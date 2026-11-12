@@ -61,6 +61,21 @@
   .panel{justify-content:flex-start}
   .panel::before,.panel::after{content:'';flex:1 0 0px}
   .panel{overflow:auto;padding:calc(14px + env(safe-area-inset-top)) calc(18px + env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) calc(18px + env(safe-area-inset-left))}
+  #prompt{position:fixed;left:0;right:0;bottom:31%;text-align:center;font-size:17px;letter-spacing:.06em;color:#ffd9a0;pointer-events:none;text-shadow:0 2px 6px #000,0 0 12px #000}
+  #talk{position:fixed;left:50%;bottom:calc(5% + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(580px,94vw);max-height:86vh;overflow:auto;box-sizing:border-box;
+    background:rgba(14,9,6,.92);border:1px solid rgba(255,190,110,.45);border-radius:12px;padding:16px 18px;box-shadow:0 0 40px rgba(0,0,0,.8);text-align:left}
+  #talkName{font-family:Georgia,serif;font-size:22px;letter-spacing:.1em;color:#ffc27a}
+  #talkPurse{float:right;color:#ffd84a;font-size:14px;margin-top:6px}
+  #talkText{font-size:16px;line-height:1.5;margin:8px 0 12px;opacity:.92;font-style:italic}
+  .opt{display:flex;justify-content:space-between;gap:14px;align-items:center;padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.14);cursor:pointer;font-size:14px}
+  .opt small{display:block;opacity:.65;font-size:12px}
+  .opt .cost{color:#ffd84a;white-space:nowrap}
+  .opt.sel{background:rgba(255,170,80,.22);border-color:rgba(255,190,110,.8)}
+  .opt.off{opacity:.45}
+  #talkOpts{display:grid;grid-template-columns:1fr 1fr;gap:5px 8px}
+  @media (max-width:540px){#talkOpts{grid-template-columns:1fr}}
+  #talkHint{font-size:12px;opacity:.5;margin-top:8px}
+  body.touch #prompt{font-size:14px;bottom:40%}
   .tc{display:none}
   span.tc{display:none!important}
   body.touch span.tc{display:inline!important}
@@ -124,6 +139,7 @@
     <div id="shards"></div>
     <div id="flashes"></div>
     <div id="keysLine" style="color:#ffd35a"></div>
+    <div id="embers" style="color:#ffd84a;font-size:.8em"></div>
   </div>
 </div>
 <canvas id="map" class="hidden"></canvas>
@@ -136,6 +152,8 @@
   <div id="tJump" class="tbtn">JUMP</div>
 </div>
 <div id="toast"></div>
+<div id="prompt"></div>
+<div id="talk" class="hidden"><div id="talkPurse"></div><div id="talkName"></div><div id="talkText"></div><div id="talkOpts"></div><div id="talkHint"></div></div>
 <div id="fade" class="fx"></div>
 
 <div id="title" class="panel">
@@ -146,7 +164,7 @@
     <b>Mouse or ← →</b><span>Look around</span>
     <b>Shift</b><span>Sprint (uses stamina)</span>
     <b>Space</b><span>Jump. Hold it to keep hopping; a running jump goes farther</span>
-    <b>E or left click</b><span>Flash bomb: stuns nearby creatures</span>
+    <b>E or left click</b><span>Flash bomb: stuns nearby creatures. Near a friendly face: talk</span>
     <b>M or Tab</b><span>Full map</span>
     <b>F</b><span>Fullscreen &nbsp;·&nbsp; <b>V</b> mute &nbsp;·&nbsp; <b>[ ]</b> brightness &nbsp;·&nbsp; <b>Esc</b> pause</span>
   </div>
@@ -161,7 +179,7 @@
     <label>Graphics <select id="qSel"><option value="auto">Auto</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
     <label class="kb" title="Asks the browser to use the dedicated graphics card. Turn off if the picture goes black."><input id="gtx" type="checkbox"> Prefer dedicated GPU</label>
   </div>
-  <div class="hint">Collect 3 blue shards on each floor to break the seal on the way down. Listen for the chime: it gets louder as you get close.</div>
+  <div class="hint">Collect 3 blue shards on each floor to break the seal on the way down. Listen for the chime: it gets louder as you get close.<br>Every floor hides a sanctuary where nothing can follow you. Its Keeper trades gems for lasting upgrades.</div>
   <div class="hint" id="padLine" style="color:#9fe3c4;max-width:640px"></div>
   <div class="hint" id="bestLine"></div>
   <div class="hint" id="diag" style="font-size:11px"></div>
@@ -317,6 +335,27 @@ function genFloor(seedStr,depth){
     stx=sx*2+1; sty=sy*2+1;
     for(let cy=0;cy<ch;cy++)for(let cx=0;cx<cw;cx++)cells.push([cx*2+1,cy*2+1]);
   }
+  // sanctuary: a 3x3 safe room around a brazier (tile value 4). Creatures never enter it.
+  let safe=null;
+  if(kind==='cave'){
+    const sc=[];
+    for(let y=2;y<H-2;y++)for(let x=2;x<W-2;x++){
+      let ok=Math.abs(x-stx)+Math.abs(y-sty)>3;
+      for(let dy=-1;dy<=1&&ok;dy++)for(let dx=-1;dx<=1;dx++)if(g[idx(x+dx,y+dy)]){ok=false;break}
+      if(ok)sc.push([x,y]);
+    }
+    if(sc.length){const c=sc[ri(sc.length)];safe={tx:c[0],ty:c[1]}}
+  }else{
+    const rx=ri(cw-1),ry=ri(ch-1);
+    for(let y=ry*2+1;y<=ry*2+3;y++)for(let x=rx*2+1;x<=rx*2+3;x++)g[idx(x,y)]=0;
+    safe={tx:rx*2+2,ty:ry*2+2};
+  }
+  const safeMask=new Uint8Array(W*H);
+  if(safe){
+    for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++)safeMask[idx(safe.tx+dx,safe.ty+dy)]=1;
+    g[idx(safe.tx,safe.ty)]=4;safe.x=safe.tx+0.5;safe.z=safe.ty+0.5;
+    cells=cells.filter(c=>g[idx(c[0],c[1])]===0);
+  }
   // pillars: free-standing columns in chambers, stalagmites in caverns (tile value 3)
   const pillars=[];
   if(kind==='cave'){
@@ -347,6 +386,7 @@ function genFloor(seedStr,depth){
   const shades=[];
   let far=cand.filter(c=>d0[idx(c[0],c[1])]>12);
   if(far.length<8)far=cand.filter(c=>d0[idx(c[0],c[1])]>6);
+  far=far.filter(c=>!safeMask[idx(c[0],c[1])]);
   const spawn=(type,n)=>{for(let i=0;i<n&&far.length;i++){const c=far.splice(ri(far.length),1)[0];
     shades.push({type,x:c[0]+0.5,z:c[1]+0.5,gx:c[0],gy:c[1],px:-1,py:-1,state:0,stun:0,think:rng()*0.2,vis:false,frozen:false,ph:rng()*6.28,d:99,snd:0})}};
   spawn(0,Math.min(1+Math.floor((depth-1)*0.6),7));
@@ -361,7 +401,7 @@ function genFloor(seedStr,depth){
   // corridor tiles: exactly two open neighbours, opposite each other
   const corr=[];
   if(kind!=='cave')for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
-    if(g[idx(x,y)]||((x&1)===(y&1)))continue;
+    if(g[idx(x,y)]||safeMask[idx(x,y)]||((x&1)===(y&1)))continue;
     const l=g[idx(x-1,y)],r=g[idx(x+1,y)],u=g[idx(x,y-1)],dn=g[idx(x,y+1)];
     if((!l&&!r&&u&&dn)||(l&&r&&!u&&!dn))corr.push([x,y]);
   }
@@ -375,7 +415,7 @@ function genFloor(seedStr,depth){
       g[di]=2;
       const f=bfs(g,W,H,stx,sty);let reach=0;for(let i=0;i<W*H;i++)if(f[i]>=0)reach++;
       const behind=total-1-reach;
-      const ki=behind>=total*0.08&&behind<=total*0.5?pool.findIndex(q=>f[idx(q[0],q[1])]>5):-1;
+      const ki=(!safe||f[idx(safe.tx-1,safe.ty)]>=0)&&behind>=total*0.08&&behind<=total*0.5?pool.findIndex(q=>f[idx(q[0],q[1])]>5):-1;
       if(ki<0){g[di]=0;continue}
       put('key',pool.splice(ki,1)[0]);
       door={tx:c[0],ty:c[1],ax:g[idx(c[0]-1,c[1])]!==1?0:1};
@@ -385,12 +425,17 @@ function genFloor(seedStr,depth){
       break;
     }
   }
+  // friendly faces: the Keeper tends every sanctuary, and a wanderer sometimes waits in the maze
+  const npcs=[];
+  if(safe)npcs.push({type:'keeper',x:safe.x+0.62,z:safe.z+0.62,ph:rng()*6.28,used:false});
+  {const r=rng(),wt=depth===1?'map':r<0.4?'map':r<0.75?'delver':null;
+    if(wt&&pool.length){const c=pool.pop();npcs.push({type:wt,x:c[0]+0.5,z:c[1]+0.5,ph:rng()*6.28,used:false,gift:ri(3),tip:ri(6)})}}
   take('gem',Math.round(nCells/6));
   // spike traps
   const traps=[];
   if(depth>=2){
     let tc;
-    if(kind==='cave'){tc=[];for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++)if(!g[idx(x,y)]&&(x+y)%2===1&&d0[idx(x,y)]>4)tc.push([x,y])}
+    if(kind==='cave'){tc=[];for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++)if(!g[idx(x,y)]&&!safeMask[idx(x,y)]&&(x+y)%2===1&&d0[idx(x,y)]>4)tc.push([x,y])}
     else tc=corr.filter(c=>d0[idx(c[0],c[1])]>3&&g[idx(c[0],c[1])]===0&&!(door&&Math.abs(c[0]-door.tx)+Math.abs(c[1]-door.ty)<=2));
     shuffle(tc);
     const n=Math.min(2+depth,14);
@@ -423,7 +468,7 @@ function genFloor(seedStr,depth){
   let yaw=0;
   for(const d of DIRS){if(g[idx(stx+d[0],sty+d[1])]===0){yaw=Math.atan2(d[1],d[0]);break}}
   const bi=((depth-1)>>1)%BIOMES.length;
-  return {W,H,g,cw,ch,kind,dark:kind==='dark',door,traps,pillars,sconces,rubble,frames:[],start:{tx:stx,ty:sty,yaw},exit:{tx:ex,ty:ey,x:ex+0.5,z:ey+0.5},items,shades,
+  return {W,H,g,cw,ch,kind,dark:kind==='dark',safe,safeMask,npcs,reveal:false,door,traps,pillars,sconces,rubble,frames:[],start:{tx:stx,ty:sty,yaw},exit:{tx:ex,ty:ey,x:ex+0.5,z:ey+0.5},items,shades,
           seen:new Uint8Array(W*H),dist:d0,bi,biome:BIOMES[bi],
           name:kind==='cave'?'The Hollow':kind==='dark'?'The Black Hush':BIOMES[bi].name};
 }
@@ -895,7 +940,7 @@ function buildSdf(F){
     const px=(i+0.5)/RES,pz=(j+0.5)/RES,tx=Math.floor(px),ty=Math.floor(pz);let best=2;
     for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
       const x=tx+dx,y=ty+dy,val=(x<0||y<0||x>=F.W||y>=F.H)?1:g[y*F.W+x];
-      if(val===0)continue;
+      if(val===0||val===4)continue;
       let d;
       if(val===3)d=Math.max(0,Math.hypot(px-x-0.5,pz-y-0.5)-0.2);
       else{
@@ -945,6 +990,8 @@ const MESH_DATA={
   stalker:lathe([[0.25,0],[0.25,0.06],[0.18,0.1],[0.2,0.5],[0.22,0.72],[0.1,0.8],[0.085,0.84],[0.13,0.9],[0.14,1.0],[0.1,1.08],[0,1.1]],12),
   pillar:lathe([[0.27,0],[0.27,0.08],[0.2,0.14],[0.2,1.1],[0.27,1.17],[0.27,1.25]],14),
   cone:lathe([[0.065,0],[0,1]],8),
+  bowl:lathe([[0.08,0],[0.25,0.1],[0.29,0.17],[0.23,0.17],[0.2,0.11],[0,0.09]],14),
+  npc:lathe([[0.29,0],[0.26,0.04],[0.2,0.4],[0.19,0.66],[0.24,0.74],[0.23,0.8],[0.13,0.84],[0.15,0.9],[0.16,0.99],[0.13,1.07],[0.06,1.14],[0,1.17]],14),
   octa:octa(),cube:cube()
 };
 const PST=9*4;
@@ -968,6 +1015,7 @@ function buildStatic(F){
     }
   };
   for(const q of F.pillars)add(MESH_DATA.pillar,1,1,1,0,q[0],0,q[1],st);
+  if(F.safe){add(MESH_DATA.pillar,1.15,0.3,1.15,0,F.safe.x,0,F.safe.z,st);add(MESH_DATA.bowl,1,1,1,0,F.safe.x,0.375,F.safe.z,iron)}
   for(const r of F.rubble)add(MESH_DATA.octa,r.s*1.4,r.s*r.sy,r.s,r.r,r.x,r.s*r.sy*0.6,r.z,dk);
   for(const q of F.sconces){
     add(MESH_DATA.cube,0.05,0.2,0.05,0,q.x,0.72,q.z,iron);
@@ -996,6 +1044,83 @@ let state='title';           // title | play | pause | trans | dead
 let F=null;                  // current floor
 const P={y:0,vy:0,vx:0,vz:0,airSpeed:2.7,jumpQ:0,keys:0,x:0,z:0,yaw:0,pitch:0,hp:3,fuel:100,stam:100,winded:false,flash:1,shards:0,inv:0,bob:0,tx:-1,ty:-1,stepPh:0};
 const R={seed:'',depth:1,score:0,time:0,gems:0};
+/* ---------- lasting upgrades, bought from the Keeper with gems ---------- */
+const UPG=[
+  {k:'heart',name:'Vitality',desc:'One more heart',cost:[15,30,50]},
+  {k:'lamp',name:'Lamp oil',desc:'Your torch burns 15% slower',cost:[10,20,35]},
+  {k:'lungs',name:'Deep lungs',desc:'Sprinting costs 20% less stamina',cost:[10,20,35]},
+  {k:'band',name:'Bandolier',desc:'Start every run with one more flash bomb',cost:[12,24,40]},
+  {k:'boots',name:'Swift boots',desc:'Move 6% faster',cost:[15,35]},
+];
+const up=Object.assign({heart:0,lamp:0,lungs:0,band:0,boots:0},store.get('up',null)||{});
+let wallet=Math.max(0,+store.get('wallet',0)||0);
+const maxHp=()=>3+(up.heart|0);
+const plLevel=()=>1+UPG.reduce((a,u)=>a+(up[u.k]|0),0);
+const ROMAN=['','I','II','III','IV'];
+let nearNpc=null,talk=null,padHold=0;
+const NPC={
+  keeper:{name:'The Keeper',col:[0.3,0.19,0.11],eye:[1.0,0.6,0.2],h:1},
+  map:{name:'Ilse the Mapmaker',col:[0.16,0.34,0.4],eye:[0.7,1.0,0.95],h:0.94},
+  delver:{name:'Brakk, a wounded delver',col:[0.4,0.36,0.3],eye:[1.0,0.95,0.8],h:0.72},
+};
+const KEEPER_LINES=['Sit. The fire keeps them out. Gems feed the fire, and the fire remembers you.','Still breathing? Good. Warm your hands and show me what you found.','Every hall below is hungrier than the last. Spend well.','The dark forgets its dead. I do not. What will you carry down?'];
+const DELVER_TIPS=['The pale statues only walk when you look away. Keep your eyes on them and back off.','Blue wisps do not bite. They drink your flame, and that is worse.','A running jump clears a spike plate. Do not stand and think about it.','When your torch dies they smell you from much farther off.','The chime turns low and warm once the seal is broken. Follow it down.','Shades lose interest if you break their line of sight twice.'];
+const clearPrompt=()=>{hudCache.prompt='';$('prompt').textContent=''};
+function openTalk(n){
+  if(state!=='play')return;
+  state='talk';talk={npc:n,sel:0,line:null,opts:[]};
+  if(document.pointerLockElement){talk.relock=true;document.exitPointerLock()}
+  clearPrompt();$('talk').classList.remove('hidden');
+  touch.mx=touch.my=0;touch.stickId=null;touch.lookId=null;touch.jump=false;$('stickBase').style.display=$('stickKnob').style.display='none';
+  sfx('pick');buildTalk();
+}
+function closeTalk(){
+  if(state!=='talk')return;
+  const re=talk&&talk.relock;talk=null;state='play';padHold=performance.now()+350;P.jumpQ=0;
+  $('talk').classList.add('hidden');
+  if(re&&!touch.on)lock();
+}
+function buildTalk(){
+  const n=talk.npc,T=NPC[n.type],o=[];
+  let text='';
+  if(n.type==='keeper'){
+    text=talk.line||KEEPER_LINES[(R.depth+(n.ph*10|0))%KEEPER_LINES.length];
+    for(const u of UPG){
+      const lv=up[u.k]|0,max=u.cost.length;
+      if(lv>=max){o.push({label:u.name+' '+ROMAN[lv],sub:u.desc+' (complete)',cost:'',off:true});continue}
+      const c=u.cost[lv];
+      o.push({label:u.name+' '+ROMAN[lv+1],sub:u.desc,cost:c+' gems',off:wallet<c,fn:()=>{
+        wallet-=c;up[u.k]=lv+1;store.set('up',up);store.set('wallet',wallet);
+        if(u.k==='heart')P.hp=Math.min(maxHp(),P.hp+1);
+        if(u.k==='band')P.flash++;
+        sfx('key');talk.line='Done. You are level '+plLevel()+' now. It will hold, even past death.'}});
+    }
+    if(P.hp<maxHp())o.push({label:'Mend a wound',sub:'Restore one heart',cost:'6 gems',off:wallet<6,fn:()=>{wallet-=6;store.set('wallet',wallet);P.hp++;sfx('pick');talk.line='There. Try to keep the rest of your blood inside.'}});
+  }else if(n.type==='map'){
+    text=n.used?'It is all on your map now. Mind the corners.':'I have walked every hall of this floor twice. Hold out your map and I will mark what matters.';
+    if(!n.used)o.push({label:'Mark the shards and the way down',sub:'Shows them on your map',cost:'free',fn:()=>{n.used=true;F.reveal=true;sfx('shard')}});
+  }else{
+    text=n.used?DELVER_TIPS[n.tip%DELVER_TIPS.length]:'Took a claw to the leg. I am done going down. Take this, it is no use to me now.';
+    if(!n.used)o.push({label:'Take the gift',sub:['A flash bomb','A flask of oil','A pouch of 8 gems'][n.gift],cost:'free',fn:()=>{
+      n.used=true;if(n.gift===0)P.flash++;else if(n.gift===1){P.fuel=Math.min(100,P.fuel+50);lowFuelSaid=false}else{wallet+=8;store.set('wallet',wallet)}sfx('gem')}});
+  }
+  o.push({label:'Leave',sub:'',cost:'',leave:true,fn:closeTalk});
+  talk.opts=o;if(talk.sel>=o.length)talk.sel=o.length-1;
+  $('talkName').textContent=T.name;$('talkText').textContent=text;
+  $('talkPurse').textContent='● '+wallet+' gems · Level '+plLevel();
+  const box=$('talkOpts');box.innerHTML='';
+  o.forEach((q,i)=>{const d=document.createElement('div');d.className='opt'+(i===talk.sel?' sel':'')+(q.off?' off':'');
+    d.innerHTML='<span>'+(i+1)+'. '+q.label+(q.sub?'<small>'+q.sub+'</small>':'')+'</span><span class="cost">'+q.cost+'</span>';
+    d.addEventListener('click',e=>{e.stopPropagation();talk.sel=i;pickTalk()});box.appendChild(d)});
+  $('talkHint').textContent=touch.on?'Tap a choice':pad.id?'D-pad or stick to choose · A to pick · B to leave':'Up and Down to choose · Enter to pick · Esc to leave';
+}
+function pickTalk(){
+  if(!talk)return;const q=talk.opts[talk.sel];if(!q)return;
+  if(q.off||!q.fn){sfx('seal');return}
+  q.fn();if(talk)buildTalk();
+}
+function moveTalk(d){if(!talk)return;const n=talk.opts.length;talk.sel=(talk.sel+d+n)%n;buildTalk()}
+function act(){if(state==='play'&&nearNpc)openTalk(nearNpc);else useFlash()}
 let doorMsgT=0, tipTimers=[];
 let mapBig=false, usingLock=false, pausedAt=0, flashT=0, sealMsgT=0, lowFuelSaid=false, pingT=0, beatT=0, titleYaw=0;
 let sens=store.get('sens',1);
@@ -1024,7 +1149,7 @@ function loadFloor(depth){
   F=genFloor(R.seed,depth);
   buildMesh(F);buildStatic(F);buildSdf(F);
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
-  P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;
+  P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;P.inSafe=false;nearNpc=null;
   sealMsgT=0;doorMsgT=0;
   onTileChange();
 }
@@ -1050,10 +1175,10 @@ function fillStartSel(){
 function startRun(seed,depth){
   const sd=clamp(depth||+$('startSel').value||1,1,deepest);
   R.seed=(seed||randSeed()).toUpperCase();R.score=0;R.time=0;R.gems=0;R.startDepth=sd;
-  P.hp=3;P.fuel=100;P.stam=100;P.winded=false;P.flash=1+Math.floor((sd-1)/3);P.inv=0;P.chill=0;lowFuelSaid=false;
+  P.hp=maxHp();P.fuel=100;P.stam=100;P.winded=false;P.flash=1+Math.floor((sd-1)/3)+(up.band|0);P.inv=0;P.chill=0;lowFuelSaid=false;
   loadFloor(sd);
   state='play';
-  ['title','pause','dead'].forEach(id=>$(id).classList.add('hidden'));
+  ['title','pause','dead','talk'].forEach(id=>$(id).classList.add('hidden'));talk=null;
   $('hud').classList.remove('hidden');$('map').classList.remove('hidden');
   say(sd>1?`Depth ${sd}: ${F.name}`:'Find 3 shards to break the seal',4);showTips();
   initAudio();
@@ -1068,7 +1193,7 @@ function showTips(){
 }
 function toTitle(){
   state='title';
-  ['pause','dead','hud','map'].forEach(id=>$(id).classList.add('hidden'));
+  ['pause','dead','hud','map','talk'].forEach(id=>$(id).classList.add('hidden'));talk=null;clearPrompt();
   $('title').classList.remove('hidden');
   showBest();
   if(document.pointerLockElement)document.exitPointerLock();
@@ -1076,7 +1201,7 @@ function toTitle(){
 function showBest(){
   fillStartSel();
   const b=store.get('best',null);
-  $('bestLine').textContent=b?`Best run: depth ${b.depth}, ${b.score} points`:'';
+  $('bestLine').textContent=(b?`Best run: depth ${b.depth}, ${b.score} points · `:'')+`Level ${plLevel()} · ${wallet} gems banked`;
 }
 function pause(){
   if(state!=='play')return;
@@ -1097,7 +1222,7 @@ let toastTimer=0;
 function say(t,secs){const el=$('toast');el.textContent=t;el.style.opacity=1;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.style.opacity=0,(secs||2.5)*1000)}
 
 function die(){
-  state='dead';
+  state='dead';clearPrompt();
   if(document.pointerLockElement)document.exitPointerLock();
   const b=store.get('best',null);
   const isBest=!b||R.depth>b.depth||(R.depth===b.depth&&R.score>b.score);
@@ -1147,11 +1272,11 @@ function collect(it){
   switch(it.type){
     case 'shard':P.shards++;R.score+=50;sfx('shard');
       say(P.shards>=3?'The seal is broken. Find the way down.':`Shard ${P.shards} of 3`,2.5);break;
-    case 'gem':R.score+=10*R.depth;R.gems++;sfx('gem');break;
+    case 'gem':R.score+=10*R.depth;R.gems++;wallet++;store.set('wallet',wallet);sfx('gem');break;
     case 'oil':P.fuel=Math.min(100,P.fuel+35);lowFuelSaid=false;sfx('oil');break;
     case 'flash':P.flash++;sfx('pick');break;
     case 'key':P.keys++;sfx('key');say('You found the gate key',2.5);break;
-    case 'heart':if(P.hp<3)P.hp++;else R.score+=25;sfx('pick');break;
+    case 'heart':if(P.hp<maxHp())P.hp++;else R.score+=25;sfx('pick');break;
   }
 }
 
@@ -1171,9 +1296,15 @@ addEventListener('keydown',e=>{
   if(state==='title'){if(e.code==='Enter')startRun($('seedIn').value.trim())}
   else if(state==='play'){
     if(e.code==='Space')P.jumpQ=0.15;
-    if(e.code==='KeyE')useFlash();
+    if(e.code==='KeyE')act();
     if(e.code==='KeyM'||e.code==='Tab')mapBig=!mapBig;
     if(e.code==='Escape'||e.code==='KeyP')pause();
+  }else if(state==='talk'){
+    if(e.code==='Escape'||e.code==='KeyQ')closeTalk();
+    else if(e.code==='ArrowUp'||e.code==='KeyW')moveTalk(-1);
+    else if(e.code==='ArrowDown'||e.code==='KeyS')moveTalk(1);
+    else if(e.code==='Enter'||e.code==='KeyE'||e.code==='Space')pickTalk();
+    else if(/^Digit[1-9]$/.test(e.code)){const i=+e.code.slice(5)-1;if(talk&&i<talk.opts.length){talk.sel=i;pickTalk()}}
   }else if(state==='pause'){
     if(e.code==='Enter'||e.code==='KeyP'||(e.code==='Escape'&&performance.now()-pausedAt>300))resume(false);
     if(e.code==='KeyT')toTitle();
@@ -1198,7 +1329,7 @@ document.addEventListener('pointerlockchange',()=>{
   else if(usingLock){usingLock=false;pause()}
 });
 canvas.addEventListener('click',()=>{if(state==='play'&&!document.pointerLockElement)lock()});
-canvas.addEventListener('mousedown',e=>{if(e.button===0&&state==='play'&&document.pointerLockElement===canvas)useFlash()});
+canvas.addEventListener('mousedown',e=>{if(e.button===0&&state==='play'&&document.pointerLockElement===canvas)act()});
 $('startBtn').addEventListener('click',()=>{startRun($('seedIn').value.trim());lock()});
 $('resumeBtn').addEventListener('click',()=>resume(true));
 $('againBtn').addEventListener('click',()=>{startRun();lock()});
@@ -1249,7 +1380,7 @@ addEventListener('touchstart',()=>{enableTouch();initAudio()},{passive:true});
     el.addEventListener('touchend',u);el.addEventListener('touchcancel',u);
     el.addEventListener('touchmove',e=>{e.preventDefault();e.stopPropagation()},{passive:false});};
   btn('tJump',()=>{touch.jump=true;P.jumpQ=0.15},()=>{touch.jump=false});
-  btn('tFlash',()=>{if(state==='play')useFlash()});
+  btn('tFlash',()=>{if(state==='play')act()});
   btn('tPause',()=>{touch.jump=false;endStick();touch.lookId=null;pause()});
   btn('tMap',()=>{mapBig=!mapBig});
   $('quitBtn').addEventListener('click',toTitle);
@@ -1282,12 +1413,12 @@ function pollPad(){
   const lx=curve(gp.axes[2]||0),ly=curve(gp.axes[3]||0);
   pad.lx=lx*(0.45+0.55*Math.abs(lx))*sens;pad.ly=ly*(0.45+0.55*Math.abs(ly))*sens;
   if(state==='play'){
-    pad.jump=B(0);
+    pad.jump=B(0)&&performance.now()>padHold;
     if(B(6)||B(4))pad.sprint=true;
     if(hit(10))pad.sprintLatch=!pad.sprintLatch;
     if(Math.hypot(pad.mx,pad.my)<0.3)pad.sprintLatch=false;
     if(pad.sprintLatch)pad.sprint=true;
-    if(hit(2)||hit(1)||hit(7))useFlash();
+    if(hit(2)||hit(1)||hit(7))act();
     if(hit(3))mapBig=!mapBig;
     if(hit(9))pause();
     if(hit(14))setBright(bright-0.15);
@@ -1295,6 +1426,12 @@ function pollPad(){
   }else if(state==='title'){if(hit(0)||hit(9))startRun($('seedIn').value.trim());
     const sel=$('startSel');if(hit(14)&&+sel.value>1){sel.value=+sel.value-1;store.set('startDepth',+sel.value)}
     if(hit(15)&&+sel.value<deepest){sel.value=+sel.value+1;store.set('startDepth',+sel.value)}}
+  else if(state==='talk'){
+    const sy=(gp.axes[1]||0)>0.6?1:(gp.axes[1]||0)<-0.6?-1:0;
+    if(hit(12)||(sy<0&&pad.psy!==-1))moveTalk(-1);else if(hit(13)||(sy>0&&pad.psy!==1))moveTalk(1);
+    pad.psy=sy;
+    if(hit(0)||hit(2))pickTalk();else if(hit(1)||hit(9))closeTalk();
+  }
   else if(state==='pause'){if(hit(0)||hit(9))resume(false);else if(hit(8))toTitle()}
   else if(state==='dead'){if(hit(0)||hit(9))startRun();else if(hit(2))startRun(R.seed,R.startDepth);else if(hit(8)||hit(1))toTitle()}
   for(let i=0;i<gp.buttons.length;i++)pad.prev[i]=B(i);
@@ -1369,10 +1506,10 @@ function update(dt){
   const moving=mag>0.05, ground=P.y<=0;
   const wantSprint=(keys.ShiftLeft||keys.ShiftRight||pad.sprint||Math.hypot(touch.mx,touch.my)>0.94)&&moving&&!P.winded;
   if(ground){
-    if(wantSprint){P.stam-=30*dt;if(P.stam<=0){P.stam=0;P.winded=true}}
+    if(wantSprint){P.stam-=30*(1-0.2*(up.lungs|0))*dt;if(P.stam<=0){P.stam=0;P.winded=true}}
     else{P.stam=Math.min(100,P.stam+18*dt);if(P.winded&&P.stam>=30)P.winded=false}
   }
-  const speed=(wantSprint?4.3:2.7)*(P.chill>0?0.55:1);
+  const speed=(wantSprint?4.3:2.7)*(P.chill>0?0.55:1)*(1+0.06*(up.boots|0));
   const cy=Math.cos(P.yaw),sy=Math.sin(P.yaw);
   const dxn=cy*fwd-sy*str, dzn=sy*fwd+cy*str;
   if(ground){P.vx=dxn*speed;P.vz=dzn*speed}
@@ -1383,6 +1520,7 @@ function update(dt){
   const nx=P.x+P.vx*dt;if(!blocked(nx,P.z))P.x=nx;else P.vx=0;
   const nz=P.z+P.vz*dt;if(!blocked(P.x,nz))P.z=nz;else P.vz=0;
   for(const q of F.pillars){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=0.2+PR;if(dd<m&&dd>1e-4){P.x=q[0]+ddx/dd*m;P.z=q[1]+ddz/dd*m}}
+  if(F.safe){const ddx=P.x-F.safe.x,ddz=P.z-F.safe.z,dd=Math.hypot(ddx,ddz),m=0.3+PR;if(dd<m&&dd>1e-4){P.x=F.safe.x+ddx/dd*m;P.z=F.safe.z+ddz/dd*m}}
   if(moving&&P.y<=0){
     P.bob+=speed*dt*2.3;
     const ph=Math.floor(P.bob/Math.PI);
@@ -1390,7 +1528,16 @@ function update(dt){
   }
   if(Math.floor(P.x)!==P.tx||Math.floor(P.z)!==P.ty)onTileChange();
   // torch
-  P.fuel=Math.max(0,P.fuel-0.85*dt);
+  // sanctuary: the brazier feeds the torch and nothing hunts you here
+  {const inS=F.safeMask[P.ty*F.W+P.tx]===1;
+    if(inS!==P.inSafe){P.inSafe=inS;if(inS){say('A sanctuary. Nothing can follow you here.',3);sfx('descend')}}
+    if(inS){P.fuel=Math.min(100,P.fuel+9*dt);P.stam=Math.min(100,P.stam+25*dt);P.chill=Math.min(P.chill,0.3);lowFuelSaid=false}
+    else P.fuel=Math.max(0,P.fuel-0.85*(1-0.15*(up.lamp|0))*dt);}
+  // who is close enough to talk to
+  {let best=null,bd=1.45;
+    for(const n of F.npcs){const d=Math.hypot(n.x-P.x,n.z-P.z);if(d<bd&&los(P.x,P.z,n.x,n.z)){bd=d;best=n}}
+    if(best!==nearNpc){nearNpc=best;$('tFlash').textContent=best?'TALK':'FLASH'}
+    setText('prompt',best?(touch.on?'TALK':pad.id?'X':'E')+': speak with '+NPC[best.type].name:'');}
   if(P.fuel<20&&!lowFuelSaid){lowFuelSaid=true;say(P.fuel<=0?'Your torch is out':'Your torch is guttering. Find oil.',3)}
   if(P.inv>0)P.inv-=dt;
   if(P.chill>0){P.chill-=dt;$('chill').style.opacity=clamp(P.chill/1.2,0,1)}else if(P.chill<0||P.chill===0&&$('chill').style.opacity!=='0'){P.chill=0;$('chill').style.opacity='0'}
@@ -1444,6 +1591,7 @@ function update(dt){
         else if(d<0||d>14)s.state=0;
       }else if(s.type===1)s.state=(d>=0&&d<=45)?1:0;
       else{if(s.state===0){if(d>=0&&d<=9)s.state=1}else if(d<0||d>13)s.state=0}
+      if(P.inSafe)s.state=0;
     }
     let sp;
     if(s.type===0){sp=s.state===1?chaseSpeed:1.15;if(s.state===1){chasing++;if(d>=0&&d<nearest)nearest=d}}
@@ -1456,7 +1604,7 @@ function update(dt){
       if(d>=0&&d<=8){chasing++;if(d<nearest)nearest=d;s.snd-=dt;if(s.snd<=0){s.snd=0.45;sfx('scrape')}}
     }else sp=s.state===1?2.95:1.4;
     let gx=s.gx+0.5,gz=s.gy+0.5;
-    const direct=s.state===1&&d>=0&&d<=1;
+    const direct=s.state===1&&d>=0&&d<=1&&!P.inSafe;
     if(direct){gx=P.x;gz=P.z;s.gx=cx;s.gy=cz}
     const dx=gx-s.x,dz=gz-s.z,l=Math.hypot(dx,dz),step=sp*dt;
     if(l<=step+0.001){
@@ -1465,7 +1613,7 @@ function update(dt){
         const opts=[];let bestN=null,bestD=d<0?1e9:d;
         for(const k of DIRS){
           const nx2=cx+k[0],ny2=cz+k[1];
-          if(nx2<0||ny2<0||nx2>=F.W||ny2>=F.H||F.g[ny2*F.W+nx2])continue;
+          if(nx2<0||ny2<0||nx2>=F.W||ny2>=F.H||F.g[ny2*F.W+nx2]||F.safeMask[ny2*F.W+nx2])continue;
           const nd=F.dist[ny2*F.W+nx2];
           if(nd>=0&&nd<bestD){bestD=nd;bestN=[nx2,ny2]}
           if(!(nx2===s.px&&ny2===s.py))opts.push([nx2,ny2]);
@@ -1476,13 +1624,13 @@ function update(dt){
         if(next){s.px=cx;s.py=cz;s.gx=next[0];s.gy=next[1]}
       }
     }else{s.x+=dx/l*step;s.z+=dz/l*step;s.face=Math.atan2(dz,dx)}
-    if(Math.hypot(s.x-P.x,s.z-P.z)<0.5){
+    if(Math.hypot(s.x-P.x,s.z-P.z)<0.5&&!P.inSafe){
       if(s.type===2){
         // a wisp drinks some of the torch and flits away
         P.fuel=Math.max(0,P.fuel-22);sfx('drain');say('A wisp drinks your flame',2);
         for(let tries=0;tries<60;tries++){
           const rx=1+(Math.random()*(F.W-2)|0),ry=1+(Math.random()*(F.H-2)|0),rd=F.dist[ry*F.W+rx];
-          if(F.g[ry*F.W+rx]===0&&(rd>10||(tries>40&&rd>4))){s.x=rx+0.5;s.z=ry+0.5;s.gx=rx;s.gy=ry;s.px=-1;break}
+          if(F.g[ry*F.W+rx]===0&&!F.safeMask[ry*F.W+rx]&&(rd>10||(tries>40&&rd>4))){s.x=rx+0.5;s.z=ry+0.5;s.gx=rx;s.gy=ry;s.px=-1;break}
         }
         s.state=0;s.stun=1.5;
       }else if(P.inv<=0){
@@ -1626,6 +1774,10 @@ function render(t){
   for(const q of F.sconces){const d=(q.lx-ex)**2+(q.lz-ez)**2;if(d<200){
     const fl=1+Math.sin(t*9+q.ph)*0.07+Math.sin(t*17.3+q.ph*2)*0.05;q.fl=fl;
     lights.push([d-6,q.lx,0.9,q.lz,SCONCE_COL,1.25*fl,4.6])}}
+  if(F.safe){const d=(F.safe.x-ex)**2+(F.safe.z-ez)**2;if(d<400){
+    const fl=1+Math.sin(t*8.3)*0.08+Math.sin(t*19.1)*0.05;F.safe.fl=fl;
+    lights.push([d-30,F.safe.x,0.85,F.safe.z,[1.0,0.56,0.2],2.3*fl,7.5])}}
+  for(const n of F.npcs){if(n.type==='keeper')continue;const d=(n.x-ex)**2+(n.z-ez)**2;if(d<140)lights.push([d-3,n.x,0.9,n.z,NPC[n.type].eye,0.7,2.6])}
   lights.sort((a,b)=>a[0]-b[0]);
   lpos.fill(0);lcol.fill(0);
   for(let i=0;i<NL;i++){
@@ -1667,6 +1819,22 @@ function render(t){
   }
   gl.uniform1f(propProg.u.uBlkOn,0);
   sprList.length=0;
+  for(const n of F.npcs){
+    const d2=(n.x-ex)**2+(n.z-ez)**2;if(d2>18*18)continue;
+    const T=NPC[n.type],tp=Math.atan2(ez-n.z,ex-n.x),cx=Math.cos(tp),cz=Math.sin(tp),h=T.h,sway=Math.sin(t*1.3+n.ph)*0.012;
+    drawProp(MESH.npc,n.x,0,n.z,1,h,1,0,T.col,0.03,0.2,cx*0.03+sway,cz*0.03);
+    spr(n.x+cx*0.172,0.965*h,n.z+cz*0.172,0.2,0.22,7,0,0,0,1,0);
+    for(const e of[-0.045,0.045])spr(n.x+cx*0.19-cz*e,0.975*h,n.z+cz*0.19+cx*e,0.045,0.045,7,T.eye[0],T.eye[1],T.eye[2],1,1);
+    if(n.type==='keeper'){spr(n.x+cx*0.2-cz*0.24,0.55,n.z+cz*0.2+cx*0.24,0.09,0.14,11,1.0,0.6,0.2,1,1);spr(n.x+cx*0.2-cz*0.24,0.55,n.z+cz*0.2+cx*0.24,0.5,0.5,7,1.0,0.5,0.15,0.25,1)}
+    if(!n.used&&n.type!=='keeper'){const b=1.22*h+Math.sin(t*3+n.ph)*0.03;spr(n.x,b,n.z,0.09,0.09,7,1.0,0.85,0.4,1,1);spr(n.x,b,n.z,0.34,0.34,7,1.0,0.7,0.2,0.3,1)}
+  }
+  if(F.safe&&(F.safe.x-ex)**2+(F.safe.z-ez)**2<22*22){
+    const fl=F.safe.fl||1,X=F.safe.x,Z=F.safe.z;
+    spr(X,0.72,Z,0.42*fl,0.62*fl,11,1.0,0.55,0.16,1,1);
+    spr(X+Math.sin(t*5.1)*0.05,0.66,Z+Math.cos(t*4.3)*0.05,0.3,0.42,11,1.0,0.75,0.3,0.9,1);
+    spr(X,0.75,Z,1.9,1.9,7,1.0,0.42,0.1,0.32*fl,1);
+    for(let i=0;i<4;i++){const a=((t*0.35+i*0.25)%1);spr(X+Math.sin(i*2.4+t)*0.12*a,0.8+a*0.9,Z+Math.cos(i*1.7+t)*0.12*a,0.025,0.025,7,1.0,0.6,0.2,1-a,1)}
+  }
   for(const s of F.shades){
     const d2=(s.x-ex)**2+(s.z-ez)**2;if(d2>18*18||s.type===2)continue;
     const tp=Math.atan2(ez-s.z,ex-s.x);
@@ -1775,11 +1943,12 @@ function drawHUD(){
   setText('depthLine','Depth '+R.depth);
   setText('scoreLine','Score '+R.score);
   setText('seedLine','Seed '+R.seed);
-  setHTML('hearts','♥'.repeat(Math.max(0,P.hp))+'<i>'+'♥'.repeat(3-Math.max(0,P.hp))+'</i>');
+  setHTML('hearts','♥'.repeat(Math.max(0,P.hp))+'<i>'+'♥'.repeat(Math.max(0,maxHp()-Math.max(0,P.hp)))+'</i>');
   setW('fuelFill',P.fuel);setW('stamFill',P.stam);
   setText('shards','◆ '+P.shards+' / 3 shards');
   setText('flashes','✦ '+P.flash+' flash'+(P.flash===1?'':'es'));
   setText('keysLine',P.keys?'⚷ gate key':'');
+  setText('embers','● '+wallet+(wallet===1?' gem':' gems')+' · Level '+plLevel());
   setText('fps',fpsShown?Math.round(fpsShown)+' fps · '+Math.round(rs*100)+'% res':'');
 }
 const mapCv=$('map'),mctx=mapCv.getContext('2d');let mapMode='';
@@ -1796,16 +1965,18 @@ function drawMap(){
   c.fillStyle='#7d7263';
   const x0=Math.max(0,Math.floor(-ox/ts)),x1=Math.min(F.W-1,Math.ceil((size-ox)/ts));
   const y0=Math.max(0,Math.floor(-oy/ts)),y1=Math.min(F.H-1,Math.ceil((size-oy)/ts));
-  for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++)if(F.seen[y*F.W+x])c.fillRect(ox+x*ts,oy+y*ts,ts+0.5,ts+0.5);
+  for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++)if(F.seen[y*F.W+x]){const sm=F.safeMask[y*F.W+x];if(sm)c.fillStyle='#c79a4e';c.fillRect(ox+x*ts,oy+y*ts,ts+0.5,ts+0.5);if(sm)c.fillStyle='#7d7263'}
   if(F.door){const D=F.door,W2=F.W;if(F.seen[D.ty*W2+D.tx-1]||F.seen[D.ty*W2+D.tx+1]||F.seen[(D.ty-1)*W2+D.tx]||F.seen[(D.ty+1)*W2+D.tx]){c.fillStyle='#b5762a';c.fillRect(ox+D.tx*ts,oy+D.ty*ts,ts,ts)}}
   c.fillStyle='#c0392b';
   for(const tr of F.traps)if(F.seen[tr.ty*F.W+tr.tx])c.fillRect(ox+(tr.tx+0.3)*ts,oy+(tr.ty+0.3)*ts,ts*0.4,ts*0.4);
   const dot=(x,z,r,col)=>{c.fillStyle=col;c.beginPath();c.arc(ox+x*ts,oy+z*ts,r,0,7);c.fill()};
-  if(F.seen[F.exit.ty*F.W+F.exit.tx]){c.fillStyle=P.shards>=3?'#5dff9a':'#ff4a3a';c.fillRect(ox+F.exit.tx*ts,oy+F.exit.ty*ts,ts,ts)}
+  if(F.seen[F.exit.ty*F.W+F.exit.tx]||F.reveal){c.fillStyle=P.shards>=3?'#5dff9a':'#ff4a3a';c.fillRect(ox+F.exit.tx*ts,oy+F.exit.ty*ts,ts,ts)}
   for(const it of F.items){
-    if(it.got||!F.seen[it.ty*F.W+it.tx])continue;
+    if(it.got||(!F.seen[it.ty*F.W+it.tx]&&!(F.reveal&&it.type==='shard')))continue;
     dot(it.x,it.z,(it.type==='shard'||it.type==='key')?Math.max(3,ts*0.4):Math.max(1.6,ts*0.22),it.type==='shard'?'#7fe9ff':it.type==='key'?'#ffd35a':it.type==='oil'?'#ff9a2e':it.type==='gem'?'#ffd84a':it.type==='heart'?'#ff5a6a':'#ffffff');
   }
+  if(F.safe&&F.seen[F.safe.ty*F.W+F.safe.tx+1])dot(F.safe.x,F.safe.z,Math.max(2.5,ts*0.3),'#ff8a2a');
+  for(const n of F.npcs)if(F.seen[Math.floor(n.z)*F.W+Math.floor(n.x)]){c.fillStyle=n.type==='keeper'?'#ffe0a0':'#8ff0d0';c.fillRect(ox+n.x*ts-2.5,oy+n.z*ts-2.5,5,5)}
   for(const s of F.shades)if(s.vis)dot(s.x,s.z,Math.max(3,ts*0.4),s.type===1?'#e6e0d2':s.type===2?'#5aa8ff':s.state===1?'#ff2a4a':'#a07cff');
   c.save();c.translate(ox+P.x*ts,oy+P.z*ts);c.rotate(P.yaw);
   c.fillStyle='#ffc27a';c.beginPath();c.moveTo(6,0);c.lineTo(-4,4);c.lineTo(-2,0);c.lineTo(-4,-4);c.closePath();c.fill();c.restore();
@@ -1826,7 +1997,7 @@ function frame(now){
 }
 // a backdrop maze behind the title screen
 R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
-window.__game={genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},startRun,useFlash,P,R,touch};
+window.__game={get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);
 </script>
 </body>
