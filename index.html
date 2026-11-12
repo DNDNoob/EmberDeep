@@ -15,6 +15,7 @@
   body{touch-action:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;overscroll-behavior:none;position:fixed;inset:0}
   .fx{position:fixed;inset:0;pointer-events:none}
   #vig{background:radial-gradient(ellipse at center,rgba(0,0,0,0) 45%,rgba(0,0,0,.72) 100%)}
+  #chill{background:radial-gradient(ellipse at center,rgba(60,110,200,0) 25%,rgba(70,130,230,.6) 100%);opacity:0}
   #hurt{background:radial-gradient(ellipse at center,rgba(160,0,0,0) 30%,rgba(200,10,10,.75) 100%);opacity:0;transition:opacity .5s}
   #flashfx{background:#dff1ff;opacity:0;transition:opacity .7s}
   #fade{background:#000;opacity:0;transition:opacity .4s}
@@ -104,6 +105,7 @@
 <canvas id="gl"></canvas>
 <div id="vig" class="fx"></div>
 <div id="hurt" class="fx"></div>
+<div id="chill" class="fx"></div>
 <div id="flashfx" class="fx"></div>
 
 <div id="hud" class="hidden">
@@ -156,6 +158,7 @@
     <label>Seed <input id="seedIn" type="text" maxlength="8" placeholder="random"></label>
     <label><span class="kb">Mouse speed</span><span class="tc" style="display:inline">Look speed</span> <input id="sens" type="range" min="0.4" max="2.5" step="0.1" value="1"></label>
     <label>Brightness <input class="brightS" type="range" min="0.6" max="3" step="0.05" value="1.3"></label>
+    <label>Graphics <select id="qSel"><option value="auto">Auto</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
     <label class="kb" title="Asks the browser to use the dedicated graphics card. Turn off if the picture goes black."><input id="gtx" type="checkbox"> Prefer dedicated GPU</label>
   </div>
   <div class="hint">Collect 3 blue shards on each floor to break the seal on the way down. Listen for the chime: it gets louder as you get close.</div>
@@ -188,7 +191,10 @@ const canvas = $('gl');
 const lsGet=(k,d)=>{try{const v=localStorage.getItem('emberdeep.'+k);return v==null?d:JSON.parse(v)}catch(e){return d}};
 const lsSet=(k,v)=>{try{localStorage.setItem('emberdeep.'+k,JSON.stringify(v))}catch(e){}};
 const SAFE=+lsGet('safe',0)||0, WANT_GTX=!!lsGet('gtx',false);
-const glOpts=SAFE?{antialias:false,alpha:false}:{antialias:true,alpha:false};
+const QSET=lsGet('quality','auto');
+const IS_TOUCH=!!(window.matchMedia&&matchMedia('(pointer:coarse)').matches);
+let Q=SAFE?0:QSET==='low'?0:QSET==='medium'?1:QSET==='high'?2:(IS_TOUCH?1:2);
+const glOpts={antialias:Q===0&&!SAFE,alpha:false};
 if(WANT_GTX&&!SAFE)glOpts.powerPreference='high-performance';
 const gl = canvas.getContext('webgl2', glOpts);
 if (!gl) {
@@ -196,6 +202,7 @@ if (!gl) {
   throw new Error('no webgl2');
 }
 
+if(gl&&Q>0&&!gl.getExtension('EXT_color_buffer_float')&&!gl.getExtension('EXT_color_buffer_half_float'))Q=0;
 /* ---------- utilities ---------- */
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
 function hashStr(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return h>>>0}
@@ -208,10 +215,10 @@ const store={
 /* ---------- constants ---------- */
 const WALL_H=1.25, EYE=0.62, PR=0.22;
 const BIOMES=[
-  {name:'The Old Stonework', wall:[1.0,0.92,0.82], floor:[0.9,0.85,0.8],  ceil:[0.7,0.65,0.6],   torch:[1.0,0.72,0.42], amb:[0.012,0.012,0.02]},
-  {name:'Mossgrown Halls',   wall:[0.7,0.95,0.7],  floor:[0.65,0.85,0.6], ceil:[0.5,0.65,0.5],   torch:[1.0,0.8,0.5],   amb:[0.008,0.02,0.012]},
-  {name:'The Frostvault',    wall:[0.7,0.85,1.1],  floor:[0.75,0.9,1.1],  ceil:[0.55,0.65,0.85], torch:[0.95,0.88,0.8], amb:[0.012,0.018,0.035]},
-  {name:'Cinder Warrens',    wall:[1.15,0.65,0.5], floor:[1.0,0.6,0.5],   ceil:[0.8,0.45,0.4],   torch:[1.0,0.6,0.3],   amb:[0.03,0.008,0.004]},
+  {name:'The Old Stonework', wall:[1.0,0.92,0.82], floor:[0.9,0.85,0.8],  ceil:[0.7,0.65,0.6],   torch:[1.0,0.72,0.42], amb:[0.012,0.012,0.02], stone:[0.44,0.4,0.34], spec:[0.12,0.2,0.05], wet:0.5},
+  {name:'Mossgrown Halls',   wall:[0.7,0.95,0.7],  floor:[0.65,0.85,0.6], ceil:[0.5,0.65,0.5],   torch:[1.0,0.8,0.5],   amb:[0.008,0.02,0.012], stone:[0.3,0.36,0.27], spec:[0.08,0.16,0.05], wet:0.9},
+  {name:'The Frostvault',    wall:[0.7,0.85,1.1],  floor:[0.75,0.9,1.1],  ceil:[0.55,0.65,0.85], torch:[0.95,0.88,0.8], amb:[0.012,0.018,0.035], stone:[0.5,0.62,0.72], spec:[0.75,0.6,0.3], wet:0.3},
+  {name:'Cinder Warrens',    wall:[1.15,0.65,0.5], floor:[1.0,0.6,0.5],   ceil:[0.8,0.45,0.4],   torch:[1.0,0.6,0.3],   amb:[0.03,0.008,0.004], stone:[0.24,0.2,0.19], spec:[0.3,0.22,0.08], wet:0.0},
 ];
 const ITEM={
   shard:{cell:0,col:[0.35,0.9,1.0], size:0.36},
@@ -310,6 +317,15 @@ function genFloor(seedStr,depth){
     stx=sx*2+1; sty=sy*2+1;
     for(let cy=0;cy<ch;cy++)for(let cx=0;cx<cw;cx++)cells.push([cx*2+1,cy*2+1]);
   }
+  // pillars: free-standing columns in chambers, stalagmites in caverns (tile value 3)
+  const pillars=[];
+  if(kind==='cave'){
+    for(let y=2;y<H-2;y++)for(let x=2;x<W-2;x++){
+      if(g[idx(x,y)]||(x+y)%2===0||(x===stx&&y===sty))continue;
+      let ok=true;for(let dy=-1;dy<=1&&ok;dy++)for(let dx=-1;dx<=1;dx++)if(g[idx(x+dx,y+dy)]){ok=false;break}
+      if(ok&&rng()<0.07){g[idx(x,y)]=3;pillars.push([x+0.5,y+0.5])}
+    }
+  }else for(let y=2;y<H-2;y+=2)for(let x=2;x<W-2;x+=2)if(g[idx(x,y)]===0&&rng()<0.6){g[idx(x,y)]=3;pillars.push([x+0.5,y+0.5])}
   const d0=bfs(g,W,H,stx,sty);
   // exit = farthest spot from the start
   let ex=stx,ey=sty,best=-1;
@@ -362,7 +378,7 @@ function genFloor(seedStr,depth){
       const ki=behind>=total*0.08&&behind<=total*0.5?pool.findIndex(q=>f[idx(q[0],q[1])]>5):-1;
       if(ki<0){g[di]=0;continue}
       put('key',pool.splice(ki,1)[0]);
-      door={tx:c[0],ty:c[1]};
+      door={tx:c[0],ty:c[1],ax:g[idx(c[0]-1,c[1])]!==1?0:1};
       // a little reward waiting behind the gate
       let bonus=0;
       for(let i=pool.length-1;i>=0&&bonus<3;i--){if(f[idx(pool[i][0],pool[i][1])]<0){put(bonus===0?'oil':bonus===1?'flash':'heart',pool.splice(i,1)[0]);bonus++}}
@@ -380,11 +396,34 @@ function genFloor(seedStr,depth){
     const n=Math.min(2+depth,14);
     for(let i=0;i<n&&i<tc.length;i++)traps.push({tx:tc[i][0],ty:tc[i][1],x:tc[i][0]+0.5,z:tc[i][1]+0.5,ph:rng()*2.8,up:false});
   }
+  // wall torches and rubble
+  const sconces=[],rubble=[];
+  if(kind!=='dark'){
+    const sc=[];
+    for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){if(g[idx(x,y)]!==0)continue;
+      for(const d of DIRS)if(g[idx(x+d[0],y+d[1])]===1){sc.push([x,y,d[0],d[1]]);break}}
+    shuffle(sc);const maxS=Math.round(nCells/(kind==='cave'?30:16));
+    for(const c of sc){
+      if(sconces.length>=maxS)break;
+      const px=c[0]+0.5+c[2]*0.44,pz=c[1]+0.5+c[3]*0.44;
+      if(Math.hypot(px-stx-0.5,pz-sty-0.5)<2||sconces.some(q=>Math.hypot(q.x-px,q.z-pz)<5.5))continue;
+      sconces.push({x:px,z:pz,dx:c[2],dz:c[3],lx:c[0]+0.5+c[2]*0.2,lz:c[1]+0.5+c[3]*0.2,ph:rng()*6.28});
+    }
+  }
+  for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
+    if(g[idx(x,y)]!==0||rng()>0.16)continue;
+    for(const d of DIRS)if(g[idx(x+d[0],y+d[1])]===1){
+      const n=1+ri(3);
+      for(let k=0;k<n;k++){const along=(rng()-0.5)*0.8,off=0.36+rng()*0.08;
+        rubble.push({x:x+0.5+(d[0]?d[0]*off:along),z:y+0.5+(d[1]?d[1]*off:along),s:0.04+rng()*0.07,r:rng()*6.28,sy:0.5+rng()*0.6})}
+      break;
+    }
+  }
   // face down an open corridor at the start
   let yaw=0;
   for(const d of DIRS){if(g[idx(stx+d[0],sty+d[1])]===0){yaw=Math.atan2(d[1],d[0]);break}}
   const bi=((depth-1)>>1)%BIOMES.length;
-  return {W,H,g,cw,ch,kind,dark:kind==='dark',door,traps,start:{tx:stx,ty:sty,yaw},exit:{tx:ex,ty:ey,x:ex+0.5,z:ey+0.5},items,shades,
+  return {W,H,g,cw,ch,kind,dark:kind==='dark',door,traps,pillars,sconces,rubble,frames:[],start:{tx:stx,ty:sty,yaw},exit:{tx:ex,ty:ey,x:ex+0.5,z:ey+0.5},items,shades,
           seen:new Uint8Array(W*H),dist:d0,bi,biome:BIOMES[bi],
           name:kind==='cave'?'The Hollow':kind==='dark'?'The Black Hush':BIOMES[bi].name};
 }
@@ -406,44 +445,138 @@ function program(vs,fs,attribs){
   for(let i=0;i<n;i++){const info=gl.getActiveUniform(p,i);u[info.name.replace('[0]','')]=gl.getUniformLocation(p,info.name)}
   return {p,u};
 }
-const worldProg=program(`#version 300 es
-precision highp float;
-in vec3 aPos;in vec3 aNor;in vec2 aUV;in float aLayer;
+const NL=12, NS=Q>=2?4:0, SHADOWS=Q>=2?2:Q>=1?1:0, POST=Q>=1, NORMALMAP=Q>=1;
+const DEFS=`#version 300 es
+precision highp float;precision highp sampler2DArray;
+#define NL ${NL}
+#define NS ${NS}
+#define SHADOWS ${SHADOWS}
+#define POST ${POST?1:0}
+#define NORMALMAP ${NORMALMAP?1:0}
+`;
+// shared lighting: hand torch + coloured point lights, soft shadows marched through a distance field of the maze
+const LIGHT_GLSL=`
+uniform vec3 uEye;uniform vec3 uTorchPos;uniform vec3 uTorchCol;uniform float uTorchR;uniform float uFlash;
+uniform vec3 uLPos[NL];uniform vec4 uLCol[NL];uniform vec3 uAmb;uniform vec3 uFog;
+uniform sampler2D uSdf;uniform vec2 uSdfScale;uniform vec4 uBlk[6];uniform float uBlkOn;uniform float uGamma;
+vec3 gSpec;
+float hash(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
+#if SHADOWS>0
+float sdf(vec2 p){
+  float d=texture(uSdf,p*uSdfScale).r*2.0;
+  if(uBlkOn>0.5){for(int i=0;i<6;i++)d=min(d,length(p-uBlk[i].xy)-uBlk[i].z);}
+  return d;
+}
+float shadow(vec3 P,vec3 Lp,vec3 Ng){
+  vec2 a=P.xz+Ng.xz*0.06;vec2 dv=Lp.xz-a;float L=length(dv);
+  if(L<0.14)return 1.0;
+  dv/=L;L-=0.1;
+  float t=0.05,res=1.0;
+  for(int i=0;i<18;i++){
+    float h=sdf(a+dv*t);
+    res=min(res,h*9.0);
+    if(res<0.02)return 0.0;
+    t+=clamp(h,0.035,0.5);
+    if(t>=L)break;
+  }
+  res=clamp(res,0.0,1.0);
+  return res*res*(3.0-2.0*res);
+}
+#endif
+vec3 shade(vec3 P,vec3 Ng,vec3 N,float gloss){
+  vec3 V=normalize(uEye-P);vec3 light=uAmb;gSpec=vec3(0.0);
+  vec3 L=uTorchPos-P;float d=length(L);L/=max(d,1e-4);
+  float s=clamp(1.0-d/uTorchR,0.0,1.0);
+  if(s>0.0){
+    float sh=1.0;
+#if SHADOWS>0
+    sh=shadow(P,uTorchPos,Ng);
+#endif
+    float a=s*s*1.7;
+    light+=uTorchCol*(a*(sh*(0.3+0.7*max(dot(N,L),0.0))*0.9+0.1));
+    gSpec+=uTorchCol*(a*sh*gloss*pow(max(dot(N,normalize(L+V)),0.0),28.0));
+  }
+  light+=vec3(0.85,0.93,1.0)*uFlash*clamp(1.0-distance(P,uEye)/9.0,0.0,1.0)*2.0;
+  for(int i=0;i<NL;i++){
+    vec3 l=uLPos[i]-P;float ld=length(l);float ls=clamp(1.0-ld/uLCol[i].a,0.0,1.0);
+    if(ls<=0.0)continue;
+    l/=max(ld,1e-4);float sh=1.0;
+#if SHADOWS>1
+    if(i<NS)sh=shadow(P,uLPos[i],Ng);
+#endif
+    float a=ls*ls*sh;
+    light+=uLCol[i].rgb*(a*(0.3+0.7*max(dot(N,l),0.0)));
+    gSpec+=uLCol[i].rgb*(a*gloss*pow(max(dot(N,normalize(l+V)),0.0),28.0));
+  }
+  return light;
+}
+vec3 finish(vec3 c,vec3 P){
+  c=mix(c,uFog,1.0-exp(-distance(P,uEye)*0.045));
+#if POST==0
+  c=pow(max(c,vec3(0.0)),vec3(1.0/uGamma));
+  c+=(hash(gl_FragCoord.xy)-0.5)/255.0;
+#endif
+  return c;
+}
+`;
+const worldProg=program(DEFS+`in vec3 aPos;in vec3 aNor;in vec2 aUV;in float aLayer;
 uniform mat4 uVP;
 out vec3 vPos;out vec3 vNor;out vec2 vUV;out float vLayer;
 void main(){vPos=aPos;vNor=aNor;vUV=aUV;vLayer=aLayer;gl_Position=uVP*vec4(aPos,1.0);}`,
-`#version 300 es
-precision highp float;precision highp sampler2DArray;
-uniform sampler2DArray uTex;
-uniform vec3 uEye;uniform vec3 uTorchCol;uniform float uTorchR;uniform float uFlash;
-uniform vec3 uLPos[8];uniform vec3 uLCol[8];
-uniform vec3 uTint[3];uniform vec3 uAmb;uniform float uGamma;uniform float uNoTex;uniform float uBase;
+DEFS+LIGHT_GLSL+`
+uniform sampler2DArray uTex;uniform sampler2DArray uNrm;
+uniform vec3 uTint[3];uniform vec3 uSpec;uniform float uNoTex;uniform float uBase;uniform float uWet;
 in vec3 vPos;in vec3 vNor;in vec2 vUV;in float vLayer;
 out vec4 o;
-float hash(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
+float vnoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);
+  return mix(mix(hash(i),hash(i+vec2(1.0,0.0)),f.x),mix(hash(i+vec2(0.0,1.0)),hash(i+vec2(1.0,1.0)),f.x),f.y);}
 void main(){
   bool isDoor=vLayer>2.5;int li=isDoor?0:int(vLayer+0.5);float em=0.0;
-  vec3 tx;
+  vec3 Ng=normalize(vNor),N=Ng,tx;
+  float layer=isDoor?12.0:uBase+vLayer;
   if(uNoTex>0.5){vec2 gq=fract(vUV*vec2(2.0,4.0));tx=(isDoor?vec3(0.5,0.3,0.12):vec3(0.42))*(0.45+0.55*step(0.04,gq.x)*step(0.07,gq.y));}
-  else{vec4 t4=texture(uTex,vec3(vUV,isDoor?12.0:uBase+vLayer));tx=t4.rgb;em=1.0-t4.a;}
-  vec3 tint=isDoor?vec3(1.0):(li==0?uTint[0]:(li==1?uTint[1]:uTint[2]));
-  vec3 alb=tx*tint;
-  vec3 N=normalize(vNor);
-  vec3 L=uEye-vPos;float d=length(L);L/=max(d,1e-4);
-  float s=clamp(1.0-d/uTorchR,0.0,1.0);
-  float diff=0.35+0.65*max(dot(N,L),0.0);
-  vec3 light=uAmb+uTorchCol*(s*s*diff*1.7)+vec3(0.85,0.93,1.0)*uFlash*clamp(1.0-d/9.0,0.0,1.0)*2.0;
-  for(int i=0;i<8;i++){
-    vec3 l=uLPos[i]-vPos;float ld=length(l);
-    float ls=clamp(1.0-ld/2.6,0.0,1.0);
-    light+=uLCol[i]*(ls*ls*(0.3+0.7*max(dot(N,l/max(ld,1e-4)),0.0)));
+  else{
+    vec4 t4=texture(uTex,vec3(vUV,layer));tx=t4.rgb;em=1.0-t4.a;
+#if NORMALMAP
+    vec3 nm=texture(uNrm,vec3(vUV,layer)).xyz*2.0-1.0;
+    vec3 T=abs(Ng.x)>0.5?vec3(0.0,0.0,1.0):vec3(1.0,0.0,0.0);
+    vec3 Bv=abs(Ng.y)>0.5?vec3(0.0,0.0,1.0):vec3(0.0,-1.0,0.0);
+    N=normalize(T*nm.x+Bv*nm.y+Ng*nm.z);
+#endif
   }
+  vec3 tint=isDoor?vec3(1.0):(li==0?uTint[0]:(li==1?uTint[1]:uTint[2]));
+  float gloss=isDoor?0.15:(li==0?uSpec.x:(li==1?uSpec.y:uSpec.z));
+  vec3 alb=tx*tint;
+  if(li==1&&uWet>0.0){
+    float pud=smoothstep(0.6,0.7,vnoise(vPos.xz*0.9))*uWet;
+    gloss=mix(gloss,1.3,pud);N=normalize(mix(N,Ng,pud*0.85));alb*=mix(1.0,0.55,pud);
+  }
+  vec3 light=shade(vPos,Ng,N,gloss);
   float ao=1.0;
   if(li==0){float v=vPos.y/${WALL_H.toFixed(2)};ao=mix(0.5,1.0,smoothstep(0.0,0.22,v)*smoothstep(1.0,0.8,v));}
-  vec3 c=pow(max(alb*light*ao+tx*em*1.2,vec3(0.0)),vec3(1.0/uGamma));
-  c+=(hash(gl_FragCoord.xy)-0.5)/255.0;
-  o=vec4(c,1.0);
+  vec3 c=(alb*light+gSpec)*ao+tx*em*${POST?'3.0':'1.2'};
+  o=vec4(finish(c,vPos),1.0);
 }`,['aPos','aNor','aUV','aLayer']);
+
+// lit, untextured 3D props: creatures, crystals, spikes, pillars, rubble
+const propProg=program(DEFS+`in vec3 aPos;in vec3 aNor;in vec3 aCol;
+uniform mat4 uVP;uniform vec3 uS;uniform vec2 uRot;uniform vec3 uOff;uniform vec2 uLean;
+out vec3 vPos;out vec3 vNor;out vec3 vCol;
+void main(){
+  vec3 p=aPos*uS;vec3 n=aNor/uS;
+  p=vec3(p.x*uRot.x-p.z*uRot.y,p.y,p.x*uRot.y+p.z*uRot.x);
+  n=vec3(n.x*uRot.x-n.z*uRot.y,n.y,n.x*uRot.y+n.z*uRot.x);
+  p.xz+=uLean*p.y;
+  vPos=p+uOff;vNor=n;vCol=aCol;gl_Position=uVP*vec4(vPos,1.0);}`,
+DEFS+LIGHT_GLSL+`
+uniform vec3 uColor;uniform float uEmis;uniform float uGloss;
+in vec3 vPos;in vec3 vNor;in vec3 vCol;
+out vec4 o;
+void main(){
+  vec3 N=normalize(vNor);vec3 alb=vCol*uColor;
+  vec3 light=shade(vPos,N,N,uGloss);
+  o=vec4(finish(alb*light+gSpec+alb*uEmis,vPos),1.0);
+}`,['aPos','aNor','aCol']);
 
 const spriteProg=program(`#version 300 es
 precision highp float;
@@ -455,21 +588,58 @@ void main(){vUV=aUV;vCol=aCol;vAdd=aAdd;
   gl_Position=uVP*vec4(aPos,1.0);}`,
 `#version 300 es
 precision highp float;
-uniform sampler2D uTex;
+uniform sampler2D uTex;uniform float uHdr;
 in vec2 vUV;in vec4 vCol;in float vAdd;in float vFog;
 out vec4 o;
 void main(){
   vec4 c=texture(uTex,vUV);
   float k=vCol.a*vFog;
-  o=vec4(c.rgb*vCol.rgb*k,c.a*k*(1.0-vAdd));
+  o=vec4(c.rgb*vCol.rgb*(k*mix(1.0,uHdr,vAdd)),c.a*k*(1.0-vAdd));
 }`,['aPos','aUV','aCol','aAdd']);
+
+// post-processing: bloom, tone mapping, FXAA
+const FSQ_VS=`#version 300 es
+out vec2 vUV;
+void main(){vec2 p=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2));vUV=p;gl_Position=vec4(p*2.0-1.0,0.0,1.0);}`;
+const PP=POST?{
+  bright:program(FSQ_VS,`#version 300 es
+precision highp float;uniform sampler2D uTex;in vec2 vUV;out vec4 o;
+void main(){vec3 c=min(texture(uTex,vUV).rgb,vec3(8.0));float m=max(c.r,max(c.g,c.b));o=vec4(c*smoothstep(0.95,1.7,m),1.0);}`,[]),
+  blur:program(FSQ_VS,`#version 300 es
+precision highp float;uniform sampler2D uTex;uniform vec2 uDir;in vec2 vUV;out vec4 o;
+void main(){vec3 c=texture(uTex,vUV).rgb*0.227;
+  c+=(texture(uTex,vUV+uDir*1.385).rgb+texture(uTex,vUV-uDir*1.385).rgb)*0.316;
+  c+=(texture(uTex,vUV+uDir*3.231).rgb+texture(uTex,vUV-uDir*3.231).rgb)*0.0703;
+  o=vec4(c,1.0);}`,[]),
+  comp:program(FSQ_VS,`#version 300 es
+precision highp float;uniform sampler2D uScene;uniform sampler2D uBloom;uniform float uGamma;uniform float uTime;in vec2 vUV;out vec4 o;
+float hash(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
+void main(){vec3 c=texture(uScene,vUV).rgb+texture(uBloom,vUV).rgb*0.9;
+  c=1.0-exp(-max(c,vec3(0.0))*1.25);
+  c=pow(c,vec3(1.0/uGamma));
+  c+=(hash(gl_FragCoord.xy+fract(uTime)*61.0)-0.5)/200.0;
+  o=vec4(c,dot(c,vec3(0.299,0.587,0.114)));}`,[]),
+  fxaa:program(FSQ_VS,`#version 300 es
+precision highp float;uniform sampler2D uTex;uniform vec2 uPx;in vec2 vUV;out vec4 o;
+void main(){
+  float lNW=texture(uTex,vUV+vec2(-1.0,-1.0)*uPx).a,lNE=texture(uTex,vUV+vec2(1.0,-1.0)*uPx).a;
+  float lSW=texture(uTex,vUV+vec2(-1.0,1.0)*uPx).a,lSE=texture(uTex,vUV+vec2(1.0,1.0)*uPx).a;
+  vec4 m=texture(uTex,vUV);float lM=m.a;
+  float lMin=min(lM,min(min(lNW,lNE),min(lSW,lSE))),lMax=max(lM,max(max(lNW,lNE),max(lSW,lSE)));
+  vec2 dir=vec2(-((lNW+lNE)-(lSW+lSE)),(lNW+lSW)-(lNE+lSE));
+  float red=max((lNW+lNE+lSW+lSE)*0.03125,0.0078125);
+  dir=clamp(dir/(min(abs(dir.x),abs(dir.y))+red),vec2(-8.0),vec2(8.0))*uPx;
+  vec4 A=0.5*(texture(uTex,vUV+dir*(1.0/3.0-0.5))+texture(uTex,vUV+dir*(2.0/3.0-0.5)));
+  vec4 B=A*0.5+0.25*(texture(uTex,vUV-dir*0.5)+texture(uTex,vUV+dir*0.5));
+  o=vec4((B.a<lMin||B.a>lMax)?A.rgb:B.rgb,1.0);}`,[])
+}:null;
 
 /* ---------- procedural textures ---------- */
 function makeWorldTextures(){
-  const S=256, rng=mulberry32(1337);
-  const mk=()=>{const c=document.createElement('canvas');c.width=c.height=S;return c};
+  const S=256, TS=Q>=2?512:256, K=TS/S, rng=mulberry32(1337);
+  const mk=()=>{const c=document.createElement('canvas');c.width=c.height=TS;c.getContext('2d',{willReadFrequently:true}).scale(K,K);return c};
   const grain=(c,amt)=>{
-    const x=c.getContext('2d'),im=x.getImageData(0,0,S,S),d=im.data;
+    const x=c.getContext('2d'),im=x.getImageData(0,0,TS,TS),d=im.data;
     for(let i=0;i<d.length;i+=4){const n=(rng()-0.5)*amt;d[i]=clamp(d[i]+n,0,255);d[i+1]=clamp(d[i+1]+n,0,255);d[i+2]=clamp(d[i+2]+n,0,255)}
     x.putImageData(im,0,0);
   };
@@ -544,33 +714,58 @@ function makeWorldTextures(){
     grain(d,16);L.push(d);}
   // glowing crack cores drawn last so they can be flagged as emissive (alpha 0)
   for(const li of EM){const x=L[li].getContext('2d');const sr=mulberry32(77+li);
-    const im0=x.getImageData(0,0,S,S).data;
+    const im0=x.getImageData(0,0,TS,TS).data;const at=(px,py)=>((((py*K)|0)&(TS-1))*TS+(((px*K)|0)&(TS-1)))*4;
     x.strokeStyle='rgb(255,150,40)';x.lineWidth=2;x.lineJoin='round';
     for(let i=0;i<S*S&&i<40;i++){
       let px=sr()*S,py=sr()*S;
       // only start a hot core where the red glow already is
-      if(!(im0[((py|0)*S+(px|0))*4]>90&&im0[((py|0)*S+(px|0))*4+2]<60))continue;
+      if(!(im0[at(px,py)]>90&&im0[at(px,py)+2]<60))continue;
       x.beginPath();x.moveTo(px,py);for(let k=0;k<3;k++){px+=(sr()-0.5)*26;py+=(sr()-0.5)*26;x.lineTo(px,py)}x.stroke();
     }}
   const tex=gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D_ARRAY,tex);
-  gl.texStorage3D(gl.TEXTURE_2D_ARRAY,9,gl.RGBA8,S,S,L.length);
+  const LV=Math.log2(TS)+1;
+  gl.texStorage3D(gl.TEXTURE_2D_ARRAY,LV,gl.RGBA8,TS,TS,L.length);
   gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);
-  L.forEach((cv,i)=>{
-    const data=new Uint8Array(cv.getContext('2d').getImageData(0,0,S,S).data.buffer);
+  const datas=L.map((cv,i)=>{
+    const data=new Uint8Array(cv.getContext('2d').getImageData(0,0,TS,TS).data.buffer);
     if(EM.has(i))for(let k=0;k<data.length;k+=4){if(data[k]>215&&data[k+1]>95&&data[k+1]<200&&data[k+2]<95)data[k+3]=0}
-    gl.texSubImage3D(gl.TEXTURE_2D_ARRAY,0,0,0,i,S,S,1,gl.RGBA,gl.UNSIGNED_BYTE,data);
+    gl.texSubImage3D(gl.TEXTURE_2D_ARRAY,0,0,0,i,TS,TS,1,gl.RGBA,gl.UNSIGNED_BYTE,data);
+    return data;
   });
-  gl.generateMipmap(gl.TEXTURE_2D_ARRAY);
-  gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
-  const ext=gl.getExtension('EXT_texture_filter_anisotropic');
-  if(ext)gl.texParameterf(gl.TEXTURE_2D_ARRAY,ext.TEXTURE_MAX_ANISOTROPY_EXT,Math.min(8,gl.getParameter(ext.MAX_TEXTURE_MAX_ANISOTROPY_EXT)));
-  return tex;
+  const filt=()=>{
+    gl.generateMipmap(gl.TEXTURE_2D_ARRAY);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    const ext=gl.getExtension('EXT_texture_filter_anisotropic');
+    if(ext)gl.texParameterf(gl.TEXTURE_2D_ARRAY,ext.TEXTURE_MAX_ANISOTROPY_EXT,Math.min(Q>=2?16:8,gl.getParameter(ext.MAX_TEXTURE_MAX_ANISOTROPY_EXT)));
+  };
+  filt();
+  // normal maps from the painted textures: dark mortar and cracks sit lower than the stone faces
+  let nrm=null;
+  if(NORMALMAP){
+    nrm=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D_ARRAY,nrm);
+    gl.texStorage3D(gl.TEXTURE_2D_ARRAY,LV,gl.RGBA8,TS,TS,L.length);
+    const hg=new Float32Array(TS*TS),hb=new Float32Array(TS*TS),out=new Uint8Array(TS*TS*4),M=TS-1,str=3.0*K;
+    datas.forEach((data,li)=>{
+      for(let q=0;q<TS*TS;q++)hg[q]=(data[q*4]*0.3+data[q*4+1]*0.59+data[q*4+2]*0.11)/255;
+      for(let y=0;y<TS;y++)for(let x=0;x<TS;x++){let a=0;
+        for(let dy=-1;dy<=1;dy++){const row=((y+dy)&M)*TS;a+=hg[row+((x-1)&M)]+hg[row+x]+hg[row+((x+1)&M)]}
+        hb[y*TS+x]=a/9}
+      for(let y=0;y<TS;y++)for(let x=0;x<TS;x++){
+        const nx=(hb[y*TS+((x-1)&M)]-hb[y*TS+((x+1)&M)])*str,ny=(hb[((y-1)&M)*TS+x]-hb[((y+1)&M)*TS+x])*str;
+        const l=1/Math.hypot(nx,ny,1),o=(y*TS+x)*4;
+        out[o]=(nx*l*0.5+0.5)*255;out[o+1]=(ny*l*0.5+0.5)*255;out[o+2]=(l*0.5+0.5)*255;out[o+3]=255;
+      }
+      gl.texSubImage3D(gl.TEXTURE_2D_ARRAY,0,0,0,li,TS,TS,1,gl.RGBA,gl.UNSIGNED_BYTE,out);
+    });
+    filt();
+  }
+  return {tex,nrm};
 }
 function makeSpriteTexture(){
-  const C=128,cv=document.createElement('canvas');cv.width=C*4;cv.height=C*4;
-  const x=cv.getContext('2d');
+  const C=128,cv=document.createElement('canvas');cv.width=C*8;cv.height=C*8;
+  const x=cv.getContext('2d');x.scale(2,2);
   const cell=(i,fn)=>{x.save();x.translate((i%4)*C,(i>>2)*C);x.beginPath();x.rect(0,0,C,C);x.clip();fn();x.restore()};
   // 0 shard
   cell(0,()=>{const g=x.createLinearGradient(40,10,90,118);g.addColorStop(0,'#ffffff');g.addColorStop(0.5,'#7fe9ff');g.addColorStop(1,'#1b6fa8');
@@ -637,48 +832,164 @@ function makeSpriteTexture(){
   gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,true);
   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,cv);
   gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
   return tex;
 }
-const worldTex=makeWorldTextures(), spriteTex=makeSpriteTexture();
+const WT=makeWorldTextures(), worldTex=WT.tex, nrmTex=WT.nrm, spriteTex=makeSpriteTexture();
 
 /* ---------- world mesh ---------- */
 const worldVAO=gl.createVertexArray(), worldVBO=gl.createBuffer(); let worldCount=0;
 gl.bindVertexArray(worldVAO);gl.bindBuffer(gl.ARRAY_BUFFER,worldVBO);
 {const st=9*4;[[0,3,0],[1,3,12],[2,2,24],[3,1,32]].forEach(a=>{gl.enableVertexAttribArray(a[0]);gl.vertexAttribPointer(a[0],a[1],gl.FLOAT,false,st,a[2])});}
 function buildMesh(F){
-  const v=[],{W,H,g}=F;
+  const v=[],{W,H,g}=F,Y=WALL_H;
   const quad=(p,n,uv,layer)=>{for(const i of[0,1,2,0,2,3])v.push(p[i][0],p[i][1],p[i][2],n[0],n[1],n[2],uv[i][0],uv[i][1],layer)};
-  const solid=(x,y)=>x<0||y<0||x>=W||y>=H||g[y*W+x]!==0;
-  const wl=(x,y)=>(x>=0&&y>=0&&x<W&&y<H&&g[y*W+x]===2)?3:0;
-  const Y=WALL_H;
+  const wall=(x,y)=>x<0||y<0||x>=W||y>=H||g[y*W+x]===1;
   for(let y=0;y<H;y++)for(let x=0;x<W;x++){
-    if(g[y*W+x])continue;
+    if(g[y*W+x]===1)continue;
     const fu=[[x/2,y/2],[(x+1)/2,y/2],[(x+1)/2,(y+1)/2],[x/2,(y+1)/2]];
     quad([[x,0,y],[x+1,0,y],[x+1,0,y+1],[x,0,y+1]],[0,1,0],fu,1);
     quad([[x,Y,y],[x+1,Y,y],[x+1,Y,y+1],[x,Y,y+1]],[0,-1,0],fu,2);
-    if(solid(x+1,y))quad([[x+1,0,y],[x+1,0,y+1],[x+1,Y,y+1],[x+1,Y,y]],[-1,0,0],[[y,1],[y+1,1],[y+1,0],[y,0]],wl(x+1,y));
-    if(solid(x-1,y))quad([[x,0,y],[x,0,y+1],[x,Y,y+1],[x,Y,y]],[1,0,0],[[y,1],[y+1,1],[y+1,0],[y,0]],wl(x-1,y));
-    if(solid(x,y+1))quad([[x,0,y+1],[x+1,0,y+1],[x+1,Y,y+1],[x,Y,y+1]],[0,0,-1],[[x,1],[x+1,1],[x+1,0],[x,0]],wl(x,y+1));
-    if(solid(x,y-1))quad([[x,0,y],[x+1,0,y],[x+1,Y,y],[x,Y,y]],[0,0,1],[[x,1],[x+1,1],[x+1,0],[x,0]],wl(x,y-1));
+    if(wall(x+1,y))quad([[x+1,0,y],[x+1,0,y+1],[x+1,Y,y+1],[x+1,Y,y]],[-1,0,0],[[y,1],[y+1,1],[y+1,0],[y,0]],0);
+    if(wall(x-1,y))quad([[x,0,y],[x,0,y+1],[x,Y,y+1],[x,Y,y]],[1,0,0],[[y,1],[y+1,1],[y+1,0],[y,0]],0);
+    if(wall(x,y+1))quad([[x,0,y+1],[x+1,0,y+1],[x+1,Y,y+1],[x,Y,y+1]],[0,0,-1],[[x,1],[x+1,1],[x+1,0],[x,0]],0);
+    if(wall(x,y-1))quad([[x,0,y],[x+1,0,y],[x+1,Y,y],[x,Y,y]],[0,0,1],[[x,1],[x+1,1],[x+1,0],[x,0]],0);
   }
+  // boxes for the gate and its stone frame
+  const UNIT=[[0,1],[1,1],[1,0],[0,0]];
+  const box=(x0,y0,z0,x1,y1,z1,lx,lz)=>{
+    const ux=lx===3?UNIT:[[z0,1-y0/Y],[z1,1-y0/Y],[z1,1-y1/Y],[z0,1-y1/Y]];
+    const uz=lz===3?UNIT:[[x0,1-y0/Y],[x1,1-y0/Y],[x1,1-y1/Y],[x0,1-y1/Y]];
+    quad([[x1,y0,z0],[x1,y0,z1],[x1,y1,z1],[x1,y1,z0]],[1,0,0],ux,lx);
+    quad([[x0,y0,z0],[x0,y0,z1],[x0,y1,z1],[x0,y1,z0]],[-1,0,0],ux,lx);
+    quad([[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]],[0,0,1],uz,lz);
+    quad([[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0]],[0,0,-1],uz,lz);
+    quad([[x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[x0,y0,z1]],[0,-1,0],[[x0,z0],[x1,z0],[x1,z1],[x0,z1]],0);
+  };
+  const gate=(D,closed)=>{
+    // u runs along the corridor, w across it
+    const b=(u0,y0,w0,u1,y1,w1,door)=>D.ax===0?box(D.tx+u0,y0,D.ty+w0,D.tx+u1,y1,D.ty+w1,door?3:0,0)
+                                               :box(D.tx+w0,y0,D.ty+u0,D.tx+w1,y1,D.ty+u1,0,door?3:0);
+    b(0.34,0,0,0.66,Y,0.14,false);b(0.34,0,0.86,0.66,Y,1,false);b(0.34,1.04,0.14,0.66,Y,0.86,false);
+    if(closed)b(0.40,0,0.14,0.60,1.04,0.86,true);
+  };
+  if(F.door)gate(F.door,true);
+  for(const D of F.frames)gate(D,false);
   gl.bindBuffer(gl.ARRAY_BUFFER,worldVBO);
   gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(v),gl.STATIC_DRAW);
   worldCount=v.length/9;
 }
+/* ---------- distance field of the floor plan, for shadows ---------- */
+const sdfTex=gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D,sdfTex);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+function buildSdf(F){
+  if(!SHADOWS)return;
+  const RES=8,W=F.W*RES,H=F.H*RES,data=new Uint8Array(W*H),g=F.g,D=F.door;
+  for(let j=0;j<H;j++)for(let i=0;i<W;i++){
+    const px=(i+0.5)/RES,pz=(j+0.5)/RES,tx=Math.floor(px),ty=Math.floor(pz);let best=2;
+    for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
+      const x=tx+dx,y=ty+dy,val=(x<0||y<0||x>=F.W||y>=F.H)?1:g[y*F.W+x];
+      if(val===0)continue;
+      let d;
+      if(val===3)d=Math.max(0,Math.hypot(px-x-0.5,pz-y-0.5)-0.2);
+      else{
+        let x0=x,x1=x+1,y0=y,y1=y+1;
+        if(val===2){if(D&&D.ax===0){x0=x+0.44;x1=x+0.56}else{y0=y+0.44;y1=y+0.56}}
+        d=Math.hypot(Math.max(x0-px,0,px-x1),Math.max(y0-pz,0,pz-y1));
+      }
+      if(d<best)best=d;
+    }
+    data[j*W+i]=Math.round(best/2*255);
+  }
+  gl.bindTexture(gl.TEXTURE_2D,sdfTex);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.R8,W,H,0,gl.RED,gl.UNSIGNED_BYTE,data);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT,4);
+}
+/* ---------- 3D prop meshes ---------- */
+function lathe(prof,seg){
+  const v=[];
+  for(let i=0;i<prof.length-1;i++){
+    const r0=prof[i][0],y0=prof[i][1],r1=prof[i+1][0],y1=prof[i+1][1];
+    let nr=y1-y0,ny=-(r1-r0);const nl=Math.hypot(nr,ny)||1;nr/=nl;ny/=nl;
+    for(let k=0;k<seg;k++){
+      const a0=k/seg*Math.PI*2,a1=(k+1)/seg*Math.PI*2,c0=Math.cos(a0),s0=Math.sin(a0),c1=Math.cos(a1),s1=Math.sin(a1);
+      const A=[r0*c0,y0,r0*s0,nr*c0,ny,nr*s0],B=[r0*c1,y0,r0*s1,nr*c1,ny,nr*s1],C=[r1*c1,y1,r1*s1,nr*c1,ny,nr*s1],Dd=[r1*c0,y1,r1*s0,nr*c0,ny,nr*s0];
+      for(const q of[A,B,C,A,C,Dd])v.push(q[0],q[1],q[2],q[3],q[4],q[5],1,1,1);
+    }
+  }
+  return new Float32Array(v);
+}
+function octa(){
+  const P=[[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]],v=[];
+  for(const sx of[0,1])for(const sy of[2,3])for(const sz of[4,5]){
+    const a=P[sx],b=P[sy],c=P[sz],n=[a[0]+b[0]+c[0],a[1]+b[1]+c[1],a[2]+b[2]+c[2]],l=Math.hypot(n[0],n[1],n[2]);
+    for(const q of[a,b,c])v.push(q[0],q[1],q[2],n[0]/l,n[1]/l,n[2]/l,1,1,1);
+  }
+  return new Float32Array(v);
+}
+function cube(){
+  const v=[],f=(n,a,b)=>{const p=(s,t)=>[n[0]+a[0]*s+b[0]*t,n[1]+a[1]*s+b[1]*t,n[2]+a[2]*s+b[2]*t];
+    for(const q of[p(-1,-1),p(1,-1),p(1,1),p(-1,-1),p(1,1),p(-1,1)])v.push(q[0]*0.5,q[1]*0.5,q[2]*0.5,n[0],n[1],n[2],1,1,1)};
+  f([1,0,0],[0,1,0],[0,0,1]);f([-1,0,0],[0,1,0],[0,0,1]);f([0,1,0],[1,0,0],[0,0,1]);f([0,-1,0],[1,0,0],[0,0,1]);f([0,0,1],[1,0,0],[0,1,0]);f([0,0,-1],[1,0,0],[0,1,0]);
+  return new Float32Array(v);
+}
+const MESH_DATA={
+  shade:lathe([[0.31,0],[0.28,0.22],[0.21,0.55],[0.17,0.76],[0.2,0.84],[0.215,0.95],[0.17,1.05],[0.07,1.11],[0,1.12]],14),
+  stalker:lathe([[0.25,0],[0.25,0.06],[0.18,0.1],[0.2,0.5],[0.22,0.72],[0.1,0.8],[0.085,0.84],[0.13,0.9],[0.14,1.0],[0.1,1.08],[0,1.1]],12),
+  pillar:lathe([[0.27,0],[0.27,0.08],[0.2,0.14],[0.2,1.1],[0.27,1.17],[0.27,1.25]],14),
+  cone:lathe([[0.065,0],[0,1]],8),
+  octa:octa(),cube:cube()
+};
+const PST=9*4;
+function propVAO(data,usage){
+  const vao=gl.createVertexArray(),vbo=gl.createBuffer();
+  gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,vbo);gl.bufferData(gl.ARRAY_BUFFER,data,usage||gl.STATIC_DRAW);
+  [[0,3,0],[1,3,12],[2,3,24]].forEach(a=>{gl.enableVertexAttribArray(a[0]);gl.vertexAttribPointer(a[0],a[1],gl.FLOAT,false,PST,a[2])});
+  gl.bindVertexArray(null);
+  return {vao,vbo,count:data.length/9};
+}
+const MESH={};for(const k in MESH_DATA)MESH[k]=propVAO(MESH_DATA[k]);
+const decor=propVAO(new Float32Array(9),gl.DYNAMIC_DRAW);
+function buildStatic(F){
+  const out=[],st=F.biome.stone,dk=[st[0]*0.8,st[1]*0.8,st[2]*0.8],iron=[0.1,0.09,0.085];
+  const add=(mesh,sx,sy,sz,yaw,ox,oy,oz,col)=>{
+    const c=Math.cos(yaw),s=Math.sin(yaw);
+    for(let i=0;i<mesh.length;i+=9){
+      const x=mesh[i]*sx,y=mesh[i+1]*sy,z=mesh[i+2]*sz;
+      let nx=mesh[i+3]/sx,ny=mesh[i+4]/sy,nz=mesh[i+5]/sz;const l=Math.hypot(nx,ny,nz)||1;nx/=l;ny/=l;nz/=l;
+      out.push(x*c-z*s+ox,y+oy,x*s+z*c+oz,nx*c-nz*s,ny,nx*s+nz*c,col[0],col[1],col[2]);
+    }
+  };
+  for(const q of F.pillars)add(MESH_DATA.pillar,1,1,1,0,q[0],0,q[1],st);
+  for(const r of F.rubble)add(MESH_DATA.octa,r.s*1.4,r.s*r.sy,r.s,r.r,r.x,r.s*r.sy*0.6,r.z,dk);
+  for(const q of F.sconces){
+    add(MESH_DATA.cube,0.05,0.2,0.05,0,q.x,0.72,q.z,iron);
+    add(MESH_DATA.cube,0.12,0.04,0.12,0,q.x-q.dx*0.07,0.82,q.z-q.dz*0.07,iron);
+  }
+  const data=new Float32Array(out.length?out:9);
+  gl.bindBuffer(gl.ARRAY_BUFFER,decor.vbo);gl.bufferData(gl.ARRAY_BUFFER,data,gl.DYNAMIC_DRAW);
+  decor.count=out.length/9;
+}
 /* ---------- sprites ---------- */
-const MAXS=400, SV=10;
+const MAXS=900, SV=10;
 const sprData=new Float32Array(MAXS*6*SV);
 const sprVAO=gl.createVertexArray(), sprVBO=gl.createBuffer();
 gl.bindVertexArray(sprVAO);gl.bindBuffer(gl.ARRAY_BUFFER,sprVBO);
 gl.bufferData(gl.ARRAY_BUFFER,sprData.byteLength,gl.DYNAMIC_DRAW);
 {const st=SV*4;[[0,3,0],[1,2,12],[2,4,20],[3,1,36]].forEach(a=>{gl.enableVertexAttribArray(a[0]);gl.vertexAttribPointer(a[0],a[1],gl.FLOAT,false,st,a[2])});}
 gl.bindVertexArray(null);
+const emptyVAO=gl.createVertexArray();
 const sprList=[];
 function spr(x,y,z,w,h,cell,r,g,b,a,add){sprList.push({x,y,z,w,h,cell,r,g,b,a,add,d:0})}
+// drifting dust motes that catch the torchlight
+const DUST=[];{const dr=mulberry32(99);for(let i=0;i<(Q>=2?90:Q>=1?45:0);i++)DUST.push([dr()*8,dr()*1.15+0.05,dr()*8,dr()*6.28,0.006+dr()*0.008])}
 
 /* ---------- game state ---------- */
 let state='title';           // title | play | pause | trans | dead
@@ -694,10 +1005,12 @@ $('startSel').addEventListener('change',e=>store.set('startDepth',+e.target.valu
 let bright=clamp(+store.get('bright',1.3)||1.3,0.6,3);
 function setBright(v,quiet){bright=clamp(v,0.6,3);store.set('bright',bright);document.querySelectorAll('.brightS').forEach(el=>el.value=bright);if(!quiet)say('Brightness '+Math.round(bright/1.3*100)+'%',1)}
 document.querySelectorAll('.brightS').forEach(el=>{el.value=bright;el.addEventListener('input',e=>setBright(+e.target.value,true))});
+$('qSel').value=QSET;
+$('qSel').addEventListener('change',e=>{lsSet('quality',e.target.value);lsSet('safe',0);location.reload()});
 $('gtx').checked=WANT_GTX;
 $('gtx').addEventListener('change',e=>{lsSet('gtx',e.target.checked);lsSet('safe',0);location.reload()});
 
-function solidAt(x,z){const tx=Math.floor(x),ty=Math.floor(z);return tx<0||ty<0||tx>=F.W||ty>=F.H||F.g[ty*F.W+tx]!==0}
+function solidAt(x,z){const tx=Math.floor(x),ty=Math.floor(z);return tx<0||ty<0||tx>=F.W||ty>=F.H||(F.g[ty*F.W+tx]&3)===1||F.g[ty*F.W+tx]===2}
 function torchRadius(){return (1.6+6.0*Math.sqrt((state==='title'?100:P.fuel)/100))*(F.dark?0.5:1)}
 function blocked(x,z){return solidAt(x-PR,z-PR)||solidAt(x+PR,z-PR)||solidAt(x-PR,z+PR)||solidAt(x+PR,z+PR)}
 function los(x0,z0,x1,z1){
@@ -709,7 +1022,7 @@ function loadFloor(depth){
   R.depth=depth;
   if(depth>deepest){deepest=depth;store.set('deepest',deepest)}
   F=genFloor(R.seed,depth);
-  buildMesh(F);
+  buildMesh(F);buildStatic(F);buildSdf(F);
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
   P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;
   sealMsgT=0;doorMsgT=0;
@@ -722,7 +1035,7 @@ function onTileChange(){
   for(let y=P.ty-rad;y<=P.ty+rad;y++)for(let x=P.tx-rad;x<=P.tx+rad;x++){
     if(x<0||y<0||x>=F.W||y>=F.H)continue;
     const i=y*F.W+x;
-    if(F.g[i]||F.seen[i])continue;
+    if(F.g[i]===1||F.g[i]===2||F.seen[i])continue;
     if(los(P.x,P.z,x+0.5,y+0.5))F.seen[i]=1;
   }
 }
@@ -737,7 +1050,7 @@ function fillStartSel(){
 function startRun(seed,depth){
   const sd=clamp(depth||+$('startSel').value||1,1,deepest);
   R.seed=(seed||randSeed()).toUpperCase();R.score=0;R.time=0;R.gems=0;R.startDepth=sd;
-  P.hp=3;P.fuel=100;P.stam=100;P.winded=false;P.flash=1+Math.floor((sd-1)/3);P.inv=0;lowFuelSaid=false;
+  P.hp=3;P.fuel=100;P.stam=100;P.winded=false;P.flash=1+Math.floor((sd-1)/3);P.inv=0;P.chill=0;lowFuelSaid=false;
   loadFloor(sd);
   state='play';
   ['title','pause','dead'].forEach(id=>$(id).classList.add('hidden'));
@@ -1059,7 +1372,7 @@ function update(dt){
     if(wantSprint){P.stam-=30*dt;if(P.stam<=0){P.stam=0;P.winded=true}}
     else{P.stam=Math.min(100,P.stam+18*dt);if(P.winded&&P.stam>=30)P.winded=false}
   }
-  const speed=wantSprint?4.3:2.7;
+  const speed=(wantSprint?4.3:2.7)*(P.chill>0?0.55:1);
   const cy=Math.cos(P.yaw),sy=Math.sin(P.yaw);
   const dxn=cy*fwd-sy*str, dzn=sy*fwd+cy*str;
   if(ground){P.vx=dxn*speed;P.vz=dzn*speed}
@@ -1069,6 +1382,7 @@ function update(dt){
   if(P.y>0){P.vy-=11*dt;P.y+=P.vy*dt;if(P.y<=0){P.y=0;P.vy=0;sfx('step')}}
   const nx=P.x+P.vx*dt;if(!blocked(nx,P.z))P.x=nx;else P.vx=0;
   const nz=P.z+P.vz*dt;if(!blocked(P.x,nz))P.z=nz;else P.vz=0;
+  for(const q of F.pillars){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=0.2+PR;if(dd<m&&dd>1e-4){P.x=q[0]+ddx/dd*m;P.z=q[1]+ddz/dd*m}}
   if(moving&&P.y<=0){
     P.bob+=speed*dt*2.3;
     const ph=Math.floor(P.bob/Math.PI);
@@ -1079,6 +1393,7 @@ function update(dt){
   P.fuel=Math.max(0,P.fuel-0.85*dt);
   if(P.fuel<20&&!lowFuelSaid){lowFuelSaid=true;say(P.fuel<=0?'Your torch is out':'Your torch is guttering. Find oil.',3)}
   if(P.inv>0)P.inv-=dt;
+  if(P.chill>0){P.chill-=dt;$('chill').style.opacity=clamp(P.chill/1.2,0,1)}else if(P.chill<0||P.chill===0&&$('chill').style.opacity!=='0'){P.chill=0;$('chill').style.opacity='0'}
   if(flashT>0)flashT=Math.max(0,flashT-dt*1.6);
   // pickups
   for(const it of F.items){
@@ -1097,7 +1412,7 @@ function update(dt){
   if(F.door){
     const ddx=F.door.tx+0.5-P.x,ddz=F.door.ty+0.5-P.z;
     if(ddx*ddx+ddz*ddz<0.92*0.92){
-      if(P.keys>0){P.keys--;F.g[F.door.ty*F.W+F.door.tx]=0;F.door=null;buildMesh(F);onTileChange();sfx('door');say('The gate grinds open',2.5)}
+      if(P.keys>0){P.keys--;F.g[F.door.ty*F.W+F.door.tx]=0;F.frames.push(F.door);F.door=null;buildMesh(F);buildSdf(F);onTileChange();sfx('door');say('The gate grinds open',2.5)}
       else if(doorMsgT<=0){doorMsgT=3;say('Locked. The key is somewhere on this side.',2.5);sfx('seal')}
     }
   }
@@ -1160,7 +1475,7 @@ function update(dt){
         else next=opts.length?opts[(Math.random()*opts.length)|0]:(s.px>=0?[s.px,s.py]:null);
         if(next){s.px=cx;s.py=cz;s.gx=next[0];s.gy=next[1]}
       }
-    }else{s.x+=dx/l*step;s.z+=dz/l*step}
+    }else{s.x+=dx/l*step;s.z+=dz/l*step;s.face=Math.atan2(dz,dx)}
     if(Math.hypot(s.x-P.x,s.z-P.z)<0.5){
       if(s.type===2){
         // a wisp drinks some of the torch and flits away
@@ -1170,7 +1485,13 @@ function update(dt){
           if(F.g[ry*F.W+rx]===0&&(rd>10||(tries>40&&rd>4))){s.x=rx+0.5;s.z=ry+0.5;s.gx=rx;s.gy=ry;s.px=-1;break}
         }
         s.state=0;s.stun=1.5;
-      }else if(P.inv<=0){hurt(s);if(state!=='play')return}
+      }else if(P.inv<=0){
+        if(R.depth<2&&s.type===0){
+          // on the first floor a shade only chills you: slowed for a few seconds, no damage
+          P.chill=3.5;P.inv=1.6;s.stun=3;s.state=0;sfx('drain');rumble(180,0.5,0.3);
+          say('The shade chills you. Deeper down, its touch wounds.',2.6);
+        }else{hurt(s);if(state!=='play')return}
+      }
     }
   }
   // heartbeat when hunted
@@ -1200,7 +1521,7 @@ function resize(){
   if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h}
 }
 function adapt(rawDt){
-  if(state!=='play'||rawDt>0.25)return;
+  if(state!=='play'||rawDt>1.5)return;
   fAcc+=rawDt;fN++;clock+=rawDt;
   if(fAcc<1)return;
   const fps=fN/fAcc;fAcc=0;fN=0;fpsShown=fps;
@@ -1213,7 +1534,7 @@ function adapt(rawDt){
   }else goodSecs=0;
 }
 const TINT_ONE=new Float32Array(9).fill(1),TINT_DARK=new Float32Array([0.8,0.75,0.95,0.8,0.75,0.95,0.8,0.75,0.95]),AMB_ZERO=new Float32Array(3);
-const VP=new Float32Array(16),lpos=new Float32Array(24),lcol=new Float32Array(24);
+const VP=new Float32Array(16),lpos=new Float32Array(NL*3),lcol=new Float32Array(NL*4),blk=new Float32Array(24);
 function buildVP(ex,ey,ez,yaw,pitch){
   const cp=Math.cos(pitch),sp=Math.sin(pitch),cy=Math.cos(yaw),sy=Math.sin(yaw);
   const fx=cp*cy,fy=sp,fz=cp*sy, rx=-sy,rz=cy, ux=-cy*sp,uy=cp,uz=-sy*sp;
@@ -1222,8 +1543,64 @@ function buildVP(ex,ey,ez,yaw,pitch){
   const Pm=[f/a,0,0,0, 0,f,0,0, 0,0,(fr+n)/(n-fr),-1, 0,0,2*fr*n/(n-fr),0];
   for(let c=0;c<4;c++)for(let r=0;r<4;r++){let s=0;for(let k=0;k<4;k++)s+=Pm[k*4+r]*V[c*4+k];VP[c*4+r]=s}
 }
+// off-screen targets for the post-processing chain
+const RT={w:0,h:0};
+function mkTarget(w,h,hdr,depth){
+  const tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);
+  if(hdr)gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA16F,w,h,0,gl.RGBA,gl.HALF_FLOAT,null);
+  else gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  const fbo=gl.createFramebuffer();gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);
+  let rb=null;
+  if(depth){rb=gl.createRenderbuffer();gl.bindRenderbuffer(gl.RENDERBUFFER,rb);gl.renderbufferStorage(gl.RENDERBUFFER,gl.DEPTH_COMPONENT24,w,h);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.RENDERBUFFER,rb)}
+  const ok=gl.checkFramebufferStatus(gl.FRAMEBUFFER)===gl.FRAMEBUFFER_COMPLETE;
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  return {tex,fbo,rb,w,h,ok};
+}
+function ensureTargets(){
+  const w=canvas.width,h=canvas.height;
+  if(RT.w===w&&RT.h===h)return;
+  for(const k of['scene','half','qa','qb','ldr']){const t=RT[k];if(t){gl.deleteTexture(t.tex);gl.deleteFramebuffer(t.fbo);if(t.rb)gl.deleteRenderbuffer(t.rb)}}
+  RT.w=w;RT.h=h;
+  const hw=Math.max(2,w>>1),hh=Math.max(2,h>>1),qw=Math.max(2,w>>2),qh=Math.max(2,h>>2);
+  RT.scene=mkTarget(w,h,true,true);RT.half=mkTarget(hw,hh,true,false);RT.qa=mkTarget(qw,qh,true,false);RT.qb=mkTarget(qw,qh,true,false);RT.ldr=mkTarget(w,h,false,false);
+  if(!RT.scene.ok||!RT.half.ok){lsSet('quality','low');location.reload()}
+}
+function fsPass(prog,target,setup){
+  gl.bindFramebuffer(gl.FRAMEBUFFER,target?target.fbo:null);
+  gl.viewport(0,0,target?target.w:canvas.width,target?target.h:canvas.height);
+  gl.useProgram(prog.p);setup(prog.u);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+}
+function bindTex(unit,tex){gl.activeTexture(gl.TEXTURE0+unit);gl.bindTexture(gl.TEXTURE_2D,tex)}
+function setLights(u,L){
+  gl.uniformMatrix4fv(u.uVP,false,VP);
+  gl.uniform3f(u.uEye,L.ex,L.ey,L.ez);
+  gl.uniform3f(u.uTorchPos,L.tx,L.ty,L.tz);
+  gl.uniform3fv(u.uTorchCol,L.B.torch);
+  gl.uniform1f(u.uTorchR,L.torchR);
+  gl.uniform1f(u.uFlash,flashT);
+  gl.uniform3fv(u.uLPos,lpos);gl.uniform4fv(u.uLCol,lcol);
+  gl.uniform3fv(u.uAmb,F.dark?AMB_ZERO:L.B.amb);
+  gl.uniform3f(u.uFog,L.B.amb[0]*2.2,L.B.amb[1]*2.2,L.B.amb[2]*2.2);
+  gl.uniform1f(u.uGamma,bright);
+  if(SHADOWS){gl.uniform1i(u.uSdf,2);gl.uniform2f(u.uSdfScale,1/F.W,1/F.H);gl.uniform4fv(u.uBlk,blk)}
+}
+function drawProp(m,x,y,z,sx,sy,sz,yaw,col,emis,gloss,lx,lz){
+  const u=propProg.u;
+  gl.uniform3f(u.uS,sx,sy,sz);gl.uniform2f(u.uRot,Math.cos(yaw),Math.sin(yaw));gl.uniform3f(u.uOff,x,y,z);
+  gl.uniform2f(u.uLean,lx||0,lz||0);
+  gl.uniform3f(u.uColor,col[0],col[1],col[2]);gl.uniform1f(u.uEmis,emis);gl.uniform1f(u.uGloss,gloss);
+  gl.bindVertexArray(m.vao);gl.drawArrays(gl.TRIANGLES,0,m.count);
+}
+const WHITE=[1,1,1],METAL=[0.6,0.62,0.68],SCONCE_COL=[1.0,0.5,0.18];
 function render(t){
   resize();
+  if(POST)ensureTargets();
+  gl.bindFramebuffer(gl.FRAMEBUFFER,POST?RT.scene.fbo:null);
   gl.viewport(0,0,canvas.width,canvas.height);
   gl.clearColor(0,0,0,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
   if(!F)return;
@@ -1232,66 +1609,117 @@ function render(t){
   const ex=P.x, ez=P.z, ey=EYE+(title?0:P.y+Math.sin(P.bob*2)*0.018);
   buildVP(ex,ey,ez,yaw,pitch);
   const B=F.biome;
+  const fwx=Math.cos(yaw),fwz=Math.sin(yaw),rx=-fwz,rz=fwx;
   const flick=1+Math.sin(t*11)*0.02+Math.sin(t*23.7)*0.015+Math.sin(t*5.3)*0.02;
   const torchR=torchRadius()*flick;
-  // nearest coloured lights
+  // the torch is held low in the right hand, so shadows swing as you turn
+  const L={ex,ey,ez,B,torchR,tx:ex,ty:ey,tz:ez};
+  if(SHADOWS){L.tx=ex+rx*0.2+fwx*0.04;L.ty=ey-0.14;L.tz=ez+rz*0.2+fwz*0.04;
+    if(solidAt(L.tx,L.tz)){L.tx=ex;L.tz=ez}}
+  // nearest coloured lights: [dist2, x,y,z, colour, strength, radius]
   const lights=[];
-  for(const it of F.items){if(it.got)continue;const d=(it.x-ex)**2+(it.z-ez)**2;if(d<140)lights.push([d,it.x,0.45,it.z,ITEM[it.type].col,it.type==='gem'?0.5:1.0])}
+  for(const it of F.items){if(it.got)continue;const d=(it.x-ex)**2+(it.z-ez)**2;if(d<140)lights.push([d,it.x,0.45,it.z,ITEM[it.type].col,it.type==='gem'?0.5:1.0,2.6])}
   const open=P.shards>=3&&!title;
   const exCol=open?[0.4,1.0,0.6]:[1.0,0.2,0.15];
-  lights.push([(F.exit.x-ex)**2+(F.exit.z-ez)**2-4,F.exit.x,0.5,F.exit.z,exCol,1.5]);
-  for(const s of F.shades)if(s.type===2){const d=(s.x-ex)**2+(s.z-ez)**2;if(d<140)lights.push([d,s.x,0.55,s.z,[0.35,0.6,1.0],1.3])}
+  lights.push([(F.exit.x-ex)**2+(F.exit.z-ez)**2-4,F.exit.x,0.5,F.exit.z,exCol,1.5,3.2]);
+  for(const s of F.shades)if(s.type===2){const d=(s.x-ex)**2+(s.z-ez)**2;if(d<140)lights.push([d,s.x,0.55,s.z,[0.35,0.6,1.0],1.3,3.0])}
+  for(const q of F.sconces){const d=(q.lx-ex)**2+(q.lz-ez)**2;if(d<200){
+    const fl=1+Math.sin(t*9+q.ph)*0.07+Math.sin(t*17.3+q.ph*2)*0.05;q.fl=fl;
+    lights.push([d-6,q.lx,0.9,q.lz,SCONCE_COL,1.25*fl,4.6])}}
   lights.sort((a,b)=>a[0]-b[0]);
   lpos.fill(0);lcol.fill(0);
-  for(let i=0;i<Math.min(8,lights.length);i++){const L=lights[i];lpos.set([L[1],L[2],L[3]],i*3);lcol.set([L[4][0]*L[5],L[4][1]*L[5],L[4][2]*L[5]],i*3)}
+  for(let i=0;i<NL;i++){
+    if(i<lights.length){const q=lights[i];lpos.set([q[1],q[2],q[3]],i*3);lcol.set([q[4][0]*q[5],q[4][1]*q[5],q[4][2]*q[5],q[6]],i*4)}
+    else lcol[i*4+3]=0.001;
+  }
+  // creatures block light
+  {const near=[];for(const s of F.shades)if(s.type!==2){const d=(s.x-ex)**2+(s.z-ez)**2;if(d<120)near.push([d,s])}
+    near.sort((a,b)=>a[0]-b[0]);
+    for(let i=0;i<6;i++){if(i<near.length){blk[i*4]=near[i][1].x;blk[i*4+1]=near[i][1].z;blk[i*4+2]=0.2}else{blk[i*4]=-99;blk[i*4+1]=-99;blk[i*4+2]=-10}}}
 
   gl.enable(gl.DEPTH_TEST);gl.disable(gl.BLEND);gl.depthMask(true);
+  if(SHADOWS)bindTex(2,sdfTex);
   gl.useProgram(worldProg.p);
   const u=worldProg.u;
-  gl.uniformMatrix4fv(u.uVP,false,VP);
-  gl.uniform3f(u.uEye,ex,ey,ez);
-  gl.uniform3fv(u.uTorchCol,B.torch);
-  gl.uniform1f(u.uTorchR,torchR);
-  gl.uniform1f(u.uFlash,flashT);
-  gl.uniform3fv(u.uLPos,lpos);gl.uniform3fv(u.uLCol,lcol);
+  setLights(u,L);gl.uniform1f(u.uBlkOn,1);
   gl.uniform3fv(u.uTint,SAFE?new Float32Array([...B.wall,...B.floor,...B.ceil]):(F.dark?TINT_DARK:TINT_ONE));
-  gl.uniform3fv(u.uAmb,F.dark?AMB_ZERO:B.amb);gl.uniform1f(u.uBase,F.bi*3);gl.uniform1f(u.uGamma,bright);gl.uniform1f(u.uNoTex,SAFE?1:0);
+  gl.uniform3fv(u.uSpec,B.spec);gl.uniform1f(u.uWet,F.kind==='cave'?1:B.wet);
+  gl.uniform1f(u.uBase,F.bi*3);gl.uniform1f(u.uNoTex,SAFE?1:0);
   gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D_ARRAY,worldTex);gl.uniform1i(u.uTex,0);
+  if(NORMALMAP){gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D_ARRAY,nrmTex);gl.uniform1i(u.uNrm,1)}
   gl.bindVertexArray(worldVAO);gl.drawArrays(gl.TRIANGLES,0,worldCount);
-  if(title&&++titleFrames===20)selfCheck();
+
+  // 3D props
+  gl.useProgram(propProg.p);
+  setLights(propProg.u,L);gl.uniform1f(propProg.u.uBlkOn,1);
+  if(decor.count)drawProp(decor,0,0,0,1,1,1,0,WHITE,0,0.12);
+  for(const tr of F.traps){
+    if((tr.x-ex)**2+(tr.z-ez)**2>16*16)continue;
+    const h=0.04+trapExt(tr,R.time)*0.44;
+    for(const o2 of[[-0.22,-0.22],[0.22,-0.22],[-0.22,0.22],[0.22,0.22],[0,0]])drawProp(MESH.cone,tr.x+o2[0],0,tr.z+o2[1],1,h,1,0,METAL,0,1.2);
+  }
+  for(const it of F.items){
+    if(it.got||(it.type!=='shard'&&it.type!=='gem'))continue;
+    if((it.x-ex)**2+(it.z-ez)**2>18*18)continue;
+    const y=0.44+Math.sin(t*2.2+it.ph)*0.05,c=ITEM[it.type].col;
+    if(it.type==='shard')drawProp(MESH.octa,it.x,y,it.z,0.1,0.23,0.1,t*1.4+it.ph,c,POST?1.9:0.9,1.5);
+    else drawProp(MESH.octa,it.x,y-0.12,it.z,0.075,0.09,0.075,t*2+it.ph,c,POST?0.9:0.6,1.5);
+  }
+  gl.uniform1f(propProg.u.uBlkOn,0);
+  sprList.length=0;
+  for(const s of F.shades){
+    const d2=(s.x-ex)**2+(s.z-ez)**2;if(d2>18*18||s.type===2)continue;
+    const tp=Math.atan2(ez-s.z,ex-s.x);
+    if(s.type===1){
+      const k=s.stun>0?0.6:1,cx=Math.cos(tp),cz=Math.sin(tp);
+      drawProp(MESH.stalker,s.x,0,s.z,1,1,1,0,[0.62*k,0.6*k,0.55*k],0,0.25);
+      for(const e of[-0.052,0.052])spr(s.x+cx*0.135-cz*e,0.985,s.z+cz*0.135+cx*e,0.075,0.09,7,0,0,0,1,0);
+      spr(s.x+cx*0.13,0.91,s.z+cz*0.13,0.05,0.07,7,0,0,0,1,0);
+    }else{
+      const chase=s.state===1&&s.stun<=0,fa=chase?tp:(s.face||0),cx=Math.cos(fa),cz=Math.sin(fa);
+      const y=0.07+Math.sin(s.ph)*0.03,ln=chase?0.2:0.06;
+      const col=s.stun>0?[0.3,0.36,0.5]:chase?[0.36,0.1,0.14]:[0.2,0.15,0.33];
+      drawProp(MESH.shade,s.x,y,s.z,1,1,1,0,col,0.04,0.3,cx*ln,cz*ln);
+      if(s.stun<=0){
+        const hx=s.x+cx*(0.19+ln*0.95),hz=s.z+cz*(0.19+ln*0.95),ec=chase?[1.0,0.22,0.15]:[0.75,0.65,1.0];
+        for(const e of[-0.055,0.055])spr(hx-cz*e,y+0.93,hz+cx*e,0.085,0.085,7,ec[0],ec[1],ec[2],1,1);
+        if(chase)spr(s.x,0.6,s.z,1.5,1.5,7,0.8,0.05,0.1,0.25,1);
+      }
+    }
+  }
 
   // sprites
-  sprList.length=0;
   for(const it of F.items){
     if(it.got)continue;
     const d2=(it.x-ex)**2+(it.z-ez)**2;if(d2>18*18)continue;
     const I=ITEM[it.type],y=0.42+Math.sin(t*2.2+it.ph)*0.05,c=I.col;
-    spr(it.x,y,it.z,I.size*2.6,I.size*2.6,7,c[0],c[1],c[2],0.5,1);
-    spr(it.x,y,it.z,I.size,I.size,I.cell,1,1,1,1,0);
+    spr(it.x,y,it.z,I.size*2.6,I.size*2.6,7,c[0],c[1],c[2],0.4,1);
+    if(it.type!=='shard'&&it.type!=='gem')spr(it.x,y,it.z,I.size,I.size,I.cell,1,1,1,1,0);
   }
   { const pulse=0.75+Math.sin(t*3)*0.25;
     spr(F.exit.x,WALL_H/2,F.exit.z,0.8,WALL_H,6,exCol[0],exCol[1],exCol[2],pulse,1);
     spr(F.exit.x,0.25,F.exit.z,1.3,0.9,7,exCol[0],exCol[1],exCol[2],0.6,1); }
-  const lit=(x,z)=>clamp(1.15-Math.hypot(x-ex,z-ez)/torchR,0.06,1);
-  for(const tr of F.traps){
-    const d2=(tr.x-ex)**2+(tr.z-ez)**2;if(d2>14*14)continue;
-    const h=0.05+trapExt(tr,R.time)*0.42,k=lit(tr.x,tr.z);
-    for(const o2 of[[-0.2,-0.2],[0.2,-0.2],[-0.2,0.2],[0.2,0.2]])spr(tr.x+o2[0],h/2,tr.z+o2[1],0.5,h,10,k,k,k*1.05,1,0);
-  }
   for(const s of F.shades){
-    const d2=(s.x-ex)**2+(s.z-ez)**2;if(d2>18*18)continue;
-    const y=0.56+Math.sin(s.ph)*0.03;
-    if(s.type===1){const k=lit(s.x,s.z)*(s.stun>0?0.6:1);spr(s.x,0.58,s.z,0.8,1.14,8,k,k,k,1,0)}
-    else if(s.type===2){const a=s.stun>0?0.35:1;
-      spr(s.x,y,s.z,1.3,1.3,7,0.25,0.45,1.0,0.5*a,1);spr(s.x,y+Math.sin(s.ph*2.3)*0.03,s.z,0.42,0.6,11,1,1,1,a,1)}
-    else if(s.stun>0)spr(s.x,y,s.z,0.85,1.05,5,0.6,0.8,1.2,0.45,0);
-    else if(s.state===1){spr(s.x,y,s.z,1.5,1.5,7,0.8,0.05,0.1,0.35,1);spr(s.x,y,s.z,0.85,1.05,5,1.6,0.55,0.5,1,0)}
-    else spr(s.x,y,s.z,0.85,1.05,5,0.95,0.9,1.25,1,0);
+    if(s.type!==2||(s.x-ex)**2+(s.z-ez)**2>18*18)continue;
+    const y=0.56+Math.sin(s.ph)*0.03,a=s.stun>0?0.35:1;
+    spr(s.x,y,s.z,1.3,1.3,7,0.25,0.45,1.0,0.5*a,1);spr(s.x,y+Math.sin(s.ph*2.3)*0.03,s.z,0.42,0.6,11,1,1,1,a,1);
+  }
+  for(const q of F.sconces){
+    if((q.x-ex)**2+(q.z-ez)**2>20*20)continue;
+    const fx=q.x-q.dx*0.07,fz=q.z-q.dz*0.07,fl=q.fl||1;
+    spr(fx,0.93,fz,0.15*fl,0.24*fl,11,1.0,0.55,0.16,1,1);
+    spr(fx,0.93,fz,0.8,0.8,7,1.0,0.42,0.1,0.3*fl,1);
+  }
+  for(const m of DUST){
+    const px=ex+((m[0]+Math.sin(t*0.21+m[3])*0.4-ex)%8+12)%8-4,pz=ez+((m[2]+Math.cos(t*0.17+m[3])*0.4-ez)%8+12)%8-4;
+    const py=0.05+((m[1]+t*0.012+Math.sin(t*0.3+m[3])*0.05)%1.15);
+    const k=clamp(1-Math.hypot(px-ex,pz-ez)/Math.min(torchR,4),0,1);
+    if(k>0.02)spr(px,py,pz,m[4]*2.4,m[4]*2.4,7,B.torch[0],B.torch[1],B.torch[2],k*0.5,1);
   }
   const n=Math.min(sprList.length,MAXS);
   for(const s of sprList)s.d=(s.x-ex)**2+(s.z-ez)**2;
   sprList.sort((a,b)=>b.d-a.d);
-  const rx=-Math.sin(yaw),rz=Math.cos(yaw);let o=0;
+  let o=0;
   for(let i=0;i<n;i++){
     const s=sprList[i],hw=s.w/2,hh=s.h/2;
     const u0=(s.cell%4)/4+0.002,u1=(s.cell%4+1)/4-0.002,v0=(s.cell>>2)/4+0.002,v1=((s.cell>>2)+1)/4-0.002;
@@ -1302,13 +1730,26 @@ function render(t){
   }
   gl.useProgram(spriteProg.p);
   gl.uniformMatrix4fv(spriteProg.u.uVP,false,VP);
-  gl.uniform3f(spriteProg.u.uEye,ex,ey,ez);
-  gl.bindTexture(gl.TEXTURE_2D,spriteTex);gl.uniform1i(spriteProg.u.uTex,0);
+  gl.uniform3f(spriteProg.u.uEye,ex,ey,ez);gl.uniform1f(spriteProg.u.uHdr,POST?2.4:1);
+  bindTex(0,spriteTex);gl.uniform1i(spriteProg.u.uTex,0);
   gl.enable(gl.BLEND);gl.blendFunc(gl.ONE,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);
   gl.bindVertexArray(sprVAO);gl.bindBuffer(gl.ARRAY_BUFFER,sprVBO);
   gl.bufferSubData(gl.ARRAY_BUFFER,0,sprData.subarray(0,o));
   gl.drawArrays(gl.TRIANGLES,0,n*6);
-  gl.depthMask(true);gl.bindVertexArray(null);
+  gl.depthMask(true);gl.disable(gl.BLEND);
+
+  if(POST){
+    gl.disable(gl.DEPTH_TEST);gl.bindVertexArray(emptyVAO);
+    fsPass(PP.bright,RT.half,u=>{bindTex(0,RT.scene.tex);gl.uniform1i(u.uTex,0)});
+    fsPass(PP.blur,RT.qa,u=>{bindTex(0,RT.half.tex);gl.uniform1i(u.uTex,0);gl.uniform2f(u.uDir,1/RT.half.w,0)});
+    fsPass(PP.blur,RT.qb,u=>{bindTex(0,RT.qa.tex);gl.uniform1i(u.uTex,0);gl.uniform2f(u.uDir,0,1/RT.qa.h)});
+    fsPass(PP.blur,RT.qa,u=>{bindTex(0,RT.qb.tex);gl.uniform1i(u.uTex,0);gl.uniform2f(u.uDir,2.2/RT.qa.w,0)});
+    fsPass(PP.blur,RT.qb,u=>{bindTex(0,RT.qa.tex);gl.uniform1i(u.uTex,0);gl.uniform2f(u.uDir,0,2.2/RT.qa.h)});
+    fsPass(PP.comp,RT.ldr,u=>{bindTex(0,RT.scene.tex);gl.uniform1i(u.uScene,0);bindTex(1,RT.qb.tex);gl.uniform1i(u.uBloom,1);gl.uniform1f(u.uGamma,bright);gl.uniform1f(u.uTime,t)});
+    fsPass(PP.fxaa,null,u=>{bindTex(0,RT.ldr.tex);gl.uniform1i(u.uTex,0);gl.uniform2f(u.uPx,1/RT.w,1/RT.h)});
+  }
+  gl.bindVertexArray(null);
+  if(title&&++titleFrames===20)selfCheck();
 }
 
 /* ---------- self-check: is the picture actually there? ---------- */
@@ -1319,7 +1760,8 @@ function selfCheck(){
   try{gl.readPixels((canvas.width>>1)-8,Math.round(canvas.height*0.1),16,16,gl.RGBA,gl.UNSIGNED_BYTE,px)}catch(e){}
   let mx=0;for(let i=0;i<px.length;i+=4)mx=Math.max(mx,px[i],px[i+1],px[i+2]);
   const err=gl.getError();
-  if(mx>=3){$('diag').textContent=(SAFE?'Compatibility graphics · ':'')+gpuName();return}
+  if(mx>=3){$('diag').textContent=(SAFE?'Compatibility graphics · ':['Low','Medium','High'][Q]+' graphics · ')+gpuName();return}
+  if(Q>0){lsSet('quality','low');location.reload();return}
   if(!SAFE){lsSet('safe',1);location.reload();return}
   $('diag').innerHTML='<span style="color:#ff9a6a">The graphics driver is drawing a black picture (code '+err+'). Please send this line to Claude: '+gpuName()+'</span>';
 }
