@@ -429,7 +429,9 @@ function genFloor(seedStr,depth){
   const npcs=[];
   if(safe)npcs.push({type:'keeper',x:safe.x+0.62,z:safe.z+0.62,ph:rng()*6.28,used:false});
   {const r=rng(),wt=depth===1?'map':r<0.4?'map':r<0.75?'delver':null;
-    if(wt&&pool.length){const c=pool.pop();npcs.push({type:wt,x:c[0]+0.5,z:c[1]+0.5,ph:rng()*6.28,used:false,gift:ri(3),tip:ri(6)})}}
+    if(wt&&pool.length){const c=pool.pop(),w={type:wt,x:c[0]+0.5,z:c[1]+0.5,ph:rng()*6.28,used:false,gift:ri(3),tip:ri(6)};
+      for(const d of DIRS)if(g[idx(c[0]+d[0],c[1]+d[1])]===1){w.ox=d[0]*0.27;w.oz=d[1]*0.27;w.wy=Math.atan2(-d[1],-d[0]);break}
+      npcs.push(w)}}
   take('gem',Math.round(nCells/6));
   // spike traps
   const traps=[];
@@ -1004,6 +1006,7 @@ function propVAO(data,usage){
 }
 const MESH={};for(const k in MESH_DATA)MESH[k]=propVAO(MESH_DATA[k]);
 const decor=propVAO(new Float32Array(9),gl.DYNAMIC_DRAW);
+const chars=propVAO(new Float32Array(9),gl.DYNAMIC_DRAW);
 function buildStatic(F){
   const out=[],st=F.biome.stone,dk=[st[0]*0.8,st[1]*0.8,st[2]*0.8],iron=[0.1,0.09,0.085];
   const add=(mesh,sx,sy,sz,yaw,ox,oy,oz,col)=>{
@@ -1024,6 +1027,211 @@ function buildStatic(F){
   const data=new Float32Array(out.length?out:9);
   gl.bindBuffer(gl.ARRAY_BUFFER,decor.vbo);gl.bufferData(gl.ARRAY_BUFFER,data,gl.DYNAMIC_DRAW);
   decor.count=out.length/9;
+}
+/* ---------- characters: jointed low-poly figures, posed on the CPU every frame ---------- */
+const CH={buf:new Float32Array(9*60000),n:0,cones:{},vao:null};
+function sphereMesh(seg,rings){
+  const v=[],pt=(i,j)=>{const th=j/rings*Math.PI,ph=i/seg*Math.PI*2,s=Math.sin(th);return [s*Math.cos(ph),Math.cos(th),s*Math.sin(ph)]};
+  for(let j=0;j<rings;j++)for(let i=0;i<seg;i++){const a=pt(i,j),b=pt(i+1,j),c=pt(i+1,j+1),d=pt(i,j+1);
+    for(const q of[a,b,c,a,c,d])v.push(q[0],q[1],q[2],q[0],q[1],q[2])}
+  return new Float32Array(v);
+}
+function coneMesh(k){
+  const key=Math.round(k*20);if(CH.cones[key])return CH.cones[key];
+  const v=[],seg=10,sl=1-k;
+  for(let i=0;i<seg;i++){
+    const a0=i/seg*Math.PI*2,a1=(i+1)/seg*Math.PI*2,c0=Math.cos(a0),s0=Math.sin(a0),c1=Math.cos(a1),s1=Math.sin(a1);
+    const A=[c0,0,s0,c0,sl,s0],B=[c1,0,s1,c1,sl,s1],C=[k*c1,1,k*s1,c1,sl,s1],D=[k*c0,1,k*s0,c0,sl,s0];
+    for(const q of[A,B,C,A,C,D])v.push(...q);
+    v.push(0,0,0,0,-1,0,c0,0,s0,0,-1,0,c1,0,s1,0,-1,0, 0,1,0,0,1,0,k*c0,1,k*s0,0,1,0,k*c1,1,k*s1,0,1,0);
+  }
+  return CH.cones[key]=new Float32Array(v);
+}
+const SPH_HI=sphereMesh(14,10),SPH_LO=sphereMesh(8,6);
+const BOX6=(()=>{const c=cube(),o=new Float32Array(c.length/9*6);for(let i=0,j=0;i<c.length;i+=9)for(let k=0;k<6;k++)o[j++]=c[i+k];return o})();
+const m3=(a,b)=>[a[0]*b[0]+a[1]*b[3]+a[2]*b[6],a[0]*b[1]+a[1]*b[4]+a[2]*b[7],a[0]*b[2]+a[1]*b[5]+a[2]*b[8],
+                 a[3]*b[0]+a[4]*b[3]+a[5]*b[6],a[3]*b[1]+a[4]*b[4]+a[5]*b[7],a[3]*b[2]+a[4]*b[5]+a[5]*b[8],
+                 a[6]*b[0]+a[7]*b[3]+a[8]*b[6],a[6]*b[1]+a[7]*b[4]+a[8]*b[7],a[6]*b[2]+a[7]*b[5]+a[8]*b[8]];
+// local axes: +X forward, +Y up, +Z to the side
+const rYaw=a=>{const c=Math.cos(a),s=Math.sin(a);return [c,0,-s,0,1,0,s,0,c]};
+const rZ=a=>{const c=Math.cos(a),s=Math.sin(a);return [c,-s,0,s,c,0,0,0,1]};
+const rX=a=>{const c=Math.cos(a),s=Math.sin(a);return [1,0,0,0,c,-s,0,s,c]};
+const fpt=(f,v)=>[f.p[0]+f.R[0]*v[0]+f.R[1]*v[1]+f.R[2]*v[2],f.p[1]+f.R[3]*v[0]+f.R[4]*v[1]+f.R[5]*v[2],f.p[2]+f.R[6]*v[0]+f.R[7]*v[1]+f.R[8]*v[2]];
+const subF=(f,off,R)=>({p:fpt(f,off),R:R?m3(f.R,R):f.R});
+function emit(mesh,f,c,s,col,R2){
+  const cnt=mesh.length/6;if(CH.n+cnt>60000)return;
+  const R=R2?m3(f.R,R2):f.R,p=fpt(f,c),b=CH.buf;let o=CH.n*9;
+  const s0=s[0],s1=s[1],s2=s[2],i0=1/s0,i1=1/s1,i2=1/s2,c0=col[0],c1=col[1],c2=col[2];
+  for(let i=0;i<mesh.length;i+=6){
+    const x=mesh[i]*s0,y=mesh[i+1]*s1,z=mesh[i+2]*s2;
+    let nx=mesh[i+3]*i0,ny=mesh[i+4]*i1,nz=mesh[i+5]*i2;const l=1/(Math.hypot(nx,ny,nz)||1);nx*=l;ny*=l;nz*=l;
+    b[o++]=p[0]+R[0]*x+R[1]*y+R[2]*z;b[o++]=p[1]+R[3]*x+R[4]*y+R[5]*z;b[o++]=p[2]+R[6]*x+R[7]*y+R[8]*z;
+    b[o++]=R[0]*nx+R[1]*ny+R[2]*nz;b[o++]=R[3]*nx+R[4]*ny+R[5]*nz;b[o++]=R[6]*nx+R[7]*ny+R[8]*nz;
+    b[o++]=c0;b[o++]=c1;b[o++]=c2;
+  }
+  CH.n+=cnt;
+}
+const ball=(f,c,s,col,lo)=>emit(lo?SPH_LO:SPH_HI,f,c,typeof s==='number'?[s,s,s]:s,col);
+const slab=(f,c,s,col,R2)=>emit(BOX6,f,c,s,col,R2);
+function seg(f,a,b,r0,r1,col){
+  let dx=b[0]-a[0],dy=b[1]-a[1],dz=b[2]-a[2];const len=Math.hypot(dx,dy,dz)||1e-4;dx/=len;dy/=len;dz/=len;
+  let ax=-dz,ay=0,az=dx;const al=Math.hypot(ax,az);
+  if(al<1e-3){ax=1;az=0}else{ax/=al;az/=al}
+  const zx=ay*dz-az*dy,zy=az*dx-ax*dz,zz=ax*dy-ay*dx;
+  emit(coneMesh(r1/r0),f,a,[r0,len,r0],col,[ax,dx,zx,ay,dy,zy,az,dz,zz]);
+}
+function limb(f,A,B,C,r0,r1,r2,colU,colL,colEnd,rEnd){
+  seg(f,A,B,r0,r1,colU);ball(f,A,r0,colU,true);ball(f,B,r1,colL,true);seg(f,B,C,r1,r2,colL);
+  if(colEnd)ball(f,C,rEnd||r2*1.25,colEnd,true);
+}
+// the face is laid out on a head whose centre sits at (0.005,0.085,0) in the head frame
+function face(H,o){
+  const sk=o.skin,bl=o.blink,es=o.eyeS||1,ey=o.eyeY||0.085;
+  ball(H,[0.005,0.085,0],[0.085,0.095,0.082],sk);
+  for(const z of[-0.034,0.034]){
+    ball(H,[0.073,ey,z],[0.012,0.022*es*bl,0.017*es],[0.96,0.95,0.92],true);
+    ball(H,[0.081,ey-0.001,z*0.97],[0.007,0.015*es*bl,0.0105*es],o.iris,true);
+    ball(H,[0.0855,ey-0.001,z*0.97],[0.004,0.008*es*bl,0.0055*es],[0.03,0.02,0.02],true);
+    slab(H,[0.079+(o.browOut||0),ey+0.033*es+(o.browUp||0),z],[0.012,o.browH||0.007,0.034],o.brow,rX((z>0?1:-1)*(o.browTilt||0)));
+    if(o.ears)ball(H,[0.0,0.08,z*2.45],[0.016,0.026,0.011],sk,true);
+  }
+  ball(H,[0.089,ey-0.027,0],o.nose||[0.015,0.017,0.013],[sk[0]*0.93,sk[1]*0.88,sk[2]*0.86],true);
+  if(o.mouth)slab(H,[0.08,0.034,0],[0.008,0.006+(o.talk||0),o.mouthW||0.03],o.mouth);
+}
+function buildNpc(n,t,ex,ey,ez,dtR){
+  const dxp=ex-n.x,dzp=ez-n.z,dist=Math.hypot(dxp,dzp),toP=Math.atan2(dzp,dxp);
+  const seated=n.type==='delver';
+  if(n.yaw===undefined){
+    n.hy=0;n.hp=0;
+    if(seated){ // sit with the back to a wall when there is one
+      n.yaw=n.wy!==undefined?n.wy:toP;
+    }else n.yaw=n.type==='keeper'&&F.safe?Math.atan2(F.safe.z-n.z,F.safe.x-n.x):toP;
+  }
+  const wrap=a=>{while(a>Math.PI)a-=Math.PI*2;while(a<-Math.PI)a+=Math.PI*2;return a};
+  const talking=talk&&talk.npc===n;
+  let diff=wrap(toP-n.yaw);
+  if(!seated&&dist<5&&(Math.abs(diff)>0.45||talking)){const st=Math.sign(diff)*Math.min(Math.abs(diff),2.6*dtR);n.yaw+=st;diff-=st}
+  const lim=seated?1.25:1.0,wantY=dist<6?clamp(diff,-lim,lim):Math.sin(t*0.4+n.ph)*0.35;
+  const headY0=seated?0.62:0.84,wantP=dist<6?clamp(Math.atan2(ey-headY0,Math.max(dist,0.3)),-0.45,0.4):0;
+  const k=Math.min(1,dtR*6);n.hy+=(wantY-n.hy)*k;n.hp+=(wantP-n.hp)*k;
+  const ph=n.ph,br=Math.sin(t*1.7+ph),breath=br*0.004;
+  const blink=((t*0.23+ph)%1)<0.035?0.12:1;
+  const nod=talking?Math.sin(t*5.5)*0.05:0,jaw=talking?Math.max(0,Math.sin(t*9))*0.006:0;
+  const B={p:[n.x+(n.ox||0),0,n.z+(n.oz||0)],R:rYaw(n.yaw)};
+  const out={top:1,lantern:null};
+  if(n.type==='keeper'){
+    const robe=[0.36,0.1,0.07],robeD=[0.24,0.07,0.06],gold=[0.8,0.58,0.18],skin=[0.8,0.6,0.47],white=[0.9,0.9,0.86],wood=[0.3,0.2,0.12];
+    seg(B,[0,0,0],[0,0.05,0],0.178,0.172,gold);
+    seg(B,[0,0.05,0],[0,0.5,0],0.172,0.092,robe);
+    const U=subF(B,[0,0.48,0],rZ(-0.15));
+    seg(U,[0,-0.01,0],[0,0.045,0],0.1,0.098,gold);
+    ball(U,[0.1,0.02,0],0.02,[2.2,0.9,0.25],true);
+    ball(U,[0,0.14+breath,0],[0.08,0.14,0.108],robe);
+    ball(U,[-0.035,0.245+breath,0],[0.085,0.04,0.115],robeD);
+    // staff arm
+    const sw=br*0.01;
+    const S1=[0,0.215+breath,0.118],E1=[0.07,0.11+breath,0.16],W1=[0.19,0.17+sw,0.17];
+    limb(U,S1,E1,W1,0.04,0.045,0.062,robe,robe,skin,0.028);
+    seg(U,[W1[0]-0.03,W1[1]-0.008,W1[2]-0.002],[W1[0]-0.02,W1[1]-0.005,W1[2]-0.001],0.064,0.065,gold);
+    const hw=fpt(U,W1),SB={p:[hw[0],0,hw[2]],R:B.R};
+    seg(SB,[0,0,0],[0,1.0,0],0.013,0.011,wood);
+    seg(SB,[0,1.0,0],[0.07,1.06,0],0.011,0.009,wood);
+    seg(SB,[0.07,1.06,0],[0.07,1.0,0],0.004,0.004,[0.15,0.14,0.13]);
+    slab(SB,[0.07,0.955,0],[0.05,0.012,0.05],[0.16,0.15,0.14]);slab(SB,[0.07,0.885,0],[0.05,0.012,0.05],[0.16,0.15,0.14]);
+    for(const q of[[-1,-1],[1,-1],[-1,1],[1,1]])slab(SB,[0.07+q[0]*0.021,0.92,q[1]*0.021],[0.006,0.07,0.006],[0.16,0.15,0.14]);
+    ball(SB,[0.07,0.918,0],0.018,[3.0,1.5,0.4],true);
+    out.lantern=fpt(SB,[0.07,0.918,0]);
+    // resting arm, hand tucked at the sash
+    limb(U,[0,0.215+breath,-0.118],[0.03,0.09+breath,-0.15],[0.1,0.06,-0.06],0.04,0.045,0.06,robe,robe,skin,0.028);
+    seg(U,[0,0.25+breath,0],[0.005,0.3+breath,0],0.032,0.03,skin);
+    const H=subF(U,[0.005,0.295+breath,0],m3(m3(rYaw(n.hy),rZ(n.hp+0.12+nod)),rX(Math.sin(t*0.5+ph)*0.03)));
+    face(H,{skin,blink,iris:[0.55,0.3,0.1],brow:white,browH:0.012,browTilt:0.25,browOut:0.004,eyeS:0.85,nose:[0.02,0.022,0.016],talk:jaw});
+    ball(H,[-0.03,0.07,0],[0.075,0.088,0.089],white);
+    ball(H,[0,0.08,0.083],[0.016,0.026,0.011],skin,true);ball(H,[0,0.08,-0.083],[0.016,0.026,0.011],skin,true);
+    ball(H,[0.06,0.03,0.022],[0.022,0.012,0.026],white,true);ball(H,[0.06,0.03,-0.022],[0.022,0.012,0.026],white,true);
+    ball(H,[0.045,0.0,0],[0.045,0.045,0.062],white);
+    seg(H,[0.05,-0.01-jaw,0],[0.085,-0.21-jaw,0],0.048,0.01,white);
+    out.top=1.0;
+  }else if(n.type==='map'){
+    const S=0.94,v=(x,y,z)=>[x*S,y*S,z*S];
+    const teal=[0.08,0.4,0.42],tealD=[0.05,0.27,0.3],cream=[0.86,0.8,0.66],leg=[0.2,0.14,0.11],boot=[0.36,0.21,0.1],belt=[0.3,0.17,0.08],
+          hair=[0.55,0.2,0.07],skin=[0.92,0.71,0.57],must=[0.9,0.62,0.14];
+    const sway=Math.sin(t*0.9+ph)*0.006;
+    for(const z of[-1,1]){
+      const hip=v(0,0.45,z*0.052),knee=v(0.012*z,0.25,z*0.058),ank=v(0,0.05,z*0.062);
+      seg(B,hip,knee,0.047*S,0.038*S,leg);ball(B,knee,0.04*S,boot,true);seg(B,knee,ank,0.04*S,0.03*S,boot);
+      seg(B,v(0.012*z,0.235,z*0.058),v(0.012*z,0.262,z*0.058),0.043*S,0.045*S,cream);
+      ball(B,v(0.03,0.028,z*0.064),[0.062*S,0.03*S,0.036*S],boot,true);
+    }
+    const U=subF(B,v(sway,0.45,0),rX(sway*2));
+    ball(U,v(0,0.02,0),[0.07*S,0.06*S,0.088*S],tealD);
+    seg(U,v(0,-0.1,0),v(0,0.07,0),0.118*S,0.076*S,teal);
+    seg(U,v(0,-0.1,0),v(0,-0.08,0),0.121*S,0.117*S,cream);
+    seg(U,v(0,0.045,0),v(0,0.075,0),0.081*S,0.079*S,belt);
+    slab(U,v(0.078,0.06,0),[0.012*S,0.03*S,0.03*S],[0.85,0.68,0.25]);
+    ball(U,v(0,0.17+breath,0),[0.064*S,0.115*S,0.088*S],teal);
+    slab(U,v(-0.01,0.0,0.105),[0.06*S,0.07*S,0.03*S],belt);slab(U,v(-0.01,0.025,0.122),[0.062*S,0.03*S,0.008*S],[0.4,0.25,0.12]);
+    seg(U,v(0.02,0.27,-0.07),v(-0.01,0.03,0.1),0.011*S,0.011*S,belt);
+    seg(U,v(0,0.245+breath,0),v(0,0.275+breath,0),0.055*S,0.045*S,must);
+    seg(U,v(-0.04,0.255+breath,0.02),v(-0.085,0.12+breath,0.03+sway*3),0.02*S,0.012*S,must);
+    // arm holding the rolled map up in front
+    const lift=talking?0.03+Math.sin(t*3)*0.01:0;
+    const W1=v(0.15,0.2+lift+breath,0.05);
+    limb(U,v(0,0.225+breath,0.1),v(0.045,0.1+breath,0.135),W1,0.03*S,0.027*S,0.023*S,cream,cream,skin,0.026*S);
+    seg(U,[W1[0]+0.005,W1[1]-0.07*S,W1[2]-0.03*S],[W1[0]+0.012,W1[1]+0.1*S,W1[2]+0.035*S],0.019*S,0.019*S,[0.9,0.84,0.66]);
+    seg(U,[W1[0]+0.008,W1[1]+0.0*S,W1[2]],[W1[0]+0.009,W1[1]+0.02*S,W1[2]+0.007*S],0.0205*S,0.0205*S,[0.7,0.15,0.12]);
+    // other hand on the hip
+    limb(U,v(0,0.225+breath,-0.1),v(-0.03,0.1+breath,-0.185),v(0.03,0.035,-0.1),0.03*S,0.027*S,0.023*S,cream,cream,skin,0.026*S);
+    seg(U,v(0,0.27+breath,0),v(0.003,0.31+breath,0),0.027*S,0.026*S,skin);
+    const H=subF(U,v(0.003,0.305+breath,0),m3(m3(rYaw(n.hy),rZ(n.hp+nod)),rX(Math.sin(t*0.6+ph)*0.05)));
+    const HS={p:H.p,R:H.R.map(q=>q*S)};
+    face(HS,{skin,blink,iris:[0.15,0.5,0.3],brow:[0.4,0.15,0.06],browH:0.005,browTilt:-0.1,eyeS:1.3,nose:[0.011,0.012,0.01],mouth:[0.72,0.3,0.28],mouthW:0.02,talk:jaw});
+    ball(HS,[-0.014,0.1,0],[0.092,0.092,0.091],hair);
+    ball(HS,[0.058,0.15,0.012],[0.04,0.028,0.07],hair);
+    ball(HS,[0.03,0.09,0.078],[0.03,0.07,0.02],hair,true);ball(HS,[0.03,0.09,-0.078],[0.03,0.07,0.02],hair,true);
+    ball(HS,[-0.085,0.16,0],0.036,hair);
+    seg(HS,[-0.095,0.15,0],[-0.14+sway*2,-0.04,sway*6],0.03,0.01,hair);
+    seg(HS,[-0.09,0.145,0],[-0.1,0.13,0],0.033,0.033,must);
+    out.top=0.98;
+  }else{
+    const lea=[0.4,0.24,0.12],leaD=[0.27,0.16,0.09],iron=[0.42,0.44,0.48],ironD=[0.25,0.26,0.29],skin=[0.78,0.56,0.44],beard=[0.42,0.22,0.1],
+          cloth=[0.3,0.3,0.24],band=[0.88,0.86,0.8],boot=[0.22,0.14,0.09];
+    // legs stretched out on the floor, one of them bandaged
+    limb(B,[0.02,0.1,0.08],[0.27,0.075,0.1],[0.5,0.05,0.11],0.062,0.052,0.042,cloth,cloth,null);
+    ball(B,[0.52,0.075,0.11],[0.04,0.07,0.045],boot,true);seg(B,[0.4,0.058,0.105],[0.5,0.05,0.11],0.05,0.046,boot);
+    limb(B,[0.02,0.1,-0.08],[0.25,0.19,-0.1],[0.44,0.05,-0.125],0.062,0.052,0.042,cloth,cloth,null);
+    ball(B,[0.47,0.07,-0.128],[0.04,0.07,0.045],boot,true);seg(B,[0.37,0.1,-0.115],[0.44,0.05,-0.125],0.05,0.046,boot);
+    for(const q of[0.3,0.48,0.66]){const a=[0.02+0.23*q,0.1+0.09*q,-0.08-0.02*q],b2=[a[0]+0.045,a[1]+0.018,a[2]-0.004];seg(B,a,b2,0.066-q*0.008,0.065-q*0.008,band)}
+    ball(B,[0.15,0.2,-0.092],[0.02,0.012,0.02],[0.55,0.08,0.06],true);
+    ball(B,[0,0.1,0],[0.11,0.085,0.13],leaD);
+    const U=subF(B,[-0.02,0.11,0],rZ(0.2));
+    ball(U,[0,0.17+breath,0],[0.105,0.15,0.135],lea);
+    seg(U,[0,0.03,0],[0,0.075,0],0.123,0.128,[0.2,0.12,0.07]);slab(U,[0.12,0.052,0],[0.02,0.045,0.05],iron);
+    seg(U,[0.03,0.3,0.1],[0.06,0.05,-0.1],0.014,0.014,[0.2,0.12,0.07]);
+    for(const z of[-1,1])ball(U,[0,0.275+breath,z*0.135],[0.065,0.045,0.07],iron);
+    // one hand on the good knee, the other clamped over the wound
+    limb(U,[0,0.26+breath,0.14],[0.11,0.12,0.19],[0.27,0.06,0.12],0.05,0.045,0.04,cloth,leaD,skin,0.04);
+    const grip=Math.sin(t*2.1+ph)*0.004;
+    limb(U,[0,0.26+breath,-0.14],[0.1,0.13+grip,-0.2],[0.22,0.13+grip,-0.1],0.05,0.045,0.04,cloth,leaD,skin,0.04);
+    seg(U,[0,0.3+breath,0],[0.01,0.35+breath,0],0.045,0.042,skin);
+    const H=subF(U,[0.01,0.34+breath,0],m3(m3(rYaw(n.hy),rZ(n.hp-0.2+nod+Math.sin(t*0.8+ph)*0.03)),rX(0.06)));
+    const HS={p:H.p,R:H.R.map(q=>q*1.08)};
+    face(HS,{skin,blink,iris:[0.3,0.22,0.12],brow:beard,browH:0.011,browTilt:0.3,browUp:-0.008,eyeS:0.8,eyeY:0.08,nose:[0.024,0.024,0.021],ears:true,talk:jaw});
+    ball(HS,[0.0,0.128,0],[0.096,0.072,0.094],iron);
+    seg(HS,[0.0,0.098,0],[0.0,0.113,0],0.099,0.097,ironD);
+    seg(HS,[0,0.19,0],[0,0.215,0],0.02,0.008,ironD);
+    slab(HS,[0.094,0.15,0],[0.02,0.035,0.03],ironD);ball(HS,[0.107,0.15,0],0.012,[2.6,1.9,0.6],true);
+    ball(HS,[0.045,0.0,0],[0.062,0.07,0.082],beard);
+    ball(HS,[0.07,0.035,0.028],[0.025,0.014,0.03],beard,true);ball(HS,[0.07,0.035,-0.028],[0.025,0.014,0.03],beard,true);
+    seg(HS,[0.06,-0.04-jaw,0.03],[0.085,-0.15-jaw,0.035],0.026,0.008,beard);seg(HS,[0.06,-0.04-jaw,-0.03],[0.085,-0.15-jaw,-0.035],0.026,0.008,beard);
+    slab(HS,[0.088,-0.1-jaw,0.034],[0.02,0.014,0.02],iron);slab(HS,[0.088,-0.1-jaw,-0.034],[0.02,0.014,0.02],iron);
+    // pickaxe and pack on the floor beside him
+    seg(B,[0.0,0.018,0.27],[0.42,0.018,0.36],0.014,0.012,[0.33,0.21,0.11]);
+    seg(B,[0.42,0.02,0.36],[0.39,0.03,0.5],0.02,0.004,iron);seg(B,[0.42,0.02,0.36],[0.45,0.03,0.22],0.02,0.004,iron);
+    ball(B,[-0.03,0.07,-0.27],[0.09,0.075,0.08],[0.33,0.27,0.16]);seg(B,[-0.03,0.13,-0.27],[-0.03,0.16,-0.27],0.05,0.035,[0.24,0.19,0.11]);
+    out.top=0.72;out.lamp=fpt(HS,[0.107,0.15,0]);
+  }
+  return out;
 }
 /* ---------- sprites ---------- */
 const MAXS=900, SV=10;
@@ -1521,6 +1729,7 @@ function update(dt){
   const nz=P.z+P.vz*dt;if(!blocked(P.x,nz))P.z=nz;else P.vz=0;
   for(const q of F.pillars){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=0.2+PR;if(dd<m&&dd>1e-4){P.x=q[0]+ddx/dd*m;P.z=q[1]+ddz/dd*m}}
   if(F.safe){const ddx=P.x-F.safe.x,ddz=P.z-F.safe.z,dd=Math.hypot(ddx,ddz),m=0.3+PR;if(dd<m&&dd>1e-4){P.x=F.safe.x+ddx/dd*m;P.z=F.safe.z+ddz/dd*m}}
+  for(const n of F.npcs){const X=n.x+(n.ox||0),Z=n.z+(n.oz||0),ddx=P.x-X,ddz=P.z-Z,dd=Math.hypot(ddx,ddz),m=0.16+PR;if(dd<m&&dd>1e-4){const nx2=X+ddx/dd*m,nz2=Z+ddz/dd*m;if(!blocked(nx2,nz2)){P.x=nx2;P.z=nz2}}}
   if(moving&&P.y<=0){
     P.bob+=speed*dt*2.3;
     const ph=Math.floor(P.bob/Math.PI);
@@ -1777,7 +1986,7 @@ function render(t){
   if(F.safe){const d=(F.safe.x-ex)**2+(F.safe.z-ez)**2;if(d<400){
     const fl=1+Math.sin(t*8.3)*0.08+Math.sin(t*19.1)*0.05;F.safe.fl=fl;
     lights.push([d-30,F.safe.x,0.85,F.safe.z,[1.0,0.56,0.2],2.3*fl,7.5])}}
-  for(const n of F.npcs){if(n.type==='keeper')continue;const d=(n.x-ex)**2+(n.z-ez)**2;if(d<140)lights.push([d-3,n.x,0.9,n.z,NPC[n.type].eye,0.7,2.6])}
+  for(const n of F.npcs){if(n.type==='keeper')continue;const d=(n.x-ex)**2+(n.z-ez)**2;if(d<140)lights.push([d-3,n.x,n.type==='delver'?0.5:0.95,n.z,[1.0,0.85,0.6],0.75,2.8])}
   lights.sort((a,b)=>a[0]-b[0]);
   lpos.fill(0);lcol.fill(0);
   for(let i=0;i<NL;i++){
@@ -1819,15 +2028,17 @@ function render(t){
   }
   gl.uniform1f(propProg.u.uBlkOn,0);
   sprList.length=0;
+  CH.n=0;
+  {const dtR=Math.min(0.1,Math.max(0,t-(CH.lt||t)));CH.lt=t;
   for(const n of F.npcs){
-    const d2=(n.x-ex)**2+(n.z-ez)**2;if(d2>18*18)continue;
-    const T=NPC[n.type],tp=Math.atan2(ez-n.z,ex-n.x),cx=Math.cos(tp),cz=Math.sin(tp),h=T.h,sway=Math.sin(t*1.3+n.ph)*0.012;
-    drawProp(MESH.npc,n.x,0,n.z,1,h,1,0,T.col,0.03,0.2,cx*0.03+sway,cz*0.03);
-    spr(n.x+cx*0.172,0.965*h,n.z+cz*0.172,0.2,0.22,7,0,0,0,1,0);
-    for(const e of[-0.045,0.045])spr(n.x+cx*0.19-cz*e,0.975*h,n.z+cz*0.19+cx*e,0.045,0.045,7,T.eye[0],T.eye[1],T.eye[2],1,1);
-    if(n.type==='keeper'){spr(n.x+cx*0.2-cz*0.24,0.55,n.z+cz*0.2+cx*0.24,0.09,0.14,11,1.0,0.6,0.2,1,1);spr(n.x+cx*0.2-cz*0.24,0.55,n.z+cz*0.2+cx*0.24,0.5,0.5,7,1.0,0.5,0.15,0.25,1)}
-    if(!n.used&&n.type!=='keeper'){const b=1.22*h+Math.sin(t*3+n.ph)*0.03;spr(n.x,b,n.z,0.09,0.09,7,1.0,0.85,0.4,1,1);spr(n.x,b,n.z,0.34,0.34,7,1.0,0.7,0.2,0.3,1)}
-  }
+    const d2=(n.x-ex)**2+(n.z-ez)**2;if(d2>16*16)continue;
+    if((n.x-ex)*fwx+(n.z-ez)*fwz<-1.5)continue;
+    const o=buildNpc(n,t,ex,ey,ez,dtR);
+    if(o.lantern){const q=o.lantern,fl=1+Math.sin(t*10+n.ph)*0.1;spr(q[0],q[1]+0.012,q[2],0.045*fl,0.07*fl,11,1.0,0.6,0.2,1,1);spr(q[0],q[1],q[2],0.5,0.5,7,1.0,0.5,0.15,0.3,1)}
+    if(o.lamp){const q=o.lamp;spr(q[0],q[1],q[2],0.22,0.22,7,1.0,0.75,0.3,0.4,1)}
+    if(!n.used&&n.type!=='keeper'){const y=o.top+0.08+Math.sin(t*3+n.ph)*0.03,X=n.x+(n.ox||0),Z=n.z+(n.oz||0);spr(X,y,Z,0.08,0.08,7,1.0,0.85,0.4,1,1);spr(X,y,Z,0.32,0.32,7,1.0,0.7,0.2,0.3,1)}
+  }}
+  if(CH.n){gl.bindBuffer(gl.ARRAY_BUFFER,chars.vbo);gl.bufferData(gl.ARRAY_BUFFER,CH.buf.subarray(0,CH.n*9),gl.DYNAMIC_DRAW);chars.count=CH.n;drawProp(chars,0,0,0,1,1,1,0,WHITE,0.03,0.22)}
   if(F.safe&&(F.safe.x-ex)**2+(F.safe.z-ez)**2<22*22){
     const fl=F.safe.fl||1,X=F.safe.x,Z=F.safe.z;
     spr(X,0.72,Z,0.42*fl,0.62*fl,11,1.0,0.55,0.16,1,1);
