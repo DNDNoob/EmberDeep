@@ -163,7 +163,7 @@
     <b>W A S D</b><span>Move</span>
     <b>Mouse or ← →</b><span>Look around</span>
     <b>Shift</b><span>Sprint (uses stamina)</span>
-    <b>Space</b><span>Jump. Hold it to keep hopping; a running jump goes farther</span>
+    <b>Space</b><span>Jump (or right mouse button). Hold it to keep hopping; a running jump goes farther</span>
     <b>E or left click</b><span>Flash bomb: stuns nearby creatures. Near a friendly face: talk</span>
     <b>M or Tab</b><span>Full map</span>
     <b>F</b><span>Fullscreen &nbsp;·&nbsp; <b>V</b> mute &nbsp;·&nbsp; <b>[ ]</b> brightness &nbsp;·&nbsp; <b>Esc</b> pause</span>
@@ -237,12 +237,14 @@ const BIOMES=[
   {name:'Mossgrown Halls',   wall:[0.7,0.95,0.7],  floor:[0.65,0.85,0.6], ceil:[0.5,0.65,0.5],   torch:[1.0,0.8,0.5],   amb:[0.008,0.02,0.012], stone:[0.3,0.36,0.27], spec:[0.08,0.16,0.05], wet:0.9},
   {name:'The Frostvault',    wall:[0.7,0.85,1.1],  floor:[0.75,0.9,1.1],  ceil:[0.55,0.65,0.85], torch:[0.95,0.88,0.8], amb:[0.012,0.018,0.035], stone:[0.5,0.62,0.72], spec:[0.75,0.6,0.3], wet:0.3},
   {name:'Cinder Warrens',    wall:[1.15,0.65,0.5], floor:[1.0,0.6,0.5],   ceil:[0.8,0.45,0.4],   torch:[1.0,0.6,0.3],   amb:[0.03,0.008,0.004], stone:[0.24,0.2,0.19], spec:[0.3,0.22,0.08], wet:0.0},
+  {name:'The Humming Rooms', wall:[1,1,0.8],     floor:[0.8,0.75,0.5],  ceil:[0.9,0.9,0.8],    torch:[1.0,0.93,0.7],  amb:[0.21,0.19,0.105], stone:[0.6,0.58,0.5], spec:[0.03,0.02,0.05], wet:0.35},
 ];
 const ITEM={
   shard:{cell:0,col:[0.35,0.9,1.0], size:0.36},
   gem:  {cell:1,col:[1.0,0.8,0.25], size:0.24},
   oil:  {cell:2,col:[1.0,0.55,0.15],size:0.32},
   flash:{cell:3,col:[0.8,0.9,1.0],  size:0.30},
+  chest:{cell:1,col:[1.0,0.8,0.25], size:0.42},
   key:  {cell:9,col:[1.0,0.85,0.35],size:0.34},
   heart:{cell:4,col:[1.0,0.25,0.3], size:0.30},
 };
@@ -263,7 +265,7 @@ function bfs(g,W,H,sx,sy){
   }
   return d;
 }
-function floorKind(depth){if(depth>=3&&depth%4===3)return 'cave';if(depth>=5&&depth%4===1)return 'dark';return 'maze'}
+function floorKind(depth){if(depth>=4&&depth%4===0)return 'back';if(depth>=3&&depth%4===3)return 'cave';if(depth>=5&&depth%4===1)return 'dark';return 'maze'}
 function genFloor(seedStr,depth){
   const rng=mulberry32(hashStr(seedStr+'#'+depth));
   const ri=n=>(rng()*n)|0;
@@ -304,7 +306,33 @@ function genFloor(seedStr,depth){
       cells=open.filter(c=>(c[0]+c[1])%2===0);
     }else kind='maze';
   }
-  if(kind!=='cave'){
+  if(kind==='back'){
+    // liminal office: a lattice of partitions, wide halls with square columns, and dead-straight corridors
+    g=new Uint8Array(W*H);
+    for(let x=0;x<W;x++){g[idx(x,0)]=1;g[idx(x,H-1)]=1}
+    for(let y=0;y<H;y++){g[idx(0,y)]=1;g[idx(W-1,y)]=1}
+    for(let y=2;y<H-2;y+=2)for(let x=2;x<W-2;x+=2){
+      if(rng()<0.62){g[idx(x,y)]=1;for(const d of DIRS)if(rng()<0.44)g[idx(x+d[0],y+d[1])]=1}
+    }
+    const halls=3+(depth>>2);
+    for(let n=0;n<halls;n++){
+      const rw=3+ri(3),rh=3+ri(2),rx=ri(cw-rw+1),ry=ri(ch-rh+1);
+      for(let y=ry*2+1;y<=(ry+rh-1)*2+1;y++)for(let x=rx*2+1;x<=(rx+rw-1)*2+1;x++)g[idx(x,y)]=((x&1)===0&&(y&1)===0&&((x>>1)&1)===0&&((y>>1)&1)===0)?1:0;
+    }
+    for(let n=0;n<2;n++){const r=ri(ch)*2+1;for(let x=1;x<W-1;x++)g[idx(x,r)]=0;const c=ri(cw)*2+1;for(let y=1;y<H-1;y++)g[idx(c,y)]=0}
+    {const lab=new Int32Array(W*H);let bestL=0,bestN=0,Ln=0;
+      for(let i=0;i<W*H;i++){
+        if(g[i]||lab[i])continue;
+        Ln++;let n=0;const q=[i];lab[i]=Ln;
+        while(q.length){const c=q.pop();n++;const cx=c%W,cy=(c/W)|0;
+          for(const d of DIRS){const ni=idx(cx+d[0],cy+d[1]);if(!g[ni]&&!lab[ni]){lab[ni]=Ln;q.push(ni)}}}
+        if(n>bestN){bestN=n;bestL=Ln}
+      }
+      for(let i=0;i<W*H;i++)if(lab[i]!==bestL)g[i]=1;}
+    for(let cy=0;cy<ch;cy++)for(let cx=0;cx<cw;cx++)if(!g[idx(cx*2+1,cy*2+1)])cells.push([cx*2+1,cy*2+1]);
+    const stc=cells[ri(cells.length)];stx=stc[0];sty=stc[1];
+  }
+  if(kind!=='cave'&&kind!=='back'){
     g=new Uint8Array(W*H).fill(1);
     const vis=new Uint8Array(cw*ch);
     const sx=ri(cw), sy=ri(ch);
@@ -317,14 +345,14 @@ function genFloor(seedStr,depth){
       g[idx(cx*2+1+d[0],cy*2+1+d[1])]=0; g[idx((cx+d[0])*2+1,(cy+d[1])*2+1)]=0;
       vis[(cy+d[1])*cw+cx+d[0]]=1; st.push([cx+d[0],cy+d[1]]);
     }
-    // braid: open up about half of the dead ends so there are loops to escape through
+    // braid: open up most of the dead ends so there are loops to escape through
     for(let cy=0;cy<ch;cy++)for(let cx=0;cx<cw;cx++){
       const tx=cx*2+1,ty=cy*2+1,closed=[];let open=0;
       for(const d of DIRS){
         if(g[idx(tx+d[0],ty+d[1])]===0)open++;
         else{const nx=cx+d[0],ny=cy+d[1];if(nx>=0&&ny>=0&&nx<cw&&ny<ch)closed.push(d)}
       }
-      if(open===1&&closed.length&&rng()<0.5){const d=closed[ri(closed.length)];g[idx(tx+d[0],ty+d[1])]=0}
+      if(open===1&&closed.length&&rng()<0.82){const d=closed[ri(closed.length)];g[idx(tx+d[0],ty+d[1])]=0}
     }
     // a few open chambers
     const nRooms=Math.min(1+(depth>>1),5);
@@ -337,7 +365,7 @@ function genFloor(seedStr,depth){
   }
   // sanctuary: a 3x3 safe room around a brazier (tile value 4). Creatures never enter it.
   let safe=null;
-  if(kind==='cave'){
+  if(kind==='cave'||kind==='back'){
     const sc=[];
     for(let y=2;y<H-2;y++)for(let x=2;x<W-2;x++){
       let ok=Math.abs(x-stx)+Math.abs(y-sty)>3;
@@ -364,7 +392,7 @@ function genFloor(seedStr,depth){
       let ok=true;for(let dy=-1;dy<=1&&ok;dy++)for(let dx=-1;dx<=1;dx++)if(g[idx(x+dx,y+dy)]){ok=false;break}
       if(ok&&rng()<0.07){g[idx(x,y)]=3;pillars.push([x+0.5,y+0.5])}
     }
-  }else for(let y=2;y<H-2;y+=2)for(let x=2;x<W-2;x+=2)if(g[idx(x,y)]===0&&rng()<0.6){g[idx(x,y)]=3;pillars.push([x+0.5,y+0.5])}
+  }else if(kind!=='back')for(let y=2;y<H-2;y+=2)for(let x=2;x<W-2;x+=2)if(g[idx(x,y)]===0&&rng()<0.6){g[idx(x,y)]=3;pillars.push([x+0.5,y+0.5])}
   const d0=bfs(g,W,H,stx,sty);
   // exit = farthest spot from the start
   let ex=stx,ey=sty,best=-1;
@@ -389,9 +417,13 @@ function genFloor(seedStr,depth){
   far=far.filter(c=>!safeMask[idx(c[0],c[1])]);
   const spawn=(type,n)=>{for(let i=0;i<n&&far.length;i++){const c=far.splice(ri(far.length),1)[0];
     shades.push({type,x:c[0]+0.5,z:c[1]+0.5,gx:c[0],gy:c[1],px:-1,py:-1,state:0,stun:0,think:rng()*0.2,vis:false,frozen:false,ph:rng()*6.28,d:99,snd:0})}};
-  spawn(0,Math.min(1+Math.floor((depth-1)*0.6),7));
-  spawn(1,depth>=3?1+(depth>=7?1:0)+(depth>=11?1:0):0);
-  spawn(2,depth>=2?1+(depth>=6?1:0):0);
+  if(kind==='back'){spawn(0,Math.max(1,Math.min(Math.floor(depth*0.3),4)));spawn(3,1+(depth>=12?1:0))}
+  else{
+    spawn(0,Math.min(1+Math.floor((depth-1)*0.6),7));
+    spawn(1,depth>=3?1+(depth>=7?1:0)+(depth>=11?1:0):0);
+    spawn(2,depth>=2?1+(depth>=6?1:0):0);
+  }
+  for(const q of shades)if(q.type===3){q.hid=6+rng()*6;q.hx=q.x;q.hz=q.z;q.x=-99;q.z=-99}
   let pool=cand.filter(c=>d0[idx(c[0],c[1])]>2);
   const nCells=cw*ch;
   const take=(type,n)=>{for(let i=0;i<n&&pool.length;i++)put(type,pool.pop())};
@@ -400,14 +432,14 @@ function genFloor(seedStr,depth){
   if(depth>1&&rng()<0.6)take('heart',1);
   // corridor tiles: exactly two open neighbours, opposite each other
   const corr=[];
-  if(kind!=='cave')for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
+  if(kind!=='cave'&&kind!=='back')for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
     if(g[idx(x,y)]||safeMask[idx(x,y)]||((x&1)===(y&1)))continue;
     const l=g[idx(x-1,y)],r=g[idx(x+1,y)],u=g[idx(x,y-1)],dn=g[idx(x,y+1)];
     if((!l&&!r&&u&&dn)||(l&&r&&!u&&!dn))corr.push([x,y]);
   }
   // one locked gate that seals off part of the floor; its key is always on the near side
   let door=null;
-  if(kind!=='cave'&&depth>=2){
+  if(kind!=='cave'&&kind!=='back'&&depth>=2){
     let total=0;for(let i=0;i<W*H;i++)if(!g[i])total++;
     for(const c of shuffle(corr.slice())){
       const di=idx(c[0],c[1]);
@@ -445,7 +477,7 @@ function genFloor(seedStr,depth){
   }
   // wall torches and rubble
   const sconces=[],rubble=[];
-  if(kind!=='dark'){
+  if(kind!=='dark'&&kind!=='back'){
     const sc=[];
     for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){if(g[idx(x,y)]!==0)continue;
       for(const d of DIRS)if(g[idx(x+d[0],y+d[1])]===1){sc.push([x,y,d[0],d[1]]);break}}
@@ -458,7 +490,7 @@ function genFloor(seedStr,depth){
     }
   }
   for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
-    if(g[idx(x,y)]!==0||rng()>0.16)continue;
+    if(kind==='back'||g[idx(x,y)]!==0||rng()>0.16)continue;
     for(const d of DIRS)if(g[idx(x+d[0],y+d[1])]===1){
       const n=1+ri(3);
       for(let k=0;k<n;k++){const along=(rng()-0.5)*0.8,off=0.36+rng()*0.08;
@@ -466,18 +498,46 @@ function genFloor(seedStr,depth){
       break;
     }
   }
+  // fluorescent panels over the humming rooms
+  const panels=[],panelAt=new Uint8Array(W*H);
+  if(kind==='back')for(const c of cells)if(rng()<0.72){const bad=rng()<0.13;panelAt[idx(c[0],c[1])]=bad?2:1;panels.push({x:c[0]+0.5,z:c[1]+0.5,ph:c[0]*1.7+c[1]*2.3,bad})}
+  // noclip pockets: a wall you can walk through, hiding a scrap of somewhere else
+  const pocketMask=new Uint8Array(W*H),phantoms=[],pockets=[];
+  if(kind!=='back'){
+    const pc=[];
+    for(let y=2;y<H-2;y++)for(let x=2;x<W-2;x++){
+      if(g[idx(x,y)]!==1)continue;
+      let open=null,walls=0;
+      for(const d of DIRS){const v=g[idx(x+d[0],y+d[1])];if(v===1)walls++;else if(v===0)open=d}
+      if(walls!==3||!open)continue;
+      const ai=idx(x+open[0],y+open[1]);
+      if(safeMask[ai]||(x+open[0]===stx&&y+open[1]===sty)||d0[ai]<4)continue;
+      if(door&&Math.abs(x-door.tx)+Math.abs(y-door.ty)<=2)continue;
+      pc.push([x,y,open[0],open[1]]);
+    }
+    shuffle(pc);
+    const want=(rng()<0.4?1:0)+(depth>=6&&rng()<0.3?1:0);
+    for(let n=0;n<want&&n<pc.length;n++){
+      const c=pc[n],i=idx(c[0],c[1]);
+      if(pockets.some(q=>Math.abs(q.tx-c[0])+Math.abs(q.ty-c[1])<4))continue;
+      g[i]=0;pocketMask[i]=1;
+      phantoms.push({tx:c[0],ty:c[1],dx:c[2],dz:c[3]});pockets.push({tx:c[0],ty:c[1],x:c[0]+0.5,z:c[1]+0.5,found:false});
+      items.push({type:'chest',tx:c[0],ty:c[1],x:c[0]+0.5,z:c[1]+0.5,got:false,ph:rng()*6.28});
+    }
+  }
   // room dressing: things in corners, banners and chains on walls, stalactites in caverns
   const props=[],discs=[];
-  {const busy=new Set(),used=new Set(),bix=((depth-1)>>1)%BIOMES.length;
+  {const busy=new Set(),used=new Set(),bix=((depth-1)>>1)%4;
     for(const n of npcs)busy.add(idx(Math.floor(n.x),Math.floor(n.z)));
     for(const tr of traps)busy.add(idx(tr.tx,tr.ty));
     busy.add(idx(stx,sty));busy.add(idx(ex,ey));
     const special=bix===1?'shroom':bix===2?'ice':bix===3?'ember':'urn';
-    const types=kind==='cave'?['bones','bones','sack',special,special,special,'urn']:['barrel','barrel','crate','crate','urn','sack','bones',special,special];
-    const RAD={barrel:0.13,crate:0.15,urn:0.09,sack:0.11,ice:0.08,ember:0.11};
+    const types=kind==='back'?['boxes','boxes','cabinet','cabinet','plant','chair','chair']:kind==='cave'?['bones','bones','sack',special,special,special,'urn']:['barrel','barrel','crate','crate','urn','sack','bones',special,special];
+    const RAD={barrel:0.13,crate:0.15,urn:0.09,sack:0.11,ice:0.08,ember:0.11,boxes:0.15,cabinet:0.14,plant:0.08,chair:0.13};
     const cands=[];
     for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
-      const i=idx(x,y);if(g[i]!==0||safeMask[i]||busy.has(i))continue;
+      const i=idx(x,y);if(g[i]!==0||safeMask[i]||pocketMask[i]||busy.has(i))continue;
+      if(phantoms.some(q=>q.tx+q.dx===x&&q.ty+q.dz===y))continue;
       if(door&&Math.abs(x-door.tx)+Math.abs(y-door.ty)<=1)continue;
       cands.push([x,y,g[idx(x+1,y)]===1?1:g[idx(x-1,y)]===1?-1:0,g[idx(x,y+1)]===1?1:g[idx(x,y-1)]===1?-1:0]);
     }
@@ -491,7 +551,7 @@ function genFloor(seedStr,depth){
         props.push({t,x:px,z:pz,r:rng()*6.28,s:sc,v:rng()<0.45?1:0});
         if(RAD[t])discs.push([px,pz,RAD[t]*sc]);
         used.add(i);nc++;
-      }else if((wx||wz)&&nw<maxW){
+      }else if((wx||wz)&&nw<maxW&&kind!=='back'){
         const dx=wx,dz=wx?0:wz;
         if(kind!=='cave'&&rng()<0.4){
           const bx=x+0.5+dx*0.5,bz=y+0.5+dz*0.5;
@@ -504,8 +564,8 @@ function genFloor(seedStr,depth){
   // face down an open corridor at the start
   let yaw=0;
   for(const d of DIRS){if(g[idx(stx+d[0],sty+d[1])]===0){yaw=Math.atan2(d[1],d[0]);break}}
-  const bi=((depth-1)>>1)%BIOMES.length;
-  return {W,H,g,cw,ch,kind,dark:kind==='dark',props,discs,safe,safeMask,npcs,reveal:false,door,traps,pillars,sconces,rubble,frames:[],start:{tx:stx,ty:sty,yaw},exit:{tx:ex,ty:ey,x:ex+0.5,z:ey+0.5},items,shades,
+  const bi=kind==='back'?4:((depth-1)>>1)%4;
+  return {W,H,g,cw,ch,kind,dark:kind==='dark',back:kind==='back',base:kind==='back'?13:bi*3,panels,panelAt,pocketMask,phantoms,pockets,blk:0,boT:22+rng()*25,props,discs,safe,safeMask,npcs,reveal:false,door,traps,pillars,sconces,rubble,frames:[],start:{tx:stx,ty:sty,yaw},exit:{tx:ex,ty:ey,x:ex+0.5,z:ey+0.5},items,shades,
           seen:new Uint8Array(W*H),dist:d0,bi,biome:BIOMES[bi],
           name:kind==='cave'?'The Hollow':kind==='dark'?'The Black Hush':BIOMES[bi].name};
 }
@@ -620,18 +680,19 @@ out vec3 vPos;out vec3 vNor;out vec2 vUV;out float vLayer;
 void main(){vPos=aPos;vNor=aNor;vUV=aUV;vLayer=aLayer;gl_Position=uVP*vec4(aPos,1.0);}`,
 DEFS+LIGHT_GLSL+`
 uniform sampler2DArray uTex;uniform sampler2DArray uNrm;
-uniform vec3 uTint[3];uniform vec3 uSpec;uniform float uNoTex;uniform float uBase;uniform float uWet;
+uniform vec3 uTint[3];uniform vec3 uSpec;uniform float uNoTex;uniform float uBase;uniform float uWet;uniform float uPanel;uniform float uTime;
 in vec3 vPos;in vec3 vNor;in vec2 vUV;in float vLayer;
 out vec4 o;
 float vnoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);
   return mix(mix(hash(i),hash(i+vec2(1.0,0.0)),f.x),mix(hash(i+vec2(0.0,1.0)),hash(i+vec2(1.0,1.0)),f.x),f.y);}
 void main(){
-  bool isDoor=vLayer>2.5;int li=isDoor?0:int(vLayer+0.5);float em=0.0;
+  bool office=vLayer>9.5;float kd=office?vLayer-10.0:vLayer;
+  bool isDoor=kd>2.5&&kd<3.5,isBad=kd>5.5,isPanel=(kd>3.5&&kd<4.5)||isBad,isPh=kd>4.5&&kd<5.5;int li=(isDoor||isPh)?0:(isPanel?2:int(kd+0.5));float em=0.0;
   vec3 Ng=normalize(vNor),N=Ng,tx;
-  float layer=isDoor?12.0:uBase+vLayer;
+  float layer=isDoor?12.0:(office?13.0:uBase)+(isPanel?3.0:float(li));
   if(uNoTex>0.5){vec2 gq=fract(vUV*vec2(2.0,4.0));tx=(isDoor?vec3(0.5,0.3,0.12):vec3(0.42))*(0.45+0.55*step(0.04,gq.x)*step(0.07,gq.y));}
   else{
-    vec4 t4=texture(uTex,vec3(vUV,layer));tx=t4.rgb;em=1.0-t4.a;
+    vec4 t4=texture(uTex,vec3(vUV,layer));tx=t4.rgb;em=1.0-t4.a;if(isPanel)em*=uPanel;if(isBad){float ph=floor(vPos.x)*1.7+floor(vPos.z)*2.3;if(sin(uTime*31.0+ph)+sin(uTime*47.7+ph*2.0)<0.4)em*=0.1;}
 #if NORMALMAP
     vec3 nm=texture(uNrm,vec3(vUV,layer)).xyz*2.0-1.0;
     vec3 T=abs(Ng.x)>0.5?vec3(0.0,0.0,1.0):vec3(1.0,0.0,0.0);
@@ -642,6 +703,7 @@ void main(){
   vec3 tint=isDoor?vec3(1.0):(li==0?uTint[0]:(li==1?uTint[1]:uTint[2]));
   float gloss=isDoor?0.15:(li==0?uSpec.x:(li==1?uSpec.y:uSpec.z));
   vec3 alb=tx*tint;
+  if(isPh)alb*=0.88+0.12*sin(uTime*2.3+vPos.y*11.0+(vPos.x+vPos.z)*5.0);
   if(li==1&&uWet>0.0){
     float pud=smoothstep(0.6,0.7,vnoise(vPos.xz*0.9))*uWet;
     gloss=mix(gloss,1.3,pud);N=normalize(mix(N,Ng,pud*0.85));alb*=mix(1.0,0.55,pud);
@@ -867,6 +929,24 @@ function makeWorldTextures(){
     x.fillStyle='#6a6f78';x.fillRect(100,104,56,56);x.fillStyle='#c9a24a';x.fillRect(104,108,48,48);
     x.fillStyle='#0a0705';x.beginPath();x.arc(128,126,8,0,7);x.fill();x.fillRect(124,128,8,20);
     grain(d,16);L.push(d);}
+  // ---- 13..16 the humming rooms: stained wallpaper, damp carpet, ceiling tiles, light panel
+  let PANEL=-1;
+  {const w=mk(),x=w.getContext('2d');x.fillStyle='#b9a650';x.fillRect(0,0,S,S);
+    for(let i=0;i<16;i++){x.fillStyle=i%2?'rgba(255,240,150,0.10)':'rgba(90,70,10,0.10)';x.fillRect(i*16,0,8,S)}
+    x.strokeStyle='rgba(120,100,30,0.28)';x.lineWidth=1.5;
+    for(let j=0;j<8;j++)for(let i=0;i<8;i++){x.beginPath();x.moveTo(i*32+6,j*32+20);x.lineTo(i*32+16,j*32+10);x.lineTo(i*32+26,j*32+20);x.stroke()}
+    blot(x,14,0.2,'70,50,10',20,70);
+    const gr=x.createLinearGradient(0,S-80,0,S);gr.addColorStop(0,'rgba(60,45,10,0)');gr.addColorStop(1,'rgba(60,45,10,0.4)');x.fillStyle=gr;x.fillRect(0,S-80,S,80);
+    x.fillStyle='#4a3a22';x.fillRect(0,S-16,S,16);x.fillStyle='rgba(255,255,255,0.12)';x.fillRect(0,S-16,S,2);
+    grain(w,14);L.push(w);
+    const f=mk(),y=f.getContext('2d');y.fillStyle='#6f6238';y.fillRect(0,0,S,S);blot(y,60,0.22,'40,34,14',6,26);blot(y,10,0.3,'30,26,12',30,80);grain(f,46);L.push(f);
+    const c=mk(),z=c.getContext('2d');z.fillStyle='#c9c4ae';z.fillRect(0,0,S,S);
+    for(let i=0;i<900;i++){z.fillStyle='rgba(60,55,40,0.35)';z.fillRect(rng()*S,rng()*S,1.5,1.5)}
+    z.fillStyle='#6d6a5c';for(const q of[0,128]){z.fillRect(q,0,3,S);z.fillRect(0,q,S,3)}
+    blot(z,6,0.25,'90,70,20',20,60);grain(c,12);L.push(c);
+    const pn=mk(),u2=pn.getContext('2d');u2.drawImage(c,0,0,S,S);
+    for(const qx of[0,128])for(const qy of[0,128]){u2.fillStyle='#55524a';u2.fillRect(qx+14,qy+30,100,68);u2.fillStyle='#fffbe6';u2.fillRect(qx+18,qy+34,92,60)}
+    PANEL=L.length;L.push(pn);}
   // glowing crack cores drawn last so they can be flagged as emissive (alpha 0)
   for(const li of EM){const x=L[li].getContext('2d');const sr=mulberry32(77+li);
     const im0=x.getImageData(0,0,TS,TS).data;const at=(px,py)=>((((py*K)|0)&(TS-1))*TS+(((px*K)|0)&(TS-1)))*4;
@@ -884,6 +964,7 @@ function makeWorldTextures(){
   gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);
   const datas=L.map((cv,i)=>{
     const data=new Uint8Array(cv.getContext('2d').getImageData(0,0,TS,TS).data.buffer);
+    if(i===PANEL)for(let k=0;k<data.length;k+=4){if(data[k]>250&&data[k+1]>245&&data[k+2]>215)data[k+3]=0}
     if(EM.has(i))for(let k=0;k<data.length;k+=4){if(data[k]>215&&data[k+1]>95&&data[k+1]<200&&data[k+2]<95)data[k+3]=0}
     gl.texSubImage3D(gl.TEXTURE_2D_ARRAY,0,0,0,i,TS,TS,1,gl.RGBA,gl.UNSIGNED_BYTE,data);
     return data;
@@ -1006,13 +1087,22 @@ function buildMesh(F){
   const wall=(x,y)=>x<0||y<0||x>=W||y>=H||g[y*W+x]===1;
   for(let y=0;y<H;y++)for(let x=0;x<W;x++){
     if(g[y*W+x]===1)continue;
+    const pk=F.pocketMask[y*W+x]?10:0;
     const fu=[[x/2,y/2],[(x+1)/2,y/2],[(x+1)/2,(y+1)/2],[x/2,(y+1)/2]];
-    quad([[x,0,y],[x+1,0,y],[x+1,0,y+1],[x,0,y+1]],[0,1,0],fu,1);
-    quad([[x,Y,y],[x+1,Y,y],[x+1,Y,y+1],[x,Y,y+1]],[0,-1,0],fu,2);
-    if(wall(x+1,y))quad([[x+1,0,y],[x+1,0,y+1],[x+1,Y,y+1],[x+1,Y,y]],[-1,0,0],[[y,1],[y+1,1],[y+1,0],[y,0]],0);
-    if(wall(x-1,y))quad([[x,0,y],[x,0,y+1],[x,Y,y+1],[x,Y,y]],[1,0,0],[[y,1],[y+1,1],[y+1,0],[y,0]],0);
-    if(wall(x,y+1))quad([[x,0,y+1],[x+1,0,y+1],[x+1,Y,y+1],[x,Y,y+1]],[0,0,-1],[[x,1],[x+1,1],[x+1,0],[x,0]],0);
-    if(wall(x,y-1))quad([[x,0,y],[x+1,0,y],[x+1,Y,y],[x,Y,y]],[0,0,1],[[x,1],[x+1,1],[x+1,0],[x,0]],0);
+    quad([[x,0,y],[x+1,0,y],[x+1,0,y+1],[x,0,y+1]],[0,1,0],fu,1+pk);
+    quad([[x,Y,y],[x+1,Y,y],[x+1,Y,y+1],[x,Y,y+1]],[0,-1,0],fu,(pk?4:F.panelAt[y*W+x]===2?6:F.panelAt[y*W+x]?4:2)+pk);
+    if(wall(x+1,y))quad([[x+1,0,y],[x+1,0,y+1],[x+1,Y,y+1],[x+1,Y,y]],[-1,0,0],[[y,1],[y+1,1],[y+1,0],[y,0]],pk);
+    if(wall(x-1,y))quad([[x,0,y],[x,0,y+1],[x,Y,y+1],[x,Y,y]],[1,0,0],[[y,1],[y+1,1],[y+1,0],[y,0]],pk);
+    if(wall(x,y+1))quad([[x,0,y+1],[x+1,0,y+1],[x+1,Y,y+1],[x,Y,y+1]],[0,0,-1],[[x,1],[x+1,1],[x+1,0],[x,0]],pk);
+    if(wall(x,y-1))quad([[x,0,y],[x+1,0,y],[x+1,Y,y],[x,Y,y]],[0,0,1],[[x,1],[x+1,1],[x+1,0],[x,0]],pk);
+  }
+  // walls that are not really there
+  for(const q of F.phantoms){
+    const x=q.tx,y=q.ty;
+    if(q.dx===1)quad([[x+1,0,y],[x+1,0,y+1],[x+1,Y,y+1],[x+1,Y,y]],[1,0,0],[[y,1],[y+1,1],[y+1,0],[y,0]],5);
+    else if(q.dx===-1)quad([[x,0,y],[x,0,y+1],[x,Y,y+1],[x,Y,y]],[-1,0,0],[[y,1],[y+1,1],[y+1,0],[y,0]],5);
+    else if(q.dz===1)quad([[x,0,y+1],[x+1,0,y+1],[x+1,Y,y+1],[x,Y,y+1]],[0,0,1],[[x,1],[x+1,1],[x+1,0],[x,0]],5);
+    else quad([[x,0,y],[x+1,0,y],[x+1,Y,y],[x,Y,y]],[0,0,-1],[[x,1],[x+1,1],[x+1,0],[x,0]],5);
   }
   // boxes for the gate and its stone frame
   const UNIT=[[0,1],[1,1],[1,0],[0,0]];
@@ -1385,6 +1475,18 @@ function buildStalker(s,t,ex,ez){
     if(pose>=1&&!(pose===1&&z<0))for(let q=-1;q<=1;q++){const dx=W[0]-E[0],dy=W[1]-E[1],l=Math.hypot(dx,dy)||1;seg(U,W,[W[0]+dx/l*0.08,W[1]+dy/l*0.08,W[2]+q*0.025],0.011,0.003,sd)}
   }
 }
+function buildWatcher(s,t,ex,ez){
+  const tp=Math.atan2(ez-s.z,ex-s.x),c=[0.022,0.022,0.027,9],k=WALL_H*0.95/1.2;
+  const B={p:[s.x,0,s.z],R:rYaw(tp),lo:[0.3,0,0.7]};
+  for(const z of[-1,1])limb(B,[0,0.62*k,z*0.04],[0.025,0.31*k,z*0.045],[0,0.01,z*0.045],0.028,0.021,0.016,c,c,c,0.02);
+  const U=subF(B,[0,0.61*k,0],rZ(-0.05+Math.sin(t*0.6+s.ph)*0.025));
+  seg(U,[0,0,0],[0,0.37*k,0],0.045,0.058,c);
+  seg(U,[0,0.36*k,0],[0.01,0.45*k,0],0.02,0.017,c);
+  const H=subF(U,[0.012,0.5*k,0],rX(Math.sin(t*0.23+s.ph)*0.18+0.2));
+  ball(H,[0,0,0],[0.046,0.068*k,0.046],c);
+  for(const z of[-1,1])limb(U,[0,0.35*k,z*0.072],[0.012,0.03*k,z*0.088],[0.035,-0.3*k,z*0.082],0.021,0.016,0.012,c,c,c,0.017);
+  return [fpt(H,[0.043,0.012,-0.018]),fpt(H,[0.043,0.012,0.018])];
+}
 /* ---------- static decor: pillars, brazier, rubble, sconces and room dressing ---------- */
 const M6={};function mesh6(k){if(M6[k])return M6[k];const c=MESH_DATA[k],o=new Float32Array(c.length/9*6);for(let i=0,j=0;i<c.length;i+=9)for(let q=0;q<6;q++)o[j++]=c[i+q];return M6[k]=o}
 function buildProp(pr,F){
@@ -1443,6 +1545,33 @@ function buildProp(pr,F){
     const n=5+pr.v*3;
     for(let i=0;i<n;i++){const y=WALL_H-i*0.055;if(i%2)slab(f,[0,y-0.03,0],[0.008,0.06,0.03],iron);else slab(f,[0,y-0.03,0],[0.03,0.06,0.008],iron)}
     const yb=WALL_H-n*0.055;seg(f,[0,yb,0],[0,yb-0.03,0],0.03,0.022,iron);seg(f,[0,yb-0.03,0],[0.03,yb-0.07,0],0.008,0.003,iron);
+    break}
+  case 'boxes':{
+    const cb=[0.6,0.45,0.28,2],tp=[0.74,0.66,0.48,2];
+    slab(f,[0,0.1*S,0],[0.24*S,0.2*S,0.2*S],cb);slab(f,[0,0.2*S+0.001,0],[0.245*S,0.004,0.04],tp);
+    const f2={p:fpt(f,[0.015,0.2*S,0.01]),R:m3(f.R,rYaw(0.4)),lo:f.lo};
+    slab(f2,[0,0.07*S,0],[0.17*S,0.14*S,0.15*S],cb);slab(f2,[0,0.14*S+0.001,0],[0.175*S,0.004,0.035],tp);
+    if(pr.v){const f3={p:fpt(f,[0.19*S,0,0.08]),R:m3(f.R,rYaw(-0.6)),lo:f.lo};slab(f3,[0,0.06,0],[0.13,0.12,0.12],cb);slab(f3,[0,0.121,0],[0.135,0.004,0.03],tp)}
+    break}
+  case 'cabinet':{
+    const mt=[0.46,0.48,0.45,4],fr=[0.54,0.56,0.53,4],dk=[0.16,0.16,0.16,4];
+    slab(f,[0,0.3*S,0],[0.2*S,0.6*S,0.24*S],mt);
+    for(let i=0;i<3;i++){const y=(0.105+i*0.195)*S,out=(pr.v&&i===1)?0.05:0;
+      slab(f,[0.1*S+0.003+out,y,0],[0.006+out*2,0.17*S,0.21*S],fr);slab(f,[0.1*S+0.012+out*2,y+0.04*S,0],[0.008,0.012,0.07*S],dk)}
+    break}
+  case 'plant':{
+    const pot=[0.5,0.27,0.17,9],lf=pr.v?[0.36,0.3,0.12,2]:[0.14,0.3,0.12,2];
+    seg(f,[0,0,0],[0,0.13*S,0],0.05*S,0.075*S,pot);seg(f,[0,0.12*S,0],[0,0.13*S,0],0.066*S,0.066*S,[0.12,0.09,0.06,9]);
+    seg(f,[0,0.12*S,0],[0,0.3*S,0],0.009,0.006,[0.3,0.2,0.1,6]);
+    for(let i=0;i<7;i++){const a=i*0.9+pr.r,h=(0.24+((i*37)%5)*0.04)*S,r=(pr.v?0.14:0.1)*S;seg(f,[0,(0.14+i*0.02)*S,0],[Math.cos(a)*r,pr.v?h*0.7:h+0.1*S,Math.sin(a)*r],0.022*S,0.003,lf)}
+    break}
+  case 'chair':{
+    const fb=[0.17,0.19,0.26,2],mt=[0.1,0.1,0.11,4];
+    for(let i=0;i<5;i++){const a=i*1.2566;seg(f,[0,0.035,0],[Math.cos(a)*0.11*S,0.014,Math.sin(a)*0.11*S],0.012,0.01,mt)}
+    seg(f,[0,0.03,0],[0,0.2*S,0],0.013,0.013,mt);
+    slab(f,[0,0.215*S,0],[0.19*S,0.035*S,0.19*S],fb);
+    seg(f,[-0.09*S,0.22*S,0],[-0.1*S,0.3*S,0],0.012,0.012,mt);
+    slab(f,[-0.1*S,0.39*S,0],[0.028*S,0.2*S,0.18*S],fb);
     break}
   case 'stal':{
     const sc=[st[0]*0.9,st[1]*0.9,st[2]*0.9,9];
@@ -1574,7 +1703,8 @@ $('gtx').checked=WANT_GTX;
 $('gtx').addEventListener('change',e=>{lsSet('gtx',e.target.checked);lsSet('safe',0);location.reload()});
 
 function solidAt(x,z){const tx=Math.floor(x),ty=Math.floor(z);return tx<0||ty<0||tx>=F.W||ty>=F.H||(F.g[ty*F.W+tx]&3)===1||F.g[ty*F.W+tx]===2}
-function torchRadius(){return (1.6+6.0*Math.sqrt((state==='title'?100:P.fuel)/100))*(F.dark?0.5:1)}
+let panelLvl=1;
+function torchRadius(){return (1.6+6.0*Math.sqrt((state==='title'?100:P.fuel)/100))*(F.dark?0.5:1)*(F.back?0.45:1)}
 function blocked(x,z){return solidAt(x-PR,z-PR)||solidAt(x+PR,z-PR)||solidAt(x-PR,z+PR)||solidAt(x+PR,z+PR)}
 function los(x0,z0,x1,z1){
   const dx=x1-x0,dz=z1-z0,l=Math.hypot(dx,dz),n=Math.ceil(l/0.2);
@@ -1584,7 +1714,7 @@ function los(x0,z0,x1,z1){
 function loadFloor(depth){
   R.depth=depth;
   if(depth>deepest){deepest=depth;store.set('deepest',deepest)}
-  F=genFloor(R.seed,depth);
+  F=genFloor(R.seed,depth);panelLvl=1;
   buildMesh(F);buildStatic(F);buildSdf(F);
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
   P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;P.inSafe=false;nearNpc=null;
@@ -1594,11 +1724,13 @@ function loadFloor(depth){
 function onTileChange(){
   P.tx=Math.floor(P.x);P.ty=Math.floor(P.z);
   F.dist=bfs(F.g,F.W,F.H,P.tx,P.ty);
+  if(F.pocketMask[P.ty*F.W+P.tx]){const q=F.pockets.find(q=>q.tx===P.tx&&q.ty===P.ty);
+    if(q&&!q.found){q.found=true;if(state==='play')sfx('noclip')}}
   const rad=F.dark?2:5;
   for(let y=P.ty-rad;y<=P.ty+rad;y++)for(let x=P.tx-rad;x<=P.tx+rad;x++){
     if(x<0||y<0||x>=F.W||y>=F.H)continue;
     const i=y*F.W+x;
-    if(F.g[i]===1||F.g[i]===2||F.seen[i])continue;
+    if(F.g[i]===1||F.g[i]===2||F.seen[i]||(F.pocketMask[i]&&i!==P.ty*F.W+P.tx))continue;
     if(los(P.x,P.z,x+0.5,y+0.5))F.seen[i]=1;
   }
 }
@@ -1691,13 +1823,14 @@ function useFlash(){
   requestAnimationFrame(()=>{fx.style.transition='opacity .7s';fx.style.opacity=0});
   let n=0;
   for(const s of F.shades){
+    if(s.type===3){if(s.x>0&&Math.hypot(s.x-P.x,s.z-P.z)<9&&los(P.x,P.z,s.x,s.z)){banish(s,true);n++}continue}
     if(Math.hypot(s.x-P.x,s.z-P.z)<6.5&&los(P.x,P.z,s.x,s.z)){s.stun=4.5;if(s.type!==1)s.state=0;n++}
   }
   sfx('flash');rumble(120,0.2,0.7);
   if(n)say(n>1?`${n} creatures stunned`:'Stunned',1.5);
 }
 function hurt(s){
-  P.hp--;P.inv=1.6;if(s)s.stun=2.5;
+  P.hp--;P.inv=1.6;if(s){s.stun=2.5;s.calm=9;s.state=0}
   try{if(touch.on&&navigator.vibrate)navigator.vibrate(90)}catch(e){}
   rumble(260,0.9,0.6);
   const h=$('hurt');h.style.transition='none';h.style.opacity=1;
@@ -1713,6 +1846,7 @@ function collect(it){
     case 'gem':R.score+=10*R.depth;R.gems++;wallet++;store.set('wallet',wallet);sfx('gem');break;
     case 'oil':P.fuel=Math.min(100,P.fuel+35);lowFuelSaid=false;sfx('oil');break;
     case 'flash':P.flash++;sfx('pick');break;
+    case 'chest':wallet+=8;R.gems+=8;R.score+=60*R.depth;store.set('wallet',wallet);sfx('shard');say('You slipped through the wall. A hidden cache: 8 gems',4);break;
     case 'key':P.keys++;sfx('key');say('You found the gate key',2.5);break;
     case 'heart':if(P.hp<maxHp())P.hp++;else R.score+=25;sfx('pick');break;
   }
@@ -1767,7 +1901,8 @@ document.addEventListener('pointerlockchange',()=>{
   else if(usingLock){usingLock=false;pause()}
 });
 canvas.addEventListener('click',()=>{if(state==='play'&&!document.pointerLockElement)lock()});
-canvas.addEventListener('mousedown',e=>{if(e.button===0&&state==='play'&&document.pointerLockElement===canvas)act()});
+canvas.addEventListener('mousedown',e=>{if(state!=='play'||document.pointerLockElement!==canvas)return;if(e.button===0)act();else if(e.button===2)P.jumpQ=0.15});
+canvas.addEventListener('contextmenu',e=>e.preventDefault());
 $('startBtn').addEventListener('click',()=>{startRun($('seedIn').value.trim());lock()});
 $('resumeBtn').addEventListener('click',()=>resume(true));
 $('againBtn').addEventListener('click',()=>{startRun();lock()});
@@ -1889,6 +2024,23 @@ function initAudio(){
     for(const[f,v]of[[55,0.05],[82.6,0.03],[110.7,0.015]]){const o=ac.createOscillator(),g=ac.createGain();o.frequency.value=f;g.gain.value=v;o.connect(g);g.connect(master);o.start()}
   }catch(e){ac=null}
 }
+// fluorescent buzz and the air handling of the humming rooms
+let humG=null,hvG=null,humB=-1,hvB=-1;
+function setHum(){
+  if(!ac)return;
+  const on=F&&F.back&&state!=='title'&&state!=='dead';
+  const b=on?0.02*panelLvl:0,h=on?0.1:0;
+  if(!humG){
+    if(!on)return;
+    humG=ac.createGain();humG.gain.value=0;humG.connect(master);
+    const o=ac.createOscillator(),hp=ac.createBiquadFilter();o.type='sawtooth';o.frequency.value=120;hp.type='highpass';hp.frequency.value=700;o.connect(hp);hp.connect(humG);o.start();
+    const o2=ac.createOscillator(),g2=ac.createGain();o2.frequency.value=60;g2.gain.value=1.6;o2.connect(g2);g2.connect(humG);o2.start();
+    hvG=ac.createGain();hvG.gain.value=0;hvG.connect(master);
+    const n=ac.createBufferSource(),lp=ac.createBiquadFilter();n.buffer=noiseBuf;n.loop=true;lp.type='lowpass';lp.frequency.value=210;n.connect(lp);lp.connect(hvG);n.start();
+  }
+  if(b!==humB){humB=b;humG.gain.setTargetAtTime(b,ac.currentTime,0.02)}
+  if(h!==hvB){hvB=h;hvG.gain.setTargetAtTime(h,ac.currentTime,0.5)}
+}
 function toggleMute(){muted=!muted;store.set('muted',muted);if(master)master.gain.value=muted?0:0.55;say(muted?'Sound off':'Sound on',1)}
 function tone(freq,dur,type,vol,when,slide,pan){
   if(!ac)return;
@@ -1909,7 +2061,13 @@ function noise(dur,vol,freq,q){
 }
 function sfx(n){
   switch(n){
-    case 'step':noise(0.09,0.12,260+Math.random()*120,1.2);break;
+    case 'step':if(F&&F.back)noise(0.12,0.1,110+Math.random()*50,0.8);else noise(0.09,0.12,260+Math.random()*120,1.2);break;
+    case 'watch':tone(196,1.8,'sine',0.05);tone(207.6,1.8,'sine',0.05);break;
+    case 'gone':noise(0.4,0.07,1700,0.7);tone(240,0.5,'sine',0.04,0,-120);break;
+    case 'powerdown':tone(120,1.5,'sawtooth',0.1,0,-98);noise(0.12,0.2,2600,2);break;
+    case 'powerup':noise(0.1,0.25,3000,2);tone(45,0.5,'sawtooth',0.1,0,80);break;
+    case 'knock':{const pan=Math.random()*2-1,n=2+((Math.random()*3)|0);for(let i=0;i<n;i++)tone(74,0.13,'sine',0.11,i*0.27,-22,pan);break}
+    case 'noclip':tone(520,0.6,'sine',0.08,0,-320);tone(780,0.6,'sine',0.05,0.05,-480);noise(0.45,0.08,5200,4);break;
     case 'gem':tone(1320,0.12,'triangle',0.12);tone(1760,0.16,'triangle',0.1,0.06);break;
     case 'shard':[660,880,1320,1760].forEach((f,i)=>tone(f,0.5,'sine',0.14,i*0.09));break;
     case 'oil':tone(330,0.25,'triangle',0.15,0,220);noise(0.3,0.08,900,2);break;
@@ -1930,6 +2088,49 @@ function sfx(n){
   }
 }
 
+/* ---------- the watcher: seen at the far end of a corridor, gone when you look back ---------- */
+function banish(s,quiet){s.x=-99;s.z=-99;s.hid=10+Math.random()*14;s.seen=0;if(!quiet)sfx('gone')}
+function watcher(s,dt,pfx,pfz){
+  s.vis=false;
+  const bo=F.blk===2;
+  if(s.x<0){
+    s.hid-=dt;
+    if(s.hid>0||P.inSafe)return;
+    s.hid=0.8;
+    for(let k=0;k<8;k++){
+      const a=P.yaw+(Math.random()-0.5)*(bo?6.28:0.9),r=bo?5+Math.random()*4:6.5+Math.random()*7;
+      const x=Math.floor(P.x+Math.cos(a)*r),z=Math.floor(P.z+Math.sin(a)*r);
+      if(x<1||z<1||x>=F.W-1||z>=F.H-1)continue;
+      const i=z*F.W+x;
+      if(F.g[i]!==0||F.safeMask[i]||!los(P.x,P.z,x+0.5,z+0.5))continue;
+      s.x=x+0.5;s.z=z+0.5;s.gx=x;s.gy=z;s.seen=0;s.life=10+Math.random()*8;
+      if(!bo)sfx('watch');
+      return;
+    }
+    return;
+  }
+  if(P.inSafe){banish(s,true);return}
+  const dx=s.x-P.x,dz=s.z-P.z,eu=Math.hypot(dx,dz);
+  if(bo){
+    // with the lights out it comes for you, slowly
+    let gx=s.gx+0.5,gz=s.gy+0.5;
+    if(eu<1.3){gx=P.x;gz=P.z}
+    const mx=gx-s.x,mz=gz-s.z,l=Math.hypot(mx,mz),step=1.9*dt;
+    if(l<=step+0.001){
+      if(eu>=1.3){
+        s.x=gx;s.z=gz;
+        const cx=s.gx,cz=s.gy;let bd=F.dist[cz*F.W+cx];if(bd<0)bd=1e9;
+        for(const k of DIRS){const nx=cx+k[0],nz=cz+k[1],i=nz*F.W+nx;if(F.g[i]||F.safeMask[i]||F.pocketMask[i])continue;const nd=F.dist[i];if(nd>=0&&nd<bd){bd=nd;s.gx=nx;s.gy=nz}}
+      }
+    }else{s.x+=mx/l*step;s.z+=mz/l*step}
+    if(eu<0.5&&P.inv<=0){hurt(null);banish(s,true)}
+    return;
+  }
+  const watched=(dx*pfx+dz*pfz)/Math.max(eu,0.001)>0.75&&los(P.x,P.z,s.x,s.z);
+  if(watched)s.seen+=dt;else s.life-=dt;
+  if(eu<3.2)banish(s,false);
+  else if(!watched&&(s.seen>0.5||s.life<=0))banish(s,true);
+}
 /* ---------- update ---------- */
 function update(dt){
   R.time+=dt;
@@ -1951,12 +2152,12 @@ function update(dt){
   const cy=Math.cos(P.yaw),sy=Math.sin(P.yaw);
   const dxn=cy*fwd-sy*str, dzn=sy*fwd+cy*str;
   if(ground){P.vx=dxn*speed;P.vz=dzn*speed}
-  else if(moving){const k=Math.min(1,3*dt);P.vx+=(dxn*P.airSpeed-P.vx)*k;P.vz+=(dzn*P.airSpeed-P.vz)*k}
+  else if(moving){const k=Math.min(1,7*dt);P.vx+=(dxn*P.airSpeed-P.vx)*k;P.vz+=(dzn*P.airSpeed-P.vz)*k}
   if(P.jumpQ>0)P.jumpQ-=dt;
-  if(ground&&(P.jumpQ>0||keys.Space||pad.jump||touch.jump)){P.jumpQ=0;P.vy=3.5;P.y=0.0001;P.airSpeed=Math.max(speed*(wantSprint?1.08:1),2.7);sfx('jump')}
+  if(ground&&(P.jumpQ>0||keys.Space||pad.jump||touch.jump)){P.jumpQ=0;P.vy=3.5;P.y=0.0001;P.airSpeed=Math.max(speed*(wantSprint?1.18:1),2.7);sfx('jump')}
   if(P.y>0){P.vy-=11*dt;P.y+=P.vy*dt;if(P.y<=0){P.y=0;P.vy=0;sfx('step')}}
-  const nx=P.x+P.vx*dt;if(!blocked(nx,P.z))P.x=nx;else P.vx=0;
-  const nz=P.z+P.vz*dt;if(!blocked(P.x,nz))P.z=nz;else P.vz=0;
+  const nx=P.x+P.vx*dt;if(!blocked(nx,P.z))P.x=nx;else if(ground)P.vx=0;
+  const nz=P.z+P.vz*dt;if(!blocked(P.x,nz))P.z=nz;else if(ground)P.vz=0;
   for(const q of F.pillars){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=0.2+PR;if(dd<m&&dd>1e-4){P.x=q[0]+ddx/dd*m;P.z=q[1]+ddz/dd*m}}
   if(F.safe){const ddx=P.x-F.safe.x,ddz=P.z-F.safe.z,dd=Math.hypot(ddx,ddz),m=0.3+PR;if(dd<m&&dd>1e-4){P.x=F.safe.x+ddx/dd*m;P.z=F.safe.z+ddz/dd*m}}
   for(const q of F.discs){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=q[2]+PR;if(dd<m&&dd>1e-4){const nx2=q[0]+ddx/dd*m,nz2=q[1]+ddz/dd*m;if(!blocked(nx2,nz2)){P.x=nx2;P.z=nz2}}}
@@ -1972,7 +2173,7 @@ function update(dt){
   {const inS=F.safeMask[P.ty*F.W+P.tx]===1;
     if(inS!==P.inSafe){P.inSafe=inS;if(inS){say('A sanctuary. Nothing can follow you here.',3);sfx('descend')}}
     if(inS){P.fuel=Math.min(100,P.fuel+9*dt);P.stam=Math.min(100,P.stam+25*dt);P.chill=Math.min(P.chill,0.3);lowFuelSaid=false}
-    else P.fuel=Math.max(0,P.fuel-0.85*(1-0.15*(up.lamp|0))*dt);}
+    else if(!F.back)P.fuel=Math.max(0,P.fuel-0.85*(1-0.15*(up.lamp|0))*dt);}
   // who is close enough to talk to
   {let best=null,bd=1.45;
     for(const n of F.npcs){const d=Math.hypot(n.x-P.x,n.z-P.z);if(d<bd&&los(P.x,P.z,n.x,n.z)){bd=d;best=n}}
@@ -2011,6 +2212,23 @@ function update(dt){
       if(P.inv<=0&&P.y<0.22&&Math.abs(tr.x-P.x)<0.42&&Math.abs(tr.z-P.z)<0.42){hurt(null);if(state!=='play')return}
     }else tr.up=false;
   }
+  // the humming rooms: lights that fail, knocking in the walls, a map that will not hold
+  if(F.back){
+    F.boT-=dt;
+    if(F.blk===0&&F.boT<=0){F.blk=1;F.boT=1.7;sfx('powerdown')}
+    else if(F.blk===1&&F.boT<=0){
+      F.blk=2;F.boT=6+Math.random()*4;say('The lights are out. Keep moving.',3);
+      for(const s of F.shades){if(s.type===0&&s.d>=0&&s.d<=14&&!P.inSafe)s.state=1;else if(s.type===3&&s.x<0)s.hid=0}
+    }else if(F.blk===2&&F.boT<=0){
+      F.blk=0;F.boT=40+Math.random()*40;sfx('powerup');
+      for(const s of F.shades)if(s.type===3&&s.x>0)banish(s,true);
+    }
+    panelLvl=F.blk===2?0:F.blk===1?((Math.sin(R.time*38)+Math.sin(R.time*61.3)>0.3)?1:0.12):0.97+0.03*Math.sin(R.time*113);
+    F.knT=(F.knT===undefined?12+Math.random()*14:F.knT)-dt;
+    if(F.knT<=0){F.knT=16+Math.random()*24;sfx('knock')}
+    F.fgT=(F.fgT||0)-dt;
+    if(F.fgT<=0){F.fgT=1;for(let k=0;k<30;k++){const x=(Math.random()*F.W)|0,y=(Math.random()*F.H)|0;if(Math.max(Math.abs(x-P.tx),Math.abs(y-P.ty))>6)F.seen[y*F.W+x]=0}}
+  }else panelLvl=1;
   // creatures
   let chasing=0,nearest=99;
   const dark=P.fuel<=0, tR=torchRadius();
@@ -2018,6 +2236,7 @@ function update(dt){
   const pfx=Math.cos(P.yaw),pfz=Math.sin(P.yaw);
   for(const s of F.shades){
     s.ph+=dt*3;
+    if(s.type===3){watcher(s,dt,pfx,pfz);if(state!=='play')return;continue}
     if(s.stun>0){s.stun-=dt;continue}
     const cx=Math.floor(s.x),cz=Math.floor(s.z);
     const d=F.dist[cz*F.W+cx];s.d=d;
@@ -2031,6 +2250,7 @@ function update(dt){
         else if(d<0||d>14)s.state=0;
       }else if(s.type===1)s.state=(d>=0&&d<=45)?1:0;
       else{if(s.state===0){if(d>=0&&d<=9)s.state=1}else if(d<0||d>13)s.state=0}
+      if(s.calm>0){s.calm-=0.2;s.state=0}
       if(P.inSafe)s.state=0;
     }
     let sp;
@@ -2053,7 +2273,7 @@ function update(dt){
         const opts=[];let bestN=null,bestD=d<0?1e9:d;
         for(const k of DIRS){
           const nx2=cx+k[0],ny2=cz+k[1];
-          if(nx2<0||ny2<0||nx2>=F.W||ny2>=F.H||F.g[ny2*F.W+nx2]||F.safeMask[ny2*F.W+nx2])continue;
+          if(nx2<0||ny2<0||nx2>=F.W||ny2>=F.H||F.g[ny2*F.W+nx2]||F.safeMask[ny2*F.W+nx2]||F.pocketMask[ny2*F.W+nx2])continue;
           const nd=F.dist[ny2*F.W+nx2];
           if(nd>=0&&nd<bestD){bestD=nd;bestN=[nx2,ny2]}
           if(!(nx2===s.px&&ny2===s.py))opts.push([nx2,ny2]);
@@ -2070,13 +2290,13 @@ function update(dt){
         P.fuel=Math.max(0,P.fuel-22);sfx('drain');say('A wisp drinks your flame',2);
         for(let tries=0;tries<60;tries++){
           const rx=1+(Math.random()*(F.W-2)|0),ry=1+(Math.random()*(F.H-2)|0),rd=F.dist[ry*F.W+rx];
-          if(F.g[ry*F.W+rx]===0&&!F.safeMask[ry*F.W+rx]&&(rd>10||(tries>40&&rd>4))){s.x=rx+0.5;s.z=ry+0.5;s.gx=rx;s.gy=ry;s.px=-1;break}
+          if(F.g[ry*F.W+rx]===0&&!F.safeMask[ry*F.W+rx]&&!F.pocketMask[ry*F.W+rx]&&(rd>10||(tries>40&&rd>4))){s.x=rx+0.5;s.z=ry+0.5;s.gx=rx;s.gy=ry;s.px=-1;break}
         }
         s.state=0;s.stun=1.5;
       }else if(P.inv<=0){
         if(R.depth<2&&s.type===0){
           // on the first floor a shade only chills you: slowed for a few seconds, no damage
-          P.chill=3.5;P.inv=1.6;s.stun=3;s.state=0;sfx('drain');rumble(180,0.5,0.3);
+          P.chill=3.5;P.inv=1.6;s.stun=3;s.state=0;s.calm=9;sfx('drain');rumble(180,0.5,0.3);
           say('The shade chills you. Deeper down, its touch wounds.',2.6);
         }else{hurt(s);if(state!=='play')return}
       }
@@ -2172,8 +2392,8 @@ function setLights(u,L){
   gl.uniform1f(u.uTorchR,L.torchR);
   gl.uniform1f(u.uFlash,flashT);
   gl.uniform3fv(u.uLPos,lpos);gl.uniform4fv(u.uLCol,lcol);
-  gl.uniform3fv(u.uAmb,F.dark?AMB_ZERO:L.B.amb);
-  gl.uniform3f(u.uFog,L.B.amb[0]*2.2,L.B.amb[1]*2.2,L.B.amb[2]*2.2);
+  gl.uniform3fv(u.uAmb,L.amb);
+  gl.uniform3f(u.uFog,L.fog[0],L.fog[1],L.fog[2]);
   gl.uniform1f(u.uGamma,bright);
   if(SHADOWS){gl.uniform1i(u.uSdf,2);gl.uniform2f(u.uSdfScale,1/F.W,1/F.H);gl.uniform4fv(u.uBlk,blk)}
 }
@@ -2184,7 +2404,7 @@ function drawProp(m,x,y,z,sx,sy,sz,yaw,col,emis,gloss,lx,lz){
   gl.uniform3f(u.uColor,col[0],col[1],col[2]);gl.uniform1f(u.uEmis,emis);gl.uniform1f(u.uGloss,gloss);
   gl.bindVertexArray(m.vao);gl.drawArrays(gl.TRIANGLES,0,m.count);
 }
-const WHITE=[1,1,1],METAL=[0.6,0.62,0.68],SCONCE_COL=[1.0,0.5,0.18];
+const WHITE=[1,1,1],METAL=[0.6,0.62,0.68],SCONCE_COL=[1.0,0.5,0.18],PANEL_COL=[1.0,0.95,0.72];
 function render(t){
   resize();
   if(POST)ensureTargets();
@@ -2202,15 +2422,24 @@ function render(t){
   const torchR=torchRadius()*flick;
   // the torch is held low in the right hand, so shadows swing as you turn
   const L={ex,ey,ez,B,torchR,tx:ex,ty:ey,tz:ez};
+  {const pl=F.back?0.05+0.95*panelLvl:1;
+    L.amb=F.dark?AMB_ZERO:F.back?[B.amb[0]*pl,B.amb[1]*pl,B.amb[2]*pl]:B.amb;
+    L.fog=[B.amb[0]*2.2*pl,B.amb[1]*2.2*pl,B.amb[2]*2.2*pl];}
   if(SHADOWS){L.tx=ex+rx*0.2+fwx*0.04;L.ty=ey-0.14;L.tz=ez+rz*0.2+fwz*0.04;
     if(solidAt(L.tx,L.tz)){L.tx=ex;L.tz=ez}}
   // nearest coloured lights: [dist2, x,y,z, colour, strength, radius]
   const lights=[];
-  for(const it of F.items){if(it.got)continue;const d=(it.x-ex)**2+(it.z-ez)**2;if(d<140)lights.push([d,it.x,0.45,it.z,ITEM[it.type].col,it.type==='gem'?0.5:1.0,2.6])}
+  for(const it of F.items){if(it.got||it.type==='chest')continue;const d=(it.x-ex)**2+(it.z-ez)**2;if(d<140)lights.push([d,it.x,0.45,it.z,ITEM[it.type].col,it.type==='gem'?0.5:1.0,2.6])}
   const open=P.shards>=3&&!title;
   const exCol=open?[0.4,1.0,0.6]:[1.0,0.2,0.15];
   lights.push([(F.exit.x-ex)**2+(F.exit.z-ez)**2-4,F.exit.x,0.5,F.exit.z,exCol,1.5,3.2]);
   for(const s of F.shades)if(s.type===2){const d=(s.x-ex)**2+(s.z-ez)**2;if(d<140)lights.push([d,s.x,0.55,s.z,[0.35,0.6,1.0],1.3,3.0])}
+  if(F.back&&panelLvl>0.01){const near=[];
+    for(const q of F.panels){const d=(q.x-ex)**2+(q.z-ez)**2;if(d<90)near.push([d,q])}
+    near.sort((a,b)=>a[0]-b[0]);
+    for(let i=0;i<near.length&&i<7;i++){const q=near[i][1],k=panelLvl*(q.bad&&Math.sin(t*31+q.ph)+Math.sin(t*47.7+q.ph*2)<0.4?0.1:1);
+      lights.push([near[i][0]+1,q.x,1.12,q.z,PANEL_COL,0.85*k,4.4])}}
+  for(const q of F.pockets){const d=(q.x-ex)**2+(q.z-ez)**2;if(d<140)lights.push([d,q.x,1.0,q.z,PANEL_COL,q.found?1.1:0.55,2.3])}
   for(const q of F.sconces){const d=(q.lx-ex)**2+(q.lz-ez)**2;if(d<200){
     const fl=1+Math.sin(t*9+q.ph)*0.07+Math.sin(t*17.3+q.ph*2)*0.05;q.fl=fl;
     lights.push([d-6,q.lx,0.9,q.lz,SCONCE_COL,1.25*fl,4.6])}}
@@ -2237,7 +2466,7 @@ function render(t){
   setLights(u,L);gl.uniform1f(u.uBlkOn,1);
   gl.uniform3fv(u.uTint,SAFE?new Float32Array([...B.wall,...B.floor,...B.ceil]):(F.dark?TINT_DARK:TINT_ONE));
   gl.uniform3fv(u.uSpec,B.spec);gl.uniform1f(u.uWet,F.kind==='cave'?1:B.wet);
-  gl.uniform1f(u.uBase,F.bi*3);gl.uniform1f(u.uNoTex,SAFE?1:0);
+  gl.uniform1f(u.uBase,F.base);gl.uniform1f(u.uPanel,F.back?panelLvl:1);gl.uniform1f(u.uTime,t);gl.uniform1f(u.uNoTex,SAFE?1:0);
   gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D_ARRAY,worldTex);gl.uniform1i(u.uTex,0);
   if(NORMALMAP){gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D_ARRAY,nrmTex);gl.uniform1i(u.uNrm,1)}
   gl.bindVertexArray(worldVAO);gl.drawArrays(gl.TRIANGLES,0,worldCount);
@@ -2282,7 +2511,8 @@ function render(t){
   for(const s of F.shades){
     const d2=(s.x-ex)**2+(s.z-ez)**2;if(d2>18*18||s.type===2)continue;
     if((s.x-ex)*fwx+(s.z-ez)*fwz<-1.5)continue;
-    if(s.type===1)buildStalker(s,t,ex,ez);
+    if(s.type===3){const e=buildWatcher(s,t,ex,ez);if(F.blk===2)for(const q of e)spr(q[0],q[1],q[2],0.045,0.045,7,0.95,0.92,0.8,1,1)}
+    else if(s.type===1)buildStalker(s,t,ex,ez);
     else{
       const o=buildShade(s,t,ex,ez);
       if(s.stun<=0){
@@ -2421,6 +2651,13 @@ function drawMap(){
   for(const s of F.shades)if(s.vis)dot(s.x,s.z,Math.max(3,ts*0.4),s.type===1?'#e6e0d2':s.type===2?'#5aa8ff':s.state===1?'#ff2a4a':'#a07cff');
   c.save();c.translate(ox+P.x*ts,oy+P.z*ts);c.rotate(P.yaw);
   c.fillStyle='#ffc27a';c.beginPath();c.moveTo(6,0);c.lineTo(-4,4);c.lineTo(-2,0);c.lineTo(-4,-4);c.closePath();c.fill();c.restore();
+  if(F.back){
+    const S2=mapCv.width,tk=Math.floor(R.time*7),r=k=>{const v=Math.sin(tk*12.9898+k*78.233)*43758.5453;return v-Math.floor(v)};
+    c.setTransform(1,0,0,1,0,0);
+    if(F.blk===2){c.fillStyle='#050406';c.fillRect(0,0,S2,S2)}
+    else if(r(0)<0.4||F.blk===1)for(let i=0;i<3;i++){const y=Math.floor(r(1+i)*S2),h=Math.floor(3+r(4+i)*S2*0.09),dx=Math.floor((r(7+i)-0.5)*S2*0.3);c.drawImage(mapCv,0,y,S2,h,dx,y,S2,h)}
+    c.fillStyle='rgba(255,240,170,0.45)';for(let i=0;i<(F.blk===2?90:36);i++)c.fillRect(Math.random()*S2,Math.random()*S2,2*dpr,dpr);
+  }
 }
 
 /* ---------- main loop ---------- */
@@ -2432,13 +2669,14 @@ function frame(now){
   if((state==='play')!==wasPlaying){wasPlaying=state==='play';document.body.classList.toggle('playing',wasPlaying)}
   if(state==='play'){update(dt);adapt(raw)}
   else if(state==='title')titleYaw+=dt*0.15;
+  setHum();
   render(now/1000);
   if(state!=='title'){drawHUD();drawMap()}
   requestAnimationFrame(frame);
 }
 // a backdrop maze behind the title screen
 R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
-window.__game={get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},startRun,useFlash,P,R,touch};
+window.__game={get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);
 </script>
 </body>
