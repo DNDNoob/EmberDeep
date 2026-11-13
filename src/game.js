@@ -7,6 +7,7 @@ import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
 import {ShaderPass} from 'three/addons/postprocessing/ShaderPass.js';
 import {FXAAShader} from 'three/addons/shaders/FXAAShader.js';
 import {RoomEnvironment} from 'three/addons/environments/RoomEnvironment.js';
+import {makeSurfaces} from './textures.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('gl');
@@ -70,6 +71,8 @@ function bfs(g,W,H,sx,sy){
   }
   return d;
 }
+// every floor that is not a Humming Rooms floor moves on to the next biome
+function biomeIx(depth){return (depth-1-Math.floor(depth/4))%4}
 function floorKind(depth){if(depth>=4&&depth%4===0)return 'back';if(depth>=3&&depth%4===3)return 'cave';if(depth>=5&&depth%4===1)return 'dark';return 'maze'}
 function genFloor(seedStr,depth){
   const rng=mulberry32(hashStr(seedStr+'#'+depth));
@@ -332,7 +335,7 @@ function genFloor(seedStr,depth){
   }
   // room dressing: things in corners, banners and chains on walls, stalactites in caverns
   const props=[],discs=[];
-  {const busy=new Set(),used=new Set(),bix=((depth-1)>>1)%4;
+  {const busy=new Set(),used=new Set(),bix=biomeIx(depth);
     for(const n of npcs)busy.add(idx(Math.floor(n.x),Math.floor(n.z)));
     for(const tr of traps)busy.add(idx(tr.tx,tr.ty));
     busy.add(idx(stx,sty));busy.add(idx(ex,ey));
@@ -369,7 +372,7 @@ function genFloor(seedStr,depth){
   // face down an open corridor at the start
   let yaw=0;
   for(const d of DIRS){if(g[idx(stx+d[0],sty+d[1])]===0){yaw=Math.atan2(d[1],d[0]);break}}
-  const bi=kind==='back'?4:((depth-1)>>1)%4;
+  const bi=kind==='back'?4:biomeIx(depth);
   return {W,H,g,cw,ch,kind,dark:kind==='dark',back:kind==='back',base:kind==='back'?13:bi*3,panels,panelAt,pocketMask,phantoms,pockets,blk:0,boT:22+rng()*25,props,discs,safe,safeMask,npcs,reveal:false,door,traps,pillars,sconces,rubble,frames:[],start:{tx:stx,ty:sty,yaw},exit:{tx:ex,ty:ey,x:ex+0.5,z:ey+0.5},items,shades,
           seen:new Uint8Array(W*H),dist:d0,bi,biome:BIOMES[bi],
           name:kind==='cave'?'The Hollow':kind==='dark'?'The Black Hush':BIOMES[bi].name};
@@ -413,35 +416,43 @@ float wNoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);
 `;
 // world surfaces: parallax depth from the normal map's alpha, fine grain, puddles, flickering panels
 function worldMaterial(o){
-  const tex=WT.layers[o.layer];
+  const tex=SAFE?null:SURFS.get(o.layer);
+  const emU={value:o.panel?(Q===0?1.3:2.6):(Q===0?1.6:3.4)};
+  const mapChunk=THREE.ShaderChunk.map_fragment.replace(/vMapUv/g,'pUv')+'\nfloat wEm=clamp(1.0-2.0*sampledDiffuseColor.a,0.0,1.0);float wRough=clamp(2.0*sampledDiffuseColor.a-1.0,0.0,1.0);diffuseColor.a=1.0;\n';
+  const flicker=o.bad?'{float ph=floor(vWPos.x)*1.7+floor(vWPos.z)*2.3;if(sin(uTime*31.0+ph)+sin(uTime*47.7+ph*2.0)<0.4)wEmis*=0.08;}':'';
   if(Q===0){
-    const m=new THREE.MeshLambertMaterial({map:SAFE?null:tex.map,color:SAFE?(o.kind===1?0x6a655c:o.kind===3?0x80501e:0x6b6b6b):0xffffff,side:THREE.DoubleSide});
-    if(tex.emis&&!SAFE){m.emissiveMap=tex.emis;m.emissive.set(0xffffff);m.emissiveIntensity=o.panel?1.3:1.6}
-    m.userData.panel=!!o.panel;
+    const m=new THREE.MeshLambertMaterial({map:tex?tex.map:null,color:SAFE?(o.kind===1?0x6a655c:o.kind===3?0x80501e:0x6b6b6b):0xffffff,side:THREE.DoubleSide});
+    m.userData.panel=!!o.panel;m.userData.em=emU;
+    if(tex)m.onBeforeCompile=sh=>{
+      sh.uniforms.uTime=UT;sh.uniforms.uEmK=emU;
+      sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nvarying vec3 vWPos;').replace('#include <begin_vertex>','#include <begin_vertex>\nvWPos=position;');
+      sh.fragmentShader=sh.fragmentShader
+        .replace('#include <common>','#include <common>\nvarying vec3 vWPos;uniform float uTime;uniform float uEmK;')
+        .replace('#include <map_fragment>','vec2 pUv=vMapUv;\n'+mapChunk)
+        .replace('#include <emissivemap_fragment>',`#include <emissivemap_fragment>\n{float wEmis=wEm*uEmK;${flicker}totalEmissiveRadiance+=diffuseColor.rgb*wEmis;}`);
+    };
+    m.customProgramCacheKey=()=>'wl'+(o.bad?1:0);
     return m;
   }
-  const m=new THREE.MeshStandardMaterial({map:tex.map,normalMap:tex.nrm,roughness:o.rough,metalness:0,side:THREE.DoubleSide});
-  if(tex.emis){m.emissiveMap=tex.emis;m.emissive.set(0xffffff);m.emissiveIntensity=o.panel?2.6:3.2}
-  m.userData.panel=!!o.panel;
-  const steps=Q>=2?10:1;
+  const m=new THREE.MeshStandardMaterial({map:tex.map,normalMap:tex.nrm,roughness:1,metalness:0,side:THREE.DoubleSide});
+  m.userData.panel=!!o.panel;m.userData.em=emU;
+  const steps=Q>=2?12:1;
   m.onBeforeCompile=sh=>{
-    sh.uniforms.uTime=UT;sh.uniforms.uWet={value:o.wet||0};
+    sh.uniforms.uTime=UT;sh.uniforms.uWet={value:o.wet||0};sh.uniforms.uEmK=emU;
     sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nvarying vec3 vWPos;varying vec3 vWNor;')
       .replace('#include <begin_vertex>','#include <begin_vertex>\nvWPos=position;vWNor=normal;');
-    const mapChunk=THREE.ShaderChunk.map_fragment.replace(/vMapUv/g,'pUv');
     const nrmChunk=THREE.ShaderChunk.normal_fragment_maps.replace(/vNormalMapUv/g,'pUv');
-    const emChunk=THREE.ShaderChunk.emissivemap_fragment.replace(/vEmissiveMapUv/g,'pUv');
     sh.fragmentShader=sh.fragmentShader
-      .replace('#include <common>','#include <common>\nvarying vec3 vWPos;varying vec3 vWNor;uniform float uTime;uniform float uWet;'+NOISE_GLSL)
+      .replace('#include <common>','#include <common>\nvarying vec3 vWPos;varying vec3 vWNor;uniform float uTime;uniform float uWet;uniform float uEmK;'+NOISE_GLSL)
       .replace('#include <map_fragment>',`
   vec2 pUv=vMapUv;float wDist=distance(vWPos,cameraPosition);float pud=0.0;
   {vec3 Ng=normalize(vWNor);
     vec3 Tw=abs(Ng.x)>0.5?vec3(0.0,0.0,1.0):vec3(1.0,0.0,0.0);
     vec3 Bw=abs(Ng.y)>0.5?vec3(0.0,0.0,1.0):vec3(0.0,-1.0,0.0);
-    ${o.panel||o.phantom?'':`if(wDist<8.0){
+    ${o.panel||o.phantom?'':`if(wDist<9.0){
       vec3 Vw=(cameraPosition-vWPos)/wDist;
       vec3 vt=vec3(dot(Vw,Tw),dot(Vw,Bw),abs(dot(Vw,Ng)));
-      float sc=0.05*(abs(Ng.y)>0.5?0.5:1.0)*smoothstep(8.0,5.0,wDist);
+      float sc=${o.depth.toFixed(3)}*(abs(Ng.y)>0.5?0.5:1.0)*smoothstep(9.0,6.0,wDist);
       vec2 full=-vt.xy/max(vt.z,0.3)*sc;vec2 gx=dFdx(vMapUv),gy=dFdy(vMapUv);
       ${steps>1?`float lh=1.0/${steps}.0,cur=0.0,d=textureGrad(normalMap,pUv,gx,gy).a,pd=d;vec2 st=full*lh;
       for(int i=0;i<${steps};i++){if(cur>=d)break;pUv+=st;cur+=lh;pd=d;d=textureGrad(normalMap,pUv,gx,gy).a;}
@@ -450,19 +461,16 @@ function worldMaterial(o){
     }`}
   }
   ${mapChunk}
-  ${o.panel?'':`if(wDist<4.0){vec2 dp=vec2(vWPos.x+vWPos.y*0.71,vWPos.z+vWPos.y*0.93);
-    diffuseColor.rgb*=1.0+(wNoise(dp*46.0)*0.6+wNoise(dp*113.0)*0.4-0.5)*0.3*smoothstep(4.0,1.5,wDist);}`}
+  ${o.panel?'':`if(wDist<3.0){vec2 dp=vec2(vWPos.x+vWPos.y*0.71,vWPos.z+vWPos.y*0.93);
+    diffuseColor.rgb*=1.0+(wNoise(dp*61.0)*0.6+wNoise(dp*137.0)*0.4-0.5)*0.16*smoothstep(3.0,1.0,wDist);}`}
   ${o.phantom?'diffuseColor.rgb*=0.86+0.14*sin(uTime*2.3+vWPos.y*11.0+(vWPos.x+vWPos.z)*5.0);':''}
-  ${o.kind===1?'if(uWet>0.0){pud=smoothstep(0.6,0.7,wNoise(vWPos.xz*0.9))*uWet;diffuseColor.rgb*=mix(1.0,0.5,pud);}':''}
+  ${o.kind===1?'if(uWet>0.0){pud=smoothstep(0.6,0.7,wNoise(vWPos.xz*0.9))*uWet*smoothstep(0.25,0.6,texture2D(normalMap,pUv).a+0.25);diffuseColor.rgb*=mix(1.0,0.5,pud);}':''}
 `)
-      .replace('#include <roughnessmap_fragment>',`#include <roughnessmap_fragment>
-  {float lum=dot(diffuseColor.rgb,vec3(0.3,0.59,0.11));roughnessFactor=clamp(roughnessFactor*mix(1.12,0.85,smoothstep(0.02,0.4,lum)),0.04,1.0);
-   roughnessFactor=mix(roughnessFactor,0.06,pud);}`)
+      .replace('#include <roughnessmap_fragment>','float roughnessFactor=mix(max(wRough,0.05),0.05,pud);')
       .replace('#include <normal_fragment_maps>',`vec3 flatN=normal;\n${nrmChunk}\nnormal=normalize(mix(normal,flatN,pud*0.9));`)
-      .replace('#include <emissivemap_fragment>',`${emChunk}
-  ${o.bad?'{float ph=floor(vWPos.x)*1.7+floor(vWPos.z)*2.3;if(sin(uTime*31.0+ph)+sin(uTime*47.7+ph*2.0)<0.4)totalEmissiveRadiance*=0.08;}':''}`);
+      .replace('#include <emissivemap_fragment>',`#include <emissivemap_fragment>\n{float wEmis=wEm*uEmK;${flicker}totalEmissiveRadiance+=diffuseColor.rgb*wEmis;}`);
   };
-  m.customProgramCacheKey=()=>'w'+[o.kind,o.panel?1:0,o.phantom?1:0,o.bad?1:0,steps].join(',');
+  m.customProgramCacheKey=()=>'w'+[o.kind,o.panel?1:0,o.phantom?1:0,o.bad?1:0,steps,o.depth].join(',');
   return m;
 }
 const worldMats=new Map();
@@ -475,7 +483,7 @@ function getWorldMat(F,k){
   const gl2=office?BIOMES[4].spec:B.spec,g=kind===3?0.15:gl2[kind];
   const key=[layer,kd,wet].join(':');
   let m=worldMats.get(key);
-  if(!m){m=worldMaterial({layer,kind,panel,bad:kd===6,phantom:kd===5,wet,rough:clamp(0.96-g*0.85,0.2,1)});worldMats.set(key,m)}
+  if(!m){m=worldMaterial({layer,kind,panel,bad:kd===6,phantom:kd===5,wet,depth:layer===13?0.02:layer===14?0.025:layer>=15?0.03:0.06});worldMats.set(key,m)}
   return m;
 }
 // characters, creatures and decor: painted procedural materials on top of physically based shading
@@ -549,153 +557,6 @@ function paintedMesh(buf,dynamic,glowBase){
   scene.add(mesh);return mesh;
 }
 /* ---------- procedural textures ---------- */
-function makeWorldTextures(){
-  const S=256, TS=Q>=2?512:256, K=TS/S, rng=mulberry32(1337);
-  const mk=()=>{const c=document.createElement('canvas');c.width=c.height=TS;c.getContext('2d',{willReadFrequently:true}).scale(K,K);return c};
-  const grain=(c,amt)=>{
-    const x=c.getContext('2d'),im=x.getImageData(0,0,TS,TS),d=im.data;
-    for(let i=0;i<d.length;i+=4){const n=(rng()-0.5)*amt;d[i]=clamp(d[i]+n,0,255);d[i+1]=clamp(d[i+1]+n,0,255);d[i+2]=clamp(d[i+2]+n,0,255)}
-    x.putImageData(im,0,0);
-  };
-  const blot=(x,n,a,col,r0,r1)=>{r0=r0||10;r1=r1||50;for(let i=0;i<n;i++){const r=r0+rng()*(r1-r0),px=rng()*S,py=rng()*S;
-    const dark=rng()<0.6,c=col||(dark?'0,0,0':'255,255,255'),al=col?a:(dark?a:a*0.5);
-    const gr=x.createRadialGradient(px,py,0,px,py,r);
-    gr.addColorStop(0,`rgba(${c},${al})`);gr.addColorStop(1,`rgba(${c},0)`);
-    x.fillStyle=gr;x.fillRect(px-r,py-r,r*2,r*2)}};
-  const crack=(x,n,col,lw,len)=>{x.strokeStyle=col;x.lineWidth=lw;x.lineJoin='round';
-    for(let i=0;i<n;i++){x.beginPath();let px=rng()*S,py=rng()*S;x.moveTo(px,py);
-      for(let k=0;k<4;k++){px+=(rng()-0.5)*len;py+=(rng()-0.5)*len;x.lineTo(px,py)}x.stroke()}};
-  const L=[],EM=new Set();
-  // ---- 0 old stonework: bricks, flagstones, rough rock
-  {const w=mk(),x=w.getContext('2d');x.fillStyle='#2a2622';x.fillRect(0,0,S,S);
-    for(let r=0;r<4;r++)for(let b=-1;b<3;b++){
-      const ox=b*128+(r%2?64:0),oy=r*64,v=95+rng()*45|0;
-      x.fillStyle=`rgb(${v+14},${v+2},${v-16})`;x.fillRect(ox+3,oy+3,122,58);
-      x.fillStyle='rgba(255,255,255,0.07)';x.fillRect(ox+3,oy+3,122,4);
-      x.fillStyle='rgba(0,0,0,0.22)';x.fillRect(ox+3,oy+56,122,5);
-    }
-    blot(x,26,0.22);grain(w,26);L.push(w);
-    const f=mk(),y=f.getContext('2d');y.fillStyle='#1d1a18';y.fillRect(0,0,S,S);
-    for(let j=0;j<4;j++)for(let i=0;i<4;i++){const v=70+rng()*38|0;y.fillStyle=`rgb(${v+8},${v+2},${v-6})`;y.fillRect(i*64+2,j*64+2,60,60)}
-    crack(y,9,'rgba(0,0,0,0.35)',1.2,50);blot(y,30,0.2);grain(f,24);L.push(f);
-    const c=mk(),z=c.getContext('2d');z.fillStyle='#4a423a';z.fillRect(0,0,S,S);blot(z,70,0.3);grain(c,34);L.push(c);}
-  // ---- 1 mossgrown: big rough blocks, cobbles, damp rock
-  {const w=mk(),x=w.getContext('2d');x.fillStyle='#161b14';x.fillRect(0,0,S,S);
-    for(let r=0;r<2;r++){let cx=-(rng()*60|0);
-      while(cx<S){const bw=56+rng()*60|0,v=70+rng()*35|0;
-        x.fillStyle=`rgb(${v-8},${v+4},${v-12})`;x.fillRect(cx+4,r*128+4,bw-8,120);
-        const mg=x.createLinearGradient(0,r*128,0,r*128+50);mg.addColorStop(0,'rgba(70,140,50,0.75)');mg.addColorStop(1,'rgba(70,140,50,0)');
-        x.fillStyle=mg;x.fillRect(cx+4,r*128+4,bw-8,50);cx+=bw}}
-    blot(x,46,0.4,'60,125,45',6,30);blot(x,20,0.25);grain(w,30);L.push(w);
-    const f=mk(),y=f.getContext('2d');y.fillStyle='#141a12';y.fillRect(0,0,S,S);
-    for(let i=0;i<110;i++){const r=10+rng()*13,px=rng()*S,py=rng()*S,v=58+rng()*42|0;
-      y.fillStyle=`rgb(${v-6},${v+2},${v-12})`;y.beginPath();y.ellipse(px,py,r,r*0.8,rng()*3,0,7);y.fill();
-      y.strokeStyle='rgba(0,0,0,0.5)';y.lineWidth=2;y.stroke()}
-    blot(y,36,0.35,'55,120,45',6,26);grain(f,26);L.push(f);
-    const c=mk(),z=c.getContext('2d');z.fillStyle='#2a3326';z.fillRect(0,0,S,S);blot(z,70,0.3);blot(z,24,0.3,'50,110,45',8,30);grain(c,32);L.push(c);}
-  // ---- 2 frostvault: ice walls, frosted tiles
-  {const w=mk(),x=w.getContext('2d');const gr=x.createLinearGradient(0,0,0,S);gr.addColorStop(0,'#a9cde4');gr.addColorStop(1,'#56839f');
-    x.fillStyle=gr;x.fillRect(0,0,S,S);
-    for(let i=0;i<60;i++){x.fillStyle=`rgba(255,255,255,${0.03+rng()*0.09})`;x.fillRect(rng()*S,0,1+rng()*7,S)}
-    for(let i=0;i<30;i++){x.fillStyle=`rgba(10,40,80,${0.04+rng()*0.08})`;x.fillRect(rng()*S,0,1+rng()*9,S)}
-    x.fillStyle='rgba(15,40,75,0.6)';x.fillRect(0,0,S,3);x.fillRect(0,126,S,4);x.fillRect(0,0,3,128);x.fillRect(126,128,4,128);
-    crack(x,10,'rgba(255,255,255,0.6)',1.3,70);blot(x,22,0.3,'255,255,255',10,40);grain(w,12);L.push(w);
-    const f=mk(),y=f.getContext('2d');y.fillStyle='#2c4a63';y.fillRect(0,0,S,S);
-    for(let j=0;j<2;j++)for(let i=0;i<2;i++){const v=rng()*24|0;y.fillStyle=`rgb(${96+v},${132+v},${164+v})`;y.fillRect(i*128+2,j*128+2,124,124)}
-    blot(y,34,0.3,'255,255,255',8,36);crack(y,8,'rgba(255,255,255,0.45)',1.1,60);grain(f,12);L.push(f);
-    const c=mk(),z=c.getContext('2d');z.fillStyle='#35546f';z.fillRect(0,0,S,S);blot(z,46,0.25,'230,245,255',6,30);blot(z,30,0.25);grain(c,18);L.push(c);}
-  // ---- 3 cinder warrens: basalt columns with glowing cracks
-  {const w=mk(),x=w.getContext('2d');x.fillStyle='#0b0909';x.fillRect(0,0,S,S);
-    for(let i=0;i<8;i++){const v=40+rng()*30|0;x.fillStyle=`rgb(${v+10},${v},${v-2})`;x.fillRect(i*32+2,0,28,S);
-      x.fillStyle='rgba(255,255,255,0.05)';x.fillRect(i*32+2,0,4,S);
-      for(let k=0;k<3;k++){x.fillStyle='rgba(0,0,0,0.5)';x.fillRect(i*32+2,rng()*S,28,3)}}
-    blot(x,20,0.3);grain(w,20);
-    crack(x,6,'rgba(255,80,10,0.4)',7,60);
-    EM.add(L.length);L.push(w);
-    const f=mk(),y=f.getContext('2d');y.fillStyle='#0d0a0a';y.fillRect(0,0,S,S);
-    for(let j=0;j<2;j++)for(let i=0;i<2;i++){const v=38+rng()*22|0;y.fillStyle=`rgb(${v+8},${v},${v-2})`;y.fillRect(i*128+3,j*128+3,122,122)}
-    blot(y,30,0.3);grain(f,20);crack(y,3,'rgba(255,80,10,0.4)',6,70);
-    EM.add(L.length);L.push(f);
-    const c=mk(),z=c.getContext('2d');z.fillStyle='#1c1513';z.fillRect(0,0,S,S);blot(z,70,0.35);grain(c,26);L.push(c);}
-  // ---- 12 gate: iron-bound planks
-  {const d=mk(),x=d.getContext('2d');x.fillStyle='#1c1108';x.fillRect(0,0,S,S);
-    for(let i=0;i<4;i++){const v=rng()*26|0;x.fillStyle=`rgb(${112+v},${72+v*0.6|0},${34})`;x.fillRect(i*64+2,0,60,S);
-      for(let k=0;k<7;k++){x.fillStyle='rgba(40,20,5,0.35)';x.fillRect(i*64+6+rng()*50,0,1.5,S)}}
-    for(const by of[34,196]){x.fillStyle='#3a3d42';x.fillRect(0,by,S,26);x.fillStyle='rgba(255,255,255,0.12)';x.fillRect(0,by,S,3);
-      for(let i=0;i<8;i++){x.fillStyle='#8a8f98';x.beginPath();x.arc(16+i*32,by+13,4,0,7);x.fill()}}
-    x.fillStyle='#6a6f78';x.fillRect(100,104,56,56);x.fillStyle='#c9a24a';x.fillRect(104,108,48,48);
-    x.fillStyle='#0a0705';x.beginPath();x.arc(128,126,8,0,7);x.fill();x.fillRect(124,128,8,20);
-    grain(d,16);L.push(d);}
-  // ---- 13..16 the humming rooms: stained wallpaper, damp carpet, ceiling tiles, light panel
-  let PANEL=-1;
-  {const w=mk(),x=w.getContext('2d');x.fillStyle='#b9a650';x.fillRect(0,0,S,S);
-    for(let i=0;i<16;i++){x.fillStyle=i%2?'rgba(255,240,150,0.10)':'rgba(90,70,10,0.10)';x.fillRect(i*16,0,8,S)}
-    x.strokeStyle='rgba(120,100,30,0.28)';x.lineWidth=1.5;
-    for(let j=0;j<8;j++)for(let i=0;i<8;i++){x.beginPath();x.moveTo(i*32+6,j*32+20);x.lineTo(i*32+16,j*32+10);x.lineTo(i*32+26,j*32+20);x.stroke()}
-    blot(x,14,0.2,'70,50,10',20,70);
-    const gr=x.createLinearGradient(0,S-80,0,S);gr.addColorStop(0,'rgba(60,45,10,0)');gr.addColorStop(1,'rgba(60,45,10,0.4)');x.fillStyle=gr;x.fillRect(0,S-80,S,80);
-    x.fillStyle='#4a3a22';x.fillRect(0,S-16,S,16);x.fillStyle='rgba(255,255,255,0.12)';x.fillRect(0,S-16,S,2);
-    grain(w,14);L.push(w);
-    const f=mk(),y=f.getContext('2d');y.fillStyle='#6f6238';y.fillRect(0,0,S,S);blot(y,60,0.22,'40,34,14',6,26);blot(y,10,0.3,'30,26,12',30,80);grain(f,46);L.push(f);
-    const c=mk(),z=c.getContext('2d');z.fillStyle='#c9c4ae';z.fillRect(0,0,S,S);
-    for(let i=0;i<900;i++){z.fillStyle='rgba(60,55,40,0.35)';z.fillRect(rng()*S,rng()*S,1.5,1.5)}
-    z.fillStyle='#6d6a5c';for(const q of[0,128]){z.fillRect(q,0,3,S);z.fillRect(0,q,S,3)}
-    blot(z,6,0.25,'90,70,20',20,60);grain(c,12);L.push(c);
-    const pn=mk(),u2=pn.getContext('2d');u2.drawImage(c,0,0,S,S);
-    for(const qx of[0,128])for(const qy of[0,128]){u2.fillStyle='#55524a';u2.fillRect(qx+14,qy+30,100,68);u2.fillStyle='#fffbe6';u2.fillRect(qx+18,qy+34,92,60)}
-    PANEL=L.length;L.push(pn);}
-  // glowing crack cores drawn last so they can be flagged as emissive (alpha 0)
-  for(const li of EM){const x=L[li].getContext('2d');const sr=mulberry32(77+li);
-    const im0=x.getImageData(0,0,TS,TS).data;const at=(px,py)=>((((py*K)|0)&(TS-1))*TS+(((px*K)|0)&(TS-1)))*4;
-    x.strokeStyle='rgb(255,150,40)';x.lineWidth=2;x.lineJoin='round';
-    for(let i=0;i<S*S&&i<40;i++){
-      let px=sr()*S,py=sr()*S;
-      // only start a hot core where the red glow already is
-      if(!(im0[at(px,py)]>90&&im0[at(px,py)+2]<60))continue;
-      x.beginPath();x.moveTo(px,py);for(let k=0;k<3;k++){px+=(sr()-0.5)*26;py+=(sr()-0.5)*26;x.lineTo(px,py)}x.stroke();
-    }}
-  const an=Math.min(Q>=2?16:Q>=1?8:4,renderer.capabilities.getMaxAnisotropy());
-  const cfg=(t,srgb)=>{t.wrapS=t.wrapT=THREE.RepeatWrapping;t.flipY=false;t.colorSpace=srgb?THREE.SRGBColorSpace:THREE.NoColorSpace;
-    t.anisotropy=an;t.generateMipmaps=true;t.minFilter=THREE.LinearMipmapLinearFilter;t.magFilter=THREE.LinearFilter;t.needsUpdate=true;return t};
-  // depth of each surface: the brightest part is its face; darker mortar, cracks and seams sink below it
-  const DK=[1,1,0.7, 1,1,0.7, 0.35,0.4,0.3, 0.45,0.4,0.4, 0.6, 0.12,0.45,0.5,0];
-  const hg=new Float32Array(TS*TS),hb=new Float32Array(TS*TS),hist=new Uint32Array(256),M=TS-1,str=3.0*K;
-  const layers=L.map((cv,i)=>{
-    const data=cv.getContext('2d').getImageData(0,0,TS,TS).data;
-    let emis=null;
-    if(i===PANEL||EM.has(i)){
-      const ec=document.createElement('canvas');ec.width=ec.height=TS;
-      const ex=ec.getContext('2d'),eim=ex.createImageData(TS,TS),ed=eim.data;
-      for(let k=0;k<data.length;k+=4){
-        const on=i===PANEL?(data[k]>250&&data[k+1]>245&&data[k+2]>215):(data[k]>215&&data[k+1]>95&&data[k+1]<200&&data[k+2]<95);
-        if(on){ed[k]=data[k];ed[k+1]=data[k+1];ed[k+2]=data[k+2]}
-        ed[k+3]=255;
-      }
-      ex.putImageData(eim,0,0);
-      emis=cfg(new THREE.CanvasTexture(ec),true);
-    }
-    const map=cfg(new THREE.CanvasTexture(cv),true);
-    let nrm=null;
-    if(NORMALMAP){
-      const out=new Uint8Array(TS*TS*4);
-      for(let q=0;q<TS*TS;q++)hg[q]=(data[q*4]*0.3+data[q*4+1]*0.59+data[q*4+2]*0.11)/255;
-      for(let y=0;y<TS;y++)for(let x=0;x<TS;x++){let a=0;
-        for(let dy=-1;dy<=1;dy++){const row=((y+dy)&M)*TS;a+=hg[row+((x-1)&M)]+hg[row+x]+hg[row+((x+1)&M)]}
-        hb[y*TS+x]=a/9}
-      hist.fill(0);for(let q=0;q<TS*TS;q++)hist[Math.min(255,(hb[q]*255)|0)]++;
-      let lo=0,hi=255;{let acc=0;for(let v=0;v<256;v++){acc+=hist[v];if(acc<TS*TS*0.04)lo=v;if(acc<TS*TS*0.75)hi=v}}
-      lo/=255;hi=Math.max(hi/255,lo+0.04);const dk=(DK[i]===undefined?0.5:DK[i])*255;
-      for(let y=0;y<TS;y++)for(let x=0;x<TS;x++){
-        const nx=(hb[y*TS+((x-1)&M)]-hb[y*TS+((x+1)&M)])*str,ny=(hb[((y-1)&M)*TS+x]-hb[((y+1)&M)*TS+x])*str;
-        const l=1/Math.hypot(nx,ny,1),o=(y*TS+x)*4;
-        out[o]=(nx*l*0.5+0.5)*255;out[o+1]=(ny*l*0.5+0.5)*255;out[o+2]=(l*0.5+0.5)*255;out[o+3]=clamp((hi-hb[y*TS+x])/(hi-lo),0,1)*dk;
-      }
-      nrm=cfg(new THREE.DataTexture(out,TS,TS,THREE.RGBAFormat),false);
-    }
-    return {map,nrm,emis};
-  });
-  return {layers};
-}
 function makeSpriteTexture(){
   const C=128,cv=document.createElement('canvas');cv.width=C*8;cv.height=C*8;
   const x=cv.getContext('2d');x.scale(2,2);
@@ -765,7 +626,7 @@ function makeSpriteTexture(){
   tex.wrapS=tex.wrapT=THREE.ClampToEdgeWrapping;tex.generateMipmaps=true;tex.minFilter=THREE.LinearMipmapLinearFilter;tex.magFilter=THREE.LinearFilter;
   return tex;
 }
-const WT=makeWorldTextures(), spriteTex=makeSpriteTexture();
+const SURFS=makeSurfaces(renderer,Q>=2?1024:Q>=1?512:256,NORMALMAP), spriteTex=makeSpriteTexture();
 
 /* ---------- world mesh ---------- */
 let worldMesh=null;
@@ -2152,7 +2013,7 @@ function render(t){
     for(const q of lights){if(i>=poolLights.length)break;if(used.has(q))continue;
       const l=poolLights[i++];l.position.set(q[1],q[2],q[3]);l.color.setRGB(q[4][0],q[4][1],q[4][2]);l.intensity=q[5]*LK.pool;l.distance=q[6]*1.15}
     for(;i<poolLights.length;i++)poolLights[i].intensity=0;}
-  for(const m of worldMats.values())if(m.userData.panel)m.emissiveIntensity=(Q===0?1.3:2.6)*(F.back?panelLvl:1);
+  for(const m of worldMats.values())if(m.userData.panel)m.userData.em.value=(Q===0?1.3:2.6)*(F.back?panelLvl:1);
 
   // traps and crystals are posed into the same buffer as the characters
   const flat={p:[0,0,0],R:ID3,lo:ZERO3};
@@ -2348,11 +2209,11 @@ function frame(now){
   if(state==='play'){update(dt);adapt(raw)}
   else if(state==='title')titleYaw+=dt*0.15;
   setHum();
-  render(now/1000);
+  if(!window.__norender)render(now/1000);
   if(state!=='title'){drawHUD();drawMap()}
   requestAnimationFrame(frame);
 }
 // a backdrop maze behind the title screen
 R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
-window.__game={get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);
