@@ -595,6 +595,7 @@ precision highp float;precision highp sampler2DArray;
 #define SHADOWS ${SHADOWS}
 #define POST ${POST?1:0}
 #define NORMALMAP ${NORMALMAP?1:0}
+#define POM ${Q>=2?10:Q>=1?1:0}
 `;
 // shared lighting: hand torch + coloured point lights, soft shadows marched through a distance field of the maze
 const LIGHT_GLSL=`
@@ -692,17 +693,43 @@ void main(){
   float layer=isDoor?12.0:(office?13.0:uBase)+(isPanel?3.0:float(li));
   if(uNoTex>0.5){vec2 gq=fract(vUV*vec2(2.0,4.0));tx=(isDoor?vec3(0.5,0.3,0.12):vec3(0.42))*(0.45+0.55*step(0.04,gq.x)*step(0.07,gq.y));}
   else{
-    vec4 t4=texture(uTex,vec3(vUV,layer));tx=t4.rgb;em=1.0-t4.a;if(isPanel)em*=uPanel;if(isBad){float ph=floor(vPos.x)*1.7+floor(vPos.z)*2.3;if(sin(uTime*31.0+ph)+sin(uTime*47.7+ph*2.0)<0.4)em*=0.1;}
+    vec2 uv=vUV;
 #if NORMALMAP
-    vec3 nm=texture(uNrm,vec3(vUV,layer)).xyz*2.0-1.0;
     vec3 T=abs(Ng.x)>0.5?vec3(0.0,0.0,1.0):vec3(1.0,0.0,0.0);
     vec3 Bv=abs(Ng.y)>0.5?vec3(0.0,0.0,1.0):vec3(0.0,-1.0,0.0);
+    vec2 gx=dFdx(vUV),gy=dFdy(vUV);
+#if POM>0
+    {vec3 Vw=uEye-vPos;float dv=length(Vw);
+      if(dv<8.0&&!isPanel&&!isPh){
+        vec3 vt=vec3(dot(Vw,T),dot(Vw,Bv),abs(dot(Vw,Ng)))/dv;
+        float sc=0.05*(abs(Ng.y)>0.5?0.5:1.0)*smoothstep(8.0,5.0,dv);
+        vec2 full=-vt.xy/max(vt.z,0.3)*sc;
+#if POM>1
+        float n=float(POM),lh=1.0/n,cur=0.0,d=textureGrad(uNrm,vec3(uv,layer),gx,gy).a,pd=d;vec2 st=full/n;
+        for(int i=0;i<POM;i++){if(cur>=d)break;uv+=st;cur+=lh;pd=d;d=textureGrad(uNrm,vec3(uv,layer),gx,gy).a;}
+        float a=d-cur,b=pd-(cur-lh);uv-=st*clamp(a/(a-b-1e-5),0.0,1.0);
+#else
+        uv+=full*textureGrad(uNrm,vec3(uv,layer),gx,gy).a;
+#endif
+      }}
+#endif
+    vec4 t4=textureGrad(uTex,vec3(uv,layer),gx,gy);
+#else
+    vec4 t4=texture(uTex,vec3(uv,layer));
+#endif
+    tx=t4.rgb;em=1.0-t4.a;if(isPanel)em*=uPanel;if(isBad){float ph=floor(vPos.x)*1.7+floor(vPos.z)*2.3;if(sin(uTime*31.0+ph)+sin(uTime*47.7+ph*2.0)<0.4)em*=0.1;}
+#if NORMALMAP
+    vec3 nm=textureGrad(uNrm,vec3(uv,layer),gx,gy).xyz*2.0-1.0;
     N=normalize(T*nm.x+Bv*nm.y+Ng*nm.z);
 #endif
   }
   vec3 tint=isDoor?vec3(1.0):(li==0?uTint[0]:(li==1?uTint[1]:uTint[2]));
   float gloss=isDoor?0.15:(li==0?uSpec.x:(li==1?uSpec.y:uSpec.z));
   vec3 alb=tx*tint;
+#if POST
+  {float dd=distance(vPos,uEye);if(dd<4.0&&!isPanel){vec2 dp=vec2(vPos.x+vPos.y*0.71,vPos.z+vPos.y*0.93);
+    alb*=1.0+(vnoise(dp*46.0)*0.6+vnoise(dp*113.0)*0.4-0.5)*0.22*smoothstep(4.0,1.5,dd);}}
+#endif
   if(isPh)alb*=0.88+0.12*sin(uTime*2.3+vPos.y*11.0+(vPos.x+vPos.z)*5.0);
   if(li==1&&uWet>0.0){
     float pud=smoothstep(0.6,0.7,vnoise(vPos.xz*0.9))*uWet;
@@ -832,7 +859,7 @@ void main(){vec3 c=texture(uTex,vUV).rgb*0.227;
 precision highp float;uniform sampler2D uScene;uniform sampler2D uBloom;uniform float uGamma;uniform float uTime;in vec2 vUV;out vec4 o;
 float hash(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
 void main(){vec3 c=texture(uScene,vUV).rgb+texture(uBloom,vUV).rgb*0.9;
-  c=1.0-exp(-max(c,vec3(0.0))*1.25);
+  c=max(c,vec3(0.0))*0.78;c=clamp(c*(2.51*c+0.03)/(c*(2.43*c+0.59)+0.14),0.0,1.0);
   c=pow(c,vec3(1.0/uGamma));
   c+=(hash(gl_FragCoord.xy+fract(uTime)*61.0)-0.5)/200.0;
   o=vec4(c,dot(c,vec3(0.299,0.587,0.114)));}`,[]),
@@ -983,15 +1010,21 @@ function makeWorldTextures(){
     nrm=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D_ARRAY,nrm);
     gl.texStorage3D(gl.TEXTURE_2D_ARRAY,LV,gl.RGBA8,TS,TS,L.length);
     const hg=new Float32Array(TS*TS),hb=new Float32Array(TS*TS),out=new Uint8Array(TS*TS*4),M=TS-1,str=3.0*K;
+    const DK=[1,1,0.7, 1,1,0.7, 0.35,0.4,0.3, 0.45,0.4,0.4, 0.6, 0.12,0.45,0.5,0];
+    const hist=new Uint32Array(256);
     datas.forEach((data,li)=>{
       for(let q=0;q<TS*TS;q++)hg[q]=(data[q*4]*0.3+data[q*4+1]*0.59+data[q*4+2]*0.11)/255;
       for(let y=0;y<TS;y++)for(let x=0;x<TS;x++){let a=0;
         for(let dy=-1;dy<=1;dy++){const row=((y+dy)&M)*TS;a+=hg[row+((x-1)&M)]+hg[row+x]+hg[row+((x+1)&M)]}
         hb[y*TS+x]=a/9}
+      // the brightest tenth of a surface is its face; darker mortar, cracks and seams sink below it
+      hist.fill(0);for(let q=0;q<TS*TS;q++)hist[Math.min(255,(hb[q]*255)|0)]++;
+      let lo=0,hi=255;{let acc=0;for(let v=0;v<256;v++){acc+=hist[v];if(acc<TS*TS*0.04)lo=v;if(acc<TS*TS*0.75)hi=v}}
+      lo/=255;hi=Math.max(hi/255,lo+0.04);const dk=(DK[li]===undefined?0.5:DK[li])*255;
       for(let y=0;y<TS;y++)for(let x=0;x<TS;x++){
         const nx=(hb[y*TS+((x-1)&M)]-hb[y*TS+((x+1)&M)])*str,ny=(hb[((y-1)&M)*TS+x]-hb[((y+1)&M)*TS+x])*str;
         const l=1/Math.hypot(nx,ny,1),o=(y*TS+x)*4;
-        out[o]=(nx*l*0.5+0.5)*255;out[o+1]=(ny*l*0.5+0.5)*255;out[o+2]=(l*0.5+0.5)*255;out[o+3]=255;
+        out[o]=(nx*l*0.5+0.5)*255;out[o+1]=(ny*l*0.5+0.5)*255;out[o+2]=(l*0.5+0.5)*255;out[o+3]=clamp((hi-hb[y*TS+x])/(hi-lo),0,1)*dk;
       }
       gl.texSubImage3D(gl.TEXTURE_2D_ARRAY,0,0,0,li,TS,TS,1,gl.RGBA,gl.UNSIGNED_BYTE,out);
     });
@@ -1486,6 +1519,21 @@ function buildWatcher(s,t,ex,ez){
   ball(H,[0,0,0],[0.046,0.068*k,0.046],c);
   for(const z of[-1,1])limb(U,[0,0.35*k,z*0.072],[0.012,0.03*k,z*0.088],[0.035,-0.3*k,z*0.082],0.021,0.016,0.012,c,c,c,0.017);
   return [fpt(H,[0.043,0.012,-0.018]),fpt(H,[0.043,0.012,0.018])];
+}
+function buildHand(t,ex,ey,ez,yaw,pitch){
+  const sw=Math.sin(P.bob)*0.006,up=Math.abs(Math.cos(P.bob))*0.007+Math.sin(t*1.3)*0.002-Math.min(0.03,Math.max(-0.03,P.vy*0.006));
+  const f={p:[ex,ey,ez],R:m3(rYaw(yaw),rZ(pitch*0.85)),lo:[0.2,0.4,0.6]};
+  const skin=[0.74,0.54,0.42,1],lea=[0.3,0.2,0.12,3],wood=[0.36,0.23,0.12,6],rag=[0.13,0.1,0.08,2],iron=[0.16,0.15,0.15,4];
+  const h=[0.205,-0.172+up,0.185+sw],tip=[0.224,-0.07+up,0.172+sw];
+  seg(f,[0.02,-0.34+up,0.3+sw],[0.17,-0.195+up,0.2+sw],0.034,0.024,lea);
+  seg(f,[0.165,-0.2+up,0.203+sw],[0.19,-0.18+up,0.192+sw],0.027,0.023,iron);
+  ball(f,h,[0.024,0.022,0.024],skin);
+  for(let i=0;i<4;i++)ball(f,[h[0]+0.014,h[1]-0.014+i*0.0095,h[2]-0.008],[0.011,0.006,0.016],skin,true);
+  ball(f,[h[0]-0.004,h[1]+0.018,h[2]-0.014],[0.009,0.012,0.009],skin,true);
+  seg(f,[h[0]-0.004,h[1]-0.05,h[2]+0.002],tip,0.007,0.008,wood);
+  seg(f,[tip[0]-0.002,tip[1]-0.012,tip[2]],[tip[0]+0.002,tip[1]+0.012,tip[2]],0.011,0.0135,rag);ball(f,[tip[0]+0.002,tip[1]+0.014,tip[2]],[0.013,0.01,0.013],rag,true);
+  seg(f,[tip[0]-0.002,tip[1]-0.016,tip[2]],[tip[0]-0.002,tip[1]-0.011,tip[2]],0.0125,0.0125,iron);
+  return fpt(f,[tip[0]+0.003,tip[1]+0.045,tip[2]]);
 }
 /* ---------- static decor: pillars, brazier, rubble, sconces and room dressing ---------- */
 const M6={};function mesh6(k){if(M6[k])return M6[k];const c=MESH_DATA[k],o=new Float32Array(c.length/9*6);for(let i=0,j=0;i<c.length;i+=9)for(let q=0;q<6;q++)o[j++]=c[i+q];return M6[k]=o}
@@ -2524,6 +2572,15 @@ function render(t){
   }
   if(CH.n){gl.useProgram(matProg.p);gl.bindBuffer(gl.ARRAY_BUFFER,chars.vbo);gl.bufferData(gl.ARRAY_BUFFER,CH.buf.subarray(0,CH.n*13),gl.DYNAMIC_DRAW);chars.count=CH.n;drawMat(chars,0.03,0)}
 
+  if(!title&&state!=='dead'){
+    CH.n=0;const q=buildHand(t,ex,ey,ez,yaw,pitch);
+    gl.useProgram(matProg.p);gl.bindBuffer(gl.ARRAY_BUFFER,chars.vbo);gl.bufferData(gl.ARRAY_BUFFER,CH.buf.subarray(0,CH.n*13),gl.DYNAMIC_DRAW);chars.count=CH.n;
+    gl.depthRange(0,0.06);drawMat(chars,0.03,0);gl.depthRange(0,1);
+    if(P.fuel>0){const k=0.55+0.45*Math.sqrt(P.fuel/100),fl=1+Math.sin(t*13)*0.08+Math.sin(t*29.3)*0.06;
+      spr(q[0],q[1],q[2],0.05*k*fl,0.085*k*fl,11,1.0,0.6,0.2,1,1);
+      spr(q[0]+Math.sin(t*7.1)*0.004,q[1]-0.008,q[2]+Math.cos(t*6.3)*0.004,0.036*k,0.06*k,11,1.0,0.85,0.45,0.9,1);
+      spr(q[0],q[1],q[2],0.3*k,0.3*k,7,1.0,0.5,0.15,0.22*fl,1);}
+  }
   // sprites
   for(const it of F.items){
     if(it.got)continue;
