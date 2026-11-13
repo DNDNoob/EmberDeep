@@ -466,11 +466,46 @@ function genFloor(seedStr,depth){
       break;
     }
   }
+  // room dressing: things in corners, banners and chains on walls, stalactites in caverns
+  const props=[],discs=[];
+  {const busy=new Set(),used=new Set(),bix=((depth-1)>>1)%BIOMES.length;
+    for(const n of npcs)busy.add(idx(Math.floor(n.x),Math.floor(n.z)));
+    for(const tr of traps)busy.add(idx(tr.tx,tr.ty));
+    busy.add(idx(stx,sty));busy.add(idx(ex,ey));
+    const special=bix===1?'shroom':bix===2?'ice':bix===3?'ember':'urn';
+    const types=kind==='cave'?['bones','bones','sack',special,special,special,'urn']:['barrel','barrel','crate','crate','urn','sack','bones',special,special];
+    const RAD={barrel:0.13,crate:0.15,urn:0.09,sack:0.11,ice:0.08,ember:0.11};
+    const cands=[];
+    for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
+      const i=idx(x,y);if(g[i]!==0||safeMask[i]||busy.has(i))continue;
+      if(door&&Math.abs(x-door.tx)+Math.abs(y-door.ty)<=1)continue;
+      cands.push([x,y,g[idx(x+1,y)]===1?1:g[idx(x-1,y)]===1?-1:0,g[idx(x,y+1)]===1?1:g[idx(x,y-1)]===1?-1:0]);
+    }
+    shuffle(cands);
+    const maxC=Math.round(nCells/5),maxW=Math.round(nCells/7);let nc=0,nw=0;
+    for(const c of cands){
+      const x=c[0],y=c[1],wx=c[2],wz=c[3],i=idx(x,y);
+      if(wx&&wz){
+        if(nc>=maxC||used.has(i-1)||used.has(i+1)||used.has(i-W)||used.has(i+W))continue;
+        const t=types[ri(types.length)],sc=0.85+rng()*0.3,px=x+0.5+wx*0.31,pz=y+0.5+wz*0.31;
+        props.push({t,x:px,z:pz,r:rng()*6.28,s:sc,v:rng()<0.45?1:0});
+        if(RAD[t])discs.push([px,pz,RAD[t]*sc]);
+        used.add(i);nc++;
+      }else if((wx||wz)&&nw<maxW){
+        const dx=wx,dz=wx?0:wz;
+        if(kind!=='cave'&&rng()<0.4){
+          const bx=x+0.5+dx*0.5,bz=y+0.5+dz*0.5;
+          if(sconces.some(q=>Math.hypot(q.x-bx,q.z-bz)<0.9))continue;
+          props.push({t:'banner',x:bx,z:bz,r:Math.atan2(-dz,-dx),s:1,v:rng()<0.5?1:0});
+        }else props.push({t:'chain',x:x+0.5+dx*0.38+(rng()-0.5)*0.1,z:y+0.5+dz*0.38+(rng()-0.5)*0.1,r:rng()*6.28,s:1,v:ri(3)});
+        nw++;
+      }else if(kind==='cave'&&!wx&&!wz&&rng()<0.14)props.push({t:'stal',x:x+0.5+(rng()-0.5)*0.5,z:y+0.5+(rng()-0.5)*0.5,r:rng()*6.28,s:0.7+rng()*0.6,v:0});
+    }}
   // face down an open corridor at the start
   let yaw=0;
   for(const d of DIRS){if(g[idx(stx+d[0],sty+d[1])]===0){yaw=Math.atan2(d[1],d[0]);break}}
   const bi=((depth-1)>>1)%BIOMES.length;
-  return {W,H,g,cw,ch,kind,dark:kind==='dark',safe,safeMask,npcs,reveal:false,door,traps,pillars,sconces,rubble,frames:[],start:{tx:stx,ty:sty,yaw},exit:{tx:ex,ty:ey,x:ex+0.5,z:ey+0.5},items,shades,
+  return {W,H,g,cw,ch,kind,dark:kind==='dark',props,discs,safe,safeMask,npcs,reveal:false,door,traps,pillars,sconces,rubble,frames:[],start:{tx:stx,ty:sty,yaw},exit:{tx:ex,ty:ey,x:ex+0.5,z:ey+0.5},items,shades,
           seen:new Uint8Array(W*H),dist:d0,bi,biome:BIOMES[bi],
           name:kind==='cave'?'The Hollow':kind==='dark'?'The Black Hush':BIOMES[bi].name};
 }
@@ -506,12 +541,12 @@ const LIGHT_GLSL=`
 uniform vec3 uEye;uniform vec3 uTorchPos;uniform vec3 uTorchCol;uniform float uTorchR;uniform float uFlash;
 uniform vec3 uLPos[NL];uniform vec4 uLCol[NL];uniform vec3 uAmb;uniform vec3 uFog;
 uniform sampler2D uSdf;uniform vec2 uSdfScale;uniform vec4 uBlk[6];uniform float uBlkOn;uniform float uGamma;
-vec3 gSpec;
+vec3 gSpec;float gBlk=0.0;
 float hash(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
 #if SHADOWS>0
 float sdf(vec2 p){
   float d=texture(uSdf,p*uSdfScale).r*2.0;
-  if(uBlkOn>0.5){for(int i=0;i<6;i++)d=min(d,length(p-uBlk[i].xy)-uBlk[i].z);}
+  if(gBlk>0.5){for(int i=0;i<6;i++)d=min(d,length(p-uBlk[i].xy)-uBlk[i].z);}
   return d;
 }
 float shadow(vec3 P,vec3 Lp,vec3 Ng){
@@ -531,7 +566,7 @@ float shadow(vec3 P,vec3 Lp,vec3 Ng){
 }
 #endif
 vec3 shade(vec3 P,vec3 Ng,vec3 N,float gloss){
-  vec3 V=normalize(uEye-P);vec3 light=uAmb;gSpec=vec3(0.0);
+  vec3 V=normalize(uEye-P);vec3 light=uAmb;gSpec=vec3(0.0);gBlk=(uBlkOn>0.5&&P.y<1.1)?1.0:0.0;
   vec3 L=uTorchPos-P;float d=length(L);L/=max(d,1e-4);
   float s=clamp(1.0-d/uTorchR,0.0,1.0);
   if(s>0.0){
@@ -556,6 +591,19 @@ vec3 shade(vec3 P,vec3 Ng,vec3 N,float gloss){
     gSpec+=uLCol[i].rgb*(a*gloss*pow(max(dot(N,normalize(l+V)),0.0),28.0));
   }
   return light;
+}
+// ambient occlusion from the floor-plan distance field: corners, wall bases and under things
+float aoAt(vec3 P,vec3 Ng){
+#if SHADOWS>0
+  if(abs(Ng.y)>0.5){
+    float a=mix(0.45,1.0,smoothstep(0.0,0.42,texture(uSdf,P.xz*uSdfScale).r*2.0));
+    if(Ng.y>0.0&&uBlkOn>0.5){float b=9.0;for(int i=0;i<6;i++)b=min(b,length(P.xz-uBlk[i].xy)-uBlk[i].z);a*=mix(0.5,1.0,smoothstep(-0.14,0.2,b));}
+    return a;
+  }
+  return mix(0.5,1.0,smoothstep(0.03,0.32,texture(uSdf,(P.xz+Ng.xz*0.3)*uSdfScale).r*2.0));
+#else
+  return 1.0;
+#endif
 }
 vec3 finish(vec3 c,vec3 P){
   c=mix(c,uFog,1.0-exp(-distance(P,uEye)*0.045));
@@ -599,8 +647,8 @@ void main(){
     gloss=mix(gloss,1.3,pud);N=normalize(mix(N,Ng,pud*0.85));alb*=mix(1.0,0.55,pud);
   }
   vec3 light=shade(vPos,Ng,N,gloss);
-  float ao=1.0;
-  if(li==0){float v=vPos.y/${WALL_H.toFixed(2)};ao=mix(0.5,1.0,smoothstep(0.0,0.22,v)*smoothstep(1.0,0.8,v));}
+  float ao=aoAt(vPos,Ng);
+  if(li==0){float v=vPos.y/${WALL_H.toFixed(2)};ao*=mix(0.5,1.0,smoothstep(0.0,0.22,v)*smoothstep(1.0,0.8,v));}
   vec3 c=(alb*light+gSpec)*ao+tx*em*${POST?'3.0':'1.2'};
   o=vec4(finish(c,vPos),1.0);
 }`,['aPos','aNor','aUV','aLayer']);
@@ -624,6 +672,66 @@ void main(){
   vec3 light=shade(vPos,N,N,uGloss);
   o=vec4(finish(alb*light+gSpec+alb*uEmis,vPos),1.0);
 }`,['aPos','aNor','aCol']);
+
+// characters, creatures and decor: world-space meshes with painted procedural materials
+const matProg=program(DEFS+`in vec3 aPos;in vec3 aNor;in vec3 aCol;in vec4 aLoc;
+uniform mat4 uVP;
+out vec3 vPos;out vec3 vNor;out vec3 vCol;out vec4 vLoc;
+void main(){vPos=aPos;vNor=aNor;vCol=aCol;vLoc=aLoc;gl_Position=uVP*vec4(aPos,1.0);}`,
+DEFS+LIGHT_GLSL+`
+uniform float uEmis;
+in vec3 vPos;in vec3 vNor;in vec3 vCol;in vec4 vLoc;
+out vec4 o;
+float h3(vec3 p){return fract(sin(dot(p,vec3(12.9898,78.233,37.719)))*43758.5453);}
+float n3(vec3 p){vec3 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);
+  return mix(mix(mix(h3(i),h3(i+vec3(1,0,0)),f.x),mix(h3(i+vec3(0,1,0)),h3(i+vec3(1,1,0)),f.x),f.y),
+             mix(mix(h3(i+vec3(0,0,1)),h3(i+vec3(1,0,1)),f.x),mix(h3(i+vec3(0,1,1)),h3(i+vec3(1,1,1)),f.x),f.y),f.z);}
+float fbm(vec3 p){return n3(p)*0.6+n3(p*2.3)*0.3+n3(p*5.1)*0.1;}
+void main(){
+  vec3 N=normalize(vNor),alb=vCol,q=vLoc.xyz;int m=int(vLoc.w+0.5);
+  float gloss=0.15,glow=0.0,rimK=0.35;
+  float dist=distance(vPos,uEye),fine=clamp(1.6-dist*0.45,0.0,1.0);
+  float mott=fbm(q*34.0);
+  if(m==1){alb*=0.92+0.16*mott;gloss=0.2;rimK=0.5;}
+  else if(m==2){
+    float folds=n3(vec3(q.x*55.0,q.y*5.0,q.z*55.0));
+    float weave=sin(q.y*1500.0)*sin((q.x+q.z)*1500.0);
+    alb*=(0.8+0.26*folds)*(0.93+0.14*mott)*(1.0+0.07*weave*fine);gloss=0.04;
+  }else if(m==3){
+    float bl=fbm(q*50.0),scr=smoothstep(0.78,0.84,n3(vec3(q.x*260.0,q.y*22.0,q.z*260.0)));
+    alb*=0.72+0.45*bl;alb=mix(alb,alb*1.5+0.03,scr*0.5*fine);gloss=0.4;
+  }else if(m==4){
+    float br=n3(vec3(q.x*26.0,q.y*420.0,q.z*26.0)),rust=smoothstep(0.6,0.82,fbm(q*40.0));
+    alb*=0.82+0.28*br*fine;alb=mix(alb,vec3(0.3,0.15,0.07),rust*0.5);gloss=mix(1.7,0.2,rust);rimK=0.2;
+  }else if(m==5){
+    float st=n3(vec3(q.x*150.0,q.y*8.0,q.z*150.0));alb*=0.68+0.55*st;gloss=0.55;
+  }else if(m==6){
+    float gr=n3(vec3(q.x*80.0,q.y*6.0,q.z*80.0)),pl=smoothstep(0.42,0.5,abs(fract(atan(q.z,q.x)*1.9+0.5)-0.5));
+    alb*=(0.7+0.36*gr)*(0.72+0.28*pl);gloss=0.12;
+  }else if(m==7){glow=1.0;}
+  else if(m==8){gloss=2.6;rimK=0.1;}
+  else if(m==9){
+    float sp=fbm(q*60.0),cr=smoothstep(0.035,0.0,abs(n3(q*13.0)-0.5));
+    alb*=0.72+0.45*sp;alb*=1.0-cr*0.5;gloss=0.1;
+  }else if(m==10){
+    float wv=n3(vec3(q.x*40.0,q.y*9.0-uEmis*0.0,q.z*40.0));alb*=0.7+0.5*wv;gloss=0.02;rimK=0.0;
+  }
+  vec3 light=shade(vPos,N,N,gloss);
+  vec3 V=normalize(uEye-vPos);float rim=pow(1.0-max(dot(N,V),0.0),3.0);
+  float ao=mix(0.5,1.0,smoothstep(0.0,0.2,vPos.y))*mix(0.8,1.0,N.y*0.5+0.5);
+  vec3 c=alb*light*ao*(1.0+rim*rimK*1.6)+gSpec*ao+alb*uEmis;
+  if(m==7)c=alb*(0.55+0.45*sin(q.x*40.0+q.z*40.0)*0.0+0.45);
+  if(m==10)c+=vCol*rim*rim*1.6;
+  o=vec4(finish(c,vPos),1.0);
+}`,['aPos','aNor','aCol','aLoc']);
+function matVAO(){
+  const vao=gl.createVertexArray(),vbo=gl.createBuffer();
+  gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,vbo);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(13),gl.DYNAMIC_DRAW);
+  [[0,3,0],[1,3,12],[2,3,24],[3,4,36]].forEach(a=>{gl.enableVertexAttribArray(a[0]);gl.vertexAttribPointer(a[0],a[1],gl.FLOAT,false,52,a[2])});
+  gl.bindVertexArray(null);
+  return {vao,vbo,count:0};
+}
+function drawMat(m,emis,blk){const u=matProg.u;gl.uniform1f(u.uEmis,emis);gl.uniform1f(u.uBlkOn,blk);gl.bindVertexArray(m.vao);gl.drawArrays(gl.TRIANGLES,0,m.count)}
 
 const spriteProg=program(`#version 300 es
 precision highp float;
@@ -1005,31 +1113,11 @@ function propVAO(data,usage){
   return {vao,vbo,count:data.length/9};
 }
 const MESH={};for(const k in MESH_DATA)MESH[k]=propVAO(MESH_DATA[k]);
-const decor=propVAO(new Float32Array(9),gl.DYNAMIC_DRAW);
-const chars=propVAO(new Float32Array(9),gl.DYNAMIC_DRAW);
-function buildStatic(F){
-  const out=[],st=F.biome.stone,dk=[st[0]*0.8,st[1]*0.8,st[2]*0.8],iron=[0.1,0.09,0.085];
-  const add=(mesh,sx,sy,sz,yaw,ox,oy,oz,col)=>{
-    const c=Math.cos(yaw),s=Math.sin(yaw);
-    for(let i=0;i<mesh.length;i+=9){
-      const x=mesh[i]*sx,y=mesh[i+1]*sy,z=mesh[i+2]*sz;
-      let nx=mesh[i+3]/sx,ny=mesh[i+4]/sy,nz=mesh[i+5]/sz;const l=Math.hypot(nx,ny,nz)||1;nx/=l;ny/=l;nz/=l;
-      out.push(x*c-z*s+ox,y+oy,x*s+z*c+oz,nx*c-nz*s,ny,nx*s+nz*c,col[0],col[1],col[2]);
-    }
-  };
-  for(const q of F.pillars)add(MESH_DATA.pillar,1,1,1,0,q[0],0,q[1],st);
-  if(F.safe){add(MESH_DATA.pillar,1.15,0.3,1.15,0,F.safe.x,0,F.safe.z,st);add(MESH_DATA.bowl,1,1,1,0,F.safe.x,0.375,F.safe.z,iron)}
-  for(const r of F.rubble)add(MESH_DATA.octa,r.s*1.4,r.s*r.sy,r.s,r.r,r.x,r.s*r.sy*0.6,r.z,dk);
-  for(const q of F.sconces){
-    add(MESH_DATA.cube,0.05,0.2,0.05,0,q.x,0.72,q.z,iron);
-    add(MESH_DATA.cube,0.12,0.04,0.12,0,q.x-q.dx*0.07,0.82,q.z-q.dz*0.07,iron);
-  }
-  const data=new Float32Array(out.length?out:9);
-  gl.bindBuffer(gl.ARRAY_BUFFER,decor.vbo);gl.bufferData(gl.ARRAY_BUFFER,data,gl.DYNAMIC_DRAW);
-  decor.count=out.length/9;
-}
+const decor=matVAO(),chars=matVAO();
 /* ---------- characters: jointed low-poly figures, posed on the CPU every frame ---------- */
-const CH={buf:new Float32Array(9*60000),n:0,cones:{},vao:null};
+const CH={buf:new Float32Array(13*90000),n:0,cap:90000,cones:{}};
+const DEC={buf:new Float32Array(13*260000),n:0,cap:260000};
+let TB=CH;const ZERO3=[0,0,0];
 function sphereMesh(seg,rings){
   const v=[],pt=(i,j)=>{const th=j/rings*Math.PI,ph=i/seg*Math.PI*2,s=Math.sin(th);return [s*Math.cos(ph),Math.cos(th),s*Math.sin(ph)]};
   for(let j=0;j<rings;j++)for(let i=0;i<seg;i++){const a=pt(i,j),b=pt(i+1,j),c=pt(i+1,j+1),d=pt(i,j+1);
@@ -1059,17 +1147,18 @@ const rX=a=>{const c=Math.cos(a),s=Math.sin(a);return [1,0,0,0,c,-s,0,s,c]};
 const fpt=(f,v)=>[f.p[0]+f.R[0]*v[0]+f.R[1]*v[1]+f.R[2]*v[2],f.p[1]+f.R[3]*v[0]+f.R[4]*v[1]+f.R[5]*v[2],f.p[2]+f.R[6]*v[0]+f.R[7]*v[1]+f.R[8]*v[2]];
 const subF=(f,off,R)=>({p:fpt(f,off),R:R?m3(f.R,R):f.R});
 function emit(mesh,f,c,s,col,R2){
-  const cnt=mesh.length/6;if(CH.n+cnt>60000)return;
-  const R=R2?m3(f.R,R2):f.R,p=fpt(f,c),b=CH.buf;let o=CH.n*9;
-  const s0=s[0],s1=s[1],s2=s[2],i0=1/s0,i1=1/s1,i2=1/s2,c0=col[0],c1=col[1],c2=col[2];
+  const cnt=mesh.length/6,T=TB;if(T.n+cnt>T.cap)return;
+  const R=R2?m3(f.R,R2):f.R,p=fpt(f,c),b=T.buf,lo=f.lo||ZERO3;let o=T.n*13;
+  const s0=s[0],s1=s[1],s2=s[2],i0=1/s0,i1=1/s1,i2=1/s2,c0=col[0],c1=col[1],c2=col[2],mat=col[3]||0;
+  const l0=c[0]+lo[0],l1=c[1]+lo[1],l2=c[2]+lo[2];
   for(let i=0;i<mesh.length;i+=6){
     const x=mesh[i]*s0,y=mesh[i+1]*s1,z=mesh[i+2]*s2;
     let nx=mesh[i+3]*i0,ny=mesh[i+4]*i1,nz=mesh[i+5]*i2;const l=1/(Math.hypot(nx,ny,nz)||1);nx*=l;ny*=l;nz*=l;
     b[o++]=p[0]+R[0]*x+R[1]*y+R[2]*z;b[o++]=p[1]+R[3]*x+R[4]*y+R[5]*z;b[o++]=p[2]+R[6]*x+R[7]*y+R[8]*z;
     b[o++]=R[0]*nx+R[1]*ny+R[2]*nz;b[o++]=R[3]*nx+R[4]*ny+R[5]*nz;b[o++]=R[6]*nx+R[7]*ny+R[8]*nz;
-    b[o++]=c0;b[o++]=c1;b[o++]=c2;
+    b[o++]=c0;b[o++]=c1;b[o++]=c2;b[o++]=l0+x;b[o++]=l1+y;b[o++]=l2+z;b[o++]=mat;
   }
-  CH.n+=cnt;
+  T.n+=cnt;
 }
 const ball=(f,c,s,col,lo)=>emit(lo?SPH_LO:SPH_HI,f,c,typeof s==='number'?[s,s,s]:s,col);
 const slab=(f,c,s,col,R2)=>emit(BOX6,f,c,s,col,R2);
@@ -1089,13 +1178,13 @@ function face(H,o){
   const sk=o.skin,bl=o.blink,es=o.eyeS||1,ey=o.eyeY||0.085;
   ball(H,[0.005,0.085,0],[0.085,0.095,0.082],sk);
   for(const z of[-0.034,0.034]){
-    ball(H,[0.073,ey,z],[0.012,0.022*es*bl,0.017*es],[0.96,0.95,0.92],true);
-    ball(H,[0.081,ey-0.001,z*0.97],[0.007,0.015*es*bl,0.0105*es],o.iris,true);
-    ball(H,[0.0855,ey-0.001,z*0.97],[0.004,0.008*es*bl,0.0055*es],[0.03,0.02,0.02],true);
+    ball(H,[0.073,ey,z],[0.012,0.022*es*bl,0.017*es],[0.96,0.95,0.92,8],true);
+    ball(H,[0.081,ey-0.001,z*0.97],[0.007,0.015*es*bl,0.0105*es],[o.iris[0],o.iris[1],o.iris[2],8],true);
+    ball(H,[0.0855,ey-0.001,z*0.97],[0.004,0.008*es*bl,0.0055*es],[0.03,0.02,0.02,8],true);
     slab(H,[0.079+(o.browOut||0),ey+0.033*es+(o.browUp||0),z],[0.012,o.browH||0.007,0.034],o.brow,rX((z>0?1:-1)*(o.browTilt||0)));
     if(o.ears)ball(H,[0.0,0.08,z*2.45],[0.016,0.026,0.011],sk,true);
   }
-  ball(H,[0.089,ey-0.027,0],o.nose||[0.015,0.017,0.013],[sk[0]*0.93,sk[1]*0.88,sk[2]*0.86],true);
+  ball(H,[0.089,ey-0.027,0],o.nose||[0.015,0.017,0.013],[sk[0]*0.93,sk[1]*0.88,sk[2]*0.86,1],true);
   if(o.mouth)slab(H,[0.08,0.034,0],[0.008,0.006+(o.talk||0),o.mouthW||0.03],o.mouth);
 }
 function buildNpc(n,t,ex,ey,ez,dtR){
@@ -1120,12 +1209,12 @@ function buildNpc(n,t,ex,ey,ez,dtR){
   const B={p:[n.x+(n.ox||0),0,n.z+(n.oz||0)],R:rYaw(n.yaw)};
   const out={top:1,lantern:null};
   if(n.type==='keeper'){
-    const robe=[0.36,0.1,0.07],robeD=[0.24,0.07,0.06],gold=[0.8,0.58,0.18],skin=[0.8,0.6,0.47],white=[0.9,0.9,0.86],wood=[0.3,0.2,0.12];
+    const robe=[0.36,0.1,0.07,2],robeD=[0.24,0.07,0.06,2],gold=[0.8,0.58,0.18,2],skin=[0.8,0.6,0.47,1],white=[0.9,0.9,0.86,5],wood=[0.3,0.2,0.12,6];
     seg(B,[0,0,0],[0,0.05,0],0.178,0.172,gold);
     seg(B,[0,0.05,0],[0,0.5,0],0.172,0.092,robe);
     const U=subF(B,[0,0.48,0],rZ(-0.15));
     seg(U,[0,-0.01,0],[0,0.045,0],0.1,0.098,gold);
-    ball(U,[0.1,0.02,0],0.02,[2.2,0.9,0.25],true);
+    ball(U,[0.1,0.02,0],0.02,[2.2,0.9,0.25,7],true);
     ball(U,[0,0.14+breath,0],[0.08,0.14,0.108],robe);
     ball(U,[-0.035,0.245+breath,0],[0.085,0.04,0.115],robeD);
     // staff arm
@@ -1136,10 +1225,10 @@ function buildNpc(n,t,ex,ey,ez,dtR){
     const hw=fpt(U,W1),SB={p:[hw[0],0,hw[2]],R:B.R};
     seg(SB,[0,0,0],[0,1.0,0],0.013,0.011,wood);
     seg(SB,[0,1.0,0],[0.07,1.06,0],0.011,0.009,wood);
-    seg(SB,[0.07,1.06,0],[0.07,1.0,0],0.004,0.004,[0.15,0.14,0.13]);
-    slab(SB,[0.07,0.955,0],[0.05,0.012,0.05],[0.16,0.15,0.14]);slab(SB,[0.07,0.885,0],[0.05,0.012,0.05],[0.16,0.15,0.14]);
-    for(const q of[[-1,-1],[1,-1],[-1,1],[1,1]])slab(SB,[0.07+q[0]*0.021,0.92,q[1]*0.021],[0.006,0.07,0.006],[0.16,0.15,0.14]);
-    ball(SB,[0.07,0.918,0],0.018,[3.0,1.5,0.4],true);
+    seg(SB,[0.07,1.06,0],[0.07,1.0,0],0.004,0.004,[0.15,0.14,0.13,4]);
+    slab(SB,[0.07,0.955,0],[0.05,0.012,0.05],[0.16,0.15,0.14,4]);slab(SB,[0.07,0.885,0],[0.05,0.012,0.05],[0.16,0.15,0.14,4]);
+    for(const q of[[-1,-1],[1,-1],[-1,1],[1,1]])slab(SB,[0.07+q[0]*0.021,0.92,q[1]*0.021],[0.006,0.07,0.006],[0.16,0.15,0.14,4]);
+    ball(SB,[0.07,0.918,0],0.018,[3.0,1.5,0.4,7],true);
     out.lantern=fpt(SB,[0.07,0.918,0]);
     // resting arm, hand tucked at the sash
     limb(U,[0,0.215+breath,-0.118],[0.03,0.09+breath,-0.15],[0.1,0.06,-0.06],0.04,0.045,0.06,robe,robe,skin,0.028);
@@ -1154,8 +1243,8 @@ function buildNpc(n,t,ex,ey,ez,dtR){
     out.top=1.0;
   }else if(n.type==='map'){
     const S=0.94,v=(x,y,z)=>[x*S,y*S,z*S];
-    const teal=[0.08,0.4,0.42],tealD=[0.05,0.27,0.3],cream=[0.86,0.8,0.66],leg=[0.2,0.14,0.11],boot=[0.36,0.21,0.1],belt=[0.3,0.17,0.08],
-          hair=[0.55,0.2,0.07],skin=[0.92,0.71,0.57],must=[0.9,0.62,0.14];
+    const teal=[0.08,0.4,0.42,2],tealD=[0.05,0.27,0.3,2],cream=[0.86,0.8,0.66,2],leg=[0.2,0.14,0.11,2],boot=[0.36,0.21,0.1,3],belt=[0.3,0.17,0.08,3],
+          hair=[0.55,0.2,0.07,5],skin=[0.92,0.71,0.57,1],must=[0.9,0.62,0.14,2];
     const sway=Math.sin(t*0.9+ph)*0.006;
     for(const z of[-1,1]){
       const hip=v(0,0.45,z*0.052),knee=v(0.012*z,0.25,z*0.058),ank=v(0,0.05,z*0.062);
@@ -1168,9 +1257,9 @@ function buildNpc(n,t,ex,ey,ez,dtR){
     seg(U,v(0,-0.1,0),v(0,0.07,0),0.118*S,0.076*S,teal);
     seg(U,v(0,-0.1,0),v(0,-0.08,0),0.121*S,0.117*S,cream);
     seg(U,v(0,0.045,0),v(0,0.075,0),0.081*S,0.079*S,belt);
-    slab(U,v(0.078,0.06,0),[0.012*S,0.03*S,0.03*S],[0.85,0.68,0.25]);
+    slab(U,v(0.078,0.06,0),[0.012*S,0.03*S,0.03*S],[0.85,0.68,0.25,4]);
     ball(U,v(0,0.17+breath,0),[0.064*S,0.115*S,0.088*S],teal);
-    slab(U,v(-0.01,0.0,0.105),[0.06*S,0.07*S,0.03*S],belt);slab(U,v(-0.01,0.025,0.122),[0.062*S,0.03*S,0.008*S],[0.4,0.25,0.12]);
+    slab(U,v(-0.01,0.0,0.105),[0.06*S,0.07*S,0.03*S],belt);slab(U,v(-0.01,0.025,0.122),[0.062*S,0.03*S,0.008*S],[0.4,0.25,0.12,3]);
     seg(U,v(0.02,0.27,-0.07),v(-0.01,0.03,0.1),0.011*S,0.011*S,belt);
     seg(U,v(0,0.245+breath,0),v(0,0.275+breath,0),0.055*S,0.045*S,must);
     seg(U,v(-0.04,0.255+breath,0.02),v(-0.085,0.12+breath,0.03+sway*3),0.02*S,0.012*S,must);
@@ -1179,13 +1268,13 @@ function buildNpc(n,t,ex,ey,ez,dtR){
     const W1=v(0.15,0.2+lift+breath,0.05);
     limb(U,v(0,0.225+breath,0.1),v(0.045,0.1+breath,0.135),W1,0.03*S,0.027*S,0.023*S,cream,cream,skin,0.026*S);
     seg(U,[W1[0]+0.005,W1[1]-0.07*S,W1[2]-0.03*S],[W1[0]+0.012,W1[1]+0.1*S,W1[2]+0.035*S],0.019*S,0.019*S,[0.9,0.84,0.66]);
-    seg(U,[W1[0]+0.008,W1[1]+0.0*S,W1[2]],[W1[0]+0.009,W1[1]+0.02*S,W1[2]+0.007*S],0.0205*S,0.0205*S,[0.7,0.15,0.12]);
+    seg(U,[W1[0]+0.008,W1[1]+0.0*S,W1[2]],[W1[0]+0.009,W1[1]+0.02*S,W1[2]+0.007*S],0.0205*S,0.0205*S,[0.7,0.15,0.12,2]);
     // other hand on the hip
     limb(U,v(0,0.225+breath,-0.1),v(-0.03,0.1+breath,-0.185),v(0.03,0.035,-0.1),0.03*S,0.027*S,0.023*S,cream,cream,skin,0.026*S);
     seg(U,v(0,0.27+breath,0),v(0.003,0.31+breath,0),0.027*S,0.026*S,skin);
     const H=subF(U,v(0.003,0.305+breath,0),m3(m3(rYaw(n.hy),rZ(n.hp+nod)),rX(Math.sin(t*0.6+ph)*0.05)));
     const HS={p:H.p,R:H.R.map(q=>q*S)};
-    face(HS,{skin,blink,iris:[0.15,0.5,0.3],brow:[0.4,0.15,0.06],browH:0.005,browTilt:-0.1,eyeS:1.3,nose:[0.011,0.012,0.01],mouth:[0.72,0.3,0.28],mouthW:0.02,talk:jaw});
+    face(HS,{skin,blink,iris:[0.15,0.5,0.3],brow:[0.4,0.15,0.06,5],browH:0.005,browTilt:-0.1,eyeS:1.3,nose:[0.011,0.012,0.01],mouth:[0.72,0.3,0.28],mouthW:0.02,talk:jaw});
     ball(HS,[-0.014,0.1,0],[0.092,0.092,0.091],hair);
     ball(HS,[0.058,0.15,0.012],[0.04,0.028,0.07],hair);
     ball(HS,[0.03,0.09,0.078],[0.03,0.07,0.02],hair,true);ball(HS,[0.03,0.09,-0.078],[0.03,0.07,0.02],hair,true);
@@ -1194,8 +1283,8 @@ function buildNpc(n,t,ex,ey,ez,dtR){
     seg(HS,[-0.09,0.145,0],[-0.1,0.13,0],0.033,0.033,must);
     out.top=0.98;
   }else{
-    const lea=[0.4,0.24,0.12],leaD=[0.27,0.16,0.09],iron=[0.42,0.44,0.48],ironD=[0.25,0.26,0.29],skin=[0.78,0.56,0.44],beard=[0.42,0.22,0.1],
-          cloth=[0.3,0.3,0.24],band=[0.88,0.86,0.8],boot=[0.22,0.14,0.09];
+    const lea=[0.4,0.24,0.12,3],leaD=[0.27,0.16,0.09,3],iron=[0.42,0.44,0.48,4],ironD=[0.25,0.26,0.29,4],skin=[0.78,0.56,0.44,1],beard=[0.42,0.22,0.1,5],
+          cloth=[0.3,0.3,0.24,2],band=[0.88,0.86,0.8,2],boot=[0.22,0.14,0.09,3];
     // legs stretched out on the floor, one of them bandaged
     limb(B,[0.02,0.1,0.08],[0.27,0.075,0.1],[0.5,0.05,0.11],0.062,0.052,0.042,cloth,cloth,null);
     ball(B,[0.52,0.075,0.11],[0.04,0.07,0.045],boot,true);seg(B,[0.4,0.058,0.105],[0.5,0.05,0.11],0.05,0.046,boot);
@@ -1206,8 +1295,8 @@ function buildNpc(n,t,ex,ey,ez,dtR){
     ball(B,[0,0.1,0],[0.11,0.085,0.13],leaD);
     const U=subF(B,[-0.02,0.11,0],rZ(0.2));
     ball(U,[0,0.17+breath,0],[0.105,0.15,0.135],lea);
-    seg(U,[0,0.03,0],[0,0.075,0],0.123,0.128,[0.2,0.12,0.07]);slab(U,[0.12,0.052,0],[0.02,0.045,0.05],iron);
-    seg(U,[0.03,0.3,0.1],[0.06,0.05,-0.1],0.014,0.014,[0.2,0.12,0.07]);
+    seg(U,[0,0.03,0],[0,0.075,0],0.123,0.128,[0.2,0.12,0.07,3]);slab(U,[0.12,0.052,0],[0.02,0.045,0.05],iron);
+    seg(U,[0.03,0.3,0.1],[0.06,0.05,-0.1],0.014,0.014,[0.2,0.12,0.07,3]);
     for(const z of[-1,1])ball(U,[0,0.275+breath,z*0.135],[0.065,0.045,0.07],iron);
     // one hand on the good knee, the other clamped over the wound
     limb(U,[0,0.26+breath,0.14],[0.11,0.12,0.19],[0.27,0.06,0.12],0.05,0.045,0.04,cloth,leaD,skin,0.04);
@@ -1220,18 +1309,159 @@ function buildNpc(n,t,ex,ey,ez,dtR){
     ball(HS,[0.0,0.128,0],[0.096,0.072,0.094],iron);
     seg(HS,[0.0,0.098,0],[0.0,0.113,0],0.099,0.097,ironD);
     seg(HS,[0,0.19,0],[0,0.215,0],0.02,0.008,ironD);
-    slab(HS,[0.094,0.15,0],[0.02,0.035,0.03],ironD);ball(HS,[0.107,0.15,0],0.012,[2.6,1.9,0.6],true);
+    slab(HS,[0.094,0.15,0],[0.02,0.035,0.03],ironD);ball(HS,[0.107,0.15,0],0.012,[2.6,1.9,0.6,7],true);
     ball(HS,[0.045,0.0,0],[0.062,0.07,0.082],beard);
     ball(HS,[0.07,0.035,0.028],[0.025,0.014,0.03],beard,true);ball(HS,[0.07,0.035,-0.028],[0.025,0.014,0.03],beard,true);
     seg(HS,[0.06,-0.04-jaw,0.03],[0.085,-0.15-jaw,0.035],0.026,0.008,beard);seg(HS,[0.06,-0.04-jaw,-0.03],[0.085,-0.15-jaw,-0.035],0.026,0.008,beard);
     slab(HS,[0.088,-0.1-jaw,0.034],[0.02,0.014,0.02],iron);slab(HS,[0.088,-0.1-jaw,-0.034],[0.02,0.014,0.02],iron);
     // pickaxe and pack on the floor beside him
-    seg(B,[0.0,0.018,0.27],[0.42,0.018,0.36],0.014,0.012,[0.33,0.21,0.11]);
+    seg(B,[0.0,0.018,0.27],[0.42,0.018,0.36],0.014,0.012,[0.33,0.21,0.11,6]);
     seg(B,[0.42,0.02,0.36],[0.39,0.03,0.5],0.02,0.004,iron);seg(B,[0.42,0.02,0.36],[0.45,0.03,0.22],0.02,0.004,iron);
-    ball(B,[-0.03,0.07,-0.27],[0.09,0.075,0.08],[0.33,0.27,0.16]);seg(B,[-0.03,0.13,-0.27],[-0.03,0.16,-0.27],0.05,0.035,[0.24,0.19,0.11]);
+    ball(B,[-0.03,0.07,-0.27],[0.09,0.075,0.08],[0.33,0.27,0.16,2]);seg(B,[-0.03,0.13,-0.27],[-0.03,0.16,-0.27],0.05,0.035,[0.24,0.19,0.11,3]);
     out.top=0.72;out.lamp=fpt(HS,[0.107,0.15,0]);
   }
   return out;
+}
+/* ---------- creatures in the same jointed style ---------- */
+function buildShade(s,t,ex,ez){
+  const chase=s.state===1&&s.stun<=0,tp=Math.atan2(ez-s.z,ex-s.x),fa=chase?tp:(s.face||0);
+  const y=0.06+Math.sin(s.ph)*0.03;
+  const c=s.stun>0?[0.3,0.36,0.5,10]:chase?[0.34,0.08,0.12,10]:[0.2,0.14,0.33,10],cd=[c[0]*0.6,c[1]*0.6,c[2]*0.6,10];
+  const bone=[0.74,0.72,0.64,9];
+  const lean=chase?-0.3:-0.08,B={p:[s.x,y,s.z],R:m3(rYaw(fa),rZ(lean)),lo:[s.ph,0,0]};
+  const sw=t*2.2+s.ph;
+  seg(B,[0,0.16,0],[0,0.8,0],0.2,0.1,c);
+  // ragged hem that trails behind
+  for(let i=0;i<9;i++){
+    const a=i/9*Math.PI*2,r=0.185,w=Math.sin(sw+i*1.7)*0.03,dr=chase?0.14:0.05;
+    seg(B,[Math.cos(a)*r,0.2,Math.sin(a)*r],[Math.cos(a)*(r+0.03)-dr+w,-0.04-((i*7)%3)*0.035,Math.sin(a)*(r+0.03)+w],0.062,0.008,i%2?c:cd);
+  }
+  ball(B,[0,0.8,0],[0.1,0.07,0.17],c);
+  const H=subF(B,[0.01,0.86,0],rZ(-lean*0.7+Math.sin(sw*0.5)*0.05));
+  ball(H,[0,0.1,0],[0.115,0.13,0.115],c);
+  seg(H,[-0.04,0.15,0],[-0.15,0.27,0],0.075,0.012,cd);
+  ball(H,[0.05,0.085,0],[0.075,0.092,0.086],[0,0,0,0]);
+  // long arms: hanging at rest, reaching when it hunts
+  const rch=chase?1:0,gr=Math.sin(t*7+s.ph)*0.02*rch;
+  for(const z of[-1,1]){
+    const S=[0,0.8,z*0.16],E=rch?[0.2,0.7,z*0.2]:[0.03,0.58,z*0.22],W=rch?[0.44,0.8+gr*z,z*0.12]:[0.1,0.4+Math.sin(sw+z)*0.015,z*0.2];
+    seg(B,S,E,0.055,0.05,c);ball(B,E,0.05,c,true);
+    seg(B,E,[E[0]+(W[0]-E[0])*0.45,E[1]+(W[1]-E[1])*0.45,E[2]+(W[2]-E[2])*0.45],0.05,0.06,cd);
+    seg(B,E,W,0.017,0.014,bone);
+    for(let k=-1;k<=1;k++){const dx=W[0]-E[0],dy=W[1]-E[1],l=Math.hypot(dx,dy)||1;
+      seg(B,W,[W[0]+dx/l*0.1,W[1]+dy/l*0.1-0.02-(rch?0:0.02),W[2]+k*0.028],0.009,0.002,bone)}
+  }
+  return {eyes:[fpt(H,[0.118,0.1,0.034]),fpt(H,[0.118,0.1,-0.034])],chase};
+}
+function buildStalker(s,t,ex,ez){
+  const tp=Math.atan2(ez-s.z,ex-s.x),k=s.stun>0?0.6:1;
+  const st=[0.62*k,0.6*k,0.55*k,9],sd=[0.4*k,0.39*k,0.36*k,9],hole=[0.03,0.03,0.03,0];
+  const pose=(Math.floor(s.x*3.1)+Math.floor(s.z*5.3))&3;
+  const B={p:[s.x,0,s.z],R:rYaw(tp),lo:[0.3,0,0.7]};
+  seg(B,[0,0,0],[0,0.04,0],0.215,0.21,sd);
+  seg(B,[0,0.04,0],[0,0.56,0],0.2,0.105,st);
+  for(let i=0;i<7;i++){const a=i/7*Math.PI*2+0.3;seg(B,[Math.cos(a)*0.19,0.03,Math.sin(a)*0.19],[Math.cos(a)*0.1,0.56,Math.sin(a)*0.1],0.03,0.014,sd)}
+  const U=subF(B,[0,0.54,0],rZ(pose>=2?-0.22:-0.05));
+  ball(U,[0,0.14,0],[0.09,0.15,0.125],st);
+  seg(U,[0,0.0,0],[0,0.035,0],0.108,0.106,sd);
+  const tilt=pose===3?0.35:pose===0?-0.25:0;
+  const H=subF(U,[0,0.3,0],m3(rZ(tilt*0.6),rX(pose===3?0.3:0)));
+  seg(U,[0,0.26,0],[0,0.31,0],0.035,0.033,st);
+  ball(H,[0.005,0.09,0],[0.085,0.1,0.082],st);
+  ball(H,[-0.02,0.1,0],[0.09,0.105,0.09],sd);
+  seg(H,[-0.06,0.08,0],[-0.1,-0.12,0],0.06,0.03,sd);
+  for(const z of[-0.034,0.034])ball(H,[0.076,0.095,z],[0.012,0.02,0.017],hole,true);
+  ball(H,[0.09,0.065,0],[0.014,0.018,0.012],st,true);
+  ball(H,[0.078,0.03,0],pose>=2?[0.012,0.03,0.022]:[0.008,0.006,0.02],hole,true);
+  const arms=[
+    [[0.13,-0.06,0.17],[0.1,0.1,0.045]],   // hands over the face
+    [[0.05,-0.08,0.17],[0.07,-0.2,0.15]],  // arms at the sides
+    [[0.2,-0.04,0.17],[0.42,0.02,0.1]],    // reaching for you
+    [[0.08,0.1,0.25],[0.2,0.28,0.2]],      // raised to strike
+  ];
+  for(const z of[-1,1]){
+    const A=(pose===1&&z>0)?arms[2]:arms[pose],S=[0,0.24,z*0.13],E=[A[0][0],0.24+A[0][1],z*A[0][2]],W=[A[1][0],0.24+A[1][1],z*A[1][2]];
+    limb(U,S,E,W,0.042,0.036,0.03,st,st,st,0.034);
+    if(pose>=1&&!(pose===1&&z<0))for(let q=-1;q<=1;q++){const dx=W[0]-E[0],dy=W[1]-E[1],l=Math.hypot(dx,dy)||1;seg(U,W,[W[0]+dx/l*0.08,W[1]+dy/l*0.08,W[2]+q*0.025],0.011,0.003,sd)}
+  }
+}
+/* ---------- static decor: pillars, brazier, rubble, sconces and room dressing ---------- */
+const M6={};function mesh6(k){if(M6[k])return M6[k];const c=MESH_DATA[k],o=new Float32Array(c.length/9*6);for(let i=0,j=0;i<c.length;i+=9)for(let q=0;q<6;q++)o[j++]=c[i+q];return M6[k]=o}
+function buildProp(pr,F){
+  const f={p:[pr.x,0,pr.z],R:rYaw(pr.r),lo:[pr.x*0.37,0,pr.z*0.37]},S=pr.s,st=F.biome.stone;
+  const wood=[0.42,0.26,0.13,6],woodD=[0.27,0.17,0.09,6],iron=[0.2,0.2,0.22,4],bone=[0.82,0.78,0.66,9];
+  switch(pr.t){
+  case 'barrel':{
+    seg(f,[0,0,0],[0,0.09*S,0],0.1*S,0.126*S,wood);seg(f,[0,0.09*S,0],[0,0.2*S,0],0.126*S,0.126*S,wood);seg(f,[0,0.2*S,0],[0,0.29*S,0],0.126*S,0.1*S,wood);
+    for(const y of[0.05,0.145,0.24])seg(f,[0,(y-0.008)*S,0],[0,(y+0.008)*S,0],0.129*S*(y===0.145?1:0.9),0.129*S*(y===0.145?1:0.9),iron);
+    seg(f,[0,0.29*S,0],[0,0.292*S,0],0.09*S,0.088*S,woodD);
+    if(pr.v)ball(f,[0.02,0.31*S,0.02],[0.05,0.03,0.05],[0.3,0.3,0.25,2]);
+    break}
+  case 'crate':{
+    const h=0.22*S;slab(f,[0,h/2,0],[h,h,h],wood);
+    for(const a of[-1,1])for(const b2 of[-1,1])slab(f,[a*h*0.5,h/2,b2*h*0.5],[0.03,h+0.012,0.03],woodD);
+    slab(f,[0,h+0.004,0],[h+0.02,0.012,0.035],woodD);slab(f,[0,h+0.004,0],[0.035,0.012,h+0.02],woodD);
+    if(pr.v){const f2={p:fpt(f,[0.02,h+0.01,-0.01]),R:m3(f.R,rYaw(0.5)),lo:f.lo};const h2=0.14*S;slab(f2,[0,h2/2,0],[h2,h2,h2],woodD);slab(f2,[0,h2+0.003,0],[h2+0.012,0.008,0.03],wood)}
+    break}
+  case 'urn':{
+    const cl=pr.v?[0.5,0.3,0.2,9]:[0.36,0.4,0.42,9],tr=pr.v?[0.8,0.7,0.5,9]:[0.75,0.55,0.2,9];
+    seg(f,[0,0,0],[0,0.1*S,0],0.045*S,0.09*S,cl);seg(f,[0,0.1*S,0],[0,0.19*S,0],0.09*S,0.07*S,cl);seg(f,[0,0.19*S,0],[0,0.245*S,0],0.07*S,0.036*S,cl);
+    seg(f,[0,0.245*S,0],[0,0.275*S,0],0.036*S,0.055*S,cl);seg(f,[0,0.115*S,0],[0,0.135*S,0],0.09*S,0.088*S,tr);
+    break}
+  case 'sack':{
+    const cl=[0.5,0.42,0.28,2];ball(f,[0,0.085*S,0],[0.1*S,0.095*S,0.09*S],cl);seg(f,[0,0.16*S,0],[0.01,0.21*S,0],0.03*S,0.045*S,cl);seg(f,[0,0.165*S,0],[0,0.175*S,0],0.034*S,0.034*S,[0.25,0.16,0.08,3]);
+    ball(f,[0.13*S,0.05*S,0.05],[0.07*S,0.055*S,0.065*S],cl);
+    break}
+  case 'bones':{
+    ball(f,[0,0.05,0],[0.05,0.048,0.043],bone);ball(f,[0.03,0.028,0],[0.03,0.022,0.03],bone,true);
+    for(const z of[-0.018,0.018])ball(f,[0.042,0.055,z],[0.012,0.014,0.012],[0.04,0.03,0.03,0],true);
+    ball(f,[0.05,0.036,0],[0.006,0.01,0.007],[0.04,0.03,0.03,0],true);
+    for(const b2 of[[0.1,-0.08,0.5],[-0.09,0.07,2.1],[0.02,0.13,1.2]]){const a=b2[2],x=b2[0],z=b2[1],dx=Math.cos(a)*0.075,dz=Math.sin(a)*0.075;
+      seg(f,[x-dx,0.012,z-dz],[x+dx,0.012,z+dz],0.009,0.009,bone);ball(f,[x-dx,0.014,z-dz],0.015,bone,true);ball(f,[x+dx,0.014,z+dz],0.015,bone,true)}
+    for(let i=0;i<4;i++)seg(f,[-0.06+i*0.012,0.0,-0.06-i*0.02],[-0.02+i*0.012,0.07-i*0.008,-0.06-i*0.02],0.006,0.004,bone);
+    break}
+  case 'shroom':{
+    for(let i=0;i<5;i++){const a=i*2.3+pr.r,r=i?0.05+((i*37)%5)*0.018:0,h=(0.07+((i*53)%7)*0.015)*S,x=Math.cos(a)*r,z=Math.sin(a)*r;
+      seg(f,[x,0,z],[x+0.006,h,z],0.012,0.009,[0.8,0.8,0.7,1]);ball(f,[x+0.006,h,z],[0.035*S,0.018*S,0.035*S],pr.v?[0.25,1.5,1.2,7]:[0.75,0.2,0.12,1]);}
+    break}
+  case 'ice':{
+    for(let i=0;i<5;i++){const a=i*1.9+pr.r,r=i?0.06+((i*29)%4)*0.015:0,h=(i?0.12+((i*41)%6)*0.03:0.3)*S,x=Math.cos(a)*r,z=Math.sin(a)*r;
+      seg(f,[x,0,z],[x+Math.cos(a)*h*0.3*(i?1:0),h,z+Math.sin(a)*h*0.3*(i?1:0)],0.04*S,0.002,[0.55,0.82,1.0,8]);}
+    break}
+  case 'ember':{
+    ball(f,[0,0.05,0],[0.11*S,0.07*S,0.09*S],[0.12,0.1,0.1,9]);ball(f,[0.09,0.035,0.06],[0.06,0.045,0.05],[0.12,0.1,0.1,9]);
+    for(let i=0;i<5;i++){const a=i*1.4;ball(f,[Math.cos(a)*0.07,0.07+((i*3)%2)*0.02,Math.sin(a)*0.06],[0.022,0.012,0.018],[2.4,0.7,0.15,7],true)}
+    break}
+  case 'banner':{
+    const col=pr.v?[0.5,0.1,0.08,2]:[0.1,0.2,0.42,2],tr=[0.82,0.66,0.25,2];
+    seg(f,[0.03,1.0,-0.24],[0.03,1.0,0.24],0.012,0.012,wood);ball(f,[0.03,1.0,-0.24],0.02,iron,true);ball(f,[0.03,1.0,0.24],0.02,iron,true);
+    slab(f,[0.025,0.74,0],[0.012,0.5,0.36],col);slab(f,[0.027,0.98,0],[0.014,0.03,0.36],tr);
+    slab(f,[0.033,0.76,0],[0.006,0.13,0.13],tr,rX(Math.PI/4));slab(f,[0.036,0.76,0],[0.006,0.07,0.07],col,rX(Math.PI/4));
+    for(const z of[-0.12,0,0.12])seg(f,[0.025,0.49,z],[0.025,0.4+Math.abs(z)*0.3,z],0.06,0.004,col);
+    break}
+  case 'chain':{
+    const n=5+pr.v*3;
+    for(let i=0;i<n;i++){const y=WALL_H-i*0.055;if(i%2)slab(f,[0,y-0.03,0],[0.008,0.06,0.03],iron);else slab(f,[0,y-0.03,0],[0.03,0.06,0.008],iron)}
+    const yb=WALL_H-n*0.055;seg(f,[0,yb,0],[0,yb-0.03,0],0.03,0.022,iron);seg(f,[0,yb-0.03,0],[0.03,yb-0.07,0],0.008,0.003,iron);
+    break}
+  case 'stal':{
+    const sc=[st[0]*0.9,st[1]*0.9,st[2]*0.9,9];
+    for(let i=0;i<3;i++){const a=i*2.1+pr.r,r=i?0.12:0,h=(i?0.18+i*0.07:0.42)*S;seg(f,[Math.cos(a)*r,WALL_H,Math.sin(a)*r],[Math.cos(a)*r,WALL_H-h,Math.sin(a)*r],0.07*S*(i?0.7:1),0.004,sc)}
+    break}
+  }
+}
+function buildStatic(F){
+  TB=DEC;DEC.n=0;
+  const st=[...F.biome.stone,9],dk=[st[0]*0.8,st[1]*0.8,st[2]*0.8,9],iron=[0.1,0.09,0.085,4];
+  const I=(x,z,yaw)=>({p:[x,0,z],R:rYaw(yaw||0),lo:[x*0.61,0,z*0.61]});
+  for(const q of F.pillars)emit(mesh6('pillar'),I(q[0],q[1]),ZERO3,[1,1,1],st);
+  if(F.safe){const f=I(F.safe.x,F.safe.z);emit(mesh6('pillar'),f,ZERO3,[1.15,0.3,1.15],st);emit(mesh6('bowl'),f,[0,0.375,0],[1,1,1],iron)}
+  for(const r of F.rubble)emit(mesh6('octa'),I(r.x,r.z,r.r),[0,r.s*r.sy*0.6,0],[r.s*1.4,r.s*r.sy,r.s],dk);
+  for(const q of F.sconces){const f=I(q.x,q.z);slab(f,[0,0.72,0],[0.05,0.2,0.05],iron);slab(f,[-q.dx*0.07,0.82,-q.dz*0.07],[0.12,0.04,0.12],iron)}
+  for(const pr of F.props)buildProp(pr,F);
+  TB=CH;
+  gl.bindBuffer(gl.ARRAY_BUFFER,decor.vbo);gl.bufferData(gl.ARRAY_BUFFER,DEC.buf.subarray(0,Math.max(13,DEC.n*13)),gl.DYNAMIC_DRAW);
+  decor.count=DEC.n;
 }
 /* ---------- sprites ---------- */
 const MAXS=900, SV=10;
@@ -1729,6 +1959,7 @@ function update(dt){
   const nz=P.z+P.vz*dt;if(!blocked(P.x,nz))P.z=nz;else P.vz=0;
   for(const q of F.pillars){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=0.2+PR;if(dd<m&&dd>1e-4){P.x=q[0]+ddx/dd*m;P.z=q[1]+ddz/dd*m}}
   if(F.safe){const ddx=P.x-F.safe.x,ddz=P.z-F.safe.z,dd=Math.hypot(ddx,ddz),m=0.3+PR;if(dd<m&&dd>1e-4){P.x=F.safe.x+ddx/dd*m;P.z=F.safe.z+ddz/dd*m}}
+  for(const q of F.discs){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=q[2]+PR;if(dd<m&&dd>1e-4){const nx2=q[0]+ddx/dd*m,nz2=q[1]+ddz/dd*m;if(!blocked(nx2,nz2)){P.x=nx2;P.z=nz2}}}
   for(const n of F.npcs){const X=n.x+(n.ox||0),Z=n.z+(n.oz||0),ddx=P.x-X,ddz=P.z-Z,dd=Math.hypot(ddx,ddz),m=0.16+PR;if(dd<m&&dd>1e-4){const nx2=X+ddx/dd*m,nz2=Z+ddz/dd*m;if(!blocked(nx2,nz2)){P.x=nx2;P.z=nz2}}}
   if(moving&&P.y<=0){
     P.bob+=speed*dt*2.3;
@@ -1995,6 +2226,7 @@ function render(t){
   }
   // creatures block light
   {const near=[];for(const s of F.shades)if(s.type!==2){const d=(s.x-ex)**2+(s.z-ez)**2;if(d<120)near.push([d,s])}
+    for(const n of F.npcs){const X=n.x+(n.ox||0),Z=n.z+(n.oz||0),d=(X-ex)**2+(Z-ez)**2;if(d<120)near.push([d,{x:X,z:Z}])}
     near.sort((a,b)=>a[0]-b[0]);
     for(let i=0;i<6;i++){if(i<near.length){blk[i*4]=near[i][1].x;blk[i*4+1]=near[i][1].z;blk[i*4+2]=0.2}else{blk[i*4]=-99;blk[i*4+1]=-99;blk[i*4+2]=-10}}}
 
@@ -2010,10 +2242,12 @@ function render(t){
   if(NORMALMAP){gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D_ARRAY,nrmTex);gl.uniform1i(u.uNrm,1)}
   gl.bindVertexArray(worldVAO);gl.drawArrays(gl.TRIANGLES,0,worldCount);
 
+  // decor
+  gl.useProgram(matProg.p);setLights(matProg.u,L);
+  if(decor.count)drawMat(decor,0,1);
   // 3D props
   gl.useProgram(propProg.p);
   setLights(propProg.u,L);gl.uniform1f(propProg.u.uBlkOn,1);
-  if(decor.count)drawProp(decor,0,0,0,1,1,1,0,WHITE,0,0.12);
   for(const tr of F.traps){
     if((tr.x-ex)**2+(tr.z-ez)**2>16*16)continue;
     const h=0.04+trapExt(tr,R.time)*0.44;
@@ -2038,7 +2272,6 @@ function render(t){
     if(o.lamp){const q=o.lamp;spr(q[0],q[1],q[2],0.22,0.22,7,1.0,0.75,0.3,0.4,1)}
     if(!n.used&&n.type!=='keeper'){const y=o.top+0.08+Math.sin(t*3+n.ph)*0.03,X=n.x+(n.ox||0),Z=n.z+(n.oz||0);spr(X,y,Z,0.08,0.08,7,1.0,0.85,0.4,1,1);spr(X,y,Z,0.32,0.32,7,1.0,0.7,0.2,0.3,1)}
   }}
-  if(CH.n){gl.bindBuffer(gl.ARRAY_BUFFER,chars.vbo);gl.bufferData(gl.ARRAY_BUFFER,CH.buf.subarray(0,CH.n*9),gl.DYNAMIC_DRAW);chars.count=CH.n;drawProp(chars,0,0,0,1,1,1,0,WHITE,0.03,0.22)}
   if(F.safe&&(F.safe.x-ex)**2+(F.safe.z-ez)**2<22*22){
     const fl=F.safe.fl||1,X=F.safe.x,Z=F.safe.z;
     spr(X,0.72,Z,0.42*fl,0.62*fl,11,1.0,0.55,0.16,1,1);
@@ -2048,24 +2281,18 @@ function render(t){
   }
   for(const s of F.shades){
     const d2=(s.x-ex)**2+(s.z-ez)**2;if(d2>18*18||s.type===2)continue;
-    const tp=Math.atan2(ez-s.z,ex-s.x);
-    if(s.type===1){
-      const k=s.stun>0?0.6:1,cx=Math.cos(tp),cz=Math.sin(tp);
-      drawProp(MESH.stalker,s.x,0,s.z,1,1,1,0,[0.62*k,0.6*k,0.55*k],0,0.25);
-      for(const e of[-0.052,0.052])spr(s.x+cx*0.135-cz*e,0.985,s.z+cz*0.135+cx*e,0.075,0.09,7,0,0,0,1,0);
-      spr(s.x+cx*0.13,0.91,s.z+cz*0.13,0.05,0.07,7,0,0,0,1,0);
-    }else{
-      const chase=s.state===1&&s.stun<=0,fa=chase?tp:(s.face||0),cx=Math.cos(fa),cz=Math.sin(fa);
-      const y=0.07+Math.sin(s.ph)*0.03,ln=chase?0.2:0.06;
-      const col=s.stun>0?[0.3,0.36,0.5]:chase?[0.36,0.1,0.14]:[0.2,0.15,0.33];
-      drawProp(MESH.shade,s.x,y,s.z,1,1,1,0,col,0.04,0.3,cx*ln,cz*ln);
+    if((s.x-ex)*fwx+(s.z-ez)*fwz<-1.5)continue;
+    if(s.type===1)buildStalker(s,t,ex,ez);
+    else{
+      const o=buildShade(s,t,ex,ez);
       if(s.stun<=0){
-        const hx=s.x+cx*(0.19+ln*0.95),hz=s.z+cz*(0.19+ln*0.95),ec=chase?[1.0,0.22,0.15]:[0.75,0.65,1.0];
-        for(const e of[-0.055,0.055])spr(hx-cz*e,y+0.93,hz+cx*e,0.085,0.085,7,ec[0],ec[1],ec[2],1,1);
-        if(chase)spr(s.x,0.6,s.z,1.5,1.5,7,0.8,0.05,0.1,0.25,1);
+        const ec=o.chase?[1.0,0.22,0.15]:[0.75,0.65,1.0];
+        for(const e of o.eyes)spr(e[0],e[1],e[2],0.075,0.075,7,ec[0],ec[1],ec[2],1,1);
+        if(o.chase)spr(s.x,0.6,s.z,1.5,1.5,7,0.8,0.05,0.1,0.25,1);
       }
     }
   }
+  if(CH.n){gl.useProgram(matProg.p);gl.bindBuffer(gl.ARRAY_BUFFER,chars.vbo);gl.bufferData(gl.ARRAY_BUFFER,CH.buf.subarray(0,CH.n*13),gl.DYNAMIC_DRAW);chars.count=CH.n;drawMat(chars,0.03,0)}
 
   // sprites
   for(const it of F.items){
@@ -2088,7 +2315,10 @@ function render(t){
     const fx=q.x-q.dx*0.07,fz=q.z-q.dz*0.07,fl=q.fl||1;
     spr(fx,0.93,fz,0.15*fl,0.24*fl,11,1.0,0.55,0.16,1,1);
     spr(fx,0.93,fz,0.8,0.8,7,1.0,0.42,0.1,0.3*fl,1);
+    if(Q>0&&(q.x-ex)**2+(q.z-ez)**2<81)for(let i=0;i<3;i++){const a=(t*0.4+i*0.33+q.ph)%1;spr(fx+Math.sin(i*2.4+t*1.3+q.ph)*0.06*a,0.98+a*0.45,fz+Math.cos(i*1.7+t+q.ph)*0.06*a,0.018,0.018,7,1.0,0.6,0.2,(1-a)*0.9,1)}
   }
+  if(flashT>0){const k=1-flashT,rr=0.4+k*5.5;
+    for(let i=0;i<18;i++){const a=i/18*6.283+k;spr(ex+Math.cos(a)*rr,0.25+((i*7)%5)*0.16,ez+Math.sin(a)*rr,0.25,0.25,7,0.8,0.9,1.0,flashT*0.8,1)}}
   for(const m of DUST){
     const px=ex+((m[0]+Math.sin(t*0.21+m[3])*0.4-ex)%8+12)%8-4,pz=ez+((m[2]+Math.cos(t*0.17+m[3])*0.4-ez)%8+12)%8-4;
     const py=0.05+((m[1]+t*0.012+Math.sin(t*0.3+m[3])*0.05)%1.15);
