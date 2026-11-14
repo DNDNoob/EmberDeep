@@ -16,6 +16,7 @@
   .fx{position:fixed;inset:0;pointer-events:none}
   #vig{background:radial-gradient(ellipse at center,rgba(0,0,0,0) 45%,rgba(0,0,0,.72) 100%)}
   #chill{background:radial-gradient(ellipse at center,rgba(60,110,200,0) 25%,rgba(70,130,230,.6) 100%);opacity:0}
+  #scare{background:radial-gradient(ellipse at center,rgba(0,0,0,0) 20%,rgba(120,0,10,.55) 60%,rgba(10,0,0,.95) 100%);opacity:0}
   #hurt{background:radial-gradient(ellipse at center,rgba(160,0,0,0) 30%,rgba(200,10,10,.75) 100%);opacity:0;transition:opacity .5s}
   #flashfx{background:#dff1ff;opacity:0;transition:opacity .7s}
   #fade{background:#000;opacity:0;transition:opacity .4s}
@@ -39,6 +40,18 @@
     letter-spacing:.05em;opacity:0;transition:opacity .5s;pointer-events:none;text-shadow:0 2px 6px #000,0 0 14px #000}
   #mpLine{position:absolute;left:50%;top:16px;transform:translateX(-50%);font-size:13px;letter-spacing:.06em;color:#9fe3c4;white-space:nowrap}
   body.touch #mpLine{top:8px;font-size:11px}
+  #chat{position:fixed;left:22px;bottom:150px;width:min(380px,80vw);z-index:5;pointer-events:none;font-size:14px;text-shadow:0 1px 3px #000,0 0 6px #000}
+  #chatLog{max-height:190px;overflow:hidden;line-height:1.4}
+  #chatLog div{transition:opacity .6s}
+  #chatLog .sys{color:#9fe3c4;font-style:italic;font-size:12px}
+  #chat.open{pointer-events:auto}
+  #chat.open #chatLog{overflow-y:auto;background:rgba(8,6,10,.55);border-radius:8px;padding:6px 8px}
+  #chatIn{display:none;width:100%;margin-top:6px;text-align:left;font-size:14px}
+  #chat.open #chatIn{display:block}
+  body.touch #chat{bottom:auto;top:calc(150px + env(safe-area-inset-top));left:calc(14px + env(safe-area-inset-left));font-size:12px;width:min(300px,60vw)}
+  #tTalk{right:calc(150px + env(safe-area-inset-right));bottom:calc(150px + env(safe-area-inset-bottom));width:62px;height:62px;font-size:12px}
+  #tChat{right:calc(200px + env(safe-area-inset-right));top:calc(12px + env(safe-area-inset-top));width:42px;height:42px;font-size:11px}
+  body:not(.mp) #tTalk,body:not(.mp) #tChat,body:not(.voice) #tTalk{display:none}
   .ptag{position:fixed;left:0;top:0;font-size:13px;letter-spacing:.06em;white-space:nowrap;pointer-events:none;z-index:4;
     text-shadow:0 1px 3px #000,0 0 8px #000;font-family:Georgia,serif}
   input.plain[type=text]{text-transform:none;letter-spacing:.04em}
@@ -126,6 +139,7 @@
 <canvas id="gl"></canvas>
 <div id="vig" class="fx"></div>
 <div id="hurt" class="fx"></div>
+<div id="scare" class="fx"></div>
 <div id="chill" class="fx"></div>
 <div id="flashfx" class="fx"></div>
 
@@ -157,8 +171,11 @@
   <div id="tPause" class="tbtn">II</div>
   <div id="tFlash" class="tbtn">FLASH</div>
   <div id="tJump" class="tbtn">JUMP</div>
+  <div id="tTalk" class="tbtn">TALK</div>
+  <div id="tChat" class="tbtn">CHAT</div>
 </div>
 <div id="toast"></div>
+<div id="chat" hidden><div id="chatLog"></div><input id="chatIn" class="plain" type="text" maxlength="200" placeholder="Say something, Enter to send, Esc to close" autocomplete="off"></div>
 <div id="prompt"></div>
 <div id="talk" class="hidden"><div id="talkPurse"></div><div id="talkName"></div><div id="talkText"></div><div id="talkOpts"></div><div id="talkHint"></div></div>
 <div id="fade" class="fx"></div>
@@ -182,6 +199,7 @@
   <div class="row">
     <label>Your name <input id="nameIn" class="plain" type="text" maxlength="16" placeholder="Delver"></label>
     <button id="hostBtn" style="font-size:13px;padding:8px 20px;background:rgba(255,255,255,.15);color:#fff;box-shadow:none" title="Start a game your friends can join with a link">HOST FOR FRIENDS</button>
+    <label>Voice chat <select class="voiceSel"><option value="off">Off</option><option value="ptt">Push to talk (hold C)</option><option value="open">Open mic</option></select></label>
     <button id="soloBtn" style="font-size:13px;padding:8px 20px;background:rgba(255,255,255,.15);color:#fff;box-shadow:none" hidden>PLAY ALONE INSTEAD</button>
   </div>
   <div class="row">
@@ -206,6 +224,18 @@
     <div class="row">Friends can join with this link. The game keeps going while you are paused.</div>
     <div class="row"><input id="mpLinkIn" class="plain" type="text" readonly> <button id="copyBtn" style="font-size:13px;padding:8px 20px;background:rgba(255,255,255,.15);color:#fff;box-shadow:none">COPY INVITE LINK</button></div>
     <div class="hint" id="mpList"></div>
+    <div class="row"><label>Voice chat <select class="voiceSel"><option value="off">Off</option><option value="ptt">Push to talk (hold C)</option><option value="open">Open mic</option></select></label></div>
+    <div class="row" id="hostOpts" hidden>
+      <label title="Friends sound quieter the farther away they are, and muffled behind walls"><input id="proxChk" type="checkbox"> Voices fade with distance</label>
+      <label title="A creature that wears a player's face and replays what they said"><input id="mimicChk" type="checkbox"> The mimic hunts</label>
+    </div>
+    <div class="row" id="brainOpts">
+      <label title="Your computer's AI-Router transcribes clips and picks what the mimic says"><input id="brainChk" type="checkbox"> Local AI picks the mimic's lines</label>
+      <input id="brainUrl" class="plain" type="text" style="width:240px;font-size:12px" spellcheck="false">
+    </div>
+    <div class="hint" id="brainLine"></div>
+    <div class="hint" id="guestOpts"></div>
+    <div class="hint">Your voice clips stay in this room's browsers and are gone when you leave.</div>
   </div>
   <div class="row"><label>Brightness <input class="brightS" type="range" min="0.6" max="3" step="0.05" value="1.3"></label></div>
   <div class="hint kb">Press T to give up this run and return to the title. On a controller: A resumes, Back quits.</div>
