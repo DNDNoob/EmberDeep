@@ -9,6 +9,7 @@ import {FXAAShader} from 'three/addons/shaders/FXAAShader.js';
 import {RoomEnvironment} from 'three/addons/environments/RoomEnvironment.js';
 import {makeSurfaces} from './textures.js';
 import {openRoom,newRoomCode,cleanCode} from './net.js';
+import {createVoice} from './voice.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('gl');
@@ -1275,7 +1276,7 @@ function los(x0,z0,x1,z1){
 function loadFloor(depth){
   R.depth=depth;
   if(depth>deepest){deepest=depth;store.set('deepest',deepest)}
-  F=genFloor(R.seed,depth);panelLvl=1;
+  F=genFloor(R.seed,depth);panelLvl=1;P.grab=null;if(typeof MIM!=='undefined')mimicReset();
   buildMesh(F);buildStatic(F);buildSdf(F);
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
   P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;P.inSafe=false;nearNpc=null;
@@ -1402,6 +1403,7 @@ function flashStun(x,z){
     if(s.type===3)continue;
     if(Math.hypot(s.x-x,s.z-z)<6.5&&los(x,z,s.x,s.z)){s.stun=4.5;if(s.type!==1)s.state=0;n++}
   }
+  n+=mimicFlash(x,z);
   return n;
 }
 function openDoor(quiet){
@@ -1464,14 +1466,19 @@ const hostName=()=>{const h=MP.peers.get(MP.hostId);return h?h.name:'the host'};
 function mpOpen(code){
   MP.code=code;MP.on=true;MP.local=new URLSearchParams(location.search).get('net')==='local';
   const room=openRoom(code,MP.local);MP.room=room;MP.id=room.id;
-  room.onPeerJoin=id=>{mpPeer(id);mpSend({k:'hi',n:myName(),h:MP.host},id);mpTitle()};
+  room.onPeerJoin=id=>{mpPeer(id);mpSend({k:'hi',n:myName(),h:MP.host},id);if(MP.host)mpSend(mpCfg(),id);if(VOX.stream)room.addStream(VOX.stream,id);mpTitle()};
   room.onPeerLeave=id=>mpGone(id);
+  room.onPeerStream=(st,id)=>{if(MP.room===room){initAudio();VOX.attach(id,st)}};
+  room.onBinary=(buf,meta,from)=>{if(MP.room===room&&from)try{mpBinary(buf,meta||{},from)}catch(e){console.warn('emberdeep clip',e)}};
+  if(VOX.stream)room.addStream(VOX.stream);
   room.onMessage=(m,from)=>{if(!m||!from||MP.room!==room)return;try{mpRecv(m,from)}catch(e){console.warn('emberdeep net',e)}};
 }
 function mpLeave(endIfDown){
   if(MP.room)try{MP.room.leave()}catch(e){}
   Object.assign(MP,{room:null,on:false,host:false,guest:false,hostId:null,run:null,wantJoin:false,code:'',follow:null});
+  for(const id of MP.peers.keys())VOX.detach(id);
   MP.peers.clear();
+  if(chatOpen)chatClose(false);chatLog.textContent='';
   try{const u=new URL(location.href);if(u.searchParams.has('room')){u.searchParams.delete('room');u.searchParams.delete('net');history.replaceState(null,'',u)}}catch(e){}
   if(P.down){P.down=false;if(endIfDown&&state!=='title'&&state!=='dead')die()}
   mpTitle();
@@ -1512,8 +1519,8 @@ function mpApplyRun(r){
   say(`You joined ${hostName()}'s game`,3);
 }
 function mpGone(id){
-  const p=MP.peers.get(id);MP.peers.delete(id);
-  if(p&&p.greeted&&state!=='title')say(p.name+' left',2.5);
+  const p=MP.peers.get(id);MP.peers.delete(id);VOX.detach(id);
+  if(p&&p.greeted&&state!=='title'){say(p.name+' left',2.5);mpSys(p.name+' left')}
   if(MP.guest&&id===MP.hostId){
     MP.hostId=null;MP.run=null;
     if(state==='title'||!MP.wantJoin)mpTitle();
@@ -1538,7 +1545,7 @@ function mpRecv(m,from){
     case 'hi':
       p.name=String(m.n||'Delver').slice(0,16);
       if(m.h&&MP.guest){MP.hostId=from;p.host=true}
-      if(!p.greeted){p.greeted=true;if(inRun)say(p.name+' joined',2.5);if(MP.host&&state!=='title'&&state!=='dead')mpSendRun(from)}
+      if(!p.greeted){p.greeted=true;if(inRun)say(p.name+' joined',2.5);mpSys(p.name+' joined');if(MP.host&&state!=='title'&&state!=='dead')mpSendRun(from)}
       mpTitle();break;
     case 'run':
       if(!fromHost)return;
@@ -1561,6 +1568,7 @@ function mpRecv(m,from){
         s.gx=Math.floor(s.nx);s.gy=Math.floor(s.nz);s.px=-1;
         if(s.x<0||Math.hypot(s.nx-s.x,s.nz-s.z)>2.5){s.x=s.nx;s.z=s.nz}
       }
+      if(Array.isArray(m.mi)){const q=m.mi;Object.assign(MIM,{x:+q[0],z:+q[1],face:+q[2],st:q[3]|0,as:String(q[4]||''),vic:String(q[5]||'')});if(MIM.st===2||MIM.st===3){if(Math.abs(MIM.t-q[6])>0.3)MIM.t=+q[6]}}
       break;}
     case 'got':{
       if(!inRun||!here)return;
@@ -1578,6 +1586,10 @@ function mpRecv(m,from){
       else if(m.w==='chill'){P.chill=3.5;P.inv=1.6;sfx('drain');rumble(180,0.5,0.3);say('The shade chills you. Deeper down, its touch wounds.',2.6)}
       else if(P.inv<=0)hurt(null);
       break;
+    case 'chat':{const t=String(m.t||'').slice(0,200);if(t){chatLine(p.name,p.hex,t);if(!chatOpen&&state==='play')sfx('pick')}break}
+    case 'cfg':if(fromHost){MP.prox=!!m.prox;MP.mimicOn=!!m.mimic;mpVoiceUI()}break;
+    case 'say':if(fromHost&&inRun&&typeof m.key==='string')mimicSay(m.key);break;
+    case 'eat':if(fromHost&&inRun)mimicEat();break;
     case 'wipe':if(fromHost&&inRun){MP.wiping=true;die();MP.wiping=false}break;
   }
 }
@@ -1634,6 +1646,7 @@ const mpShown=p=>MP.on&&p.run&&p.d===R.depth&&p.rx!==undefined&&state!=='title'&
 function mpTick(raw){
   if(!MP.on)return;
   const dt=Math.min(raw,0.25);
+  mimicTick(dt);
   for(const p of MP.peers.values()){
     if(p.x===undefined)continue;
     const k=Math.min(1,dt*12),ox=p.rx,oz=p.rz;
@@ -1655,14 +1668,16 @@ function mpTick(raw){
     if(MP.mt<=0){
       MP.mt=0.1;
       const a=[];for(const s of F.shades){if(s.type===3)continue;a.push(r2(s.x),r2(s.z),r2(s.face||0),s.state|0,r2(Math.max(0,s.stun||0)),s.frozen?1:0)}
-      mpSend({k:'m',d:R.depth,t:r2(R.time),b:F.blk|0,s:a});
+      const M=MIM;
+      mpSend({k:'m',d:R.depth,t:r2(R.time),b:F.blk|0,s:a,mi:[r2(M.x),r2(M.z),r2(M.face),M.st,M.as,M.vic,r2(M.t)]});
     }
     // everyone is down: the run is over for the whole room
     if(P.down&&!mpAlive().length){mpSend({k:'wipe'});MP.wiping=true;die();MP.wiping=false}
   }
 }
 // friends drawn in the maze, built from the same jointed parts as everyone else
-function buildPlayer(p,t){
+function buildPlayer(p,t,rev,et){
+  rev=rev||0;et=et||0;
   const c=p.col,cloak=[c[0]*0.72,c[1]*0.72,c[2]*0.72,2],cloakD=[c[0]*0.42,c[1]*0.42,c[2]*0.42,2];
   const leg=[0.22,0.17,0.13,2],boot=[0.3,0.19,0.1,3],belt=[0.3,0.17,0.08,3],skin=[0.86,0.65,0.5,1],wood=[0.36,0.23,0.12,6],rag=[0.13,0.1,0.08,2];
   const S=0.94,v=(x,y,z)=>[x*S,y*S,z*S],ph=hashStr(p.id)%100;
@@ -1678,7 +1693,8 @@ function buildPlayer(p,t){
   ball(U,v(0,0.02,0),[0.075*S,0.06*S,0.09*S],cloakD);
   seg(U,v(0,-0.1,0),v(0,0.07,0),0.12*S,0.078*S,cloak);
   seg(U,v(0,0.045,0),v(0,0.075,0),0.083*S,0.081*S,belt);
-  ball(U,v(0,0.17+breath,0),[0.066*S,0.115*S,0.09*S],cloak);
+  if(rev<=0)ball(U,v(0,0.17+breath,0),[0.066*S,0.115*S,0.09*S],cloak);
+  else mimicMaw(U,v,S,rev,t,et,cloak);
   ball(U,v(-0.035,0.2+breath,0),[0.055*S,0.12*S,0.095*S],cloakD);
   const la=-sw*0.09;
   limb(U,v(0,0.225+breath,-0.1),v(-0.01+la*0.6,0.11+breath,-0.135),v(0.02+la,0.01,-0.115),0.03*S,0.027*S,0.023*S,cloak,cloak,skin,0.026*S);
@@ -1687,12 +1703,32 @@ function buildPlayer(p,t){
   const tb=[W1[0]+0.004,W1[1]-0.05,W1[2]],tt=[W1[0]+0.03,W1[1]+0.13,W1[2]];
   seg(U,tb,tt,0.011,0.013,wood);ball(U,tt,[0.02,0.018,0.02],rag,true);
   seg(U,v(0,0.27+breath,0),v(0.003,0.31+breath,0),0.027*S,0.026*S,skin);
-  const H=subF(U,v(0.003,0.305+breath,0),rZ(clamp(p.rpitch,-0.6,0.6)*0.7));
+  const H=subF(U,v(0.003-0.03*rev,0.305+breath+0.02*rev,0),rev?m3(rZ(rev*1.05),rX(rev*0.35+Math.sin(t*23)*0.04*rev)):rZ(clamp(p.rpitch,-0.6,0.6)*0.7));
   const HS={p:H.p,R:H.R.map(q=>q*S)};
   face(HS,{skin,blink:((t*0.23+ph*0.01)%1)<0.035?0.12:1,iris:[0.3,0.25,0.18],brow:[0.25,0.16,0.1,5],browH:0.006,eyeS:1.1,nose:[0.012,0.013,0.011],mouth:[0.6,0.32,0.3],mouthW:0.022});
   ball(HS,[-0.03,0.1,0],[0.088,0.1,0.094],cloak);
   ball(HS,[-0.05,0.04,0],[0.07,0.07,0.09],cloakD,true);
   return {torch:fpt(U,[tt[0],tt[1]+0.035,tt[2]])};
+}
+// the chest splits like a pair of doors: a ring of teeth, a red throat, and tentacles that reach
+function mimicMaw(U,v,S,rev,t,et,cloak){
+  const flesh=[0.55,0.06,0.1,1],dark=[0.9,0.04,0.03,7],bone=[0.86,0.82,0.7,9],tent=[0.5,0.12,0.24,1],tentD=[0.32,0.06,0.15,1];
+  for(const sd of[-1,1]){const D=subF(U,v(0.01,0.17,sd*0.085),rYaw(-sd*rev*1.5));ball(D,[0.03,0,-sd*0.045*S],[0.058*S,0.112*S,0.046*S],cloak)}
+  ball(U,v(0.005,0.17,0),[0.05*S,0.105*S,0.075*S],flesh);
+  ball(U,v(0.03,0.17,0),[0.03*S,0.07*S,0.045*S],dark,true);
+  const n=14;
+  for(let i=0;i<n;i++){const a=i/n*Math.PI*2,c=Math.cos(a),sn=Math.sin(a),o=v(0.05,0.17+0.1*sn,0.07*c),tip=v(0.075+0.02*rev,0.17+0.1*sn*(1-0.55*rev),0.07*c*(1-0.55*rev));
+    seg(U,o,v(0.085+0.03*rev,0.17+0.1*sn*(1-0.6*rev),0.07*c*(1-0.6*rev)),0.016*S,0.0015,bone)}
+  const L=rev*(0.22+0.3*Math.min(1,et*1.5));
+  for(let i=0;i<8;i++){
+    const a=i/8*Math.PI*2+0.4,oy=Math.sin(a)*0.05,oz=Math.cos(a)*0.035,sp=0.5+0.2*(i%3);
+    let prev=v(0.04,0.17+oy,oz);
+    for(let k=1;k<=8;k++){const f=k/8,w=Math.sin(t*7+i*1.7+f*4)*0.07*f;
+      const curl=Math.sin(f*3.2+t*5+i)*0.35*f;
+      const q=[0.04*S+L*f*(1-0.25*f*f),(0.17+oy)*S+(Math.sin(a)*sp*f+Math.cos(a)*curl)*L+w*L,oz*S+(Math.cos(a)*sp*f-Math.sin(a)*curl)*L];
+      seg(U,prev,q,(0.03-0.024*(k-1)/8)*S,(0.03-0.024*k/8)*S,k%2?tent:tentD);prev=q}
+    ball(U,prev,0.008,tentD,true);
+  }
 }
 const mpDrawn=p=>mpShown(p)&&!p.down&&!(P.down&&p.id===MP.follow);
 function mpDrawPlayers(t,ex,ez,fwx,fwz){
@@ -1718,7 +1754,15 @@ function mpLights(lights,ex,ez,B){
 }
 const tagEls=new Map(),tagV=new THREE.Vector3();
 function mpTags(){
-  for(const [id,el] of tagEls)if(!MP.peers.has(id)){el.remove();tagEls.delete(id)}
+  for(const [id,el] of tagEls)if(id!=='~m'&&!MP.peers.has(id)){el.remove();tagEls.delete(id)}
+  {let el=tagEls.get('~m');if(!el){el=document.createElement('div');el.className='ptag';document.body.appendChild(el);tagEls.set('~m',el)}
+    const nm=MP.on&&state==='play'?mimicTagName():null;let vis=!!nm;
+    if(vis){const dd=Math.hypot(MIM.rx-P.x,MIM.rz-P.z);if(dd>14||(dd>1.2&&!los(P.x,P.z,MIM.rx,MIM.rz)))vis=false}
+    if(vis){tagV.set(MIM.rx,1.08,MIM.rz).project(camera);if(tagV.z>1||Math.abs(tagV.x)>1.1||Math.abs(tagV.y)>1.1)vis=false}
+    if(!vis)el.style.display='none';
+    else{el.style.display='';const lb=(MIM.voice&&!MIM.voice.done?'🔊 ':'')+nm;if(el.textContent!==lb)el.textContent=lb;
+      const as=MP.peers.get(MIM.as);el.style.color=as?as.hex:toHex(MP_COLS[hashStr(MIM.as||'')%MP_COLS.length]);
+      el.style.transform=`translate(${((tagV.x+1)/2*innerWidth).toFixed(1)}px,${((1-tagV.y)/2*innerHeight).toFixed(1)}px) translate(-50%,-100%)`}}
   const show=MP.on&&state==='play';
   for(const p of MP.peers.values()){
     let el=tagEls.get(p.id);
@@ -1728,7 +1772,8 @@ function mpTags(){
     if(vis){tagV.set(p.rx,1.08+p.ry,p.rz).project(camera);if(tagV.z>1||Math.abs(tagV.x)>1.1||Math.abs(tagV.y)>1.1)vis=false}
     if(!vis){if(el.style.display!=='none')el.style.display='none';continue}
     el.style.display='';
-    if(el.textContent!==p.name)el.textContent=p.name;
+    const label=(VOX.speaking(p.id)?'🔊 ':'')+p.name;
+    if(el.textContent!==label)el.textContent=label;
     el.style.color=p.hex;
     el.style.transform=`translate(${((tagV.x+1)/2*innerWidth).toFixed(1)}px,${((1-tagV.y)/2*innerHeight).toFixed(1)}px) translate(-50%,-100%)`;
   }
@@ -1737,6 +1782,8 @@ function mpHudLine(){
   if(!MP.on)return '';
   const n=[...MP.peers.values()].filter(p=>p.run&&mpFresh(p)).length+1;
   let s=`Room ${MP.code} · ${n} player${n>1?'s':''}`;
+  if(VOX.stream)s+=VOX.on?' · 🎙 talking':voiceMode==='ptt'?(touch.on?' · hold TALK':' · hold C to talk'):'';
+  if(!touch.on)s+=' · Enter to chat';
   if(P.down){const f=MP.peers.get(MP.follow);s+=f?` · watching ${f.name}`+(mpAlive().length>1?' (E to switch)':''):' · fallen'}
   return s;
 }
@@ -1749,7 +1796,7 @@ function mpTitle(){
   $('mpJoinLine').textContent=g?(MP.run?`${hostName()} is at depth ${MP.run.d}. ${n} player${n>1?'s':''} in room ${MP.code}.`:`Room ${MP.code}: waiting for the host to answer. Keep this page open.`):'';
 }
 function mpPausePanel(){
-  $('mpPause').hidden=!MP.on;
+  $('mpPause').hidden=!MP.on;mpVoiceUI();
   if(!MP.on)return;
   $('mpLinkIn').value=mpLink();
   const L=[myName()+' (you)'+(MP.host?' · host':'')];
@@ -1767,11 +1814,262 @@ $('hostBtn').addEventListener('click',mpHost);
 $('soloBtn').addEventListener('click',()=>mpLeave(false));
 $('copyBtn').addEventListener('click',()=>{const el=$('mpLinkIn');try{navigator.clipboard.writeText(el.value).then(()=>say('Invite link copied',2),()=>{el.select();document.execCommand('copy')})}catch(e){el.select();try{document.execCommand('copy')}catch(e2){}}});
 
+/* ---------- chat: text in a box, voices in the maze ---------- */
+const VOX=createVoice(()=>ac);
+let voiceMode=['off','ptt','open'].includes(store.get('voice','off'))?store.get('voice','off'):'off';
+MP.prox=!!store.get('prox',true);MP.mimicOn=!!store.get('mimic',true);
+function mpCfg(){return {k:'cfg',prox:MP.prox,mimic:MP.mimicOn}}
+// turn the microphone on or off for this room
+async function mpVoiceSet(mode){
+  voiceMode=mode;store.set('voice',mode);
+  document.querySelectorAll('.voiceSel').forEach(el=>el.value=mode);
+  if(mode==='off'){if(VOX.stream&&MP.room)MP.room.removeStream(VOX.stream);VOX.disable();return}
+  initAudio();
+  const had=!!VOX.stream;
+  if(!await VOX.enable(mode)){say('No microphone, or permission was refused',3);document.querySelectorAll('.voiceSel').forEach(el=>el.value='off');voiceMode='off';return}
+  if(!had&&MP.on&&MP.room)MP.room.addStream(VOX.stream);
+  if(!had)say(mode==='ptt'?'Voice on: hold C to talk':'Voice on: your microphone is open',3);
+}
+function mpVoiceTick(dt){
+  if(!MP.on){if(VOX.on)VOX.transmit(false);return}
+  const live=state==='play'||state==='pause'||state==='talk';
+  const want=!!VOX.stream&&live&&!chatOpen&&(voiceMode==='open'||(voiceMode==='ptt'&&(keys.KeyC||touch.talk)));
+  if(want!==VOX.on)VOX.transmit(want);
+  VOX.tick(dt);
+  for(const p of MP.peers.values())VOX.place(p.id,mpEar(p.rx,p.rz,p.d,p.run&&mpFresh(p)));
+}
+// how loud a voice at (x,z) on depth d sounds to you
+function mpEar(x,z,d,present){
+  if(!MP.prox||state==='title')return {gain:present||state==='title'?1:0.8,pan:0,muffle:false};
+  if(!present||d!==R.depth||x===undefined||!F)return {gain:0,pan:0,muffle:false};
+  const tx=Math.floor(x),tz=Math.floor(z),pd=tx>=0&&tz>=0&&tx<F.W&&tz<F.H?F.dist[tz*F.W+tx]:-1;
+  const eu=Math.hypot(x-P.x,z-P.z),dd=pd<0?(eu<1.5?eu:99):Math.max(eu,pd*0.9);
+  const gain=Math.pow(clamp(1-(dd-1.5)/17,0,1),1.6);
+  const pan=eu<0.3?0:clamp(Math.sin(Math.atan2(z-P.z,x-P.x)-P.yaw),-1,1)*0.75;
+  return {gain,pan,muffle:eu>1.2&&!los(P.x,P.z,x,z)};
+}
+// text chat
+let chatOpen=false;
+const chatLog=$('chatLog'),chatIn=$('chatIn');
+function chatLine(name,col,text){
+  const d=document.createElement('div');
+  if(name){const b=document.createElement('b');b.textContent=name+': ';b.style.color=col;d.appendChild(b)}else d.className='sys';
+  d.appendChild(document.createTextNode(text));
+  d.dataset.t=performance.now();
+  chatLog.appendChild(d);
+  while(chatLog.children.length>40)chatLog.firstChild.remove();
+  chatLog.scrollTop=chatLog.scrollHeight;
+}
+const mpSys=t=>{if(MP.on)chatLine('','',t)};
+function chatOpenBox(){
+  if(!MP.on||chatOpen)return;
+  chatOpen=true;for(const k in keys)keys[k]=false;
+  $('chat').classList.add('open');chatIn.value='';chatIn.focus();
+}
+function chatClose(send){
+  if(!chatOpen)return;
+  const t=chatIn.value.trim().slice(0,200);
+  chatOpen=false;$('chat').classList.remove('open');chatIn.blur();
+  if(send&&t){mpSend({k:'chat',t});chatLine(myName(),'#ffc27a',t)}
+  if(state==='play'&&!touch.on)lock();
+}
+chatIn.addEventListener('keydown',e=>{e.stopPropagation();if(e.code==='Enter'||e.code==='NumpadEnter')chatClose(true);else if(e.code==='Escape')chatClose(false)});
+chatIn.addEventListener('blur',()=>{if(chatOpen)setTimeout(()=>{if(chatOpen&&document.activeElement!==chatIn)chatClose(false)},0)});
+function chatTick(){
+  const now=performance.now();
+  document.body.classList.toggle('mp',MP.on);document.body.classList.toggle('voice',!!VOX.stream&&voiceMode==='ptt');
+  $('chat').hidden=!MP.on||state==='title';
+  for(const d of chatLog.children){const age=(now-d.dataset.t)/1000,o=chatOpen?1:clamp(1-(age-12)/3,0,1);if(d.style.opacity!==String(o))d.style.opacity=o}
+}
+function mpVoiceUI(){
+  const host=MP.on&&MP.host;
+  $('hostOpts').hidden=!host;$('brainOpts').hidden=!host;
+  $('proxChk').checked=MP.prox;$('mimicChk').checked=MP.mimicOn;
+  $('brainLine').textContent=BRAIN.on?(BRAIN.ok===true?'Local AI is answering.':BRAIN.ok===false?'Local AI is not answering; the mimic picks lines itself.':'Waiting for the first clip.'):'';
+  $('guestOpts').textContent=MP.on&&MP.guest?`Host settings: voices ${MP.prox?'fade with distance':'carry everywhere'}, mimic ${MP.mimicOn?'on':'off'}.`:'';
+}
+document.querySelectorAll('.voiceSel').forEach(el=>{el.value=voiceMode;el.addEventListener('change',()=>mpVoiceSet(el.value))});
+$('proxChk').addEventListener('change',()=>{MP.prox=$('proxChk').checked;store.set('prox',MP.prox);mpSend(mpCfg())});
+$('mimicChk').addEventListener('change',()=>{MP.mimicOn=$('mimicChk').checked;store.set('mimic',MP.mimicOn);mpSend(mpCfg())});
+
+/* ---------- the mimic: wears a player's face, speaks with their recorded voice ----------
+   Each player's own browser cuts what they say (only while their mic is live) into short clips
+   and shares them with the room. The host moves the mimic: it takes the look and name of one
+   player, creeps toward another, and now and then plays one of the first player's clips from
+   where it stands. When it reaches its victim, its chest splits open. */
+const CLIPS=new Map();   // player id -> [{key,buf,len,peak,text}]
+let clipN=0;
+function clipAdd(id,c){
+  let L=CLIPS.get(id);if(!L){L=[];CLIPS.set(id,L)}
+  if(L.some(q=>q.key===c.key))return;
+  L.push(c);while(L.length>12)L.shift();
+}
+VOX.onClip=(buf,len,peak,type)=>{
+  if(!MP.on||!MP.mimicOn||buf.byteLength>200000)return;
+  const c={key:MP.id+':'+(++clipN),buf,len:r2(len),peak:r2(peak),type};
+  clipAdd(MP.id,c);
+  MP.room.sendBinary(buf,{c:'clip',key:c.key,len:c.len,peak:c.peak,type});
+  mimicHear(MP.id,c);
+};
+function mpBinary(buf,meta,from){
+  if(meta.c==='clip'&&typeof meta.key==='string'&&meta.key.startsWith(from+':')&&buf&&buf.byteLength<=200000){
+    const c={key:meta.key,buf:buf instanceof ArrayBuffer?buf:buf.buffer,len:+meta.len||0,peak:+meta.peak||0,type:meta.type};
+    clipAdd(from,c);mimicHear(from,c);
+  }
+}
+// Optional: the host's own local AI (Andrew's AI-Router) listens to each clip and picks lines.
+// POST {url}/transcribe with the clip's audio returns {text}; POST {url}/pick with the clips and
+// the moment returns {key}. Anything that fails just falls back to the built-in choice.
+const BRAIN={on:!!store.get('brain',false),url:String(store.get('brainUrl','http://127.0.0.1:7790/emberdeep')),next:'',busy:false,ok:null};
+function mimicHear(id,c){
+  if(!MP.host||!BRAIN.on)return;
+  fetch(BRAIN.url+'/transcribe',{method:'POST',headers:{'Content-Type':c.type||'audio/webm'},body:c.buf.slice(0)})
+    .then(r=>r.ok?r.json():null).then(j=>{if(j&&typeof j.text==='string'){c.text=j.text.slice(0,200);BRAIN.ok=true}}).catch(()=>{BRAIN.ok=false});
+}
+function mimicAsk(id){
+  const L=(CLIPS.get(id)||[]).filter(c=>c.text);
+  if(!BRAIN.on||BRAIN.busy||L.length<2)return;
+  const as=id===MP.id?myName():(MP.peers.get(id)||{name:'Delver'}).name,vp=MP.peers.get(MIM.vic);
+  const body={as,victim:MIM.vic===MP.id?myName():(vp?vp.name:'someone'),depth:R.depth,dark:F.back&&F.blk===2,
+    distance:r2(MIM.vic===MP.id?Math.hypot(MIM.x-P.x,MIM.z-P.z):vp?Math.hypot(MIM.x-vp.x,MIM.z-vp.z):99),last:MIM.lastKey,
+    clips:L.map(c=>({key:c.key,text:c.text,seconds:c.len}))};
+  BRAIN.busy=true;
+  fetch(BRAIN.url+'/pick',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(r=>r.ok?r.json():null).then(j=>{if(j&&typeof j.key==='string')BRAIN.next=j.key}).catch(()=>{BRAIN.ok=false}).finally(()=>{BRAIN.busy=false});
+}
+function mimicPick(id){
+  const L=CLIPS.get(id);if(!L||!L.length)return null;
+  if(BRAIN.next){const c=L.find(q=>q.key===BRAIN.next);BRAIN.next='';if(c)return c}
+  // otherwise favour longer, louder clips and avoid repeating the last one
+  const pool=L.filter(c=>c.key!==MIM.lastKey);const P2=pool.length?pool:L;
+  let tot=0;const w=P2.map(c=>{const v=0.3+Math.min(c.len,3)+c.peak*4;tot+=v;return v});
+  let r=Math.random()*tot;for(let i=0;i<P2.length;i++){r-=w[i];if(r<=0)return P2[i]}
+  return P2[P2.length-1];
+}
+const MIM={x:-99,z:-99,rx:-99,rz:-99,face:0,rface:0,st:0,as:'',vic:'',t:0,hid:40,sayT:5,gx:0,gy:0,px:-1,py:-1,walk:0,spd:0,lastKey:'',vd:null,vdKey:'',voice:null,depth:0};
+// st: 0 hidden, 1 stalking, 2 revealing (eating), 3 recoiling from a flash
+function mimicReset(){Object.assign(MIM,{x:-99,z:-99,rx:-99,rz:-99,st:0,hid:30+Math.random()*25,t:0,vd:null,vdKey:'',as:'',vic:''})}
+const tid=t=>t.loc?MP.id:t.p.id;
+function mimicHost(dt,TG){
+  const M=MIM;
+  if(!MP.on||!MP.mimicOn){if(M.st)mimicReset();return}
+  if(M.depth!==R.depth){M.depth=R.depth;mimicReset()}
+  const ids=TG.map(tid),speakers=ids.filter(id=>(CLIPS.get(id)||[]).length);
+  if(M.st===0){
+    M.hid-=dt;
+    if(M.hid>0||TG.length<2||!speakers.length)return;
+    // wear the face of someone who has spoken, and hunt someone else
+    M.as=speakers[(Math.random()*speakers.length)|0];
+    const others=ids.filter(id=>id!==M.as);M.vic=others[(Math.random()*others.length)|0];
+    const MD=mpDist(TG);let best=null;
+    for(let k=0;k<200;k++){const x=1+(Math.random()*(F.W-2)|0),y=1+(Math.random()*(F.H-2)|0),i=y*F.W+x;
+      if(F.g[i]||F.safeMask[i]||F.pocketMask[i])continue;const d=MD[i];if(d>=12&&d<=26){best=[x,y];break}if(d>8&&!best)best=[x,y]}
+    if(!best){M.hid=5;return}
+    Object.assign(M,{x:best[0]+0.5,z:best[1]+0.5,gx:best[0],gy:best[1],px:-1,py:-1,st:1,t:0,sayT:4+Math.random()*4});
+    return;
+  }
+  M.t+=dt;
+  if(M.st===3){if(M.t>0.7){M.st=0;M.x=M.z=-99;M.hid=18+Math.random()*12}return}
+  const V=TG.find(t=>tid(t)===M.vic);
+  if(M.st===2){if(M.t>1.6){mimicReset()}return}
+  if(!V){const others=TG.filter(t=>tid(t)!==M.as);if(!others.length){mimicReset();return}M.vic=tid(others[(Math.random()*others.length)|0]);return}
+  // path toward the victim
+  const key=V.tx+','+V.ty+(F.door?'d':'');
+  if(M.vdKey!==key){M.vdKey=key;M.vd=bfs(F.g,F.W,F.H,V.tx,V.ty)}
+  const cx=Math.floor(M.x),cz=Math.floor(M.z),d=M.vd[cz*F.W+cx],eu=Math.hypot(M.x-V.x,M.z-V.z);
+  const sp=V.inSafe?0:d>=0&&d<=7?2.5:2.15;
+  let gx=M.gx+0.5,gz=M.gy+0.5;
+  const direct=d>=0&&d<=1&&!V.inSafe;
+  if(direct){gx=V.x;gz=V.z;M.gx=cx;M.gy=cz}
+  const dx=gx-M.x,dz=gz-M.z,l=Math.hypot(dx,dz),step=sp*dt;
+  if(sp>0){
+    if(l<=step+0.001){
+      M.x=gx;M.z=gz;
+      if(!direct){let bn=null,bd=d<0?1e9:d;
+        for(const k of DIRS){const nx=cx+k[0],ny=cz+k[1];if(nx<0||ny<0||nx>=F.W||ny>=F.H)continue;const i=ny*F.W+nx;if(F.g[i]||F.safeMask[i]||F.pocketMask[i])continue;const nd=M.vd[i];if(nd>=0&&nd<bd){bd=nd;bn=[nx,ny]}}
+        if(bn){M.px=cx;M.py=cz;M.gx=bn[0];M.gy=bn[1]}}
+    }else{M.x+=dx/l*step;M.z+=dz/l*step;M.face=Math.atan2(dz,dx)}
+  }else if(eu>0.01)M.face=Math.atan2(V.z-M.z,V.x-M.x);
+  // talk: more often as it closes in; ask the local AI for the next line a moment early
+  M.sayT-=dt;
+  if(M.sayT<1.5&&!BRAIN.next)mimicAsk(M.as);
+  if(M.sayT<=0&&!(M.voice&&!M.voice.done)){
+    const c=mimicPick(M.as);
+    if(c){M.lastKey=c.key;mpSend({k:'say',key:c.key});mimicSay(c.key)}
+    M.sayT=(d>=0&&d<=10?3.5:6)+Math.random()*5;
+  }
+  // close enough: the chest opens
+  if(eu<1.25&&!V.inSafe&&(V.loc?P.inv<=0:V.inv<=0)){
+    M.st=2;M.t=0;M.face=Math.atan2(V.z-M.z,V.x-M.x);
+    if(V.loc)mimicEat();else mpSend({k:'eat'},V.p.id);
+  }
+}
+function mimicFlash(x,z){
+  if(MIM.st!==1||Math.hypot(MIM.x-x,MIM.z-z)>=6.5||!los(x,z,MIM.x,MIM.z))return 0;
+  MIM.st=3;MIM.t=0;return 1;
+}
+// play one of the disguise's clips from where the mimic stands
+function mimicSay(key){
+  for(const L of CLIPS.values()){const c=L.find(q=>q.key===key);if(c){
+    VOX.playClip(key,c.buf,mpEar(MIM.rx,MIM.rz,R.depth,true)).then(h=>{MIM.voice=h});return}}
+}
+// you are the one it reached
+function mimicEat(){
+  if(P.down||P.grab||state==='title'||state==='dead')return;
+  P.grab={t:0,x:MIM.rx>0?MIM.rx:P.x+Math.cos(P.yaw),z:MIM.rx>0?MIM.rz:P.z+Math.sin(P.yaw)};for(const k in keys)keys[k]=false;
+  if(state==='pause'){$('pause').classList.add('hidden');state='play'}
+  if(state==='talk'){$('talk').classList.add('hidden');talk=null;state='play'}
+  if(chatOpen)chatClose(false);
+  sfx('scare');rumble(1400,1,1);try{if(touch.on&&navigator.vibrate)navigator.vibrate([200,60,400])}catch(e){}
+}
+function mimicGrabTick(dt){
+  const G=P.grab;G.t+=dt;
+  if(MIM.st===2&&MIM.rx>0){G.x=MIM.rx;G.z=MIM.rz}
+  const want=Math.atan2(G.z-P.z,G.x-P.x);
+  P.yaw+=wrapA(want-P.yaw)*Math.min(1,dt*14);P.pitch+=(0.05-P.pitch)*Math.min(1,dt*10);
+  // dragged in
+  const dd=Math.hypot(G.x-P.x,G.z-P.z);
+  if(dd>0.75&&dd<3&&G.t>0.35){const k=Math.min(1,dt*3)*(1-0.75/dd),nx=P.x+(G.x-P.x)*k,nz=P.z+(G.z-P.z)*k;if(!blocked(nx,nz)){P.x=nx;P.z=nz}}
+  const s=$('scare');s.style.opacity=clamp(G.t*2.5,0,1)*(0.55+0.45*Math.sin(G.t*40));
+  if(G.t>=1.45){
+    P.grab=null;s.style.opacity=0;
+    const who=MIM.as===MP.id?'your':(MP.peers.get(MIM.as)||{name:'a friend'}).name+"'s";
+    P.hp=0;
+    if(MP.on){mpDown();say(`The mimic wore ${who} face.`,5);mpSys(myName()+' was taken by the mimic')}else die();
+  }
+}
+// the mimic's look on every screen: the disguise, or the thing underneath
+function mimicDraw(t,ex,ez){
+  const M=MIM;if(M.st===0||M.rx<0||!MP.on)return;
+  if((M.rx-ex)**2+(M.rz-ez)**2>18*18)return;
+  const as=MP.peers.get(M.as),col=as?as.col:MP_COLS[hashStr(M.as||'')%MP_COLS.length];
+  const rev=M.st===2?clamp(M.t/0.45,0,1):M.st===3?Math.sin(clamp(M.t/0.7,0,1)*Math.PI)*0.7:0;
+  const q=buildPlayer({id:M.as+'~',col,rx:M.rx,ry:0,rz:M.rz,ryaw:M.rface,rpitch:0,spd:M.spd,walk:M.walk},t,rev,M.st===2?M.t:0);
+  if(rev<0.5){const k=1,fl=1+Math.sin(t*13)*0.08;
+    spr(q.torch[0],q.torch[1]+0.02,q.torch[2],0.07*k*fl,0.12*k*fl,11,1.0,0.6,0.2,1,1);
+    spr(q.torch[0],q.torch[1],q.torch[2],0.5*k,0.5*k,7,1.0,0.5,0.15,0.22*fl,1)}
+  else spr(M.rx,0.6,M.rz,1.6,1.6,7,0.6,0.02,0.05,0.35*rev,1);
+}
+function mimicTick(dt){
+  const M=MIM;
+  if(M.st===0||M.x<0){M.rx=M.rz=-99;return}
+  if(M.rx<0||Math.hypot(M.x-M.rx,M.z-M.rz)>2.5){M.rx=M.x;M.rz=M.z;M.rface=M.face}
+  const k=Math.min(1,dt*12),ox=M.rx,oz=M.rz;
+  M.rx+=(M.x-M.rx)*k;M.rz+=(M.z-M.rz)*k;M.rface+=wrapA(M.face-M.rface)*k;
+  const sp=dt>0?Math.hypot(M.rx-ox,M.rz-oz)/dt:0;M.spd+=(sp-M.spd)*Math.min(1,dt*8);M.walk+=M.spd*dt*5.5;
+  if(MP.guest)M.t+=dt;
+  if(M.voice&&!M.voice.done)VOX.placeClip(M.voice,mpEar(M.rx,M.rz,R.depth,true));
+}
+function mimicTagName(){const M=MIM;if(M.st!==1)return null;return M.as===MP.id?myName():(MP.peers.get(M.as)||{name:'Delver'}).name}
+$('brainChk').checked=BRAIN.on;$('brainUrl').value=BRAIN.url;
+$('brainChk').addEventListener('change',()=>{BRAIN.on=$('brainChk').checked;store.set('brain',BRAIN.on);BRAIN.ok=null;if(BRAIN.on&&MP.host)for(const [id,L] of CLIPS)for(const c of L)if(!c.text)mimicHear(id,c)});
+$('brainUrl').addEventListener('change',()=>{BRAIN.url=$('brainUrl').value.trim().replace(/\/+$/,'');store.set('brainUrl',BRAIN.url);BRAIN.ok=null});
+
 /* ---------- input ---------- */
 const keys={};
 addEventListener('keydown',e=>{
   if(e.target&&e.target.tagName==='SELECT')return;
-  if(e.target&&e.target.tagName==='INPUT'){if(e.code==='Enter'){e.target.blur();startRun($('seedIn').value.trim())}return}
+  if(e.target&&e.target.tagName==='INPUT'){if(e.code==='Enter'&&(e.target.id==='seedIn'||e.target.id==='nameIn')){e.target.blur();startRun($('seedIn').value.trim())}return}
   if(['Tab','Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
   if(e.repeat)return;
   keys[e.code]=true;
@@ -1786,6 +2084,7 @@ addEventListener('keydown',e=>{
     if(e.code==='KeyE')act();
     if(e.code==='KeyM'||e.code==='Tab')mapBig=!mapBig;
     if(e.code==='Escape'||e.code==='KeyP')pause();
+    if((e.code==='Enter'||e.code==='NumpadEnter'||e.code==='KeyT')&&MP.on){e.preventDefault();chatOpenBox()}
   }else if(state==='talk'){
     if(e.code==='Escape'||e.code==='KeyQ')closeTalk();
     else if(e.code==='ArrowUp'||e.code==='KeyW')moveTalk(-1);
@@ -1871,6 +2170,8 @@ addEventListener('touchstart',()=>{enableTouch();initAudio()},{passive:true});
   btn('tFlash',()=>{if(state==='play')act()});
   btn('tPause',()=>{touch.jump=false;endStick();touch.lookId=null;pause()});
   btn('tMap',()=>{mapBig=!mapBig});
+  btn('tTalk',()=>{touch.talk=true},()=>{touch.talk=false});
+  btn('tChat',()=>{chatOpenBox()});
   $('quitBtn').addEventListener('click',toTitle);
   $('retryBtn').addEventListener('click',()=>startRun(R.seed,R.startDepth));
   document.addEventListener('contextmenu',e=>{if(touch.on)e.preventDefault()});
@@ -1976,6 +2277,8 @@ function noise(dur,vol,freq,q){
 }
 function sfx(n){
   switch(n){
+    case 'scare':tone(70,1.4,'sawtooth',0.55,0,-30);tone(466,1.1,'square',0.22,0,-260);tone(493,1.1,'sawtooth',0.22,0.02,-300);
+      tone(1250,0.6,'sawtooth',0.18,0.05,-900);noise(1.3,0.7,1600,0.6);noise(0.5,0.6,300,0.8);break;
     case 'step':if(F&&F.back)noise(0.12,0.1,110+Math.random()*50,0.8);else noise(0.09,0.12,260+Math.random()*120,1.2);break;
     case 'watch':tone(196,1.8,'sine',0.05);tone(207.6,1.8,'sine',0.05);break;
     case 'gone':noise(0.4,0.07,1700,0.7);tone(240,0.5,'sine',0.04,0,-120);break;
@@ -2050,7 +2353,8 @@ function watcher(s,dt,pfx,pfz){
 function update(dt){
   R.time+=dt;
   // in a shared game the world keeps going while you pause or talk, but you stand still
-  const ctl=state==='play';
+  if(P.grab)mimicGrabTick(dt);
+  const ctl=state==='play'&&!P.grab;
   if(P.down)mpSpectate();
   else{
   // look
@@ -2233,6 +2537,7 @@ function update(dt){
       }
     }
   }
+  if(TG)mimicHost(dt,TG);
   // heartbeat when hunted
   if(chasing){beatT-=dt;if(beatT<=0){beatT=clamp(0.35+nearest*0.05,0.4,1.0);sfx('beat')}}
   // homing chime toward the nearest shard, or the exit once the seal is broken
@@ -2329,6 +2634,7 @@ function render(t){
   const yaw=title?titleYaw:P.yaw, pitch=title?0:P.pitch;
   const ex=P.x, ez=P.z, ey=EYE+(title?0:P.y+Math.sin(P.bob*2)*0.018);
   {const cp=Math.cos(pitch);camera.position.set(ex,ey,ez);camera.lookAt(ex+cp*Math.cos(yaw),ey+Math.sin(pitch),ez+cp*Math.sin(yaw))}
+  if(P.grab){const k=0.012+0.02*Math.min(1,P.grab.t);camera.position.x+=(Math.random()-0.5)*k;camera.position.y+=(Math.random()-0.5)*k;camera.position.z+=(Math.random()-0.5)*k}
   const B=F.biome;
   const fwx=Math.cos(yaw),fwz=Math.sin(yaw),rx=-fwz,rz=fwx;
   const flick=1+Math.sin(t*11)*0.02+Math.sin(t*23.7)*0.015+Math.sin(t*5.3)*0.02;
@@ -2411,7 +2717,7 @@ function render(t){
     if(o.lamp){const q=o.lamp;spr(q[0],q[1],q[2],0.22,0.22,7,1.0,0.75,0.3,0.4,1)}
     if(!n.used&&n.type!=='keeper'){const y=o.top+0.08+Math.sin(t*3+n.ph)*0.03,X=n.x+(n.ox||0),Z=n.z+(n.oz||0);spr(X,y,Z,0.08,0.08,7,1.0,0.85,0.4,1,1);spr(X,y,Z,0.32,0.32,7,1.0,0.7,0.2,0.3,1)}
   }}
-  mpDrawPlayers(t,ex,ez,fwx,fwz);
+  mpDrawPlayers(t,ex,ez,fwx,fwz);mimicDraw(t,ex,ez);
   if(F.safe&&(F.safe.x-ex)**2+(F.safe.z-ez)**2<22*22){
     const fl=F.safe.fl||1,X=F.safe.x,Z=F.safe.z;
     spr(X,0.72,Z,0.42*fl,0.62*fl,11,1.0,0.55,0.16,1,1);
@@ -2588,7 +2894,7 @@ function step(now){
   const live=()=>state==='play'||(MP.on&&(state==='pause'||state==='talk'));
   if(live()){
     // a host whose tab is in the background still runs the creatures, in catch-up steps
-    if(raw>0.1&&MP.host){let left=Math.min(raw,1);while(left>0&&live()){const s=Math.min(left,0.05);update(s);left-=s}}
+    if(raw>0.1&&MP.host&&document.hidden){let left=Math.min(raw,1);while(left>0&&live()){const s=Math.min(left,0.05);update(s);left-=s}}
     else update(dt);
   }
   else if(state==='title')titleYaw+=dt*0.15;
@@ -2597,6 +2903,7 @@ function step(now){
 }
 function frame(now){
   const raw=step(now);
+  mpVoiceTick(Math.min(raw,0.1));chatTick();
   if(state==='play')adapt(raw);
   setHum();
   if(!window.__norender)render(now/1000);
@@ -2608,5 +2915,5 @@ setInterval(()=>{if(MP.host&&document.hidden&&performance.now()-last>200)step(pe
 // a backdrop maze behind the title screen
 R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
 {const rc=cleanCode(new URLSearchParams(location.search).get('room'));if(rc)mpPrepareJoin(rc)}
-window.__game={MP,mpHost,hurt,keys,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);
