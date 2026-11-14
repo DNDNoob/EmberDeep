@@ -8,6 +8,7 @@ import {ShaderPass} from 'three/addons/postprocessing/ShaderPass.js';
 import {FXAAShader} from 'three/addons/shaders/FXAAShader.js';
 import {RoomEnvironment} from 'three/addons/environments/RoomEnvironment.js';
 import {makeSurfaces} from './textures.js';
+import {openRoom,newRoomCode,cleanCode} from './net.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('gl');
@@ -1247,7 +1248,7 @@ function pickTalk(){
   q.fn();if(talk)buildTalk();
 }
 function moveTalk(d){if(!talk)return;const n=talk.opts.length;talk.sel=(talk.sel+d+n)%n;buildTalk()}
-function act(){if(state==='play'&&nearNpc)openTalk(nearNpc);else useFlash()}
+function act(){if(P.down){mpCycle();return}if(state==='play'&&nearNpc)openTalk(nearNpc);else useFlash()}
 let doorMsgT=0, tipTimers=[];
 let mapBig=false, usingLock=false, pausedAt=0, flashT=0, sealMsgT=0, lowFuelSaid=false, pingT=0, beatT=0, titleYaw=0;
 let sens=store.get('sens',1);
@@ -1264,7 +1265,7 @@ $('gtx').addEventListener('change',e=>{lsSet('gtx',e.target.checked);lsSet('safe
 
 function solidAt(x,z){const tx=Math.floor(x),ty=Math.floor(z);return tx<0||ty<0||tx>=F.W||ty>=F.H||(F.g[ty*F.W+tx]&3)===1||F.g[ty*F.W+tx]===2}
 let panelLvl=1;
-function torchRadius(){return (1.6+6.0*Math.sqrt((state==='title'?100:P.fuel)/100))*(F.dark?0.5:1)*(F.back?0.45:1)}
+function torchRadius(fu){if(fu===undefined)fu=state==='title'?100:P.fuel;return (1.6+6.0*Math.sqrt(Math.max(0,fu)/100))*(F.dark?0.5:1)*(F.back?0.45:1)}
 function blocked(x,z){return solidAt(x-PR,z-PR)||solidAt(x+PR,z-PR)||solidAt(x-PR,z+PR)||solidAt(x+PR,z+PR)}
 function los(x0,z0,x1,z1){
   const dx=x1-x0,dz=z1-z0,l=Math.hypot(dx,dz),n=Math.ceil(l/0.2);
@@ -1302,8 +1303,10 @@ function fillStartSel(){
     o.textContent='Depth '+d+(d===deepest&&d>1?' (deepest reached)':'');sel.appendChild(o)}
   sel.value=want;$('depthLbl').hidden=deepest<2;
 }
-function startRun(seed,depth){
-  const sd=clamp(depth||+$('startSel').value||1,1,deepest);
+function startRun(seed,depth,force){
+  if(MP.guest&&!force){mpJoinClick();return}
+  const sd=force?depth:clamp(depth||+$('startSel').value||1,1,deepest);
+  P.down=false;
   R.seed=(seed||randSeed()).toUpperCase();R.score=0;R.time=0;R.gems=0;R.startDepth=sd;
   P.hp=maxHp();P.fuel=100;P.stam=100;P.winded=false;P.flash=1+Math.floor((sd-1)/3)+(up.band|0);P.inv=0;P.chill=0;lowFuelSaid=false;
   loadFloor(sd);
@@ -1312,6 +1315,7 @@ function startRun(seed,depth){
   $('hud').classList.remove('hidden');$('map').classList.remove('hidden');
   say(sd>1?`Depth ${sd}: ${F.name}`:'Find 3 shards to break the seal',4);showTips();
   initAudio();
+  if(MP.host)mpSendRun();
 }
 const TIPS={2:['Spikes ahead: time them, or jump with Space','A locked gate needs its key. Blue wisps drink your torch.'],
   3:['An open cavern. Something here only moves when you look away.'],
@@ -1322,6 +1326,7 @@ function showTips(){
   t.forEach((msg,i)=>tipTimers.push(setTimeout(()=>{if(state==='play'&&R.depth===d)say(msg,4)},4200+i*4600)));
 }
 function toTitle(){
+  if(MP.on)mpLeave(false);
   state='title';
   ['pause','dead','hud','map','talk'].forEach(id=>$(id).classList.add('hidden'));talk=null;clearPrompt();
   $('title').classList.remove('hidden');
@@ -1335,7 +1340,7 @@ function showBest(){
 }
 function pause(){
   if(state!=='play')return;
-  state='pause';pausedAt=performance.now();
+  state='pause';pausedAt=performance.now();mpPausePanel();
   $('pause').classList.remove('hidden');
 }
 function resume(withLock){
@@ -1352,7 +1357,9 @@ let toastTimer=0;
 function say(t,secs){const el=$('toast');el.textContent=t;el.style.opacity=1;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.style.opacity=0,(secs||2.5)*1000)}
 
 function die(){
+  if(MP.on&&!MP.wiping){mpDown();return}
   state='dead';clearPrompt();
+  mpDeadPanel();
   if(document.pointerLockElement)document.exitPointerLock();
   const b=store.get('best',null);
   const isBest=!b||R.depth>b.depth||(R.depth===b.depth&&R.score>b.score);
@@ -1370,6 +1377,7 @@ function descend(){
   $('fade').style.opacity=1;
   setTimeout(()=>{
     P.fuel=Math.min(100,P.fuel+25);lowFuelSaid=false;
+    if(P.down){P.down=false;P.hp=maxHp();P.fuel=Math.max(P.fuel,50);P.inv=2;say('You rise again',2)}
     loadFloor(R.depth+1);
     $('fade').style.opacity=0;
     say(`Depth ${R.depth}: ${F.name}`,3.5);showTips();
@@ -1382,12 +1390,34 @@ function useFlash(){
   const fx=$('flashfx');fx.style.transition='none';fx.style.opacity=0.85;
   requestAnimationFrame(()=>{fx.style.transition='opacity .7s';fx.style.opacity=0});
   let n=0;
-  for(const s of F.shades){
-    if(s.type===3){if(s.x>0&&Math.hypot(s.x-P.x,s.z-P.z)<9&&los(P.x,P.z,s.x,s.z)){banish(s,true);n++}continue}
-    if(Math.hypot(s.x-P.x,s.z-P.z)<6.5&&los(P.x,P.z,s.x,s.z)){s.stun=4.5;if(s.type!==1)s.state=0;n++}
-  }
+  for(const s of F.shades)if(s.type===3&&s.x>0&&Math.hypot(s.x-P.x,s.z-P.z)<9&&los(P.x,P.z,s.x,s.z)){banish(s,true);n++}
+  n+=flashStun(P.x,P.z);
+  if(MP.guest)mpSend({k:'fl',d:R.depth,x:P.x,z:P.z},MP.hostId);
   sfx('flash');rumble(120,0.2,0.7);
   if(n)say(n>1?`${n} creatures stunned`:'Stunned',1.5);
+}
+function flashStun(x,z){
+  let n=0;
+  for(const s of F.shades){
+    if(s.type===3)continue;
+    if(Math.hypot(s.x-x,s.z-z)<6.5&&los(x,z,s.x,s.z)){s.stun=4.5;if(s.type!==1)s.state=0;n++}
+  }
+  return n;
+}
+function openDoor(quiet){
+  if(!F.door)return;
+  P.keys=Math.max(0,P.keys-1);F.doorOpen=true;F.g[F.door.ty*F.W+F.door.tx]=0;F.frames.push(F.door);F.door=null;buildMesh(F);buildSdf(F);onTileChange();
+  if(!quiet){sfx('door');say('The gate grinds open',2.5)}
+}
+function setBlk(v){
+  if(v===1){F.blk=1;F.boT=1.7;sfx('powerdown')}
+  else if(v===2){
+    F.blk=2;F.boT=6+Math.random()*4;say('The lights are out. Keep moving.',3);
+    for(const s of F.shades){if(s.type===0&&!MP.guest&&s.d>=0&&s.d<=14)s.state=1;else if(s.type===3&&s.x<0)s.hid=0}
+  }else{
+    F.blk=0;F.boT=40+Math.random()*40;sfx('powerup');
+    for(const s of F.shades)if(s.type===3&&s.x>0)banish(s,true);
+  }
 }
 function hurt(s){
   P.hp--;P.inv=1.6;if(s){s.stun=2.5;s.calm=9;s.state=0}
@@ -1410,7 +1440,332 @@ function collect(it){
     case 'key':P.keys++;sfx('key');say('You found the gate key',2.5);break;
     case 'heart':if(P.hp<maxHp())P.hp++;else R.score+=25;sfx('pick');break;
   }
+  mpSend({k:'got',d:R.depth,i:F.items.indexOf(it)});
 }
+
+/* ---------- multiplayer: one player hosts, friends join with ?room=CODE ----------
+   Every client builds the same maze from the shared seed, so only small updates travel:
+   where each player is, what the creatures are doing (the host runs them), and events
+   such as a pickup, a gate, a descent. See src/net.js for the connection itself. */
+const MP_COLS=[[0.31,0.76,0.97],[0.51,0.82,0.45],[0.78,0.45,0.9],[1.0,0.72,0.3],[0.97,0.42,0.62],[0.35,0.85,0.75],[1.0,0.92,0.42],[0.62,0.6,1.0]];
+const MP={on:false,host:false,guest:false,local:false,room:null,code:'',id:'',hostId:null,peers:new Map(),run:null,wantJoin:false,wiping:false,pt:0,mt:0,follow:null};
+const myName=()=>String(store.get('name','')||'').trim().slice(0,16)||'Delver';
+const toHex=c=>'#'+c.map(v=>Math.round(clamp(v,0,1)*255).toString(16).padStart(2,'0')).join('');
+const r2=v=>Math.round(v*100)/100, r3=v=>Math.round(v*1000)/1000;
+const wrapA=a=>{while(a>Math.PI)a-=Math.PI*2;while(a<-Math.PI)a+=Math.PI*2;return a};
+function mpSend(m,to){if(MP.on&&MP.room)MP.room.send(m,to)}
+function mpLink(){return location.origin+location.pathname+'?room='+MP.code+(MP.local?'&net=local':'')}
+function mpPeer(id){
+  let p=MP.peers.get(id);
+  if(!p){const c=MP_COLS[hashStr(id||'')%MP_COLS.length];p={id,name:'Delver',col:c,hex:toHex(c),d:0,run:false,down:false,inv:0,walk:0,spd:0,fu:100};MP.peers.set(id,p)}
+  return p;
+}
+const hostName=()=>{const h=MP.peers.get(MP.hostId);return h?h.name:'the host'};
+function mpOpen(code){
+  MP.code=code;MP.on=true;MP.local=new URLSearchParams(location.search).get('net')==='local';
+  const room=openRoom(code,MP.local);MP.room=room;MP.id=room.id;
+  room.onPeerJoin=id=>{mpPeer(id);mpSend({k:'hi',n:myName(),h:MP.host},id);mpTitle()};
+  room.onPeerLeave=id=>mpGone(id);
+  room.onMessage=(m,from)=>{if(!m||!from||MP.room!==room)return;try{mpRecv(m,from)}catch(e){console.warn('emberdeep net',e)}};
+}
+function mpLeave(endIfDown){
+  if(MP.room)try{MP.room.leave()}catch(e){}
+  Object.assign(MP,{room:null,on:false,host:false,guest:false,hostId:null,run:null,wantJoin:false,code:'',follow:null});
+  MP.peers.clear();
+  try{const u=new URL(location.href);if(u.searchParams.has('room')){u.searchParams.delete('room');u.searchParams.delete('net');history.replaceState(null,'',u)}}catch(e){}
+  if(P.down){P.down=false;if(endIfDown&&state!=='title'&&state!=='dead')die()}
+  mpTitle();
+}
+// the host button: open a room, start a run, copy the invite link
+function mpHost(){
+  if(MP.on)mpLeave(false);
+  MP.host=true;MP.guest=false;
+  mpOpen(newRoomCode());
+  startRun($('seedIn').value.trim());
+  lock();
+  const link=mpLink(),fallback=()=>say('Room '+MP.code+'. Press Esc for the invite link.',4);
+  try{navigator.clipboard.writeText(link).then(()=>say('Invite link copied. Send it to your friends.',4),fallback)}catch(e){fallback()}
+}
+// opened from an invite link: connect straight away, start when the player clicks Join
+function mpPrepareJoin(code){
+  MP.guest=true;MP.host=false;
+  mpOpen(code);
+  mpTitle();
+}
+function mpJoinClick(){
+  MP.wantJoin=true;initAudio();
+  if(MP.run){mpApplyRun(MP.run);lock()}
+  else say('Still looking for the host. Keep this page open.',2.5);
+}
+function mpSendRun(to){
+  if(!MP.host||!F)return;
+  const got=[];F.items.forEach((it,i)=>{if(it.got)got.push(i)});
+  mpSend({k:'run',seed:R.seed,d:R.depth,sd:R.startDepth,t:r2(R.time),got,door:F.doorOpen?1:0,sh:P.shards,ke:P.keys,blk:F.blk|0},to);
+}
+function mpApplyRun(r){
+  startRun(r.seed,r.d,true);
+  R.startDepth=r.sd;R.time=r.t;
+  for(const i of r.got||[]){const it=F.items[i];if(it)it.got=true}
+  if(r.door&&F.door)openDoor(true);
+  P.shards=r.sh|0;P.keys=r.ke|0;
+  if(F.back&&r.blk)F.blk=r.blk;
+  say(`You joined ${hostName()}'s game`,3);
+}
+function mpGone(id){
+  const p=MP.peers.get(id);MP.peers.delete(id);
+  if(p&&p.greeted&&state!=='title')say(p.name+' left',2.5);
+  if(MP.guest&&id===MP.hostId){
+    MP.hostId=null;MP.run=null;
+    if(state==='title'||!MP.wantJoin)mpTitle();
+    else{say('The host left. The maze is yours alone now.',4);mpLeave(true)}
+  }else mpTitle();
+}
+function mpDown(){
+  P.down=true;P.hp=0;clearPrompt();sfx('die');rumble(300,1,0.8);
+  say('You have fallen. Reach the next floor together and you rise again.',5);
+}
+function mpDescend(){
+  if(state==='pause')$('pause').classList.add('hidden');
+  if(state==='talk'){$('talk').classList.add('hidden');talk=null}
+  descend();
+}
+function mpRecv(m,from){
+  const p=mpPeer(from),fromHost=from===MP.hostId;
+  p.seen=performance.now();
+  const inRun=state!=='title'&&state!=='dead'&&!(MP.guest&&!MP.wantJoin);
+  const here=m.d===R.depth;
+  switch(m.k){
+    case 'hi':
+      p.name=String(m.n||'Delver').slice(0,16);
+      if(m.h&&MP.guest){MP.hostId=from;p.host=true}
+      if(!p.greeted){p.greeted=true;if(inRun)say(p.name+' joined',2.5);if(MP.host&&state!=='title'&&state!=='dead')mpSendRun(from)}
+      mpTitle();break;
+    case 'run':
+      if(!fromHost)return;
+      MP.run=m;if(MP.wantJoin)mpApplyRun(m);
+      mpTitle();break;
+    case 'p':{
+      const a=m.a;if(!Array.isArray(a))return;
+      p.d=m.d;p.x=+a[0];p.z=+a[1];p.y=+a[2];p.yaw=+a[3];p.pitch=+a[4];p.fu=+a[5];p.down=!!(a[6]&1);p.safe=!!(a[6]&2);p.run=!!(a[6]&4);p.hp=a[7];
+      if(p.rx===undefined||p.rd!==p.d||Math.hypot(p.x-p.rx,p.z-p.rz)>3){p.rx=p.x;p.rz=p.z;p.ry=p.y;p.ryaw=p.yaw;p.rpitch=p.pitch;p.rd=p.d}
+      break;}
+    case 'm':{
+      if(!fromHost||!inRun||!here)return;
+      const e=m.t-R.time;if(Math.abs(e)>1)R.time=m.t;else R.time+=e*0.2;
+      if(F.back&&(m.b|0)!==(F.blk|0))setBlk(m.b|0);
+      let j=0;const a=m.s||[];
+      for(const s of F.shades){
+        if(s.type===3)continue;
+        if(j+5>=a.length)break;
+        s.nx=a[j];s.nz=a[j+1];s.face=a[j+2];s.state=a[j+3];s.stun=a[j+4];s.frozen=!!a[j+5];j+=6;
+        s.gx=Math.floor(s.nx);s.gy=Math.floor(s.nz);s.px=-1;
+        if(s.x<0||Math.hypot(s.nx-s.x,s.nz-s.z)>2.5){s.x=s.nx;s.z=s.nz}
+      }
+      break;}
+    case 'got':{
+      if(!inRun||!here)return;
+      const it=F.items[m.i];if(!it||it.got)return;
+      it.got=true;
+      if(it.type==='shard'){P.shards++;sfx('shard');say(P.shards>=3?`${p.name} found the last shard. Find the way down.`:`${p.name} found a shard (${P.shards} of 3)`,2.5)}
+      else if(it.type==='key'){P.keys++;sfx('key');say(p.name+' found the gate key',2.5)}
+      break;}
+    case 'door':if(inRun&&here&&F.door)openDoor(false);break;
+    case 'down':if(inRun&&state!=='trans'&&m.d===R.depth+1){say(p.name+' found the way down',2);mpDescend()}break;
+    case 'fl':if(MP.host&&inRun&&here)flashStun(+m.x,+m.z);break;
+    case 'hit':
+      if(!fromHost||!inRun||P.down||state==='trans')return;
+      if(m.w==='drain'){P.fuel=Math.max(0,P.fuel-22);sfx('drain');say('A wisp drinks your flame',2)}
+      else if(m.w==='chill'){P.chill=3.5;P.inv=1.6;sfx('drain');rumble(180,0.5,0.3);say('The shade chills you. Deeper down, its touch wounds.',2.6)}
+      else if(P.inv<=0)hurt(null);
+      break;
+    case 'wipe':if(fromHost&&inRun){MP.wiping=true;die();MP.wiping=false}break;
+  }
+}
+// the host's view of everyone the creatures can hunt
+function mpTargets(){
+  const T=[];
+  if(!P.down)T.push({x:P.x,z:P.z,yaw:P.yaw,fuel:P.fuel,inSafe:P.inSafe,inv:P.inv,loc:true,tx:P.tx,ty:P.ty});
+  if(MP.host)for(const p of MP.peers.values())
+    if(p.run&&!p.down&&p.d===R.depth&&p.x!==undefined&&mpFresh(p))T.push({x:p.x,z:p.z,yaw:p.yaw,fuel:p.fu,inSafe:p.safe,inv:p.inv,loc:false,p,tx:Math.floor(p.x),ty:Math.floor(p.z)});
+  return T;
+}
+// path distance from every tile to the nearest player
+function mpDist(T){
+  if(T.length===1&&T[0].loc)return F.dist;
+  const key=T.map(t=>t.tx+','+t.ty).join(';')+(F.door?'d':'');
+  if(F.mdKey===key&&F.md)return F.md;
+  const W=F.W,H=F.H,g=F.g,d=new Int16Array(W*H).fill(-1),q=new Int32Array(W*H);let qh=0,qt=0;
+  for(const t of T){if(t.tx<0||t.ty<0||t.tx>=W||t.ty>=H)continue;const i=t.ty*W+t.tx;if(d[i]<0){d[i]=0;q[qt++]=i}}
+  while(qh<qt){
+    const c=q[qh++],cx=c%W,cy=(c/W)|0,nd=d[c]+1;
+    for(let k=0;k<4;k++){const nx=cx+DIRS[k][0],ny=cy+DIRS[k][1];if(nx<0||ny<0||nx>=W||ny>=H)continue;const n=ny*W+nx;if(g[n]===0&&d[n]<0){d[n]=nd;q[qt++]=n}}
+  }
+  F.mdKey=key;F.md=d;return d;
+}
+function mpNearest(T,x,z){let b=null,bd=1e9;for(const t of T){const d=(t.x-x)**2+(t.z-z)**2;if(d<bd){bd=d;b=t}}return b}
+function mpWatched(T,s){
+  for(const t of T){
+    const eu=Math.hypot(s.x-t.x,s.z-t.z);if(eu>=9||eu>=torchRadius(t.fuel)+0.5)continue;
+    const facing=((s.x-t.x)*Math.cos(t.yaw)+(s.z-t.z)*Math.sin(t.yaw))/Math.max(eu,0.001);
+    if(facing>0.55&&los(s.x,s.z,t.x,t.z))return true;
+  }
+  return false;
+}
+function mpTouching(T,s){for(const t of T)if(!t.inSafe&&Math.hypot(s.x-t.x,s.z-t.z)<0.5)return t;return null}
+function mpHit(t,w){if(w!=='drain')t.p.inv=1.6;mpSend({k:'hit',w},t.p.id)}
+function mpFollowShade(s,dt){
+  if(s.nx===undefined)return;
+  const dx=s.nx-s.x,dz=s.nz-s.z,k=Math.min(1,dt*12);
+  s.x+=dx*k;s.z+=dz*k;
+  if(s.stun>0)s.stun-=dt;
+}
+// after you fall, the camera rides along with a friend who is still standing
+function mpAlive(){return [...MP.peers.values()].filter(p=>p.run&&!p.down&&p.d===R.depth&&p.rx!==undefined&&mpFresh(p))}
+function mpSpectate(){
+  const L=mpAlive(),f=L.find(p=>p.id===MP.follow)||L[0];
+  MP.follow=f?f.id:null;
+  if(!f)return;
+  P.x=f.rx;P.z=f.rz;P.y=0;P.yaw=f.ryaw;P.pitch=f.rpitch*0.6;P.fuel=f.fu;P.inSafe=f.safe;
+  if(Math.floor(P.x)!==P.tx||Math.floor(P.z)!==P.ty)onTileChange();
+}
+function mpCycle(){const L=mpAlive();if(L.length<2)return;const i=L.findIndex(p=>p.id===MP.follow);MP.follow=L[(i+1)%L.length].id}
+const mpFresh=p=>performance.now()-(p.seen||0)<15000;
+const mpShown=p=>MP.on&&p.run&&p.d===R.depth&&p.rx!==undefined&&state!=='title'&&mpFresh(p);
+function mpTick(raw){
+  if(!MP.on)return;
+  const dt=Math.min(raw,0.25);
+  for(const p of MP.peers.values()){
+    if(p.x===undefined)continue;
+    const k=Math.min(1,dt*12),ox=p.rx,oz=p.rz;
+    p.rx+=(p.x-p.rx)*k;p.rz+=(p.z-p.rz)*k;p.ry+=(p.y-p.ry)*k;
+    p.ryaw+=wrapA(p.yaw-p.ryaw)*k;p.rpitch+=(p.pitch-p.rpitch)*k;
+    const sp=dt>0?Math.hypot(p.rx-ox,p.rz-oz)/dt:0;p.spd+=(sp-p.spd)*Math.min(1,dt*8);p.walk+=p.spd*dt*5.5;
+    if(p.inv>0)p.inv-=raw;
+  }
+  // a quiet host for 15 seconds has gone (closed the tab or lost the connection)
+  if(MP.guest&&MP.hostId){const h=MP.peers.get(MP.hostId);if(h&&!mpFresh(h)){mpGone(MP.hostId);if(!MP.on)return}}
+  if(state==='title'||state==='dead'||(MP.guest&&!MP.wantJoin))return;
+  MP.pt-=raw;
+  if(MP.pt<=0){
+    MP.pt=1/15;
+    mpSend({k:'p',d:R.depth,a:[r3(P.x),r3(P.z),r3(P.y),r3(P.yaw),r3(P.pitch),Math.round(P.fuel),(P.down?1:0)|(P.inSafe?2:0)|4,P.hp]});
+  }
+  if(MP.host&&state!=='trans'){
+    MP.mt-=raw;
+    if(MP.mt<=0){
+      MP.mt=0.1;
+      const a=[];for(const s of F.shades){if(s.type===3)continue;a.push(r2(s.x),r2(s.z),r2(s.face||0),s.state|0,r2(Math.max(0,s.stun||0)),s.frozen?1:0)}
+      mpSend({k:'m',d:R.depth,t:r2(R.time),b:F.blk|0,s:a});
+    }
+    // everyone is down: the run is over for the whole room
+    if(P.down&&!mpAlive().length){mpSend({k:'wipe'});MP.wiping=true;die();MP.wiping=false}
+  }
+}
+// friends drawn in the maze, built from the same jointed parts as everyone else
+function buildPlayer(p,t){
+  const c=p.col,cloak=[c[0]*0.72,c[1]*0.72,c[2]*0.72,2],cloakD=[c[0]*0.42,c[1]*0.42,c[2]*0.42,2];
+  const leg=[0.22,0.17,0.13,2],boot=[0.3,0.19,0.1,3],belt=[0.3,0.17,0.08,3],skin=[0.86,0.65,0.5,1],wood=[0.36,0.23,0.12,6],rag=[0.13,0.1,0.08,2];
+  const S=0.94,v=(x,y,z)=>[x*S,y*S,z*S],ph=hashStr(p.id)%100;
+  const mv=Math.min(1,p.spd/2.7),w=p.walk,sw=Math.sin(w)*mv,bob=Math.abs(Math.cos(w))*0.018*mv,breath=Math.sin(t*1.7+ph)*0.004;
+  const B={p:[p.rx,Math.max(0,p.ry),p.rz],R:rYaw(p.ryaw)};
+  for(const z of[-1,1]){
+    const st=sw*z;
+    const hip=v(0,0.45,z*0.052),knee=v(0.012+0.09*st,0.25+0.03*Math.max(0,st),z*0.058),ank=v(0.17*st,0.05+0.06*Math.max(0,-st),z*0.062);
+    seg(B,hip,knee,0.047*S,0.038*S,leg);ball(B,knee,0.04*S,leg,true);seg(B,knee,ank,0.04*S,0.03*S,boot);
+    ball(B,[ank[0]+0.03,ank[1]-0.02,ank[2]],[0.062*S,0.03*S,0.036*S],boot,true);
+  }
+  const U=subF(B,v(0,0.45+bob,0),m3(rYaw(sw*0.12),rZ(-0.06*mv)));
+  ball(U,v(0,0.02,0),[0.075*S,0.06*S,0.09*S],cloakD);
+  seg(U,v(0,-0.1,0),v(0,0.07,0),0.12*S,0.078*S,cloak);
+  seg(U,v(0,0.045,0),v(0,0.075,0),0.083*S,0.081*S,belt);
+  ball(U,v(0,0.17+breath,0),[0.066*S,0.115*S,0.09*S],cloak);
+  ball(U,v(-0.035,0.2+breath,0),[0.055*S,0.12*S,0.095*S],cloakD);
+  const la=-sw*0.09;
+  limb(U,v(0,0.225+breath,-0.1),v(-0.01+la*0.6,0.11+breath,-0.135),v(0.02+la,0.01,-0.115),0.03*S,0.027*S,0.023*S,cloak,cloak,skin,0.026*S);
+  const W1=v(0.16,0.17+breath,0.12);
+  limb(U,v(0,0.225+breath,0.1),v(0.05,0.11+breath,0.15),W1,0.03*S,0.027*S,0.023*S,cloak,cloak,skin,0.026*S);
+  const tb=[W1[0]+0.004,W1[1]-0.05,W1[2]],tt=[W1[0]+0.03,W1[1]+0.13,W1[2]];
+  seg(U,tb,tt,0.011,0.013,wood);ball(U,tt,[0.02,0.018,0.02],rag,true);
+  seg(U,v(0,0.27+breath,0),v(0.003,0.31+breath,0),0.027*S,0.026*S,skin);
+  const H=subF(U,v(0.003,0.305+breath,0),rZ(clamp(p.rpitch,-0.6,0.6)*0.7));
+  const HS={p:H.p,R:H.R.map(q=>q*S)};
+  face(HS,{skin,blink:((t*0.23+ph*0.01)%1)<0.035?0.12:1,iris:[0.3,0.25,0.18],brow:[0.25,0.16,0.1,5],browH:0.006,eyeS:1.1,nose:[0.012,0.013,0.011],mouth:[0.6,0.32,0.3],mouthW:0.022});
+  ball(HS,[-0.03,0.1,0],[0.088,0.1,0.094],cloak);
+  ball(HS,[-0.05,0.04,0],[0.07,0.07,0.09],cloakD,true);
+  return {torch:fpt(U,[tt[0],tt[1]+0.035,tt[2]])};
+}
+const mpDrawn=p=>mpShown(p)&&!p.down&&!(P.down&&p.id===MP.follow);
+function mpDrawPlayers(t,ex,ez,fwx,fwz){
+  if(!MP.on)return;
+  for(const p of MP.peers.values()){
+    if(!mpDrawn(p))continue;
+    if((p.rx-ex)**2+(p.rz-ez)**2>18*18||(p.rx-ex)*fwx+(p.rz-ez)*fwz<-1.5)continue;
+    const q=buildPlayer(p,t).torch;
+    if(p.fu>0){const k=0.55+0.45*Math.sqrt(p.fu/100),fl=1+Math.sin(t*13+p.walk)*0.08+Math.sin(t*29.3)*0.06;
+      spr(q[0],q[1]+0.02,q[2],0.07*k*fl,0.12*k*fl,11,1.0,0.6,0.2,1,1);
+      spr(q[0],q[1]+0.015,q[2],0.05*k,0.085*k,11,1.0,0.85,0.45,0.9,1);
+      spr(q[0],q[1],q[2],0.5*k,0.5*k,7,1.0,0.5,0.15,0.25*fl,1)}
+  }
+}
+// a friend's torch lights the walls around them
+function mpLights(lights,ex,ez,B){
+  if(!MP.on)return;
+  for(const p of MP.peers.values()){
+    if(!mpDrawn(p)||!(p.fu>0))continue;
+    const cy=Math.cos(p.ryaw),sy=Math.sin(p.ryaw),x=p.rx+cy*0.17-sy*0.15,z=p.rz+sy*0.17+cy*0.15,d=(x-ex)**2+(z-ez)**2;
+    if(d<220)lights.push([d-2,x,0.8+p.ry,z,B.torch,1.5*(0.3+0.7*Math.sqrt(p.fu/100)),Math.max(2.5,torchRadius(p.fu)*0.9)]);
+  }
+}
+const tagEls=new Map(),tagV=new THREE.Vector3();
+function mpTags(){
+  for(const [id,el] of tagEls)if(!MP.peers.has(id)){el.remove();tagEls.delete(id)}
+  const show=MP.on&&state==='play';
+  for(const p of MP.peers.values()){
+    let el=tagEls.get(p.id);
+    if(!el){el=document.createElement('div');el.className='ptag';document.body.appendChild(el);tagEls.set(p.id,el)}
+    let vis=show&&mpDrawn(p);
+    if(vis){const dd=Math.hypot(p.rx-P.x,p.rz-P.z);if(dd>14||(dd>1.2&&!los(P.x,P.z,p.rx,p.rz)))vis=false}
+    if(vis){tagV.set(p.rx,1.08+p.ry,p.rz).project(camera);if(tagV.z>1||Math.abs(tagV.x)>1.1||Math.abs(tagV.y)>1.1)vis=false}
+    if(!vis){if(el.style.display!=='none')el.style.display='none';continue}
+    el.style.display='';
+    if(el.textContent!==p.name)el.textContent=p.name;
+    el.style.color=p.hex;
+    el.style.transform=`translate(${((tagV.x+1)/2*innerWidth).toFixed(1)}px,${((1-tagV.y)/2*innerHeight).toFixed(1)}px) translate(-50%,-100%)`;
+  }
+}
+function mpHudLine(){
+  if(!MP.on)return '';
+  const n=[...MP.peers.values()].filter(p=>p.run&&mpFresh(p)).length+1;
+  let s=`Room ${MP.code} · ${n} player${n>1?'s':''}`;
+  if(P.down){const f=MP.peers.get(MP.follow);s+=f?` · watching ${f.name}`+(mpAlive().length>1?' (E to switch)':''):' · fallen'}
+  return s;
+}
+// the title, pause and game-over screens in a shared game
+function mpTitle(){
+  const g=MP.on&&MP.guest,n=[...MP.peers.values()].length+1;
+  $('startBtn').textContent=g?(MP.run?('JOIN '+hostName().toUpperCase()):'LOOKING FOR HOST…'):'DESCEND';
+  $('hostBtn').hidden=g;$('soloBtn').hidden=!g;$('seedLbl').hidden=g;
+  if(g)$('depthLbl').hidden=true;
+  $('mpJoinLine').textContent=g?(MP.run?`${hostName()} is at depth ${MP.run.d}. ${n} player${n>1?'s':''} in room ${MP.code}.`:`Room ${MP.code}: waiting for the host to answer. Keep this page open.`):'';
+}
+function mpPausePanel(){
+  $('mpPause').hidden=!MP.on;
+  if(!MP.on)return;
+  $('mpLinkIn').value=mpLink();
+  const L=[myName()+' (you)'+(MP.host?' · host':'')];
+  for(const p of MP.peers.values())L.push(p.name+(p.id===MP.hostId?' · host':'')+(p.down?' · fallen':p.run&&p.d!==R.depth?' · depth '+p.d:''));
+  $('mpList').textContent=L.join('   ·   ');
+}
+function mpDeadPanel(){
+  const g=MP.on&&MP.guest;
+  $('againBtn').hidden=g;$('retryBtn').hidden=g;
+  $('mpDeadLine').textContent=g?`Waiting for ${hostName()} to start again…`:MP.on?'Starting again takes everyone in the room with you.':'';
+}
+$('nameIn').value=store.get('name','')||'';
+$('nameIn').addEventListener('input',()=>{store.set('name',$('nameIn').value.trim().slice(0,16));if(MP.on)mpSend({k:'hi',n:myName(),h:MP.host})});
+$('hostBtn').addEventListener('click',mpHost);
+$('soloBtn').addEventListener('click',()=>mpLeave(false));
+$('copyBtn').addEventListener('click',()=>{const el=$('mpLinkIn');try{navigator.clipboard.writeText(el.value).then(()=>say('Invite link copied',2),()=>{el.select();document.execCommand('copy')})}catch(e){el.select();try{document.execCommand('copy')}catch(e2){}}});
 
 /* ---------- input ---------- */
 const keys={};
@@ -1694,13 +2049,17 @@ function watcher(s,dt,pfx,pfz){
 /* ---------- update ---------- */
 function update(dt){
   R.time+=dt;
+  // in a shared game the world keeps going while you pause or talk, but you stand still
+  const ctl=state==='play';
+  if(P.down)mpSpectate();
+  else{
   // look
-  const turn=(keys.ArrowRight?1:0)-(keys.ArrowLeft?1:0)+pad.lx*1.35;
+  const turn=ctl?(keys.ArrowRight?1:0)-(keys.ArrowLeft?1:0)+pad.lx*1.35:0;
   P.yaw+=turn*2.5*dt;
-  if(pad.ly)P.pitch=clamp(P.pitch-pad.ly*1.9*dt,-0.9,0.9);
+  if(pad.ly&&ctl)P.pitch=clamp(P.pitch-pad.ly*1.9*dt,-0.9,0.9);
   // move, with momentum kept through a jump
-  let fwd=((keys.KeyW||keys.ArrowUp)?1:0)-((keys.KeyS||keys.ArrowDown)?1:0)-pad.my-touch.my;
-  let str=(keys.KeyD?1:0)-(keys.KeyA?1:0)+pad.mx+touch.mx;
+  let fwd=ctl?((keys.KeyW||keys.ArrowUp)?1:0)-((keys.KeyS||keys.ArrowDown)?1:0)-pad.my-touch.my:0;
+  let str=ctl?(keys.KeyD?1:0)-(keys.KeyA?1:0)+pad.mx+touch.mx:0;
   const mag=Math.hypot(fwd,str);if(mag>1){fwd/=mag;str/=mag}
   const moving=mag>0.05, ground=P.y<=0;
   const wantSprint=(keys.ShiftLeft||keys.ShiftRight||pad.sprint||Math.hypot(touch.mx,touch.my)>0.94)&&moving&&!P.winded;
@@ -1714,7 +2073,7 @@ function update(dt){
   if(ground){P.vx=dxn*speed;P.vz=dzn*speed}
   else if(moving){const k=Math.min(1,7*dt);P.vx+=(dxn*P.airSpeed-P.vx)*k;P.vz+=(dzn*P.airSpeed-P.vz)*k}
   if(P.jumpQ>0)P.jumpQ-=dt;
-  if(ground&&(P.jumpQ>0||keys.Space||pad.jump||touch.jump)){P.jumpQ=0;P.vy=3.5;P.y=0.0001;P.airSpeed=Math.max(speed*(wantSprint?1.18:1),2.7);sfx('jump')}
+  if(ground&&ctl&&(P.jumpQ>0||keys.Space||pad.jump||touch.jump)){P.jumpQ=0;P.vy=3.5;P.y=0.0001;P.airSpeed=Math.max(speed*(wantSprint?1.18:1),2.7);sfx('jump')}
   if(P.y>0){P.vy-=11*dt;P.y+=P.vy*dt;if(P.y<=0){P.y=0;P.vy=0;sfx('step')}}
   const nx=P.x+P.vx*dt;if(!blocked(nx,P.z))P.x=nx;else if(ground)P.vx=0;
   const nz=P.z+P.vz*dt;if(!blocked(P.x,nz))P.z=nz;else if(ground)P.vz=0;
@@ -1752,7 +2111,7 @@ function update(dt){
   // exit
   sealMsgT-=dt;
   if(Math.hypot(F.exit.x-P.x,F.exit.z-P.z)<0.42){
-    if(P.shards>=3){descend();return}
+    if(P.shards>=3){mpSend({k:'down',d:R.depth+1});descend();return}
     if(sealMsgT<=0){sealMsgT=3;const n=3-P.shards;say(`The seal holds. ${n} shard${n>1?'s':''} to go.`,2.5);sfx('seal')}
   }
   // locked gate
@@ -1760,7 +2119,7 @@ function update(dt){
   if(F.door){
     const ddx=F.door.tx+0.5-P.x,ddz=F.door.ty+0.5-P.z;
     if(ddx*ddx+ddz*ddz<0.92*0.92){
-      if(P.keys>0){P.keys--;F.g[F.door.ty*F.W+F.door.tx]=0;F.frames.push(F.door);F.door=null;buildMesh(F);buildSdf(F);onTileChange();sfx('door');say('The gate grinds open',2.5)}
+      if(P.keys>0){openDoor(false);mpSend({k:'door',d:R.depth})}
       else if(doorMsgT<=0){doorMsgT=3;say('Locked. The key is somewhere on this side.',2.5);sfx('seal')}
     }
   }
@@ -1769,19 +2128,17 @@ function update(dt){
     const e=trapExt(tr,R.time);
     if(e>0.5){
       if(!tr.up){tr.up=true;if(Math.abs(tr.x-P.x)+Math.abs(tr.z-P.z)<6)sfx('spike')}
-      if(P.inv<=0&&P.y<0.22&&Math.abs(tr.x-P.x)<0.42&&Math.abs(tr.z-P.z)<0.42){hurt(null);if(state!=='play')return}
+      if(P.inv<=0&&P.y<0.22&&Math.abs(tr.x-P.x)<0.42&&Math.abs(tr.z-P.z)<0.42){hurt(null);if(state==='dead')return}
     }else tr.up=false;
   }
+  } // end of the living player's turn
   // the humming rooms: lights that fail, knocking in the walls, a map that will not hold
   if(F.back){
-    F.boT-=dt;
-    if(F.blk===0&&F.boT<=0){F.blk=1;F.boT=1.7;sfx('powerdown')}
-    else if(F.blk===1&&F.boT<=0){
-      F.blk=2;F.boT=6+Math.random()*4;say('The lights are out. Keep moving.',3);
-      for(const s of F.shades){if(s.type===0&&s.d>=0&&s.d<=14&&!P.inSafe)s.state=1;else if(s.type===3&&s.x<0)s.hid=0}
-    }else if(F.blk===2&&F.boT<=0){
-      F.blk=0;F.boT=40+Math.random()*40;sfx('powerup');
-      for(const s of F.shades)if(s.type===3&&s.x>0)banish(s,true);
+    if(!MP.guest){
+      F.boT-=dt;
+      if(F.blk===0&&F.boT<=0)setBlk(1);
+      else if(F.blk===1&&F.boT<=0)setBlk(2);
+      else if(F.blk===2&&F.boT<=0)setBlk(0);
     }
     panelLvl=F.blk===2?0:F.blk===1?((Math.sin(R.time*38)+Math.sin(R.time*61.3)>0.3)?1:0.12):0.97+0.03*Math.sin(R.time*113);
     F.knT=(F.knT===undefined?12+Math.random()*14:F.knT)-dt;
@@ -1789,43 +2146,54 @@ function update(dt){
     F.fgT=(F.fgT||0)-dt;
     if(F.fgT<=0){F.fgT=1;for(let k=0;k<30;k++){const x=(Math.random()*F.W)|0,y=(Math.random()*F.H)|0;if(Math.max(Math.abs(x-P.tx),Math.abs(y-P.ty))>6)F.seen[y*F.W+x]=0}}
   }else panelLvl=1;
-  // creatures
+  // creatures. A solo player or the host runs them for everyone in the room, hunting whoever
+  // is closest; a guest only follows what the host sends. Watchers are private to each player.
   let chasing=0,nearest=99;
-  const dark=P.fuel<=0, tR=torchRadius();
-  const chaseSpeed=Math.min(2.95+R.depth*0.06,3.6)+(dark?0.35:0);
   const pfx=Math.cos(P.yaw),pfz=Math.sin(P.yaw);
+  const TG=MP.guest?null:mpTargets(), MD=MP.guest?null:mpDist(TG);
   for(const s of F.shades){
     s.ph+=dt*3;
-    if(s.type===3){watcher(s,dt,pfx,pfz);if(state!=='play')return;continue}
-    if(s.stun>0){s.stun-=dt;continue}
+    if(s.type===3){if(!P.down){watcher(s,dt,pfx,pfz);if(state==='dead')return}continue}
     const cx=Math.floor(s.x),cz=Math.floor(s.z);
-    const d=F.dist[cz*F.W+cx];s.d=d;
-    const eu=Math.hypot(s.x-P.x,s.z-P.z);
+    const dl=F.dist[cz*F.W+cx];
+    if(MP.guest){
+      mpFollowShade(s,dt);
+      s.think=(s.think||0)-dt;
+      if(s.think<=0){s.think=0.2;s.vis=Math.hypot(s.x-P.x,s.z-P.z)<9&&los(s.x,s.z,P.x,P.z)}
+      if(s.stun<=0&&s.state===1&&dl>=0&&dl<=14&&(s.type===0||(s.type===1&&!s.frozen&&dl<=8))){chasing++;if(dl<nearest)nearest=dl;
+        if(s.type===1){s.snd=(s.snd||0)-dt;if(s.snd<=0){s.snd=0.45;sfx('scrape')}}}
+      continue;
+    }
+    if(s.stun>0){s.stun-=dt;continue}
+    const d=MD[cz*F.W+cx];s.d=d;
+    const T=mpNearest(TG,s.x,s.z);
+    const eu=T?Math.hypot(s.x-T.x,s.z-T.z):99, tDark=!!T&&T.fuel<=0;
+    const chaseSpeed=Math.min(2.95+R.depth*0.06,3.6)+(tDark?0.35:0);
     s.think-=dt;
     if(s.think<=0){
       s.think=0.2;
-      s.vis=eu<9&&los(s.x,s.z,P.x,P.z);
+      const tv=!!T&&eu<9&&los(s.x,s.z,T.x,T.z);
+      s.vis=T&&T.loc?tv:!P.down&&Math.hypot(s.x-P.x,s.z-P.z)<9&&los(s.x,s.z,P.x,P.z);
       if(s.type===0){
-        if(s.state===0){if((d>=0&&d<=8&&s.vis)||(d>=0&&d<=2)||(dark&&d>=0&&d<=12)){s.state=1;sfx('growl')}}
+        if(s.state===0){if((d>=0&&d<=8&&tv)||(d>=0&&d<=2)||(tDark&&d>=0&&d<=12)){s.state=1;if(dl>=0&&dl<=14)sfx('growl')}}
         else if(d<0||d>14)s.state=0;
       }else if(s.type===1)s.state=(d>=0&&d<=45)?1:0;
       else{if(s.state===0){if(d>=0&&d<=9)s.state=1}else if(d<0||d>13)s.state=0}
       if(s.calm>0){s.calm-=0.2;s.state=0}
-      if(P.inSafe)s.state=0;
+      if(!T||T.inSafe)s.state=0;
     }
     let sp;
-    if(s.type===0){sp=s.state===1?chaseSpeed:1.15;if(s.state===1){chasing++;if(d>=0&&d<nearest)nearest=d}}
+    if(s.type===0){sp=s.state===1?chaseSpeed:1.15;if(s.state===1&&(TG.length<2||(dl>=0&&dl<=14))){chasing++;if(dl>=0&&dl<nearest)nearest=dl}}
     else if(s.type===1){
-      // a stalker is stone while your torchlight is on it and you are facing it
-      const facing=((s.x-P.x)*pfx+(s.z-P.z)*pfz)/Math.max(eu,0.001);
-      s.frozen=s.vis&&facing>0.55&&eu<tR+0.5;
+      // a stalker is stone while someone's torchlight is on it and they are facing it
+      s.frozen=mpWatched(TG,s);
       if(s.frozen||s.state===0)continue;
       sp=3.15;
-      if(d>=0&&d<=8){chasing++;if(d<nearest)nearest=d;s.snd-=dt;if(s.snd<=0){s.snd=0.45;sfx('scrape')}}
+      if(dl>=0&&dl<=8){chasing++;if(dl<nearest)nearest=dl;s.snd-=dt;if(s.snd<=0){s.snd=0.45;sfx('scrape')}}
     }else sp=s.state===1?2.95:1.4;
     let gx=s.gx+0.5,gz=s.gy+0.5;
-    const direct=s.state===1&&d>=0&&d<=1&&!P.inSafe;
-    if(direct){gx=P.x;gz=P.z;s.gx=cx;s.gy=cz}
+    const direct=!!T&&s.state===1&&d>=0&&d<=1&&!T.inSafe;
+    if(direct){gx=T.x;gz=T.z;s.gx=cx;s.gy=cz}
     const dx=gx-s.x,dz=gz-s.z,l=Math.hypot(dx,dz),step=sp*dt;
     if(l<=step+0.001){
       s.x=gx;s.z=gz;
@@ -1834,7 +2202,7 @@ function update(dt){
         for(const k of DIRS){
           const nx2=cx+k[0],ny2=cz+k[1];
           if(nx2<0||ny2<0||nx2>=F.W||ny2>=F.H||F.g[ny2*F.W+nx2]||F.safeMask[ny2*F.W+nx2]||F.pocketMask[ny2*F.W+nx2])continue;
-          const nd=F.dist[ny2*F.W+nx2];
+          const nd=MD[ny2*F.W+nx2];
           if(nd>=0&&nd<bestD){bestD=nd;bestN=[nx2,ny2]}
           if(!(nx2===s.px&&ny2===s.py))opts.push([nx2,ny2]);
         }
@@ -1844,21 +2212,24 @@ function update(dt){
         if(next){s.px=cx;s.py=cz;s.gx=next[0];s.gy=next[1]}
       }
     }else{s.x+=dx/l*step;s.z+=dz/l*step;s.face=Math.atan2(dz,dx)}
-    if(Math.hypot(s.x-P.x,s.z-P.z)<0.5&&!P.inSafe){
+    const hitT=mpTouching(TG,s);
+    if(hitT){
       if(s.type===2){
         // a wisp drinks some of the torch and flits away
-        P.fuel=Math.max(0,P.fuel-22);sfx('drain');say('A wisp drinks your flame',2);
+        if(hitT.loc){P.fuel=Math.max(0,P.fuel-22);sfx('drain');say('A wisp drinks your flame',2)}else mpHit(hitT,'drain');
         for(let tries=0;tries<60;tries++){
-          const rx=1+(Math.random()*(F.W-2)|0),ry=1+(Math.random()*(F.H-2)|0),rd=F.dist[ry*F.W+rx];
+          const rx=1+(Math.random()*(F.W-2)|0),ry=1+(Math.random()*(F.H-2)|0),rd=MD[ry*F.W+rx];
           if(F.g[ry*F.W+rx]===0&&!F.safeMask[ry*F.W+rx]&&!F.pocketMask[ry*F.W+rx]&&(rd>10||(tries>40&&rd>4))){s.x=rx+0.5;s.z=ry+0.5;s.gx=rx;s.gy=ry;s.px=-1;break}
         }
         s.state=0;s.stun=1.5;
-      }else if(P.inv<=0){
+      }else if(hitT.inv<=0){
         if(R.depth<2&&s.type===0){
           // on the first floor a shade only chills you: slowed for a few seconds, no damage
-          P.chill=3.5;P.inv=1.6;s.stun=3;s.state=0;s.calm=9;sfx('drain');rumble(180,0.5,0.3);
-          say('The shade chills you. Deeper down, its touch wounds.',2.6);
-        }else{hurt(s);if(state!=='play')return}
+          s.stun=3;s.state=0;s.calm=9;
+          if(hitT.loc){P.chill=3.5;P.inv=1.6;sfx('drain');rumble(180,0.5,0.3);say('The shade chills you. Deeper down, its touch wounds.',2.6)}
+          else mpHit(hitT,'chill');
+        }else if(hitT.loc){hurt(s);if(state==='dead')return}
+        else{s.stun=2.5;s.calm=9;s.state=0;mpHit(hitT,'hurt')}
       }
     }
   }
@@ -1996,6 +2367,7 @@ function render(t){
     const fl=1+Math.sin(t*8.3)*0.08+Math.sin(t*19.1)*0.05;F.safe.fl=fl;
     lights.push([d-30,F.safe.x,0.85,F.safe.z,[1.0,0.56,0.2],2.3*fl,7.5,'safe'])}}
   for(const n of F.npcs){if(n.type==='keeper')continue;const d=(n.x-ex)**2+(n.z-ez)**2;if(d<140)lights.push([d-3,n.x,n.type==='delver'?0.5:0.95,n.z,[1.0,0.85,0.6],0.75,2.8])}
+  mpLights(lights,ex,ez,B);
   lights.sort((a,b)=>a[0]-b[0]);
   // the nearest fixed flames get real shadows; everything else shares a pool of plain lights
   {const used=new Set();
@@ -2039,6 +2411,7 @@ function render(t){
     if(o.lamp){const q=o.lamp;spr(q[0],q[1],q[2],0.22,0.22,7,1.0,0.75,0.3,0.4,1)}
     if(!n.used&&n.type!=='keeper'){const y=o.top+0.08+Math.sin(t*3+n.ph)*0.03,X=n.x+(n.ox||0),Z=n.z+(n.oz||0);spr(X,y,Z,0.08,0.08,7,1.0,0.85,0.4,1,1);spr(X,y,Z,0.32,0.32,7,1.0,0.7,0.2,0.3,1)}
   }}
+  mpDrawPlayers(t,ex,ez,fwx,fwz);
   if(F.safe&&(F.safe.x-ex)**2+(F.safe.z-ez)**2<22*22){
     const fl=F.safe.fl||1,X=F.safe.x,Z=F.safe.z;
     spr(X,0.72,Z,0.42*fl,0.62*fl,11,1.0,0.55,0.16,1,1);
@@ -2064,7 +2437,7 @@ function render(t){
   upload(charMesh,CH);
   // the torch in your hand, drawn close to the eye so it never pokes through a wall
   HB.n=0;
-  if(!title&&state!=='dead'){
+  if(!title&&state!=='dead'&&!P.down){
     TB=HB;const q=buildHand(t,ex,ey,ez,yaw,pitch);TB=CH;
     const hk=0.3,b=HB.buf;
     for(let i=0;i<HB.n;i++){const o=i*13;b[o]=ex+(b[o]-ex)*hk;b[o+1]=ey+(b[o+1]-ey)*hk;b[o+2]=ez+(b[o+2]-ez)*hk}
@@ -2159,6 +2532,7 @@ function drawHUD(){
   setText('flashes','✦ '+P.flash+' flash'+(P.flash===1?'':'es'));
   setText('keysLine',P.keys?'⚷ gate key':'');
   setText('embers','● '+wallet+(wallet===1?' gem':' gems')+' · Level '+plLevel());
+  setText('mpLine',mpHudLine());
   setText('fps',fpsShown?Math.round(fpsShown)+' fps · '+Math.round(rs*100)+'% res':'');
 }
 const mapCv=$('map'),mctx=mapCv.getContext('2d');let mapMode='';
@@ -2188,8 +2562,13 @@ function drawMap(){
   if(F.safe&&F.seen[F.safe.ty*F.W+F.safe.tx+1])dot(F.safe.x,F.safe.z,Math.max(2.5,ts*0.3),'#ff8a2a');
   for(const n of F.npcs)if(F.seen[Math.floor(n.z)*F.W+Math.floor(n.x)]){c.fillStyle=n.type==='keeper'?'#ffe0a0':'#8ff0d0';c.fillRect(ox+n.x*ts-2.5,oy+n.z*ts-2.5,5,5)}
   for(const s of F.shades)if(s.vis)dot(s.x,s.z,Math.max(3,ts*0.4),s.type===1?'#e6e0d2':s.type===2?'#5aa8ff':s.state===1?'#ff2a4a':'#a07cff');
+  for(const p of MP.peers.values()){if(!mpShown(p))continue;
+    c.save();c.translate(ox+p.rx*ts,oy+p.rz*ts);c.rotate(p.ryaw);c.fillStyle=p.down?'#777':p.hex;
+    c.beginPath();c.moveTo(5,0);c.lineTo(-3.5,3.5);c.lineTo(-1.5,0);c.lineTo(-3.5,-3.5);c.closePath();c.fill();c.restore()}
+  if(!P.down){
   c.save();c.translate(ox+P.x*ts,oy+P.z*ts);c.rotate(P.yaw);
   c.fillStyle='#ffc27a';c.beginPath();c.moveTo(6,0);c.lineTo(-4,4);c.lineTo(-2,0);c.lineTo(-4,-4);c.closePath();c.fill();c.restore();
+  }
   if(F.back){
     const S2=mapCv.width,tk=Math.floor(R.time*7),r=k=>{const v=Math.sin(tk*12.9898+k*78.233)*43758.5453;return v-Math.floor(v)};
     c.setTransform(1,0,0,1,0,0);
@@ -2201,19 +2580,33 @@ function drawMap(){
 
 /* ---------- main loop ---------- */
 let last=performance.now(),wasPlaying=false;
-function frame(now){
-  const raw=(now-last)/1000;last=now;
+function step(now){
+  const raw=Math.max(0,(now-last)/1000);last=now;
   const dt=Math.min(raw,0.05);
   pollPad();
   if((state==='play')!==wasPlaying){wasPlaying=state==='play';document.body.classList.toggle('playing',wasPlaying)}
-  if(state==='play'){update(dt);adapt(raw)}
+  const live=()=>state==='play'||(MP.on&&(state==='pause'||state==='talk'));
+  if(live()){
+    // a host whose tab is in the background still runs the creatures, in catch-up steps
+    if(raw>0.1&&MP.host){let left=Math.min(raw,1);while(left>0&&live()){const s=Math.min(left,0.05);update(s);left-=s}}
+    else update(dt);
+  }
   else if(state==='title')titleYaw+=dt*0.15;
+  mpTick(raw);
+  return raw;
+}
+function frame(now){
+  const raw=step(now);
+  if(state==='play')adapt(raw);
   setHum();
   if(!window.__norender)render(now/1000);
   if(state!=='title'){drawHUD();drawMap()}
+  mpTags();
   requestAnimationFrame(frame);
 }
+setInterval(()=>{if(MP.host&&document.hidden&&performance.now()-last>200)step(performance.now())},100);
 // a backdrop maze behind the title screen
 R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
-window.__game={surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+{const rc=cleanCode(new URLSearchParams(location.search).get('room'));if(rc)mpPrepareJoin(rc)}
+window.__game={MP,mpHost,hurt,keys,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);
