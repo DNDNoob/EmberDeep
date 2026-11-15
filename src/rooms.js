@@ -139,7 +139,7 @@ export function createRooms(renderer,o){
     // the sun and its worlds, a little below and ahead
     S.sys=new THREE.Group();S.sys.position.set(0,-7,-34);S.sys.rotation.x=0.16;group.add(S.sys);
     S.sun=new THREE.Mesh(new THREE.SphereGeometry(2.6,32,20),new THREE.MeshBasicMaterial({color:new THREE.Color(3.2,2.1,0.8)}));S.sys.add(S.sun);
-    S.sunGlow=glow(0xffb060,26,0.9);S.sys.add(S.sunGlow);
+    S.sunGlow=glow(0xffb060,26,0.55);S.sys.add(S.sunGlow);
     S.light=new THREE.PointLight(0xffe2b0,900,0,2);S.sys.add(S.light);
     group.add(new THREE.AmbientLight(0x223044,0.5));
     const band=(a,b,c)=>canvasTex(128,64,(x,w,h)=>{for(let y=0;y<h;y++){const k=Math.sin(y*0.35+Math.sin(y*0.11)*3)*0.5+0.5,m=rnd()*0.12;
@@ -157,13 +157,13 @@ export function createRooms(renderer,o){
     });
     // the hole: a black ball, a ring of burning matter, and a thin bright edge
     S.hole=new THREE.Mesh(new THREE.SphereGeometry(1,32,20),new THREE.MeshBasicMaterial({color:0x000000}));S.hole.visible=false;S.sys.add(S.hole);
-    S.disk=new THREE.Mesh(new THREE.RingGeometry(1.15,5.2,96,8),new THREE.ShaderMaterial({
+    S.disk=new THREE.Mesh(new THREE.RingGeometry(1.15,3.0,96,8),new THREE.ShaderMaterial({
       uniforms:{uT:{value:0},uK:{value:0}},transparent:true,depthWrite:false,side:THREE.DoubleSide,blending:THREE.AdditiveBlending,
       vertexShader:'varying vec2 vP;void main(){vP=position.xy;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
       fragmentShader:`uniform float uT;uniform float uK;varying vec2 vP;
-void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/4.05;
+void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
   float sw=0.55+0.45*sin(a*3.0+r*4.0-uT*5.0)+0.3*sin(a*7.0-r*9.0+uT*8.0);
-  vec3 c=mix(vec3(4.0,3.0,1.8),vec3(1.6,0.35,0.9),smoothstep(0.0,0.7,k));
+  vec3 c=mix(vec3(2.6,1.9,1.1),vec3(1.2,0.3,0.7),smoothstep(0.0,0.7,k));
   float f=smoothstep(0.0,0.08,k)*(1.0-smoothstep(0.35,1.0,k));
   gl_FragColor=vec4(c*max(sw,0.15)*f*uK,1.0);}`}));
     S.disk.rotation.x=Math.PI/2-0.1;S.disk.visible=false;S.sys.add(S.disk);
@@ -185,9 +185,9 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/4.05;
       const col=ss(HOLE_AT,EAT,t),pull=ss(EAT,END,t);
       S.sun.scale.setScalar(Math.max(0.001,1-col));
       S.sun.material.color.setRGB(3.2*(1-col*0.4),2.1*(1-col),0.8*(1-col));
-      S.sunGlow.material.opacity=0.9*(1-col);S.sunGlow.scale.setScalar(26*(1-col*0.7));
+      S.sunGlow.material.opacity=0.55*(1-col);S.sunGlow.scale.setScalar(26*(1-col*0.7));
       S.light.intensity=900*(1-col)+260*col;S.light.color.setRGB(1,0.89-0.4*col,0.69-0.45*col);
-      const hr=col*(1.5+pull*3.2);
+      const hr=col*(1.5+pull*2.0);
       S.hole.visible=S.disk.visible=col>0.02;
       S.hole.scale.setScalar(Math.max(hr,0.001));
       S.disk.scale.setScalar(Math.max(hr*0.9,0.001));S.disk.material.uniforms.uT.value=t;S.disk.material.uniforms.uK.value=col;
@@ -212,9 +212,9 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/4.05;
       S.rumT-=dt;
       if(pull>0.05&&S.rumT<=0){S.rumT=0.28;o.noise(0.4,0.06+0.3*pull,120+400*pull,0.6);o.rumble(250,0.3+0.6*pull,0.2+0.5*pull)}
       const out=ss(OUT,FIN,t),drift=Math.sin(t*0.5)*0.25;
-      const cz=lerp(drift,-24,Math.pow(pull,3))+out*out*46;
+      const cz=lerp(drift,-17,Math.pow(pull,3))+out*out*46;
       const sh=pull*0.12*(1-out);
-      cam.position.set(Math.sin(t*0.37)*0.2+(Math.random()-0.5)*sh,Math.sin(t*0.29)*0.25-5*Math.pow(pull,3)*(1-out)+(Math.random()-0.5)*sh,cz+(Math.random()-0.5)*sh);
+      cam.position.set(Math.sin(t*0.37)*0.2+(Math.random()-0.5)*sh,Math.sin(t*0.29)*0.25-3*Math.pow(pull,3)*(1-out)+(Math.random()-0.5)*sh,cz+(Math.random()-0.5)*sh);
       cam.fov=72+pull*26-out*20;cam.updateProjectionMatrix();
       // as you are thrown back the doorway rushes past and shrinks away
       const yw=S.yaw*(1-out),pt=S.pitch*(1-out);
@@ -335,7 +335,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/4.05;
       S.ghost.count=gn;S.ghost.instanceMatrix.needsUpdate=true;
     };
     const hud=()=>o.hud(K.over==='win'?'<b>The glass parts.</b>':K.over==='dead'?'<b>The kiln is full.</b>':
-      `<b>THE GLASS KILN</b> &nbsp; Rows burned <b>${K.cleared} / ${KILN.need}</b> &nbsp;·&nbsp; ash rises in ${Math.max(0,Math.ceil(K.ashT))}s<br><small>${o.hint()}</small>`);
+      `<b>THE GLASS KILN</b><br>Rows burned <b>${K.cleared} / ${KILN.need}</b> &nbsp;·&nbsp; ash rises in ${Math.max(0,Math.ceil(K.ashT))}s<br><small>${o.hint()}</small>`);
     const landed=n=>{
       if(n<0)return;
       if(n>0){o.tone(330,0.25,'triangle',0.2);o.tone(495,0.3,'triangle',0.18,0.08);o.tone(660,0.4,'triangle',0.16,0.16);o.noise(0.35,0.25,2400,0.8);o.rumble(160,0.5,0.6);S.shake=0.25}
