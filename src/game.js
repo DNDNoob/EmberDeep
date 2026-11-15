@@ -511,7 +511,7 @@ function getWorldMat(F,k){
   const gl2=office?BIOMES[4].spec:B.spec,g=kind===3?0.15:gl2[kind];
   const key=[layer,kd,wet].join(':');
   let m=worldMats.get(key);
-  if(!m){m=worldMaterial({layer,kind,panel,bad:kd===6,phantom:kd===5,wet,depth:layer<=1?0.025:layer===13?0.02:layer===14?0.025:layer>=15?0.03:0.06});worldMats.set(key,m)}
+  if(!m){m=worldMaterial({layer,kind,panel,bad:kd===6,phantom:kd===5,wet,depth:layer===13?0.02:layer===14?0.025:layer>=15?0.03:0.06});worldMats.set(key,m)}
   return m;
 }
 // characters, creatures and decor: painted procedural materials on top of physically based shading

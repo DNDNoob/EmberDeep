@@ -2,7 +2,6 @@
 // Every surface is described as a height field plus colour, roughness and glow; normals and parallax depth come from the real height.
 import * as THREE from 'three';
 import {FullScreenQuad} from 'three/addons/postprocessing/Pass.js';
-import {PHOTOS} from './photos.js';
 
 const LIB = `
 precision highp float;
@@ -337,39 +336,7 @@ void main(){
   vec3 n=normalize(vec3(gx*bump,gy*bump,1.));
   gl_FragColor=vec4(n*.5+.5,clamp(1.-c,0.,1.));}`;
 
-// photo surfaces (Forge SDXL tiles): colour and height come from images instead of a surf() function
-// KEEP(uv) is where the procedural surface stays (the Humming Rooms baseboard); TINT ages the photo the way the procedural one is aged
-const PHOTO_FX = {
-  13: {keep: 'smoothstep(.905,.915,uv.y)', tint: `float stain=smoothstep(.5,.78,fbm(uv+.15,4.)*.75+fbm(uv,24.)*.12);p=mix(p,p*vec3(.72,.63,.42),stain*.6);
-    float damp=smoothstep(.55,1.,uv.y+fbm(uv,6.)*.25-.12);p=mix(p,p*vec3(.6,.52,.36),damp*.7);p*=mix(1.,.6,smoothstep(.885,.915,uv.y));`, h: '.8+(ph-.5)*.05'},
-};
-const photoHead = i => {const fx = PHOTO_FX[i] || {}; return `uniform sampler2D tP;uniform float rough;
-float KEEP(vec2 uv){return ${fx.keep || '0.'};}
-vec3 TINT(vec2 uv,vec3 p){${fx.tint || ''}return p;}
-float PH(float ph){return ${fx.h || 'ph'};}
-`};
-const PHOTO_A = `
-void main(){float h,r,em;vec3 alb;surf(vUv,h,alb,r,em);float k=KEEP(vUv);
-  vec3 p=TINT(vUv,texture2D(tP,vUv).rgb);
-  alb=pow(clamp(mix(p,alb,k),0.,1.),vec3(2.2));
-  gl_FragColor=vec4(alb,.5+.5*mix(rough,r,k));}`;
-const PHOTO_H = `
-void main(){float h,r,em;vec3 alb;surf(vUv,h,alb,r,em);gl_FragColor=vec4(sat(mix(PH(texture2D(tP,vUv).r),h,KEEP(vUv))),0.,0.,1.);}`;
-function loadImage(url) {
-  const t = new THREE.Texture();
-  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.minFilter = THREE.LinearFilter; t.generateMipmaps = false;
-  t.ready = new Promise(res => {const im = new Image(); im.onload = () => {t.image = im; t.needsUpdate = true; res(t)}; im.onerror = () => res(null); im.src = url});
-  return t;
-}
-
-export function makeSurfaces(renderer, size, wantNormals, usePhotos = true) {
-  // start decoding the photos at once; a surface asked for before they are ready is drawn procedurally and repainted when they arrive
-  const photos = new Map();
-  if (usePhotos) for (const k in PHOTOS) {
-    const p = PHOTOS[k], alb = loadImage(p.alb), h = loadImage(p.h);
-    photos.set(+k, {rough: p.rough, alb, h, ready: Promise.all([alb.ready, h.ready]).then(r => r[0] && r[1]), ok: false});
-    const ph = photos.get(+k); ph.ready.then(g => {if (g) ph.ok = true});
-  }
+export function makeSurfaces(renderer, size, wantNormals) {
   const quad = new FullScreenQuad();
   const cache = new Map();
   const an = Math.min(size >= 1024 ? 16 : 8, renderer.capabilities.getMaxAnisotropy());
@@ -385,38 +352,24 @@ export function makeSurfaces(renderer, size, wantNormals, usePhotos = true) {
     if (cache.has(i)) return cache.get(i);
     const prev = renderer.getRenderTarget(), tm = renderer.toneMapping;
     renderer.toneMapping = THREE.NoToneMapping;
-    const A = target(true), N = wantNormals ? target(false) : null;
-    paint(i, A, N);
-    renderer.toneMapping = tm; renderer.setRenderTarget(prev);
-    const out = {map: A.texture, nrm: N ? N.texture : null, rtA: A, rtN: N};
-    cache.set(i, out);
-    const ph = photos.get(i);
-    if (ph && !ph.ok) ph.ready.then(good => {if (good) {ph.ok = true; repaint(i)}});
-    return out;
-  }
-  function repaint(i) {
-    const o = cache.get(i); if (!o) return;
-    const prev = renderer.getRenderTarget(), tm = renderer.toneMapping;
-    renderer.toneMapping = THREE.NoToneMapping;
-    paint(i, o.rtA, o.rtN);
-    renderer.toneMapping = tm; renderer.setRenderTarget(prev);
-  }
-  function paint(i, A, N) {
-    const ph = photos.get(i), photo = ph && ph.ok;
     const head = `#define SEED ${(i * 17.31 + 3.7).toFixed(2)}\n` + LIB + SURF[i];
-    const mat = (fs, tex, extra) => new THREE.ShaderMaterial({vertexShader: VS, fragmentShader: fs, depthTest: false, depthWrite: false, toneMapped: false,
-      uniforms: tex ? Object.assign({tP: {value: tex}}, extra || {}) : {}});
-    run(photo ? mat(head + photoHead(i) + PHOTO_A, ph.alb, {rough: {value: ph.rough}}) : mat(head + mainA), A);
-    if (N) {
+    const A = target(true);
+    run(new THREE.ShaderMaterial({vertexShader: VS, fragmentShader: head + mainA, depthTest: false, depthWrite: false, toneMapped: false}), A);
+    let N = null;
+    if (wantNormals) {
       const Hh = new THREE.WebGLRenderTarget(size, size, {type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping});
-      run(photo ? mat(head + photoHead(i) + PHOTO_H, ph.h, {rough: {value: ph.rough}}) : mat(head + mainH), Hh);
+      run(new THREE.ShaderMaterial({vertexShader: VS, fragmentShader: head + mainH, depthTest: false, depthWrite: false, toneMapped: false}), Hh);
+      N = target(false);
       // floors and ceilings stretch one tile of texture over two metres, walls over one
       const flat = i === 12 ? 0 : [0, 1, 1][i < 12 ? i % 3 : i - 13 > 2 ? 1 : i - 13];
       run(new THREE.ShaderMaterial({vertexShader: VS, fragmentShader: FS_N, depthTest: false, depthWrite: false, toneMapped: false,
-        uniforms: {tH: {value: Hh.texture}, px: {value: new THREE.Vector2(1 / size, 1 / size)}, bump: {value: (flat ? 0.05 : 0.1) * (photo ? 0.45 : 1)}}}), N);
+        uniforms: {tH: {value: Hh.texture}, px: {value: new THREE.Vector2(1 / size, 1 / size)}, bump: {value: flat ? 0.05 : 0.1}}}), N);
       Hh.dispose();
     }
+    renderer.toneMapping = tm; renderer.setRenderTarget(prev);
+    const out = {map: A.texture, nrm: N ? N.texture : null, rtA: A, rtN: N};
+    cache.set(i, out);
+    return out;
   }
-  const allReady = () => Promise.all([...photos.values()].map(p => p.ready));
-  return {get, count: SURF.length, allReady};
+  return {get, count: SURF.length};
 }
