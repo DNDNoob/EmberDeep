@@ -1,4 +1,4 @@
-# Emberdeep
+# Door Simulator
 
 A procedural maze explorer that runs in the browser. Play it at https://dndnoob.github.io/EmberDeep/
 
