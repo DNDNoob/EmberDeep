@@ -1284,8 +1284,8 @@ const DUST=[];{const dr=mulberry32(99);for(let i=0;i<(Q>=2?90:Q>=1?45:0);i++)DUS
 /* ---------- game state ---------- */
 let state='title';           // title | play | pause | trans | dead
 let F=null;                  // current floor
-const P={y:0,vy:0,vx:0,vz:0,airSpeed:2.7,jumpQ:0,keys:0,x:0,z:0,yaw:0,pitch:0,hp:3,fuel:100,stam:100,winded:false,flash:1,shards:0,inv:0,bob:0,tx:-1,ty:-1,stepPh:0};
-const R={seed:'',depth:1,score:0,time:0,gems:0};
+const P={y:0,vy:0,vx:0,vz:0,airSpeed:2.7,jumpQ:0,keys:0,x:0,z:0,yaw:0,pitch:0,hp:3,fuel:100,stam:100,winded:false,flash:1,ward:0,shards:0,inv:0,bob:0,tx:-1,ty:-1,stepPh:0};
+const R={seed:'',depth:1,score:0,time:0,gems:0,wind:false};
 /* ---------- lasting upgrades, bought from the Keeper with gems ---------- */
 const UPG=[
   {k:'heart',name:'Vitality',desc:'One more heart',cost:[15,30,50]},
@@ -1293,8 +1293,11 @@ const UPG=[
   {k:'lungs',name:'Deep lungs',desc:'Sprinting costs 20% less stamina',cost:[10,20,35]},
   {k:'band',name:'Bandolier',desc:'Start every run with one more flash bomb',cost:[12,24,40]},
   {k:'boots',name:'Swift boots',desc:'Move 6% faster',cost:[15,35]},
+  {k:'powder',name:'Bright powder',desc:'Flash bombs reach farther and stun longer',cost:[14,28]},
+  {k:'purse',name:'Lucky purse',desc:'Loose gems are sometimes worth double',cost:[12,26,44]},
+  {k:'wind',name:'Second wind',desc:'Once each run, a killing blow leaves you on one heart',cost:[60]},
 ];
-const up=Object.assign({heart:0,lamp:0,lungs:0,band:0,boots:0},store.get('up',null)||{});
+const up=Object.assign({heart:0,lamp:0,lungs:0,band:0,boots:0,powder:0,purse:0,wind:0},store.get('up',null)||{});
 let wallet=Math.max(0,+store.get('wallet',0)||0);
 const maxHp=()=>3+(up.heart|0);
 const plLevel=()=>1+UPG.reduce((a,u)=>a+(up[u.k]|0),0);
@@ -1327,6 +1330,12 @@ function buildTalk(){
   let text='';
   if(n.type==='keeper'){
     text=talk.line||KEEPER_LINES[(R.depth+(n.ph*10|0))%KEEPER_LINES.length];
+    const fc=4+2*(n.sold|0);
+    o.push({head:'Supplies for this run',label:'Flash bomb',sub:'One more flash bomb',cost:fc+' gems',off:wallet<fc,fn:()=>{wallet-=fc;store.set('wallet',wallet);n.sold=(n.sold|0)+1;P.flash++;sfx('key');talk.line='Burn it bright. Then run.'}});
+    o.push({label:'Flask of oil',sub:'Refill your torch',cost:'4 gems',off:wallet<4||P.fuel>=95,fn:()=>{wallet-=4;store.set('wallet',wallet);P.fuel=100;lowFuelSaid=false;sfx('oil');talk.line='Fill it to the lip. The dark is thirsty.'}});
+    o.push({label:'Ward stone',sub:P.ward?'Already carried':'Soaks up the next blow, then crumbles',cost:'10 gems',off:wallet<10||!!P.ward,fn:()=>{wallet-=10;store.set('wallet',wallet);P.ward=1;sfx('key');talk.line='Keep it close. It only works once.'}});
+    if(P.hp<maxHp())o.push({label:'Mend a wound',sub:'Restore one heart',cost:'6 gems',off:wallet<6,fn:()=>{wallet-=6;store.set('wallet',wallet);P.hp++;sfx('pick');talk.line='There. Try to keep the rest of your blood inside.'}});
+    const u0=o.length;
     for(const u of UPG){
       const lv=up[u.k]|0,max=u.cost.length;
       if(lv>=max){o.push({label:u.name+' '+ROMAN[lv],sub:u.desc+' (complete)',cost:'',off:true});continue}
@@ -1337,7 +1346,7 @@ function buildTalk(){
         if(u.k==='band')P.flash++;
         sfx('key');talk.line='Done. You are level '+plLevel()+' now. It will hold, even past death.'}});
     }
-    if(P.hp<maxHp())o.push({label:'Mend a wound',sub:'Restore one heart',cost:'6 gems',off:wallet<6,fn:()=>{wallet-=6;store.set('wallet',wallet);P.hp++;sfx('pick');talk.line='There. Try to keep the rest of your blood inside.'}});
+    o[u0].head='Lasting upgrades';
   }else if(n.type==='map'){
     text=n.used?'It is all on your map now. Mind the corners.':'I have walked every hall of this floor twice. Hold out your map and I will mark what matters.';
     if(!n.used)o.push({label:'Mark the shards and the way down',sub:'Shows them on your map',cost:'free',fn:()=>{n.used=true;F.reveal=true;sfx('shard')}});
@@ -1351,9 +1360,11 @@ function buildTalk(){
   $('talkName').textContent=T.name;$('talkText').textContent=text;
   $('talkPurse').textContent='● '+wallet+' gems · Level '+plLevel();
   const box=$('talkOpts');box.innerHTML='';
-  o.forEach((q,i)=>{const d=document.createElement('div');d.className='opt'+(i===talk.sel?' sel':'')+(q.off?' off':'');
-    d.innerHTML='<span>'+(i+1)+'. '+q.label+(q.sub?'<small>'+q.sub+'</small>':'')+'</span><span class="cost">'+q.cost+'</span>';
+  o.forEach((q,i)=>{if(q.head){const h=document.createElement('div');h.className='tgrp';h.textContent=q.head;box.appendChild(h)}
+    const d=document.createElement('div');d.className='opt'+(i===talk.sel?' sel':'')+(q.off?' off':'');
+    d.innerHTML='<span>'+(i<9?(i+1)+'. ':'')+q.label+(q.sub?'<small>'+q.sub+'</small>':'')+'</span><span class="cost">'+q.cost+'</span>';
     d.addEventListener('click',e=>{e.stopPropagation();talk.sel=i;pickTalk()});box.appendChild(d)});
+  const se=box.querySelector('.sel');if(se&&se.scrollIntoView)se.scrollIntoView({block:'nearest'});
   $('talkHint').textContent=touch.on?'Tap a choice':pad.id?'D-pad or stick to choose · A to pick · B to leave':'Up and Down to choose · Enter to pick · Esc to leave';
 }
 function pickTalk(){
@@ -1494,7 +1505,7 @@ function startRun(seed,depth,force){
   const sd=force?depth:clamp(depth||+$('startSel').value||1,1,deepest);
   P.down=false;
   R.seed=(seed||randSeed()).toUpperCase();R.score=0;R.time=0;R.gems=0;R.startDepth=sd;
-  P.hp=maxHp();P.fuel=100;P.stam=100;P.winded=false;P.flash=1+Math.floor((sd-1)/3)+(up.band|0);P.inv=0;P.chill=0;lowFuelSaid=false;
+  P.hp=maxHp();P.fuel=100;P.stam=100;P.winded=false;P.flash=1+Math.floor((sd-1)/3)+(up.band|0);P.ward=0;R.wind=false;P.inv=0;P.chill=0;lowFuelSaid=false;
   loadFloor(sd);
   state='play';
   ['title','pause','dead','talk'].forEach(id=>$(id).classList.add('hidden'));talk=null;
@@ -1580,16 +1591,16 @@ function useFlash(){
   requestAnimationFrame(()=>{fx.style.transition='opacity .7s';fx.style.opacity=0});
   let n=0;
   for(const s of F.shades)if(s.type===3&&s.x>0&&Math.hypot(s.x-P.x,s.z-P.z)<9&&los(P.x,P.z,s.x,s.z)){banish(s,true);n++}
-  n+=flashStun(P.x,P.z);
-  if(MP.guest)mpSend({k:'fl',d:R.depth,x:P.x,z:P.z},MP.hostId);
+  n+=flashStun(P.x,P.z,up.powder|0);
+  if(MP.guest)mpSend({k:'fl',d:R.depth,x:P.x,z:P.z,p:up.powder|0},MP.hostId);
   sfx('flash');rumble(120,0.2,0.7);
   if(n)say(n>1?`${n} creatures stunned`:'Stunned',1.5);
 }
-function flashStun(x,z){
-  let n=0;
+function flashStun(x,z,lv){
+  lv=clamp(lv|0,0,2);let n=0;
   for(const s of F.shades){
     if(s.type===3)continue;
-    if(Math.hypot(s.x-x,s.z-z)<6.5&&los(x,z,s.x,s.z)){s.stun=4.5;if(s.type!==1)s.state=0;n++}
+    if(Math.hypot(s.x-x,s.z-z)<6.5+1.25*lv&&los(x,z,s.x,s.z)){s.stun=4.5+1.5*lv;if(s.type!==1)s.state=0;n++}
   }
   n+=mimicFlash(x,z);
   return n;
@@ -1610,7 +1621,9 @@ function setBlk(v){
   }
 }
 function hurt(s){
+  if(P.ward){P.ward=0;P.inv=1.6;if(s){s.stun=2.5;s.calm=9;s.state=0}sfx('seal');say('Your ward stone shatters',2);return}
   P.hp--;P.inv=1.6;if(s){s.stun=2.5;s.calm=9;s.state=0}
+  if(P.hp<=0&&up.wind&&!R.wind){R.wind=true;P.hp=1;P.inv=3;say('Second wind. You are still standing.',3)}
   try{if(touch.on&&navigator.vibrate)navigator.vibrate(90)}catch(e){}
   rumble(260,0.9,0.6);
   const h=$('hurt');h.style.transition='none';h.style.opacity=1;
@@ -1623,7 +1636,7 @@ function collect(it){
   switch(it.type){
     case 'shard':P.shards++;R.score+=50;sfx('shard');
       say(P.shards>=3?'The seal is broken. Find the way down.':`Shard ${P.shards} of 3`,2.5);break;
-    case 'gem':R.score+=10*R.depth;R.gems++;wallet++;store.set('wallet',wallet);sfx('gem');break;
+    case 'gem':R.score+=10*R.depth;R.gems++;wallet++;if(Math.random()<0.15*(up.purse|0)){R.gems++;wallet++;say('Lucky find: 2 gems',1.2)}store.set('wallet',wallet);sfx('gem');break;
     case 'oil':P.fuel=Math.min(100,P.fuel+35);lowFuelSaid=false;sfx('oil');break;
     case 'flash':P.flash++;sfx('pick');break;
     case 'chest':wallet+=8;R.gems+=8;R.score+=60*R.depth;store.set('wallet',wallet);sfx('shard');say('You slipped through the wall. A hidden cache: 8 gems',4);break;
@@ -1780,7 +1793,7 @@ function mpRecv(m,from){
       if(inRun&&state!=='trans'&&n>=1&&n<=3)mpDescend(n,p.name+' woke a black hole. It throws you all '+n+(n>1?' floors':' floor')+' down');
       break;}
     case 'down':if(inRun&&state!=='trans'&&m.d===R.depth+1){say(p.name+' found the way down',2);mpDescend()}break;
-    case 'fl':if(MP.host&&inRun&&here)flashStun(+m.x,+m.z);break;
+    case 'fl':if(MP.host&&inRun&&here)flashStun(+m.x,+m.z,+m.p);break;
     case 'hit':
       if(!fromHost||!inRun||P.down||P.away||state==='trans')return;
       if(m.w==='drain'){P.fuel=Math.max(0,P.fuel-22);sfx('drain');say('A wisp drinks your flame',2)}
@@ -3435,7 +3448,7 @@ function drawHUD(){
   setW('fuelFill',P.fuel);setW('stamFill',P.stam);
   setText('shards',GL.hudOv.shards||'◆ '+P.shards+' / 3 shards');
   setText('flashes','✦ '+P.flash+' flash'+(P.flash===1?'':'es'));
-  setText('keysLine',P.keys?'⚷ gate key':'');
+  setText('keysLine',(P.keys?'⚷ gate key':'')+(P.ward?(P.keys?' · ':'')+'◈ ward stone':''));
   setText('embers','● '+wallet+(wallet===1?' gem':' gems')+' · Level '+plLevel());
   setText('mpLine',mpHudLine());
   setText('fps',fpsShown?Math.round(fpsShown)+' fps · '+Math.round(rs*100)+'% res':'');
@@ -3522,5 +3535,5 @@ setInterval(()=>{if(MP.host&&document.hidden&&performance.now()-last>200)step(pe
 // a backdrop maze behind the title screen
 R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
 {const rc=cleanCode(new URLSearchParams(location.search).get('room'));if(rc)mpPrepareJoin(rc)}
-window.__game={get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);
