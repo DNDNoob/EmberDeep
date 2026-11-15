@@ -90,11 +90,15 @@ function canvasTex(w,h,draw,repeat){
 }
 const rnd=(()=>{let a=1234567;return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}})();
 
-export function createRooms(renderer,o){
+export function createRooms(renderer,o0){
+  // a watcher is not the one in the room: no speech or shaking for them, and a fast-forward makes no sound
+  const o=Object.assign({},o0,{say:(...a)=>{if(!A.watching)o0.say(...a)},rumble:(...a)=>{if(!A.watching)o0.rumble(...a)},
+    tone:(...a)=>{if(!A.mute)o0.tone(...a)},noise:(...a)=>{if(!A.mute)o0.noise(...a)},hint:()=>A.watching?A.label:o0.hint()});
+  const nf=v=>typeof v==='number'&&isFinite(v),Z={l:0,r:0,d:0,rot:0,drop:0,lx:0,ly:0};
   const scene=new THREE.Scene(),cam=new THREE.PerspectiveCamera(72,1,0.05,2000);
   scene.background=new THREE.Color(0x000000);
-  let composer=null,bloom=null,viewKey='',cur=null,group=null,done=null;
-  const A={active:false,kind:''};
+  let composer=null,bloom=null,viewKey='',cur=null,group=null,done=null,held=false;
+  const A={active:false,kind:'',watching:false,label:'',mute:0};
   const glowTex=canvasTex(128,128,(c,w)=>{const g=c.createRadialGradient(w/2,w/2,0,w/2,w/2,w/2);
     g.addColorStop(0,'rgba(255,255,255,1)');g.addColorStop(0.25,'rgba(255,255,255,0.45)');g.addColorStop(0.6,'rgba(255,255,255,0.08)');g.addColorStop(1,'rgba(255,255,255,0)');
     c.fillStyle=g;c.fillRect(0,0,w,w)});
@@ -113,7 +117,7 @@ export function createRooms(renderer,o){
     group.traverse(m=>{if(m.geometry)m.geometry.dispose();if(m.material){const L=Array.isArray(m.material)?m.material:[m.material];for(const q of L){if(q.map&&q.map!==glowTex)q.map.dispose();q.dispose()}}});
     scene.remove(group);group=null;scene.fog=null;
   }
-  const finish=res=>{const d=done;done=null;A.active=false;A.kind='';cur=null;clear();o.hud('');if(d)d(res)};
+  const finish=res=>{if(A.watching){held=true;return}const d=done;done=null;A.active=false;A.kind='';cur=null;clear();o.hud('');if(d)d(res)};
 
   /* ---------- the galaxy ---------- */
   function galaxy(){
@@ -228,6 +232,14 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       if(t>=FIN)finish({k:'warp'});
     };
     S.bloom=1.0;
+    S.snap=()=>({t:+S.t.toFixed(3),yaw:+S.yaw.toFixed(2),pitch:+S.pitch.toFixed(2)});
+    S.apply=q=>{
+      if(nf(q.yaw))S.yaw=q.yaw;if(nf(q.pitch))S.pitch=clamp(q.pitch,-1.2,1.2);
+      if(!nf(q.t))return;
+      const to=clamp(q.t,0,FIN+1),d=to-S.t;
+      // the worlds wind inward step by step, so a jump forward is played through silently
+      if(Math.abs(d)>0.25){if(d>0){A.mute++;try{for(let n=0;n<420&&!held&&S.t<to-0.001;n++)S.update(Math.min(0.05,to-S.t),Z)}finally{A.mute--}}else S.t=to}
+    };
     return S;
   }
 
@@ -273,6 +285,13 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       if(S.hit&&t-S.hitT>0.9)finish({k:'dead',why:'fall'});
     };
     S.bloom=0.35;
+    S.snap=()=>({t:+S.t.toFixed(3),y:+S.y.toFixed(2),v:+S.v.toFixed(2),hit:S.hit,hitT:+(S.hitT||0).toFixed(2)});
+    S.apply=q=>{
+      if(!nf(q.t)||!nf(q.y)||!nf(q.v))return;
+      if(S.t>0.05)S.said=1;
+      if(Math.abs(q.t-S.t)>0.25){S.t=q.t;S.y=q.y;S.v=q.v}
+      if(q.hit===true&&!S.hit&&nf(q.hitT)){S.hit=true;S.hitT=q.hitT;S.y=q.y}
+    };
     return S;
   }
 
@@ -358,6 +377,11 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
         if(S.endT>(K.over==='win'?2.0:1.7))finish({k:K.over==='win'?'win':'dead',why:'kiln'});
         return;
       }
+      if(A.watching){
+        // the watcher only draws what the player's last snapshot said; the rules run on the player's side
+        for(let i=0;i<S.runes.length;i++)S.runes[i].material.color.setRGB(i<K.cleared?3:0.13,i<K.cleared?1.8:0.1,i<K.cleared?0.5:0.08);
+        K.ashT-=dt;S.l1.intensity=60*(1+Math.sin(S.t*9)*0.05);hud();draw();return;
+      }
       const P0=S.prev||inp;S.prev={l:inp.l,r:inp.r,d:inp.d,rot:inp.rot,drop:inp.drop};
       if(S.t>0.5){
         const dir=(inp.r?1:0)-(inp.l?1:0);
@@ -376,6 +400,22 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       S.l1.intensity=60*(1+Math.sin(S.t*9)*0.05);
       hud();draw();
     };
+    S.snap=()=>{const p=K.piece,n=K.next,fl=[];for(const f of K.flash)if(f.t>0)fl.push([f.y,+f.t.toFixed(2)]);
+      return {g:Array.from(K.g).join(''),p:p?[p.col,p.x,p.y,p.c.flat()]:null,n:n?[n.col,n.c.flat()]:null,cl:K.cleared,a:+K.ashT.toFixed(1),o:K.over,f:fl,e:+S.endT.toFixed(2)}};
+    const cells=a=>{if(!Array.isArray(a)||a.length<2||a.length>16||a.length%2)return null;const c=[];
+      for(let i=0;i<a.length;i+=2){const x=a[i],y=a[i+1];if(!Number.isInteger(x)||!Number.isInteger(y)||Math.abs(x)>6||Math.abs(y)>6)return null;c.push([x,y])}return c};
+    S.apply=q=>{
+      if(typeof q.g==='string'&&q.g.length===W*H&&/^[0-4]+$/.test(q.g))for(let i=0;i<W*H;i++)K.g[i]=q.g.charCodeAt(i)-48;
+      if(q.p===null)K.piece=null;
+      else if(Array.isArray(q.p)){const c=cells(q.p[3]),[col,x,y]=q.p;if(c&&Number.isInteger(col)&&col>=1&&col<=4&&Number.isInteger(x)&&Number.isInteger(y)&&x>-8&&x<16&&y>-8&&y<40)K.piece={c,col,x,y}}
+      if(q.n===null)K.next=null;
+      else if(Array.isArray(q.n)){const c=cells(q.n[1]),col=q.n[0];if(c&&Number.isInteger(col)&&col>=1&&col<=4)K.next={c,col}}
+      if(Number.isInteger(q.cl)&&q.cl>=0&&q.cl<100){if(q.cl>K.cleared){o.tone(330,0.25,'triangle',0.2);o.tone(495,0.3,'triangle',0.18,0.08);o.tone(660,0.4,'triangle',0.16,0.16);S.shake=0.25}K.cleared=q.cl}
+      if(nf(q.a))K.ashT=clamp(q.a,0,KILN.ash);
+      if(q.o===null||q.o==='win'||q.o==='dead')K.over=q.o;
+      if(Array.isArray(q.f)){K.flash=[];for(const f of q.f.slice(0,8))if(Array.isArray(f)&&Number.isInteger(f[0])&&nf(f[1])&&f[0]>=0&&f[0]<H)K.flash.push({y:f[0],t:clamp(f[1],0,0.45)})}
+      if(nf(q.e)&&K.over&&Math.abs(q.e-S.endT)>0.25)S.endT=clamp(q.e,0,3);
+    };
     S.frame=()=>{
       // stand back far enough that the whole box fits, on a wide screen or a tall phone
       const th=Math.tan(cam.fov*Math.PI/360),dv=(bh/2+0.9)/th,dh=(bw/2+2.3)/(th*cam.aspect),d=Math.max(dv,dh);
@@ -387,16 +427,31 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     return S;
   }
 
+  const build=kind=>{
+    setup();A.active=true;A.kind=kind;held=false;
+    cur=kind==='galaxy'?galaxy():kind==='fall'?fall():kiln();
+    cur.fade=0;cur.in=0;
+  };
+  // watching someone else's room: the same scene, driven by their snapshots instead of our input
+  A.watch=(kind,q)=>{
+    if(A.active)A.abort();
+    if(kind!=='galaxy'&&kind!=='fall'&&kind!=='kiln')return;
+    done=null;A.watching=true;
+    build(kind);
+    A.sync(q);cur.update(0,Z);
+  };
+  A.sync=q=>{if(!cur||!A.watching||held||!q||typeof q!=='object'||!cur.apply)return;try{cur.apply(q)}catch(e){}};
+  A.snap=()=>cur&&cur.snap&&!A.watching?cur.snap():null;
   A.start=(kind,cb)=>{
     if(A.active)A.abort();
-    setup();done=cb;A.active=true;A.kind=kind;
+    A.watching=false;setup();done=cb;A.active=true;A.kind=kind;
     cur=kind==='galaxy'?galaxy():kind==='fall'?fall():kiln();
     cur.fade=0;cur.in=0;
     cur.update(0,{l:0,r:0,d:0,rot:1,drop:1,lx:0,ly:0});
   };
-  A.abort=()=>{done=null;A.active=false;A.kind='';cur=null;clear();o.hud('')};
-  A.update=(dt,inp)=>{if(!cur)return;cur.in+=dt;cur.update(dt,inp)};
-  A.look=(dx,dy)=>{if(cur&&cur.yaw!==undefined){cur.yaw+=dx;cur.pitch=clamp(cur.pitch-dy,-1.2,1.2)}};
+  A.abort=()=>{done=null;A.active=false;A.kind='';A.watching=false;held=false;cur=null;clear();o.hud('')};
+  A.update=(dt,inp)=>{if(!cur||held)return;cur.in+=dt;cur.update(dt,inp)};
+  A.look=(dx,dy)=>{if(cur&&!A.watching&&cur.yaw!==undefined){cur.yaw+=dx;cur.pitch=clamp(cur.pitch-dy,-1.2,1.2)}};
   // how black the screen overlay should be: fades in at the start, out at the end
   A.fade=()=>cur?Math.max(cur.fade||0,1-ss(0,A.kind==='fall'?0.18:0.7,cur.in)):0;
   A.state=()=>cur;
