@@ -22,6 +22,17 @@ Click **Host for friends** on the title screen. The invite link is copied for yo
 - **The mimic:** while your mic is live, your browser cuts what you say into short clips and shares them with the room. The host's game sends out a creature that wears one player's look and name tag and plays their clips near someone else. If it reaches you, its chest splits open. A flash bomb drives it off, and the minimap never shows it, so check where your friend really is. The host can turn it off.
 - Clips live only in the browsers in the room and are gone when you leave. `docs/mimic-brain.md` describes the optional local-AI line picker.
 
+## Strange doors
+
+Every floor has two or three doors set into its walls. Face one and press E (or OPEN / X) and you are somewhere else. `src/rooms.js` holds the three rooms, each with a small scene of its own.
+
+- **A door full of stars:** you float over a little solar system until its sun collapses into a black hole, eats the planets and throws you back out, one to three floors deeper. In a shared game the whole party is thrown down together, and fallen players rise as on any descent.
+- **The glass kiln:** a glass box of falling ember stones. Burn four full rows to open the way out, for gems and a heart. Ash rises from the bottom every 16 seconds; if the box fills, you die.
+- **A door with no floor:** you are shoved through and fall.
+- The keyhole is the only hint: cold blue light, warm amber light, or nothing.
+- While someone is inside a room their friends cannot see them and creatures ignore them. A used door is boarded up for everyone, including players who join later.
+
+
 ## Things that look like bugs (they are not)
 
 From depth 2, every minute or two, something goes wrong on purpose. It only happens on your own screen, and never while a creature is hunting you.

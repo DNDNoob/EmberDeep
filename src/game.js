@@ -10,6 +10,7 @@ import {RoomEnvironment} from 'three/addons/environments/RoomEnvironment.js';
 import {makeSurfaces} from './textures.js';
 import {openRoom,newRoomCode,cleanCode} from './net.js';
 import {createVoice} from './voice.js';
+import {createRooms,kilnGame,KILN} from './rooms.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('gl');
@@ -371,11 +372,36 @@ function genFloor(seedStr,depth){
         nw++;
       }else if(kind==='cave'&&!wx&&!wz&&rng()<0.14)props.push({t:'stal',x:x+0.5+(rng()-0.5)*0.5,z:y+0.5+(rng()-0.5)*0.5,r:rng()*6.28,s:0.7+rng()*0.6,v:0});
     }}
+  // strange doors: set into a wall, and what is behind one is never the maze. They draw on their own
+  // dice so that the rest of the floor stays the same as it always was for a seed.
+  const sdoors=[];
+  {const dr=mulberry32(hashStr(seedStr+'#doors'+depth)),dc=[];
+    for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
+      const i=idx(x,y);
+      if(g[i]!==0||safeMask[i]||pocketMask[i]||d0[i]<3||(x===ex&&y===ey))continue;
+      if(traps.some(q=>q.tx===x&&q.ty===y)||npcs.some(q=>Math.floor(q.x)===x&&Math.floor(q.z)===y))continue;
+      if(door&&Math.abs(x-door.tx)+Math.abs(y-door.ty)<=1)continue;
+      for(const d of DIRS){
+        if(g[idx(x+d[0],y+d[1])]!==1)continue;
+        const px=x+0.5+d[0]*0.5,pz=y+0.5+d[1]*0.5;
+        if(sconces.some(q=>Math.hypot(q.x-px,q.z-pz)<0.85)||props.some(q=>Math.hypot(q.x-px,q.z-pz)<0.66))continue;
+        dc.push([x,y,d[0],d[1],px,pz]);
+      }
+    }
+    for(let i=dc.length-1;i>0;i--){const j=(dr()*(i+1))|0;const t=dc[i];dc[i]=dc[j];dc[j]=t}
+    const kinds=['galaxy','kiln','fall'];
+    for(let i=2;i>0;i--){const j=(dr()*(i+1))|0;const t=kinds[i];kinds[i]=kinds[j];kinds[j]=t}
+    const want=2+(dr()<0.5?1:0);
+    for(const c of dc){
+      if(sdoors.length>=want)break;
+      if(sdoors.some(q=>Math.abs(q.tx-c[0])+Math.abs(q.ty-c[1])<6))continue;
+      sdoors.push({tx:c[0],ty:c[1],dx:c[2],dz:c[3],x:c[4],z:c[5],r:Math.atan2(-c[3],-c[2]),kind:kinds[sdoors.length],used:false,ph:dr()*6.28});
+    }}
   // face down an open corridor at the start
   let yaw=0;
   for(const d of DIRS){if(g[idx(stx+d[0],sty+d[1])]===0){yaw=Math.atan2(d[1],d[0]);break}}
   const bi=kind==='back'?4:biomeIx(depth);
-  return {W,H,g,cw,ch,kind,dark:kind==='dark',back:kind==='back',base:kind==='back'?13:bi*3,panels,panelAt,pocketMask,phantoms,pockets,blk:0,boT:22+rng()*25,props,discs,safe,safeMask,npcs,reveal:false,door,traps,pillars,sconces,rubble,frames:[],start:{tx:stx,ty:sty,yaw},exit:{tx:ex,ty:ey,x:ex+0.5,z:ey+0.5},items,shades,
+  return {W,H,g,cw,ch,kind,dark:kind==='dark',back:kind==='back',base:kind==='back'?13:bi*3,panels,panelAt,pocketMask,phantoms,pockets,blk:0,boT:22+rng()*25,props,discs,safe,safeMask,npcs,reveal:false,door,sdoors,traps,pillars,sconces,rubble,frames:[],start:{tx:stx,ty:sty,yaw},exit:{tx:ex,ty:ey,x:ex+0.5,z:ey+0.5},items,shades,
           seen:new Uint8Array(W*H),dist:d0,bi,biome:BIOMES[bi],
           name:kind==='cave'?'The Hollow':kind==='dark'?'The Black Hush':BIOMES[bi].name};
 }
@@ -1135,6 +1161,16 @@ function buildStatic(F){
   for(const r of F.rubble)emit(mesh6('octa'),I(r.x,r.z,r.r),[0,r.s*r.sy*0.6,0],[r.s*1.4,r.s*r.sy,r.s],dk);
   for(const q of F.sconces){const f=I(q.x,q.z);slab(f,[0,0.72,0],[0.05,0.2,0.05],iron);slab(f,[-q.dx*0.07,0.82,-q.dz*0.07],[0.12,0.04,0.12],iron)}
   for(const pr of F.props)buildProp(pr,F);
+  for(const D of F.sdoors){
+    const f={p:[D.x,0,D.z],R:rYaw(D.r),lo:[D.x*0.37,0,D.z*0.37]},wood=D.used?[0.06,0.05,0.045,6]:[0.3,0.17,0.08,6],band=[0.13,0.12,0.12,4];
+    for(const z of[-0.3,0.3])slab(f,[0.035,0.52,z],[0.09,1.04,0.1],st);
+    slab(f,[0.035,1.08,0],[0.09,0.1,0.7],st);slab(f,[0.045,1.15,0],[0.07,0.06,0.2],dk);
+    slab(f,[0.02,0.515,0],[0.03,1.03,0.5],wood);
+    for(const z of[-0.125,0.125])slab(f,[0.036,0.515,z],[0.004,1.0,0.012],[0.1,0.06,0.03,6]);
+    for(const y of[0.2,0.82])slab(f,[0.037,y,0],[0.008,0.05,0.5],band);
+    if(!D.used){seg(f,[0.04,0.5,0.17],[0.075,0.5,0.17],0.012,0.012,band);ball(f,[0.08,0.5,0.17],0.026,[0.5,0.42,0.2,4],true);slab(f,[0.038,0.4,0.17],[0.004,0.05,0.022],[0.01,0.01,0.01,4])}
+    else{slab(f,[0.04,0.55,0],[0.006,0.9,0.05],dk,rX(0.6));slab(f,[0.04,0.55,0],[0.006,0.9,0.05],dk,rX(-0.6))}
+  }
   TB=CH;
   upload(decorMesh,DEC);
 }
@@ -1249,7 +1285,63 @@ function pickTalk(){
   q.fn();if(talk)buildTalk();
 }
 function moveTalk(d){if(!talk)return;const n=talk.opts.length;talk.sel=(talk.sel+d+n)%n;buildTalk()}
-function act(){if(P.down){mpCycle();return}if(state==='play'&&nearNpc)openTalk(nearNpc);else useFlash()}
+function act(){if(P.down){mpCycle();return}if(state==='play'&&nearNpc)openTalk(nearNpc);else if(state==='play'&&nearDoor)sdoorOpen(nearDoor);else useFlash()}
+/* ---------- strange doors (the rooms themselves are in src/rooms.js) ---------- */
+let nearDoor=null;
+const ROOMS=createRooms(renderer,{post:POST,low:Q===0,
+  say:(t,s)=>say(t,s),tone:(...a)=>tone(...a),noise:(...a)=>noise(...a),rumble:(...a)=>rumble(...a),
+  hud:h=>{const el=$('roomHud');if(el.innerHTML!==h)el.innerHTML=h},
+  hurtFx:()=>{const h=$('hurt');h.style.transition='none';h.style.opacity=1;requestAnimationFrame(()=>{h.style.transition='opacity .9s';h.style.opacity=0})},
+  hint:()=>touch.on?'Stick: move, pull down to drop faster · JUMP turns the stone · DROP slams it down':pad.id?'Stick or D-pad: move · A turn · X slam down':'A D move · W turn · S faster · Space slam down'});
+const ROOM_NAME={galaxy:'a door full of stars',kiln:'the glass kiln',fall:'a door with no floor behind it'};
+function sdoorOpen(D){
+  if(state!=='play'||D.used||P.down||P.grab)return;
+  D.used=true;nearDoor=null;buildStatic(F);clearPrompt();
+  mpSend({k:'sd',d:R.depth,i:F.sdoors.indexOf(D),w:D.kind});
+  sfx('door');
+  state='room';P.away=true;P.vx=P.vz=0;mapBig=false;
+  document.body.classList.add('inroom');$('tFlash').textContent=D.kind==='kiln'?'DROP':'FLASH';$('tJump').textContent=D.kind==='kiln'?'TURN':'JUMP';
+  $('fade').style.transition='none';$('fade').style.opacity=1;
+  ROOMS.start(D.kind,roomEnd);
+}
+// leave whatever room we are in without its ending, because the floor itself is changing
+function roomLeave(){
+  if(state!=='room')return;
+  ROOMS.abort();roomClose();
+}
+function roomClose(){
+  P.away=false;state='play';document.body.classList.remove('inroom');
+  $('tFlash').textContent='FLASH';$('tJump').textContent='JUMP';
+  $('fade').style.transition='opacity .4s';$('fade').style.opacity=0;
+}
+function roomEnd(res){
+  const fall=res.k==='dead'&&res.why==='fall';
+  if(res.k==='warp'){
+    const n=1+(Math.random()*3|0);
+    P.away=false;document.body.classList.remove('inroom');
+    mpSend({k:'warp',d:R.depth+n});mpSys(myName()+' was thrown '+n+(n>1?' floors':' floor')+' down by a collapsing star, and took everyone along');
+    descend(n,'The black hole throws you '+n+(n>1?' floors':' floor')+' down');
+    return;
+  }
+  roomClose();
+  if(res.k==='win'){
+    const g=4+R.depth;wallet+=g;R.gems+=g;R.score+=80*R.depth;store.set('wallet',wallet);
+    if(P.hp<maxHp())P.hp++;P.fuel=Math.min(100,P.fuel+30);P.inv=2;
+    say('The kiln lets you go. '+g+' gems, and your wounds close a little.',4.5);sfx('shard');
+    mpSend({k:'sdr',r:'esc'});mpSys(myName()+' beat the glass kiln');
+    return;
+  }
+  mpSend({k:'sdr',r:fall?'fall':'kiln'});mpSys(myName()+(fall?' opened a door and fell to their death':' was buried in the glass kiln'));
+  P.hp=0;
+  $('deadTitle').textContent=fall?'THE PIT TAKES YOU':'THE KILN KEEPS YOU';
+  die();
+  if(MP.on)say(fall?'There was no floor. Your friends can still bring you back on the next floor.':'The kiln filled up. Your friends can still bring you back on the next floor.',5);
+}
+function roomInput(){
+  return {l:keys.KeyA||keys.ArrowLeft||pad.mx<-0.5||touch.mx<-0.5||pad.dl,r:keys.KeyD||keys.ArrowRight||pad.mx>0.5||touch.mx>0.5||pad.dr,
+    d:keys.KeyS||keys.ArrowDown||pad.my>0.5||touch.my>0.5||pad.dd,rot:keys.KeyW||keys.ArrowUp||keys.KeyE||pad.b0||pad.du||touch.jump,
+    drop:keys.Space||pad.b2||touch.act,lx:pad.lx*1.35+(ROOMS.kind==='galaxy'?(keys.ArrowRight?1:0)-(keys.ArrowLeft?1:0):0),ly:pad.ly};
+}
 let doorMsgT=0, tipTimers=[];
 let mapBig=false, usingLock=false, pausedAt=0, flashT=0, sealMsgT=0, lowFuelSaid=false, pingT=0, beatT=0, titleYaw=0;
 let sens=store.get('sens',1);
@@ -1306,6 +1398,7 @@ function fillStartSel(){
   sel.value=want;$('depthLbl').hidden=deepest<2;
 }
 function startRun(seed,depth,force){
+  roomLeave();$('deadTitle').textContent='THE DARK TAKES YOU';
   if(MP.guest&&!force){mpJoinClick();return}
   const sd=force?depth:clamp(depth||+$('startSel').value||1,1,deepest);
   P.down=false;
@@ -1328,6 +1421,7 @@ function showTips(){
   t.forEach((msg,i)=>tipTimers.push(setTimeout(()=>{if(state==='play'&&R.depth===d)say(msg,4)},4200+i*4600)));
 }
 function toTitle(){
+  roomLeave();
   if(MP.on)mpLeave(false);
   state='title';
   ['pause','dead','hud','map','talk'].forEach(id=>$(id).classList.add('hidden'));talk=null;clearPrompt();
@@ -1359,6 +1453,7 @@ let toastTimer=0;
 function say(t,secs){const el=$('toast');el.textContent=t;el.style.opacity=1;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.style.opacity=0,(secs||2.5)*1000)}
 
 function die(){
+  roomLeave();
   if(MP.on&&!MP.wiping){mpDown();return}
   state='dead';clearPrompt();
   mpDeadPanel();
@@ -1371,18 +1466,19 @@ function die(){
   $('dead').classList.remove('hidden');
   sfx('die');
 }
-function descend(){
+function descend(n,why){
+  n=n||1;roomLeave();
   state='trans';
-  const bonus=100*R.depth+Math.round(P.fuel);
+  const bonus=why?0:100*R.depth+Math.round(P.fuel);
   R.score+=bonus;
   sfx('descend');
   $('fade').style.opacity=1;
   setTimeout(()=>{
     P.fuel=Math.min(100,P.fuel+25);lowFuelSaid=false;
     if(P.down){P.down=false;P.hp=maxHp();P.fuel=Math.max(P.fuel,50);P.inv=2;say('You rise again',2)}
-    loadFloor(R.depth+1);
-    $('fade').style.opacity=0;
-    say(`Depth ${R.depth}: ${F.name}`,3.5);showTips();
+    loadFloor(R.depth+n);
+    $('fade').style.transition='';$('fade').style.opacity=0;
+    say((why?why+'. ':'')+`Depth ${R.depth}: ${F.name}`,why?5:3.5);showTips();
     state='play';
   },550);
 }
@@ -1508,13 +1604,14 @@ function mpJoinClick(){
 function mpSendRun(to){
   if(!MP.host||!F)return;
   const got=[];F.items.forEach((it,i)=>{if(it.got)got.push(i)});
-  mpSend({k:'run',seed:R.seed,d:R.depth,sd:R.startDepth,t:r2(R.time),got,door:F.doorOpen?1:0,sh:P.shards,ke:P.keys,blk:F.blk|0},to);
+  mpSend({k:'run',seed:R.seed,d:R.depth,sd:R.startDepth,t:r2(R.time),got,door:F.doorOpen?1:0,sdo:F.sdoors.map(q=>q.used?1:0),sh:P.shards,ke:P.keys,blk:F.blk|0},to);
 }
 function mpApplyRun(r){
   startRun(r.seed,r.d,true);
   R.startDepth=r.sd;R.time=r.t;
   for(const i of r.got||[]){const it=F.items[i];if(it)it.got=true}
   if(r.door&&F.door)openDoor(true);
+  if(Array.isArray(r.sdo)){r.sdo.forEach((u,i)=>{if(u&&F.sdoors[i])F.sdoors[i].used=true});buildStatic(F)}
   P.shards=r.sh|0;P.keys=r.ke|0;
   if(F.back&&r.blk)F.blk=r.blk;
   say(`You joined ${hostName()}'s game`,3);
@@ -1532,10 +1629,10 @@ function mpDown(){
   P.down=true;P.hp=0;clearPrompt();sfx('die');rumble(300,1,0.8);
   say('You have fallen. Reach the next floor together and you rise again.',5);
 }
-function mpDescend(){
+function mpDescend(n,why){
   if(state==='pause')$('pause').classList.add('hidden');
   if(state==='talk'){$('talk').classList.add('hidden');talk=null}
-  descend();
+  descend(n,why);
 }
 function mpRecv(m,from){
   const p=mpPeer(from),fromHost=from===MP.hostId;
@@ -1554,7 +1651,7 @@ function mpRecv(m,from){
       mpTitle();break;
     case 'p':{
       const a=m.a;if(!Array.isArray(a))return;
-      p.d=m.d;p.x=+a[0];p.z=+a[1];p.y=+a[2];p.yaw=+a[3];p.pitch=+a[4];p.fu=+a[5];p.down=!!(a[6]&1);p.safe=!!(a[6]&2);p.run=!!(a[6]&4);p.hp=a[7];
+      p.d=m.d;p.x=+a[0];p.z=+a[1];p.y=+a[2];p.yaw=+a[3];p.pitch=+a[4];p.fu=+a[5];p.down=!!(a[6]&1);p.safe=!!(a[6]&2);p.run=!!(a[6]&4);p.away=!!(a[6]&8);p.hp=a[7];
       if(p.rx===undefined||p.rd!==p.d||Math.hypot(p.x-p.rx,p.z-p.rz)>3){p.rx=p.x;p.rz=p.z;p.ry=p.y;p.ryaw=p.yaw;p.rpitch=p.pitch;p.rd=p.d}
       break;}
     case 'm':{
@@ -1579,10 +1676,21 @@ function mpRecv(m,from){
       else if(it.type==='key'){P.keys++;sfx('key');say(p.name+' found the gate key',2.5)}
       break;}
     case 'door':if(inRun&&here&&F.door)openDoor(false);break;
+    case 'sd':{
+      if(!inRun||!here)return;
+      const D=F.sdoors[m.i];if(!D||D.used)return;
+      D.used=true;if(nearDoor===D)nearDoor=null;buildStatic(F);
+      say(p.name+' opened a strange door',2.5);mpSys(p.name+' opened '+(ROOM_NAME[m.w]||'a strange door'));
+      break;}
+    case 'sdr':if(inRun)say(m.r==='esc'?p.name+' beat the glass kiln':m.r==='fall'?p.name+' fell to their death':p.name+' was buried in the glass kiln',3);break;
+    case 'warp':{
+      const n=(m.d|0)-R.depth;
+      if(inRun&&state!=='trans'&&n>=1&&n<=3)mpDescend(n,p.name+' woke a black hole. It throws you all '+n+(n>1?' floors':' floor')+' down');
+      break;}
     case 'down':if(inRun&&state!=='trans'&&m.d===R.depth+1){say(p.name+' found the way down',2);mpDescend()}break;
     case 'fl':if(MP.host&&inRun&&here)flashStun(+m.x,+m.z);break;
     case 'hit':
-      if(!fromHost||!inRun||P.down||state==='trans')return;
+      if(!fromHost||!inRun||P.down||P.away||state==='trans')return;
       if(m.w==='drain'){P.fuel=Math.max(0,P.fuel-22);sfx('drain');say('A wisp drinks your flame',2)}
       else if(m.w==='chill'){P.chill=3.5;P.inv=1.6;sfx('drain');rumble(180,0.5,0.3);say('The shade chills you. Deeper down, its touch wounds.',2.6)}
       else if(P.inv<=0)hurt(null);
@@ -1598,7 +1706,7 @@ function mpRecv(m,from){
 // the host's view of everyone the creatures can hunt
 function mpTargets(){
   const T=[];
-  if(!P.down)T.push({x:P.x,z:P.z,yaw:P.yaw,fuel:P.fuel,inSafe:P.inSafe,inv:P.inv,loc:true,tx:P.tx,ty:P.ty});
+  if(!P.down)T.push({x:P.x,z:P.z,yaw:P.yaw,fuel:P.fuel,inSafe:P.inSafe||P.away,inv:P.inv,loc:true,tx:P.tx,ty:P.ty});
   if(MP.host)for(const p of MP.peers.values())
     if(p.run&&!p.down&&p.d===R.depth&&p.x!==undefined&&mpFresh(p))T.push({x:p.x,z:p.z,yaw:p.yaw,fuel:p.fu,inSafe:p.safe,inv:p.inv,loc:false,p,tx:Math.floor(p.x),ty:Math.floor(p.z)});
   return T;
@@ -1644,7 +1752,7 @@ function mpSpectate(){
 }
 function mpCycle(){const L=mpAlive();if(L.length<2)return;const i=L.findIndex(p=>p.id===MP.follow);MP.follow=L[(i+1)%L.length].id}
 const mpFresh=p=>performance.now()-(p.seen||0)<15000;
-const mpShown=p=>MP.on&&p.run&&p.d===R.depth&&p.rx!==undefined&&state!=='title'&&mpFresh(p);
+const mpShown=p=>MP.on&&p.run&&!p.away&&p.d===R.depth&&p.rx!==undefined&&state!=='title'&&mpFresh(p);
 function mpTick(raw){
   if(!MP.on)return;
   const dt=Math.min(raw,0.25);
@@ -1663,7 +1771,7 @@ function mpTick(raw){
   MP.pt-=raw;
   if(MP.pt<=0){
     MP.pt=1/15;
-    mpSend({k:'p',d:R.depth,a:[r3(P.x),r3(P.z),r3(P.y),r3(P.yaw),r3(P.pitch),Math.round(P.fuel),(P.down?1:0)|(P.inSafe?2:0)|4,P.hp]});
+    mpSend({k:'p',d:R.depth,a:[r3(P.x),r3(P.z),r3(P.y),r3(P.yaw),r3(P.pitch),Math.round(P.fuel),(P.down?1:0)|(P.inSafe||P.away?2:0)|4|(P.away?8:0),P.hp]});
   }
   if(MP.host&&state!=='trans'){
     MP.mt-=raw;
@@ -2090,6 +2198,8 @@ addEventListener('keydown',e=>{
     if(e.code==='KeyM'||e.code==='Tab')mapBig=!mapBig;
     if(e.code==='Escape'||e.code==='KeyP')pause();
     if((e.code==='Enter'||e.code==='NumpadEnter'||e.code==='KeyT')&&MP.on){e.preventDefault();chatOpenBox()}
+  }else if(state==='room'){
+    if((e.code==='Enter'||e.code==='NumpadEnter'||e.code==='KeyT')&&MP.on){e.preventDefault();chatOpenBox()}
   }else if(state==='talk'){
     if(e.code==='Escape'||e.code==='KeyQ')closeTalk();
     else if(e.code==='ArrowUp'||e.code==='KeyW')moveTalk(-1);
@@ -2109,9 +2219,10 @@ addEventListener('keyup',e=>{keys[e.code]=false});
 addEventListener('blur',()=>{for(const k in keys)keys[k]=false;pause()});
 document.addEventListener('visibilitychange',()=>{if(document.hidden)pause()});
 document.addEventListener('mousemove',e=>{
-  if(state!=='play'||document.pointerLockElement!==canvas)return;
+  if((state!=='play'&&state!=='room')||document.pointerLockElement!==canvas)return;
   const mx=e.movementX,my=e.movementY;
   if(!isFinite(mx)||!isFinite(my)||Math.abs(mx)>600||Math.abs(my)>600)return;
+  if(state==='room'){ROOMS.look(mx*0.0022*sens,my*0.0022*sens);return}
   P.yaw+=mx*0.0022*sens;
   P.pitch=clamp(P.pitch-my*0.0022*sens,-0.9,0.9);
 });
@@ -2119,7 +2230,7 @@ document.addEventListener('pointerlockchange',()=>{
   if(document.pointerLockElement===canvas)usingLock=true;
   else if(usingLock){usingLock=false;pause()}
 });
-canvas.addEventListener('click',()=>{if(state==='play'&&!document.pointerLockElement)lock()});
+canvas.addEventListener('click',()=>{if((state==='play'||state==='room')&&!document.pointerLockElement)lock()});
 canvas.addEventListener('mousedown',e=>{if(state!=='play'||document.pointerLockElement!==canvas)return;if(e.button===0)act();else if(e.button===2)P.jumpQ=0.15});
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 $('startBtn').addEventListener('click',()=>{startRun($('seedIn').value.trim());lock()});
@@ -2159,6 +2270,7 @@ addEventListener('touchstart',()=>{enableTouch();initAudio()},{passive:true});
     for(const t of e.changedTouches){
       if(t.identifier===touch.stickId)setStick(t.clientX,t.clientY);
       else if(t.identifier===touch.lookId){
+        if(state==='room')ROOMS.look((t.clientX-touch.lx)*0.0062*sens,(t.clientY-touch.ly)*0.005*sens);
         if(state==='play'){P.yaw+=(t.clientX-touch.lx)*0.0062*sens;P.pitch=clamp(P.pitch-(t.clientY-touch.ly)*0.005*sens,-0.9,0.9)}
         touch.lx=t.clientX;touch.ly=t.clientY;
       }
@@ -2172,7 +2284,7 @@ addEventListener('touchstart',()=>{enableTouch();initAudio()},{passive:true});
     el.addEventListener('touchend',u);el.addEventListener('touchcancel',u);
     el.addEventListener('touchmove',e=>{e.preventDefault();e.stopPropagation()},{passive:false});};
   btn('tJump',()=>{touch.jump=true;P.jumpQ=0.15},()=>{touch.jump=false});
-  btn('tFlash',()=>{if(state==='play')act()});
+  btn('tFlash',()=>{touch.act=true;if(state==='play')act()},()=>{touch.act=false});
   btn('tPause',()=>{touch.jump=false;endStick();touch.lookId=null;pause()});
   btn('tMap',()=>{mapBig=!mapBig});
   btn('tTalk',()=>{touch.talk=true},()=>{touch.talk=false});
@@ -2194,13 +2306,14 @@ function rumble(ms,strong,weak){
   try{const a=pad.gp&&pad.gp.vibrationActuator;if(a&&a.playEffect)a.playEffect('dual-rumble',{duration:ms,strongMagnitude:strong,weakMagnitude:weak})}catch(e){}
 }
 function pollPad(){
-  pad.mx=pad.my=pad.lx=pad.ly=0;pad.sprint=false;pad.jump=false;
+  pad.mx=pad.my=pad.lx=pad.ly=0;pad.sprint=false;pad.jump=false;pad.b0=pad.b2=pad.du=pad.dd=pad.dl=pad.dr=false;
   const gp=pickPad();pad.gp=gp;
   if(!gp){if(pad.id){pad.id='';$('padLine').textContent='';pad.prev=[]}return}
   if(pad.id!==gp.id){pad.id=gp.id;initAudio();
     $('padLine').innerHTML='Controller connected. <b>Left stick</b> move · <b>Right stick</b> look · <b>A</b> jump · <b>X</b> or <b>RT</b> flash · <b>LT</b> or click left stick to sprint · <b>Y</b> map · <b>Start</b> pause';
     if(state==='play')say('Controller connected',2)}
   const B=i=>{const b=gp.buttons[i];return !!b&&(b.pressed||b.value>0.4)};
+  pad.b0=B(0);pad.b2=B(2);pad.du=B(12);pad.dd=B(13);pad.dl=B(14);pad.dr=B(15);
   const hit=i=>B(i)&&!pad.prev[i];
   const curve=v=>{const a=Math.abs(v);if(a<0.2)return 0;const k=(a-0.2)/0.8;return Math.sign(v)*k};
   pad.mx=curve(gp.axes[0]||0);pad.my=curve(gp.axes[1]||0);
@@ -2405,8 +2518,10 @@ function update(dt){
   // who is close enough to talk to
   {let best=null,bd=1.45;
     for(const n of F.npcs){const d=Math.hypot(n.x-P.x,n.z-P.z);if(d<bd&&los(P.x,P.z,n.x,n.z)){bd=d;best=n}}
-    if(best!==nearNpc){nearNpc=best;$('tFlash').textContent=best?'TALK':'FLASH'}
-    setText('prompt',best?(touch.on?'TALK':pad.id?'X':'E')+': speak with '+NPC[best.type].name:'');}
+    let nd=null;
+    if(!best&&ctl){let dd=0.72;for(const D of F.sdoors){if(D.used)continue;const d=Math.hypot(D.x-P.x,D.z-P.z);if(d<dd&&(D.x-P.x)*Math.cos(P.yaw)+(D.z-P.z)*Math.sin(P.yaw)>d*0.45){dd=d;nd=D}}}
+    if(best!==nearNpc||nd!==nearDoor){nearNpc=best;nearDoor=nd;if(state!=='room')$('tFlash').textContent=best?'TALK':nd?'OPEN':'FLASH'}
+    if(state!=='room')setText('prompt',best?(touch.on?'TALK':pad.id?'X':'E')+': speak with '+NPC[best.type].name:nd?(touch.on?'OPEN':pad.id?'X':'E')+': open the strange door':'');}
   if(P.fuel<20&&!lowFuelSaid){lowFuelSaid=true;say(P.fuel<=0?'Your torch is out':'Your torch is guttering. Find oil.',3)}
   if(P.inv>0)P.inv-=dt;
   if(P.chill>0){P.chill-=dt;$('chill').style.opacity=clamp(P.chill/1.2,0,1)}else if(P.chill<0||P.chill===0&&$('chill').style.opacity!=='0'){P.chill=0;$('chill').style.opacity='0'}
@@ -2437,7 +2552,7 @@ function update(dt){
     const e=trapExt(tr,R.time);
     if(e>0.5){
       if(!tr.up){tr.up=true;if(Math.abs(tr.x-P.x)+Math.abs(tr.z-P.z)<6)sfx('spike')}
-      if(P.inv<=0&&P.y<0.22&&P.y>-0.2&&Math.abs(tr.x-P.x)<0.42&&Math.abs(tr.z-P.z)<0.42){hurt(null);if(state==='dead')return}
+      if(P.inv<=0&&!P.away&&P.y<0.22&&P.y>-0.2&&Math.abs(tr.x-P.x)<0.42&&Math.abs(tr.z-P.z)<0.42){hurt(null);if(state==='dead')return}
     }else tr.up=false;
   }
   } // end of the living player's turn
@@ -2582,7 +2697,7 @@ function glNet(text,secs){
 }
 // is the moment right? nothing hunting, nothing open, feet on the ground
 function glCalm(chasing){
-  return state==='play'&&!P.down&&!P.grab&&!P.inSafe&&!chasing&&R.depth>=2&&!chatOpen&&P.y===0&&
+  return state==='play'&&!P.down&&!P.away&&!P.grab&&!P.inSafe&&!chasing&&R.depth>=2&&!chatOpen&&P.y===0&&
     GL.frz<=0&&!GL.rb&&!GL.fall&&!GL.loop&&!GL.figs.length&&!GL.hole&&!GL.hudSeq;
 }
 function glTick(dt,chasing){
@@ -2653,6 +2768,7 @@ function glWallBehind(){
     if(!glOpen(tx,ty)||glTrapAt(tx,ty)||(tx===F.exit.tx&&ty===F.exit.ty)||(tx===F.start.tx&&ty===F.start.ty))return false;
     if(F.items.some(it=>!it.got&&it.tx===tx&&it.ty===ty))return false;
     if(F.npcs.some(n=>Math.floor(n.x)===tx&&Math.floor(n.z)===ty))return false;
+    if(F.sdoors&&F.sdoors.some(D=>D.tx===tx&&D.ty===ty))return false;
     const i=ty*W+tx,before=bfs(F.g,W,F.H,P.tx,P.ty);let nb=0;for(let j=0;j<before.length;j++)if(before[j]>=0)nb++;
     F.g[i]=1;
     const after=bfs(F.g,W,F.H,P.tx,P.ty);let na=0;for(let j=0;j<after.length;j++)if(after[j]>=0)na++;
@@ -2844,6 +2960,7 @@ function glHole(){
     if(x<1||y<1||x>=F.W-1||y>=F.H-1||F.g[y*F.W+x]!==0)continue;
     for(const k of DIRS){
       const wx=x+k[0],wy=y+k[1];if(F.g[wy*F.W+wx]!==1)continue;
+      if(F.sdoors&&F.sdoors.some(D=>D.tx===x&&D.ty===y&&D.dx===k[0]&&D.dz===k[1]))continue;
       const cx=x+0.5+k[0]*0.5,cz=y+0.5+k[1]*0.5,dx=cx-P.x,dz=cz-P.z,d=Math.hypot(dx,dz);
       if(d<3.2||d>7.5)continue;
       const facing=(k[0]*dx+k[1]*dz)/d,ahead=(dx*fx+dz*fz)/d;
@@ -3171,6 +3288,13 @@ function render(t){
     const k=clamp(1-Math.hypot(px-ex,pz-ez)/Math.min(torchR,4),0,1);
     if(k>0.02)spr(px,py,pz,m[4]*2.4,m[4]*2.4,7,B.torch[0],B.torch[1],B.torch[2],k*0.5,1);
   }
+  // a strange door gives itself away at the keyhole: cold starlight, kiln glow, or nothing at all
+  for(const D of F.sdoors){
+    if(D.used||D.kind==='fall'||(D.x-ex)**2+(D.z-ez)**2>64)continue;
+    const c=Math.cos(D.r),s=Math.sin(D.r),kx=D.x+c*0.05-s*0.17,kz=D.z+s*0.05+c*0.17,g=D.kind==='galaxy';
+    const a=g?0.45+0.25*Math.sin(t*3.1+D.ph)*Math.sin(t*7.7+D.ph):0.4+0.2*Math.sin(t*13+D.ph);
+    spr(kx,0.4,kz,0.09,0.09,7,g?0.55:1.0,g?0.6:0.5,g?1.0:0.15,a,1);
+  }
   const n=Math.min(sprList.length,MAXS);
   for(const s of sprList)s.d=(s.x-ex)**2+(s.z-ez)**2;
   sprList.sort((a,b)=>b.d-a.d);
@@ -3238,6 +3362,7 @@ function drawMap(){
   const y0=Math.max(0,Math.floor(-oy/ts)),y1=Math.min(F.H-1,Math.ceil((size-oy)/ts));
   for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++)if(F.seen[y*F.W+x]){const sm=F.safeMask[y*F.W+x];if(sm)c.fillStyle='#c79a4e';c.fillRect(ox+x*ts,oy+y*ts,ts+0.5,ts+0.5);if(sm)c.fillStyle='#7d7263'}
   if(F.door){const D=F.door,W2=F.W;if(F.seen[D.ty*W2+D.tx-1]||F.seen[D.ty*W2+D.tx+1]||F.seen[(D.ty-1)*W2+D.tx]||F.seen[(D.ty+1)*W2+D.tx]){c.fillStyle='#b5762a';c.fillRect(ox+D.tx*ts,oy+D.ty*ts,ts,ts)}}
+  for(const D of F.sdoors)if(F.seen[D.ty*F.W+D.tx]){c.fillStyle=D.used?'#4a4038':'#c58bff';c.fillRect(ox+(D.tx+0.5+D.dx*0.5)*ts-ts*0.25,oy+(D.ty+0.5+D.dz*0.5)*ts-ts*0.25,ts*0.5,ts*0.5)}
   c.fillStyle='#c0392b';
   for(const tr of F.traps)if(F.seen[tr.ty*F.W+tr.tx])c.fillRect(ox+(tr.tx+0.3)*ts,oy+(tr.ty+0.3)*ts,ts*0.4,ts*0.4);
   const dot=(x,z,r,col)=>{c.fillStyle=col;c.beginPath();c.arc(ox+x*ts,oy+z*ts,r,0,7);c.fill()};
@@ -3272,7 +3397,8 @@ function step(now){
   const dt=Math.min(raw,0.05);
   pollPad();
   if((state==='play')!==wasPlaying){wasPlaying=state==='play';document.body.classList.toggle('playing',wasPlaying)}
-  const live=()=>state==='play'||(MP.on&&(state==='pause'||state==='talk'));
+  if(state==='room'){ROOMS.update(dt,roomInput());if(state==='room')$('fade').style.opacity=ROOMS.fade()}
+  const live=()=>state==='play'||(MP.on&&(state==='pause'||state==='talk'||state==='room'));
   // a fake hang: nothing moves for you, though the room carries on
   if(GL.frz>0){GL.frz-=raw;if(GL.frz<=0)glUnfreeze();mpTick(raw);return raw}
   if(live()){
@@ -3290,8 +3416,8 @@ function frame(now){
   if(state==='play')adapt(raw);
   setHum();
   if(GL.frz<=0){
-    if(!window.__norender)render(now/1000);
-    if(state!=='title'){drawHUD();drawMap()}
+    if(!window.__norender){if(state==='room'&&ROOMS.active){resize();renderer.toneMappingExposure=1;ROOMS.render()}else render(now/1000)}
+    if(state!=='title'){drawHUD();if(state!=='room')drawMap()}
     mpTags();
   }
   requestAnimationFrame(frame);
@@ -3300,5 +3426,5 @@ setInterval(()=>{if(MP.host&&document.hidden&&performance.now()-last>200)step(pe
 // a backdrop maze behind the title screen
 R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
 {const rc=cleanCode(new URLSearchParams(location.search).get('room'));if(rc)mpPrepareJoin(rc)}
-window.__game={glitch:k=>glStart(k,true),GL,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);
