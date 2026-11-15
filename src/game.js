@@ -396,7 +396,10 @@ function genFloor(seedStr,depth){
       if(sdoors.length>=want)break;
       if(sdoors.some(q=>Math.abs(q.tx-c[0])+Math.abs(q.ty-c[1])<6))continue;
       sdoors.push({tx:c[0],ty:c[1],dx:c[2],dz:c[3],x:c[4],z:c[5],r:Math.atan2(-c[3],-c[2]),kind:kinds[sdoors.length],used:false,ph:dr()*6.28});
-    }}
+    }
+    // every door wears a look. A disguise kind (the trap) picks one with the door rng AFTER placement so positions and kinds never move.
+    const own=doorDisguises();
+    for(const D of sdoors){const k=DOOR_KINDS[D.kind]||{};D.look=k.disguise?own[(dr()*own.length)|0]:(k.look||'wood')}}
   // face down an open corridor at the start
   let yaw=0;
   for(const d of DIRS){if(g[idx(stx+d[0],sty+d[1])]===0){yaw=Math.atan2(d[1],d[0]);break}}
@@ -1152,6 +1155,78 @@ function buildProp(pr,F){
     break}
   }
 }
+/* ---------- strange door looks ----------
+   A door has a KIND (what happens when it opens: DOOR_KINDS) and a LOOK (how its leaf is drawn: DOOR_LOOKS).
+   Behaviour (rooms, ROOM_NAME, network messages) always follows D.kind; drawing and the keyhole glow follow D.look.
+   To add a new door type: add one entry to DOOR_LOOKS (leaf + optional glow) and one to DOOR_KINDS ({look:'name'}).
+   Any kind marked {disguise:true} (the trap) automatically passes as every look owned by a non-disguise kind,
+   including ones added later: genFloor picks one with the door's seeded rng, so every player agrees on it.
+   'wood' is the plain fallback for an unknown look. Stone jambs, lintel and the "used" state are shared code below. */
+const DOOR_LOOKS={
+  wood:{
+    leaf(f,D,c){
+      slab(f,[0.02,0.515,0],[0.03,1.03,0.5],[0.3,0.17,0.08,6]);
+      for(const z of[-0.125,0.125])slab(f,[0.036,0.515,z],[0.004,1.0,0.012],[0.1,0.06,0.03,6]);
+      for(const y of[0.2,0.82])slab(f,[0.037,y,0],[0.008,0.05,0.5],c.band);
+      doorKnob(f,[0.5,0.42,0.2,4]);
+    },
+    glow:null
+  },
+  galaxy:{
+    leaf(f,D,c){
+      slab(f,[0.02,0.515,0],[0.03,1.03,0.5],[0.012,0.012,0.022,0]);
+      const r=doorRng(D,'galaxy');
+      for(let i=0;i<34;i++){
+        const z=(r()-0.5)*0.44,y=0.05+r()*0.93,big=r()<0.14,s=big?0.011+r()*0.008:0.004+r()*0.006,t=r();
+        const col=t<0.18?[0.7,0.82,1.0,7]:t<0.3?[1.0,0.9,0.7,7]:[1.0,1.0,1.0,7];
+        ball(f,[0.036,y,z],[0.003,s,s],col,true);
+      }
+      doorKnob(f,[0.16,0.16,0.19,4]);
+    },
+    glow(D,t){const a=0.45+0.25*Math.sin(t*3.1+D.ph)*Math.sin(t*7.7+D.ph);return[0.55,0.6,1.0,a]}
+  },
+  kiln:{
+    leaf(f,D,c){
+      slab(f,[0.02,0.515,0],[0.03,1.03,0.5],[0.03,0.025,0.03,0]);
+      const r=doorRng(D,'kiln'),COLS=5,ROWS=10,cell=0.1,
+        pal=[[0.7,0.38,0.03],[0.03,0.5,0.45],[0.65,0.06,0.36],[0.06,0.16,0.7],[0.38,0.64,0.05],[0.7,0.14,0.08]],
+        // glass-kiln shapes as cell offsets [col,row]: bar, block, tee, two bends, two hooks
+        SH=[[[0,0],[1,0],[2,0],[3,0]],[[0,0],[1,0],[0,1],[1,1]],[[0,0],[1,0],[2,0],[1,1]],[[0,0],[1,0],[1,1],[2,1]],[[1,0],[2,0],[0,1],[1,1]],[[0,0],[0,1],[0,2],[1,2]],[[1,0],[1,1],[1,2],[0,2]]],
+        grid=new Array(COLS*ROWS).fill(-2);
+      for(let k=0;k<COLS*ROWS;k++){
+        if(grid[k]!==-2)continue;
+        const cx=k%COLS,cy=(k/COLS)|0;let placed=false;
+        for(let tries=0;tries<6&&!placed;tries++){
+          const sh=SH[(r()*SH.length)|0],rot=(r()*4)|0;
+          let cells=sh.map(p=>{let x=p[0],y=p[1];for(let q=0;q<rot;q++){const t=x;x=-y;y=t}return[x,y]});
+          const mx=Math.min(...cells.map(p=>p[0])),my=Math.min(...cells.map(p=>p[1]));
+          cells=cells.map(p=>[p[0]-mx,p[1]-my]);
+          // anchor the first cell in scan order (lowest row, then lowest column) on this empty cell
+          cells.sort((a,b)=>a[1]-b[1]||a[0]-b[0]);const a0=cells[0];
+          const ok=cells.every(p=>{const x=cx+p[0]-a0[0],y=cy+p[1]-a0[1];return x>=0&&x<COLS&&y>=0&&y<ROWS&&grid[y*COLS+x]===-2});
+          if(ok){const col=(r()*pal.length)|0;for(const p of cells)grid[(cy+p[1]-a0[1])*COLS+cx+p[0]-a0[0]]=col;placed=true}
+        }
+        if(!placed)grid[k]=(r()*pal.length)|0;
+      }
+      for(let k=0;k<COLS*ROWS;k++){
+        const cx=k%COLS,cy=(k/COLS)|0,z=(cx-(COLS-1)/2)*cell,y=0.065+cy*cell,d=0.012+r()*0.014,hole=r()<0.07;
+        const j=0.9+r()*0.2,p=hole?[0.05,0.04,0.05]:pal[grid[k]];
+        slab(f,[0.035+d/2,y,z],[d,cell*0.9,cell*0.9],[Math.min(1,p[0]*j),Math.min(1,p[1]*j),Math.min(1,p[2]*j),hole?0:0]);
+      }
+      doorKnob(f,[0.55,0.46,0.22,4]);
+    },
+    glow(D,t){return[1.0,0.5,0.15,0.4+0.2*Math.sin(t*13+D.ph)]}
+  }
+};
+const DOOR_KINDS={galaxy:{look:'galaxy'},kiln:{look:'kiln'},fall:{disguise:true}};
+const doorLookOf=D=>DOOR_LOOKS[D.look]?D.look:DOOR_LOOKS[(DOOR_KINDS[D.kind]||{}).look]?DOOR_KINDS[D.kind].look:'wood';
+// the looks a trap door may wear: every look owned by a non-disguise kind
+const doorDisguises=()=>{const o=[];for(const k in DOOR_KINDS){const l=DOOR_KINDS[k].look;if(!DOOR_KINDS[k].disguise&&l&&DOOR_LOOKS[l]&&!o.includes(l))o.push(l)}return o};
+// same for every player and every rebuild: seeded from the door itself
+const doorRng=(D,s)=>mulberry32(hashStr(s+'#'+D.tx+','+D.ty+','+Math.round(D.ph*1e4)));
+function doorKnob(f,col){
+  seg(f,[0.04,0.5,0.17],[0.075,0.5,0.17],0.012,0.012,[0.13,0.12,0.12,4]);ball(f,[0.08,0.5,0.17],0.026,col,true);slab(f,[0.038,0.4,0.17],[0.004,0.05,0.022],[0.01,0.01,0.01,4]);
+}
 function buildStatic(F){
   TB=DEC;DEC.n=0;
   const st=[...F.biome.stone,9],dk=[st[0]*0.8,st[1]*0.8,st[2]*0.8,9],iron=[0.1,0.09,0.085,4];
@@ -1162,14 +1237,16 @@ function buildStatic(F){
   for(const q of F.sconces){const f=I(q.x,q.z);slab(f,[0,0.72,0],[0.05,0.2,0.05],iron);slab(f,[-q.dx*0.07,0.82,-q.dz*0.07],[0.12,0.04,0.12],iron)}
   for(const pr of F.props)buildProp(pr,F);
   for(const D of F.sdoors){
-    const f={p:[D.x,0,D.z],R:rYaw(D.r),lo:[D.x*0.37,0,D.z*0.37]},wood=D.used?[0.06,0.05,0.045,6]:[0.3,0.17,0.08,6],band=[0.13,0.12,0.12,4];
+    const f={p:[D.x,0,D.z],R:rYaw(D.r),lo:[D.x*0.37,0,D.z*0.37]},band=[0.13,0.12,0.12,4];
     for(const z of[-0.3,0.3])slab(f,[0.035,0.52,z],[0.09,1.04,0.1],st);
     slab(f,[0.035,1.08,0],[0.09,0.1,0.7],st);slab(f,[0.045,1.15,0],[0.07,0.06,0.2],dk);
-    slab(f,[0.02,0.515,0],[0.03,1.03,0.5],wood);
-    for(const z of[-0.125,0.125])slab(f,[0.036,0.515,z],[0.004,1.0,0.012],[0.1,0.06,0.03,6]);
-    for(const y of[0.2,0.82])slab(f,[0.037,y,0],[0.008,0.05,0.5],band);
-    if(!D.used){seg(f,[0.04,0.5,0.17],[0.075,0.5,0.17],0.012,0.012,band);ball(f,[0.08,0.5,0.17],0.026,[0.5,0.42,0.2,4],true);slab(f,[0.038,0.4,0.17],[0.004,0.05,0.022],[0.01,0.01,0.01,4])}
-    else{slab(f,[0.04,0.55,0],[0.006,0.9,0.05],dk,rX(0.6));slab(f,[0.04,0.55,0],[0.006,0.9,0.05],dk,rX(-0.6))}
+    if(!D.used)DOOR_LOOKS[doorLookOf(D)].leaf(f,D,{st,dk,band});
+    else{
+      slab(f,[0.02,0.515,0],[0.03,1.03,0.5],[0.06,0.05,0.045,6]);
+      for(const z of[-0.125,0.125])slab(f,[0.036,0.515,z],[0.004,1.0,0.012],[0.1,0.06,0.03,6]);
+      for(const y of[0.2,0.82])slab(f,[0.037,y,0],[0.008,0.05,0.5],band);
+      slab(f,[0.04,0.55,0],[0.006,0.9,0.05],dk,rX(0.6));slab(f,[0.04,0.55,0],[0.006,0.9,0.05],dk,rX(-0.6));
+    }
   }
   TB=CH;
   upload(decorMesh,DEC);
@@ -3290,10 +3367,10 @@ function render(t){
   }
   // a strange door gives itself away at the keyhole: cold starlight, kiln glow, or nothing at all
   for(const D of F.sdoors){
-    if(D.used||D.kind==='fall'||(D.x-ex)**2+(D.z-ez)**2>64)continue;
-    const c=Math.cos(D.r),s=Math.sin(D.r),kx=D.x+c*0.05-s*0.17,kz=D.z+s*0.05+c*0.17,g=D.kind==='galaxy';
-    const a=g?0.45+0.25*Math.sin(t*3.1+D.ph)*Math.sin(t*7.7+D.ph):0.4+0.2*Math.sin(t*13+D.ph);
-    spr(kx,0.4,kz,0.09,0.09,7,g?0.55:1.0,g?0.6:0.5,g?1.0:0.15,a,1);
+    if(D.used||(D.x-ex)**2+(D.z-ez)**2>64)continue;
+    const gl=DOOR_LOOKS[doorLookOf(D)].glow;if(!gl)continue;
+    const c=Math.cos(D.r),s=Math.sin(D.r),kx=D.x+c*0.05-s*0.17,kz=D.z+s*0.05+c*0.17,q=gl(D,t);
+    spr(kx,0.4,kz,0.09,0.09,7,q[0],q[1],q[2],q[3],1);
   }
   const n=Math.min(sprList.length,MAXS);
   for(const s of sprList)s.d=(s.x-ex)**2+(s.z-ez)**2;
@@ -3426,5 +3503,5 @@ setInterval(()=>{if(MP.host&&document.hidden&&performance.now()-last>200)step(pe
 // a backdrop maze behind the title screen
 R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
 {const rc=cleanCode(new URLSearchParams(location.search).get('room'));if(rc)mpPrepareJoin(rc)}
-window.__game={glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);
