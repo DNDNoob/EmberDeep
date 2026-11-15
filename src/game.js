@@ -1374,6 +1374,7 @@ function loadFloor(depth){
   P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;P.inSafe=false;nearNpc=null;
   sealMsgT=0;doorMsgT=0;
   onTileChange();
+  glReset();
 }
 function onTileChange(){
   P.tx=Math.floor(P.x);P.ty=Math.floor(P.z);
@@ -1698,6 +1699,7 @@ function mpRecv(m,from){
     case 'cfg':if(fromHost){MP.prox=!!m.prox;MP.mimicOn=!!m.mimic;mpVoiceUI()}break;
     case 'say':if(fromHost&&inRun&&typeof m.key==='string')mimicSay(m.key);break;
     case 'eat':if(fromHost&&inRun)mimicEat();break;
+    case 'gl':glRecv(m,p);break;
     case 'wipe':if(fromHost&&inRun){MP.wiping=true;die();MP.wiping=false}break;
   }
 }
@@ -1844,7 +1846,10 @@ function mpDrawPlayers(t,ex,ez,fwx,fwz){
   for(const p of MP.peers.values()){
     if(!mpDrawn(p))continue;
     if((p.rx-ex)**2+(p.rz-ez)**2>18*18||(p.rx-ex)*fwx+(p.rz-ez)*fwz<-1.5)continue;
+    const rp=p.glRep&&p.glRep.h[Math.floor(p.glRep.i)],sv=rp&&[p.rx,p.rz,p.ryaw,p.ry];
+    if(rp){p.rx=rp[0];p.rz=rp[1];p.ryaw=rp[2];p.ry=rp[3]}
     const q=buildPlayer(p,t).torch;
+    if(rp){p.rx=sv[0];p.rz=sv[1];p.ryaw=sv[2];p.ry=sv[3]}
     if(p.fu>0){const k=0.55+0.45*Math.sqrt(p.fu/100),fl=1+Math.sin(t*13+p.walk)*0.08+Math.sin(t*29.3)*0.06;
       spr(q[0],q[1]+0.02,q[2],0.07*k*fl,0.12*k*fl,11,1.0,0.6,0.2,1,1);
       spr(q[0],q[1]+0.015,q[2],0.05*k,0.085*k,11,1.0,0.85,0.45,0.9,1);
@@ -1986,7 +1991,7 @@ chatIn.addEventListener('blur',()=>{if(chatOpen)setTimeout(()=>{if(chatOpen&&doc
 function chatTick(){
   const now=performance.now();
   document.body.classList.toggle('mp',MP.on);document.body.classList.toggle('voice',!!VOX.stream&&voiceMode==='ptt');
-  $('chat').hidden=!MP.on||state==='title';
+  $('chat').hidden=(!MP.on&&!(GL.chatT>0))||state==='title';
   for(const d of chatLog.children){const age=(now-d.dataset.t)/1000,o=chatOpen?1:clamp(1-(age-12)/3,0,1);if(d.style.opacity!==String(o))d.style.opacity=o}
 }
 function mpVoiceUI(){
@@ -2467,7 +2472,7 @@ function update(dt){
   R.time+=dt;
   // in a shared game the world keeps going while you pause or talk, but you stand still
   if(P.grab)mimicGrabTick(dt);
-  const ctl=state==='play'&&!P.grab;
+  const ctl=state==='play'&&!P.grab&&!GL.fall&&!(GL.rb&&!GL.rb.fwd);
   if(P.down)mpSpectate();
   else{
   // look
@@ -2523,13 +2528,13 @@ function update(dt){
   if(flashT>0)flashT=Math.max(0,flashT-dt*1.6);
   // pickups
   for(const it of F.items){
-    if(it.got)continue;
+    if(it.got||P.y<-0.2)continue;
     const dx=it.x-P.x,dz=it.z-P.z;
     if(dx*dx+dz*dz<0.2)collect(it);
   }
   // exit
   sealMsgT-=dt;
-  if(Math.hypot(F.exit.x-P.x,F.exit.z-P.z)<0.42){
+  if(Math.hypot(F.exit.x-P.x,F.exit.z-P.z)<0.42&&P.y>-0.2){
     if(P.shards>=3){mpSend({k:'down',d:R.depth+1});descend();return}
     if(sealMsgT<=0){sealMsgT=3;const n=3-P.shards;say(`The seal holds. ${n} shard${n>1?'s':''} to go.`,2.5);sfx('seal')}
   }
@@ -2547,7 +2552,7 @@ function update(dt){
     const e=trapExt(tr,R.time);
     if(e>0.5){
       if(!tr.up){tr.up=true;if(Math.abs(tr.x-P.x)+Math.abs(tr.z-P.z)<6)sfx('spike')}
-      if(P.inv<=0&&!P.away&&P.y<0.22&&Math.abs(tr.x-P.x)<0.42&&Math.abs(tr.z-P.z)<0.42){hurt(null);if(state==='dead')return}
+      if(P.inv<=0&&!P.away&&P.y<0.22&&P.y>-0.2&&Math.abs(tr.x-P.x)<0.42&&Math.abs(tr.z-P.z)<0.42){hurt(null);if(state==='dead')return}
     }else tr.up=false;
   }
   } // end of the living player's turn
@@ -2655,6 +2660,7 @@ function update(dt){
   if(TG)mimicHost(dt,TG);
   // heartbeat when hunted
   if(chasing){beatT-=dt;if(beatT<=0){beatT=clamp(0.35+nearest*0.05,0.4,1.0);sfx('beat')}}
+  glTick(dt,chasing);
   // homing chime toward the nearest shard, or the exit once the seal is broken
   pingT-=dt;
   if(pingT<=0){
@@ -2670,6 +2676,383 @@ function update(dt){
     }
   }
 }
+
+/* ---------- fake glitches: things that look like bugs and are not ---------- */
+// Every one of these is deliberate. They are rare, they happen only on your own screen, and they
+// never start while something is hunting you, so they unsettle without ever costing a life.
+// __game.glitch('freeze'|'rubber'|'rubberfwd'|'replay'|'hud'|'tpose'|'hole'|'fall'|'loop') forces one for testing.
+const GL={cd:60,used:{},frz:0,frzAfter:null,buzz:null,hist:[],histT:0,rb:null,rbN:0,figs:[],hole:null,fall:null,loop:null,
+  ghosts:[],walked:null,peerH:new Map(),hudOv:{},hudSeq:null,chatT:0,dip:0,netEl:null,netT:0};
+function glReset(){
+  GL.cd=F.back?28+Math.random()*30:55+Math.random()*60;GL.used={};GL.frz=0;GL.frzAfter=null;GL.hist=[];GL.rb=null;
+  GL.figs=[];GL.ghosts=[];GL.fall=null;GL.loop=null;GL.hudOv={};GL.hudSeq=null;GL.dip=0;GL.walked=new Uint8Array(F.W*F.H);
+  glHoleOff();if(GL.grid){scene.remove(GL.grid);GL.grid=null}
+  for(const p of MP.peers.values())p.glRep=null;
+}
+const glOpen=(x,y)=>x>0&&y>0&&x<F.W-1&&y<F.H-1&&F.g[y*F.W+x]===0&&!F.safeMask[y*F.W+x]&&!F.pocketMask[y*F.W+x];
+const glTrapAt=(x,y)=>F.traps.some(tr=>tr.tx===x&&tr.ty===y)||(F.door&&F.door.tx===x&&F.door.ty===y);
+function glNet(text,secs){
+  if(!GL.netEl){const el=document.createElement('div');el.style.cssText='position:fixed;left:50%;top:38px;transform:translateX(-50%);font:13px system-ui,sans-serif;letter-spacing:.06em;color:#9fe3c4;text-shadow:0 1px 3px #000;pointer-events:none;z-index:6;white-space:nowrap';document.body.appendChild(el);GL.netEl=el}
+  GL.netEl.textContent=text;GL.netEl.style.display=text?'block':'none';GL.netT=secs||0;
+}
+// is the moment right? nothing hunting, nothing open, feet on the ground
+function glCalm(chasing){
+  return state==='play'&&!P.down&&!P.away&&!P.grab&&!P.inSafe&&!chasing&&R.depth>=2&&!chatOpen&&P.y===0&&
+    GL.frz<=0&&!GL.rb&&!GL.fall&&!GL.loop&&!GL.figs.length&&!GL.hole&&!GL.hudSeq;
+}
+function glTick(dt,chasing){
+  if(!F||state==='title')return;
+  if(GL.netT>0){GL.netT-=dt;if(GL.netT<=0)glNet('')}
+  if(GL.chatT>0)GL.chatT-=dt;
+  // a short memory of where you have been, for the rubber band and the fall
+  GL.histT-=dt;
+  if(GL.histT<=0){GL.histT=0.1;GL.hist.push([P.x,P.z,P.yaw]);if(GL.hist.length>40)GL.hist.shift();
+    for(const p of MP.peers.values()){if(p.rx===undefined)continue;let h=GL.peerH.get(p.id);if(!h){h=[];GL.peerH.set(p.id,h)}
+      if(!p.glRep){h.push([p.rx,p.rz,p.ryaw,p.ry]);if(h.length>30)h.shift()}}}
+  if(P.tx>=0&&GL.walked)GL.walked[P.ty*F.W+P.tx]=1;
+  if(GL.dip>0){GL.dip-=dt;panelLvl*=0.04}
+  glRubberTick(dt);glHudTick(dt);glFigTick(dt);glHoleTick(dt);glFallTick(dt);glLoopTick(dt,chasing);
+  for(const g of GL.ghosts){g.t-=dt;if(Math.hypot(g.x-P.x,g.z-P.z)<1.8)g.t=Math.min(g.t,0.05)}
+  GL.ghosts=GL.ghosts.filter(g=>g.t>0);
+  for(const p of MP.peers.values())if(p.glRep){p.glRep.i+=dt*10;if(p.glRep.i>=p.glRep.h.length)p.glRep=null}
+  // the director: every so often, if the moment is right, something goes wrong
+  if(!glCalm(chasing)){if(chasing)GL.cd=Math.max(GL.cd,8);return}
+  GL.cd-=dt;
+  if(GL.cd>0)return;
+  const opts=[['freeze',3],['rubber',3],['hud',4],['tpose',2],['hole',2.5]];
+  if(R.depth>=3)opts.push(['fall',1]);
+  if(MP.on&&mpAlive().length)opts.push(['replay',2]);
+  const ok=opts.filter(o=>(GL.used[o[0]]|0)<(o[0]==='hud'?2:1));
+  let sum=0;for(const o of ok)sum+=o[1];
+  let r=Math.random()*sum,pick=null;for(const o of ok){r-=o[1];if(r<=0){pick=o[0];break}}
+  if(pick&&glStart(pick)){GL.used[pick]=(GL.used[pick]|0)+1;GL.cd=F.back?35+Math.random()*35:60+Math.random()*70}
+  else GL.cd=6;
+}
+function glStart(k,forced){
+  if(state!=='play')return false;
+  switch(k){
+    case 'freeze':return glFreeze();
+    case 'rubber':return glRubber(GL.rbN%2===1);
+    case 'rubberfwd':return glRubber(true);
+    case 'replay':return glReplay();
+    case 'hud':return glHud();
+    case 'tpose':return glFigure('tpose');
+    case 'hole':return glHole();
+    case 'fall':return glFall();
+    case 'loop':return glLoopTry(forced);
+  }
+  return false;
+}
+
+/* 1. the game hangs: the picture locks, the sound sticks, and when it lets go something has changed */
+function glFreeze(){
+  GL.frz=1.1+Math.random()*0.6;
+  // decide the aftermath now, so any rebuild happens inside the hitch where nobody can see it
+  const r=Math.random();
+  GL.frzAfter=r<0.45&&glWallBehind()?'wall':r<0.85?'figure':'turned';
+  if(ac&&!muted){
+    const n=Math.floor(ac.sampleRate*0.065),b=ac.createBuffer(1,n,ac.sampleRate),d=b.getChannelData(0);
+    for(let i=0;i<n;i++){const t=i/ac.sampleRate;d[i]=0.5*((t*120)%1-0.5)+0.35*Math.sin(t*55*6.283)+0.25*(Math.random()*2-1)}
+    const s=ac.createBufferSource(),g=ac.createGain();s.buffer=b;s.loop=true;g.gain.value=0.13;s.connect(g);g.connect(ac.destination);s.start();
+    GL.buzz=s;master.gain.setValueAtTime(0,ac.currentTime);
+  }
+  return true;
+}
+// wall up the way you came, but only where the floor stays in one piece
+function glWallBehind(){
+  const H=GL.hist;if(H.length<12)return false;
+  const W=F.W;
+  for(let back=8;back<H.length;back++){
+    const q=H[H.length-1-back],tx=Math.floor(q[0]),ty=Math.floor(q[1]);
+    if(Math.abs(tx-P.tx)+Math.abs(ty-P.ty)<2)continue;
+    if(!glOpen(tx,ty)||glTrapAt(tx,ty)||(tx===F.exit.tx&&ty===F.exit.ty)||(tx===F.start.tx&&ty===F.start.ty))return false;
+    if(F.items.some(it=>!it.got&&it.tx===tx&&it.ty===ty))return false;
+    if(F.npcs.some(n=>Math.floor(n.x)===tx&&Math.floor(n.z)===ty))return false;
+    if(F.sdoors&&F.sdoors.some(D=>D.tx===tx&&D.ty===ty))return false;
+    const i=ty*W+tx,before=bfs(F.g,W,F.H,P.tx,P.ty);let nb=0;for(let j=0;j<before.length;j++)if(before[j]>=0)nb++;
+    F.g[i]=1;
+    const after=bfs(F.g,W,F.H,P.tx,P.ty);let na=0;for(let j=0;j<after.length;j++)if(after[j]>=0)na++;
+    if(na!==nb-1){F.g[i]=0;return false}
+    buildMesh(F);F.dist=after;F.seen[i]=0;
+    return true;
+  }
+  return false;
+}
+function glUnfreeze(){
+  if(GL.buzz){try{GL.buzz.stop()}catch(e){}GL.buzz=null;if(master)master.gain.setValueAtTime(muted?0:0.55,ac.currentTime)}
+  const a=GL.frzAfter;GL.frzAfter=null;
+  if(a==='figure'&&!glFigure('pale'))P.yaw+=Math.PI;
+  else if(a==='turned')P.yaw+=Math.PI;
+}
+
+/* 2. rubber-banding: snapped back like a lag spike, and the second time, snapped forward */
+function glRubber(fwd){
+  if(GL.hist.length<25)return false;
+  let dest=null;
+  if(fwd){
+    // somewhere you have not been yet, a fair walk away, with nothing waiting there
+    const C=[];
+    for(let y=1;y<F.H-1;y++)for(let x=1;x<F.W-1;x++){
+      const d=F.dist[y*F.W+x];if(d<10||d>26||!glOpen(x,y)||F.seen[y*F.W+x]||glTrapAt(x,y))continue;
+      if((x===F.exit.tx&&y===F.exit.ty)||F.shades.some(s=>Math.hypot(s.x-x-0.5,s.z-y-0.5)<6))continue;
+      C.push([x+0.5,y+0.5]);
+    }
+    if(!C.length)return false;
+    dest=C[(Math.random()*C.length)|0];
+  }
+  GL.rbN++;
+  GL.rb={t:0,fwd,dest,from:[P.x,P.z,P.yaw],a:GL.hist[GL.hist.length-6],b:GL.hist[GL.hist.length-13],stage:0};
+  glNet(MP.on?`Reconnecting to ${myName()}…`:'Reconnecting…',fwd?1.2:1.7);
+  return true;
+}
+function glRubberTick(dt){
+  const B=GL.rb;if(!B)return;
+  B.t+=dt;
+  const snap=(x,z,yaw)=>{if(blocked(x,z))return;P.x=x;P.z=z;if(yaw!==undefined)P.yaw=yaw;P.vx=P.vz=0;onTileChange()};
+  if(!B.fwd){
+    if(B.stage===0&&B.t>0.22){B.stage=1;snap(B.a[0],B.a[1])}
+    else if(B.stage===1&&B.t>0.5){B.stage=2;snap(B.b[0],B.b[1])}
+    else if(B.stage===2&&B.t>0.62){B.stage=3;snap(B.a[0],B.a[1])}
+    else if(B.stage===3&&B.t>0.75){B.stage=4;snap(B.b[0],B.b[1]);glTellRoom(B.from);GL.rb=null}
+    return;
+  }
+  if(B.stage===0&&B.t>0.35){
+    B.stage=1;snap(B.dest[0],B.dest[1]);glTellRoom(B.from);
+    // your own footsteps carry on from where you were
+    for(let i=0;i<6;i++)setTimeout(()=>{if(state!=='play'||!ac)return;noise(0.12,0.06*(1-i/7),F.back?120:240+Math.random()*80,1)},420+i*480);
+    GL.rb=null;
+  }
+}
+// friends see a copy of you left standing where you were, torch flame stuck mid-flicker
+function glTellRoom(from){if(MP.on)mpSend({k:'gl',w:'rb',d:R.depth,x:r2(from[0]),z:r2(from[1]),yaw:r2(from[2])})}
+function glRecv(m,p){
+  if(m.w==='rb'&&m.d===R.depth&&state!=='title'&&state!=='dead'&&isFinite(+m.x)&&isFinite(+m.z))
+    GL.ghosts.push({x:+m.x,z:+m.z,yaw:+m.yaw||0,col:p.col,id:p.id,t:7+Math.random()*3});
+}
+// multiplayer only: a friend in front of you rewinds two seconds and walks it again
+function glReplay(){
+  let best=null,bd=13;
+  const fx=Math.cos(P.yaw),fz=Math.sin(P.yaw);
+  for(const p of mpAlive()){const d=Math.hypot(p.rx-P.x,p.rz-P.z),h=GL.peerH.get(p.id);
+    if(d<bd&&h&&h.length>=20&&((p.rx-P.x)*fx+(p.rz-P.z)*fz)/Math.max(d,0.1)>0.5&&los(P.x,P.z,p.rx,p.rz)){bd=d;best=p}}
+  if(!best)return false;
+  best.glRep={h:GL.peerH.get(best.id).slice(-20),i:0};
+  glNet(`Reconnecting to ${best.name}…`,1.5);
+  return true;
+}
+
+/* 3. the HUD lies */
+const GL_LINES=()=>[`The seal holds. ${4+((Math.random()*3)|0)} shards to go.`,'A sanctuary. Nothing can follow you here.','You rise again',`Depth ${R.depth}: ${F.name}`,'Your torch is out'];
+function glGarble(s){const c='▒░█▓';let o='';for(const ch of s){const r=Math.random();o+=r<0.1?c[(Math.random()*4)|0]:r<0.14?ch+ch:r<0.17?'':ch}return o}
+function glHud(){
+  const r=Math.random();
+  if(r<0.4){
+    const wrong=['Depth 0','Depth -1','Depth '+(-R.depth),'Depth ∞','Depth '+(R.depth+Math.floor(20+Math.random()*60))][(Math.random()*5)|0];
+    GL.hudSeq={t:0,end:2.4,k:'depthLine',a:wrong};
+  }else if(r<0.62){
+    GL.hudSeq={t:0,end:2,k:'shards',a:'◆ '+(P.shards+1)+' / 3 shards'};
+    if(P.shards>=2)GL.hudSeq.a='◆ '+P.shards+' / 4 shards';
+  }else if(r<0.8){const L=GL_LINES();say(glGarble(L[(Math.random()*L.length)|0]),2.4)}
+  else{
+    // a line in the chat from somebody who is not in your game. In a shared game, it is you.
+    const nm=MP.on?myName():'Delver',col=MP.on?toHex(MP_COLS[hashStr(MP.id||'')%MP_COLS.length]):'#8f8a80';
+    GL.chatT=15;chatLine(nm,col,['is anyone else down here','hello?','i can hear you walking','which way did you go'][(Math.random()*4)|0]);
+    sfx('pick');
+  }
+  return true;
+}
+function glHudTick(dt){
+  const S=GL.hudSeq;if(!S)return;
+  S.t+=dt;
+  if(S.t>=S.end){GL.hudSeq=null;GL.hudOv={};return}
+  const on=Math.sin(S.t*23)+Math.sin(S.t*7.3)>0.2;
+  GL.hudOv={};if(on)GL.hudOv[S.k]=S.a;
+}
+
+/* 4. a stiff figure, arms out, sliding and always turned to you. Look away and it is gone */
+function glFigure(kind){
+  const fx=Math.cos(P.yaw),fz=Math.sin(P.yaw);let spot=null;
+  for(let d=2.6;d<6.5;d+=0.25){const x=P.x+fx*d,z=P.z+fz*d;if(solidAt(x,z)||blocked(x,z))break;if(d>=3.2)spot=[x,z]}
+  if(!spot)return false;
+  let col;
+  const L=MP.on?mpAlive():[];
+  if(kind==='pale')col=[0.92,0.9,0.84];
+  else if(L.length)col=L[(Math.random()*L.length)|0].col;
+  else col=MP_COLS[hashStr(myName())%MP_COLS.length];
+  GL.figs.push({kind,x:spot[0],z:spot[1],sx:spot[0],sz:spot[1],yaw:0,col,t:0,seen:0,away:0,tick:0});
+  if(kind==='tpose')noise(0.3,0.05,4200,3);
+  return true;
+}
+function glFigTick(dt){
+  for(const f of GL.figs){
+    f.t+=dt;
+    const dx=P.x-f.x,dz=P.z-f.z,d=Math.hypot(dx,dz),fx=Math.cos(P.yaw),fz=Math.sin(P.yaw);
+    const inView=d<12&&(-dx*fx-dz*fz)/Math.max(d,0.01)>0.6&&los(P.x,P.z,f.x,f.z);
+    if(inView){f.seen+=dt;f.away=0}else f.away+=dt;
+    // moves and turns in jerky steps, as if its updates arrive late
+    f.tick-=dt;
+    if(f.tick<=0){f.tick=0.16;f.yaw=Math.atan2(dz,dx);
+      if(f.kind==='tpose'&&d>1.4){const k=0.5*0.16/d,nx=f.x+dx*k,nz=f.z+dz*k;if(!blocked(nx,nz)){f.sx=nx;f.sz=nz}}}
+    f.x=f.sx;f.z=f.sz;
+    if((f.seen>0.2&&f.away>0.3)||f.away>4||f.t>14){f.dead=true}
+    else if(d<1.35){f.dead=true;noise(0.25,0.06,1700,0.7)}
+  }
+  GL.figs=GL.figs.filter(f=>!f.dead);
+}
+function buildTpose(f,t){
+  // drawn 'fullbright', evenly lit from nowhere, like a model whose lighting never loaded
+  const c=f.col,k=f.kind==='pale'?0.32:0.4,FB=11,cloak=[c[0]*k,c[1]*k,c[2]*k,FB],cloakD=[c[0]*k*0.6,c[1]*k*0.6,c[2]*k*0.6,FB];
+  const pale=f.kind==='pale',leg=pale?cloakD:[0.13,0.1,0.08,FB],boot=pale?cloakD:[0.16,0.1,0.05,FB],skin=pale?[0.36,0.35,0.33,FB]:[0.42,0.32,0.25,FB];
+  const S=0.94,v=(x,y,z)=>[x*S,y*S,z*S];
+  const B={p:[f.x,0,f.z],R:rYaw(f.yaw)};
+  for(const z of[-1,1]){
+    const hip=v(0,0.45,z*0.052),knee=v(0.012,0.25,z*0.058),ank=v(0,0.05,z*0.062);
+    seg(B,hip,knee,0.047*S,0.038*S,leg);ball(B,knee,0.04*S,leg,true);seg(B,knee,ank,0.04*S,0.03*S,boot);
+    ball(B,[ank[0]+0.03,ank[1]-0.02,ank[2]],[0.062*S,0.03*S,0.036*S],boot,true);
+  }
+  const U=subF(B,v(0,0.45,0),ID3);
+  ball(U,v(0,0.02,0),[0.075*S,0.06*S,0.09*S],cloakD);
+  seg(U,v(0,-0.1,0),v(0,0.07,0),0.12*S,0.078*S,cloak);
+  ball(U,v(0,0.17,0),[0.066*S,0.115*S,0.09*S],cloak);
+  ball(U,v(-0.035,0.2,0),[0.055*S,0.12*S,0.095*S],cloakD);
+  // arms dead straight out to the sides, palms down, the default pose of a model with no animation
+  for(const z of[-1,1])limb(U,v(0,0.225,z*0.1),v(0,0.225,z*0.26),v(0,0.225,z*0.41),0.03*S,0.027*S,0.023*S,cloak,cloak,skin,0.026*S);
+  seg(U,v(0,0.27,0),v(0,0.31,0),0.027*S,0.026*S,skin);
+  const H=subF(U,v(0,0.305,0),ID3),HS={p:H.p,R:H.R.map(q=>q*S)};
+  face(HS,{skin,blink:1,iris:pale?[0.05,0.05,0.05]:[0.3,0.25,0.18],brow:[0.25,0.16,0.1,5],browH:0.006,eyeS:pale?1.4:1.1,nose:[0.012,0.013,0.011],mouth:[0.6,0.32,0.3],mouthW:0.022});
+  ball(HS,[-0.03,0.1,0],[0.088,0.1,0.094],cloak);
+  ball(HS,[-0.05,0.04,0],[0.07,0.07,0.09],cloakD,true);
+}
+function glDraw(t,ex,ez,fwx,fwz){
+  for(const f of GL.figs)buildTpose(f,t);
+  // the copy of a friend left behind by a rubber band, flame frozen mid-flicker
+  for(const g of GL.ghosts){
+    if((g.x-ex)**2+(g.z-ez)**2>18*18||(g.x-ex)*fwx+(g.z-ez)*fwz<-1.5)continue;
+    const q=buildPlayer({id:g.id,col:g.col,rx:g.x,rz:g.z,ry:0,ryaw:g.yaw,rpitch:0,spd:0,walk:0},1.234).torch;
+    spr(q[0],q[1]+0.02,q[2],0.07,0.12,11,1.0,0.6,0.2,1,1);spr(q[0],q[1],q[2],0.5,0.5,7,1.0,0.5,0.15,0.25,1);
+  }
+}
+
+/* 5. a wall that never loaded: through the gap, a grey floor that goes on forever and one lit doorway */
+const holeMat=new THREE.ShaderMaterial({
+  uniforms:{uN:{value:new THREE.Vector3()},uC:{value:new THREE.Vector3()},uA:{value:1}},
+  vertexShader:`varying vec3 vW;void main(){vec4 w=modelMatrix*vec4(position,1.0);vW=w.xyz;gl_Position=projectionMatrix*viewMatrix*w;}`,
+  fragmentShader:`varying vec3 vW;uniform vec3 uN,uC;uniform float uA;
+  void main(){
+    vec3 d=normalize(vW-cameraPosition);
+    float fy=cameraPosition.y-1.3;
+    vec3 col=mix(vec3(0.075),vec3(0.095),clamp(d.y*2.5,0.0,1.0));
+    if(d.y<-0.001){float tt=(cameraPosition.y-fy)/(-d.y);vec2 p=(cameraPosition+d*tt).xz;vec2 g=abs(fract(p*0.5)-0.5);
+      float line=smoothstep(0.47,0.5,max(g.x,g.y));float fade=exp(-tt*0.025);col=mix(vec3(0.075),mix(vec3(0.07),vec3(0.035),line),fade);}
+    float dn=dot(d,-uN);
+    if(dn>0.01){vec3 dc=uC-uN*45.0;float tt=dot(dc-cameraPosition,-uN)/dn;vec3 q=cameraPosition+d*tt;
+      vec3 sd=vec3(-uN.z,0.0,uN.x);float u=dot(q-dc,sd),v=q.y-fy;
+      if(abs(u)<0.7&&v>0.0&&v<2.3)col=vec3(1.0,0.86,0.58)*0.9;
+      else col+=vec3(0.5,0.4,0.25)*0.08*exp(-length(vec2(u,v-1.1))*0.6);}
+    gl_FragColor=vec4(col*uA,1.0);
+  }`,
+  fog:false,side:THREE.DoubleSide
+});
+function glHole(){
+  // a wall face a few steps ahead, square to the view
+  const fx=Math.cos(P.yaw),fz=Math.sin(P.yaw);let best=null,bs=-1;
+  for(let y=P.ty-7;y<=P.ty+7;y++)for(let x=P.tx-7;x<=P.tx+7;x++){
+    if(x<1||y<1||x>=F.W-1||y>=F.H-1||F.g[y*F.W+x]!==0)continue;
+    for(const k of DIRS){
+      const wx=x+k[0],wy=y+k[1];if(F.g[wy*F.W+wx]!==1)continue;
+      if(F.sdoors&&F.sdoors.some(D=>D.tx===x&&D.ty===y&&D.dx===k[0]&&D.dz===k[1]))continue;
+      const cx=x+0.5+k[0]*0.5,cz=y+0.5+k[1]*0.5,dx=cx-P.x,dz=cz-P.z,d=Math.hypot(dx,dz);
+      if(d<3.2||d>7.5)continue;
+      const facing=(k[0]*dx+k[1]*dz)/d,ahead=(dx*fx+dz*fz)/d;
+      if(facing<0.55||ahead<0.8||!los(P.x,P.z,x+0.5,y+0.5))continue;
+      const sc=ahead*facing+Math.random()*0.1;if(sc>bs){bs=sc;best={x,y,k,cx,cz}}
+    }
+  }
+  if(!best)return false;
+  const m=new THREE.Mesh(new THREE.PlaneGeometry(1,WALL_H),holeMat);
+  const n=[-best.k[0],0,-best.k[1]];
+  m.position.set(best.cx+n[0]*0.004,WALL_H/2,best.cz+n[2]*0.004);
+  m.rotation.y=Math.atan2(n[0],n[2]);
+  holeMat.uniforms.uN.value.set(n[0],0,n[2]);holeMat.uniforms.uC.value.set(best.cx,WALL_H/2,best.cz);holeMat.uniforms.uA.value=1;
+  scene.add(m);GL.hole={m,cx:best.cx,cz:best.cz,t:0,pop:0};
+  return true;
+}
+function glHoleOff(){if(GL.hole){scene.remove(GL.hole.m);GL.hole.m.geometry.dispose();GL.hole=null}}
+function glHoleTick(dt){
+  const h=GL.hole;if(!h)return;
+  h.t+=dt;
+  const d=Math.hypot(h.cx-P.x,h.cz-P.z);
+  // walk up to it and it pops in, after a stutter
+  if(d<1.9&&!h.pop)h.pop=0.3;
+  if(h.pop){h.pop-=dt;h.m.visible=Math.sin(h.pop*90)>0;if(h.pop<=0){glHoleOff();return}}
+  if(h.t>45)glHoleOff();
+}
+
+/* 6. falling through the floor, under the maze, into a dark grid, and waking at the start */
+function glFall(){
+  if(glTrapAt(P.tx,P.ty)||Math.hypot(F.exit.x-P.x,F.exit.z-P.z)<2)return false;
+  GL.fall={t:0,vy:0};P.vx=P.vz=0;P.inv=99;
+  if(!GL.grid){GL.grid=new THREE.GridHelper(400,200,0x3a3a40,0x26262c);GL.grid.position.set(P.x,-34,P.z);scene.add(GL.grid)}
+  tone(70,2.6,'sine',0.12,0.3,-40);noise(0.25,0.08,2400,3);
+  return true;
+}
+function glFallTick(dt){
+  const L=GL.fall;if(!L)return;
+  L.t+=dt;
+  if(L.t<0.9)P.y=-0.85*(L.t/0.9)**2;          // sink slowly through the stone
+  else if(L.t<1.6)P.y=-0.85-0.05*(L.t-0.9);    // hang for a moment just under it, looking at the underside
+  else{L.vy+=9*dt;P.y-=L.vy*dt}
+  if(L.t>1.6&&!L.wind){L.wind=1;noise(2.6,0.12,180,0.6)}
+  if(L.t>3.6&&!L.dark){L.dark=1;$('fade').style.opacity=1}
+  if(L.t>4.6){
+    // wake at the start of the floor. The map remembers only the path you walked
+    GL.fall=null;if(GL.grid){scene.remove(GL.grid);GL.grid=null}
+    P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.y=0;P.vy=0;P.inv=2;
+    if(GL.walked)for(let i=0;i<F.seen.length;i++)F.seen[i]=GL.walked[i];
+    onTileChange();tone(48,0.4,'sine',0.3);noise(0.2,0.2,200,1);
+    setTimeout(()=>{$('fade').style.opacity=0},400);
+  }
+}
+
+/* 7. the humming rooms: a long hall that quietly puts you back at its start */
+function glLoopTry(forced){
+  if(!F.back&&!forced)return false;
+  const fx=Math.cos(P.yaw),fz=Math.sin(P.yaw),ax=Math.abs(fx)>Math.abs(fz)?0:1,dir=Math.sign(ax?fz:fx)||1;
+  if(!forced&&Math.abs(ax?fz:fx)<0.85)return false;
+  const at=(s)=>ax?glOpen(P.tx,P.ty+s*dir):glOpen(P.tx+s*dir,P.ty);
+  let n=0;while(n<14&&at(n+1))n++;
+  if(n<9)return false;
+  const p0=ax?P.ty:P.tx;
+  GL.loop={ax,dir,a:p0+1*dir,b:p0+6*dir,pass:0,fig:null};
+  return true;
+}
+function glLoopTick(dt,chasing){
+  if(!GL.loop){
+    if(F.back&&!GL.used.loop&&GL.cd<25&&glCalm(chasing)&&(Math.abs(P.vx)+Math.abs(P.vz))>1&&glLoopTry()){GL.used.loop=1}
+    return;
+  }
+  const Lp=GL.loop,pos=Lp.ax?P.z:P.x,cross=Lp.ax?P.x:P.z,rel=(pos-(Lp.b+0.5))*Lp.dir;
+  // turned back past the start, wandered off sideways, or something is coming: let go
+  const side=Math.abs(cross-((Lp.ax?P.tx:P.ty)+0.5));
+  if(chasing||(pos-(Lp.a+0.5))*Lp.dir<-2.5||side>0.9||state!=='play'){glLoopEnd();return}
+  if(rel>0&&Lp.pass<4){
+    const j=5*Lp.dir,nx=Lp.ax?P.x:P.x-j,nz=Lp.ax?P.z-j:P.z;
+    if(blocked(nx,nz)){glLoopEnd();return}
+    P.x=nx;P.z=nz;onTileChange();Lp.pass++;GL.dip=0.09;
+    for(let i=0;i<GL.hist.length;i++){if(Lp.ax)GL.hist[i][1]-=j;else GL.hist[i][0]-=j}
+    if(Lp.pass===2){
+      // the third time through, one light in the hall is dead
+      for(const q of F.panels){const u=Lp.ax?q.z:q.x,w=Lp.ax?q.x:q.z;if(Math.abs(w-cross)<1.2&&u>=Math.min(Lp.a,Lp.b)-1&&u<=Math.max(Lp.a,Lp.b)+2){q.dead=true}}
+      sfx('powerdown');
+    }
+    if(Lp.pass===3){
+      // the fourth time, something is standing at the far end
+      const fx=Lp.ax?P.tx+0.5:Lp.b+3*Lp.dir+0.5,fz=Lp.ax?Lp.b+3*Lp.dir+0.5:P.ty+0.5;
+      if(!blocked(fx,fz)){GL.figs.push({kind:'pale',x:fx,z:fz,sx:fx,sz:fz,yaw:0,col:[0.92,0.9,0.84],t:-6,seen:0,away:-8,tick:0});Lp.fig=true}
+    }
+  }else if(rel>0&&Lp.pass>=4&&rel>1.5)glLoopEnd();
+}
+function glLoopEnd(){if(!GL.loop)return;for(const q of F.panels)q.dead=false;GL.loop=null}
 
 /* ---------- render ---------- */
 let rs=1,rsCeil=1,fAcc=0,fN=0,goodSecs=0,lastRaise=-99,clock=0,fpsShown=0;
@@ -2778,7 +3161,7 @@ function render(t){
   if(F.back&&panelLvl>0.01){const near=[];
     for(const q of F.panels){const d=(q.x-ex)**2+(q.z-ez)**2;if(d<90)near.push([d,q])}
     near.sort((a,b)=>a[0]-b[0]);
-    for(let i=0;i<near.length&&i<7;i++){const q=near[i][1],k=panelLvl*(q.bad&&Math.sin(t*31+q.ph)+Math.sin(t*47.7+q.ph*2)<0.4?0.1:1);
+    for(let i=0;i<near.length&&i<7;i++){const q=near[i][1],k=(q.dead?0:panelLvl)*(q.bad&&Math.sin(t*31+q.ph)+Math.sin(t*47.7+q.ph*2)<0.4?0.1:1);
       lights.push([near[i][0]+1,q.x,1.12,q.z,PANEL_COL,0.85*k,4.4])}}
   for(const q of F.pockets){const d=(q.x-ex)**2+(q.z-ez)**2;if(d<140)lights.push([d,q.x,1.0,q.z,PANEL_COL,q.found?1.1:0.55,2.3])}
   for(const q of F.sconces){const d=(q.lx-ex)**2+(q.lz-ez)**2;if(d<200){
@@ -2832,7 +3215,7 @@ function render(t){
     if(o.lamp){const q=o.lamp;spr(q[0],q[1],q[2],0.22,0.22,7,1.0,0.75,0.3,0.4,1)}
     if(!n.used&&n.type!=='keeper'){const y=o.top+0.08+Math.sin(t*3+n.ph)*0.03,X=n.x+(n.ox||0),Z=n.z+(n.oz||0);spr(X,y,Z,0.08,0.08,7,1.0,0.85,0.4,1,1);spr(X,y,Z,0.32,0.32,7,1.0,0.7,0.2,0.3,1)}
   }}
-  mpDrawPlayers(t,ex,ez,fwx,fwz);mimicDraw(t,ex,ez);
+  mpDrawPlayers(t,ex,ez,fwx,fwz);mimicDraw(t,ex,ez);glDraw(t,ex,ez,fwx,fwz);
   if(F.safe&&(F.safe.x-ex)**2+(F.safe.z-ez)**2<22*22){
     const fl=F.safe.fl||1,X=F.safe.x,Z=F.safe.z;
     spr(X,0.72,Z,0.42*fl,0.62*fl,11,1.0,0.55,0.16,1,1);
@@ -2951,12 +3334,12 @@ function setHTML(id,v){if(hudCache[id]!==v){hudCache[id]=v;$(id).innerHTML=v}}
 function setW(id,p){const v=Math.round(p)+'%';if(hudCache[id]!==v){hudCache[id]=v;$(id).style.width=v}}
 function drawHUD(){
   setText('depthName',F.name);
-  setText('depthLine','Depth '+R.depth);
+  setText('depthLine',GL.hudOv.depthLine||'Depth '+R.depth);
   setText('scoreLine','Score '+R.score);
   setText('seedLine','Seed '+R.seed);
   setHTML('hearts','♥'.repeat(Math.max(0,P.hp))+'<i>'+'♥'.repeat(Math.max(0,maxHp()-Math.max(0,P.hp)))+'</i>');
   setW('fuelFill',P.fuel);setW('stamFill',P.stam);
-  setText('shards','◆ '+P.shards+' / 3 shards');
+  setText('shards',GL.hudOv.shards||'◆ '+P.shards+' / 3 shards');
   setText('flashes','✦ '+P.flash+' flash'+(P.flash===1?'':'es'));
   setText('keysLine',P.keys?'⚷ gate key':'');
   setText('embers','● '+wallet+(wallet===1?' gem':' gems')+' · Level '+plLevel());
@@ -3016,6 +3399,8 @@ function step(now){
   if((state==='play')!==wasPlaying){wasPlaying=state==='play';document.body.classList.toggle('playing',wasPlaying)}
   if(state==='room'){ROOMS.update(dt,roomInput());if(state==='room')$('fade').style.opacity=ROOMS.fade()}
   const live=()=>state==='play'||(MP.on&&(state==='pause'||state==='talk'||state==='room'));
+  // a fake hang: nothing moves for you, though the room carries on
+  if(GL.frz>0){GL.frz-=raw;if(GL.frz<=0)glUnfreeze();mpTick(raw);return raw}
   if(live()){
     // a host whose tab is in the background still runs the creatures, in catch-up steps
     if(raw>0.1&&MP.host&&document.hidden){let left=Math.min(raw,1);while(left>0&&live()){const s=Math.min(left,0.05);update(s);left-=s}}
@@ -3030,14 +3415,16 @@ function frame(now){
   mpVoiceTick(Math.min(raw,0.1));chatTick();
   if(state==='play')adapt(raw);
   setHum();
-  if(!window.__norender){if(state==='room'&&ROOMS.active){resize();renderer.toneMappingExposure=1;ROOMS.render()}else render(now/1000)}
-  if(state!=='title'){drawHUD();if(state!=='room')drawMap()}
-  mpTags();
+  if(GL.frz<=0){
+    if(!window.__norender){if(state==='room'&&ROOMS.active){resize();renderer.toneMappingExposure=1;ROOMS.render()}else render(now/1000)}
+    if(state!=='title'){drawHUD();if(state!=='room')drawMap()}
+    mpTags();
+  }
   requestAnimationFrame(frame);
 }
 setInterval(()=>{if(MP.host&&document.hidden&&performance.now()-last>200)step(performance.now())},100);
 // a backdrop maze behind the title screen
 R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
 {const rc=cleanCode(new URLSearchParams(location.search).get('room'));if(rc)mpPrepareJoin(rc)}
-window.__game={ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);

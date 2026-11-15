@@ -32,3 +32,17 @@ Every floor has two or three doors set into its walls. Face one and press E (or 
 - The keyhole is the only hint: cold blue light, warm amber light, or nothing.
 - While someone is inside a room their friends cannot see them and creatures ignore them. A used door is boarded up for everyone, including players who join later.
 
+
+## Things that look like bugs (they are not)
+
+From depth 2, every minute or two, something goes wrong on purpose. It only happens on your own screen, and never while a creature is hunting you.
+
+- **A hang:** the picture freezes and the sound sticks on one buzzing note. When it lets go, the way you came may be walled up, you may be facing the other way, or something pale is standing ahead.
+- **Rubber-banding:** "Reconnecting…" and you are snapped back a few steps. Another time you are snapped forward somewhere you have never been, and your footsteps carry on behind you. In a shared game it says it is reconnecting to *you*, your friends see a frozen copy of you left standing where you were, and sometimes a friend in front of you rewinds and walks the last two seconds again.
+- **A lying HUD:** the wrong depth, a fourth shard, a garbled message, or a chat line from someone who is not in your game (in a shared game, it is from you).
+- **A T-posing figure:** arms straight out, lit from nowhere, sliding toward you in jerky steps. Look away and it is gone.
+- **A wall that never loaded:** a gap showing a grey floor that goes on forever and one lit doorway. Walk up and the wall pops back in.
+- **Falling through the floor** (depth 3 and deeper): you sink under the maze, fall toward a dark grid, and wake at the start of the floor, with the map showing only the path you walked.
+- **A hall that loops** (the Humming Rooms only): you are quietly put back at the start of a long hall. On the third pass a light is dead. On the fourth, something is standing at the far end.
+
+For testing, `__game.glitch('freeze' | 'rubber' | 'rubberfwd' | 'replay' | 'hud' | 'tpose' | 'hole' | 'fall' | 'loop')` in the console forces one.
