@@ -2685,7 +2685,7 @@ function glRubber(fwd){
     dest=C[(Math.random()*C.length)|0];
   }
   GL.rbN++;
-  GL.rb={t:0,fwd,dest,from:[P.x,P.z,P.yaw],a:GL.hist[GL.hist.length-10],b:GL.hist[GL.hist.length-22],stage:0};
+  GL.rb={t:0,fwd,dest,from:[P.x,P.z,P.yaw],a:GL.hist[GL.hist.length-6],b:GL.hist[GL.hist.length-13],stage:0};
   glNet(MP.on?`Reconnecting to ${myName()}…`:'Reconnecting…',fwd?1.2:1.7);
   return true;
 }
@@ -2756,7 +2756,7 @@ function glHudTick(dt){
 /* 4. a stiff figure, arms out, sliding and always turned to you. Look away and it is gone */
 function glFigure(kind){
   const fx=Math.cos(P.yaw),fz=Math.sin(P.yaw);let spot=null;
-  for(let d=2.6;d<9;d+=0.25){const x=P.x+fx*d,z=P.z+fz*d;if(solidAt(x,z)||blocked(x,z))break;if(d>=3.4)spot=[x,z]}
+  for(let d=2.6;d<6.5;d+=0.25){const x=P.x+fx*d,z=P.z+fz*d;if(solidAt(x,z)||blocked(x,z))break;if(d>=3.2)spot=[x,z]}
   if(!spot)return false;
   let col;
   const L=MP.on?mpAlive():[];
@@ -2784,8 +2784,9 @@ function glFigTick(dt){
   GL.figs=GL.figs.filter(f=>!f.dead);
 }
 function buildTpose(f,t){
-  const c=f.col,cloak=[c[0]*0.72,c[1]*0.72,c[2]*0.72,2],cloakD=[c[0]*0.42,c[1]*0.42,c[2]*0.42,2];
-  const pale=f.kind==='pale',leg=pale?cloakD:[0.22,0.17,0.13,2],boot=pale?cloakD:[0.3,0.19,0.1,3],skin=pale?[0.9,0.88,0.84,1]:[0.86,0.65,0.5,1];
+  // drawn 'fullbright', evenly lit from nowhere, like a model whose lighting never loaded
+  const c=f.col,k=f.kind==='pale'?0.32:0.4,FB=11,cloak=[c[0]*k,c[1]*k,c[2]*k,FB],cloakD=[c[0]*k*0.6,c[1]*k*0.6,c[2]*k*0.6,FB];
+  const pale=f.kind==='pale',leg=pale?cloakD:[0.13,0.1,0.08,FB],boot=pale?cloakD:[0.16,0.1,0.05,FB],skin=pale?[0.36,0.35,0.33,FB]:[0.42,0.32,0.25,FB];
   const S=0.94,v=(x,y,z)=>[x*S,y*S,z*S];
   const B={p:[f.x,0,f.z],R:rYaw(f.yaw)};
   for(const z of[-1,1]){
@@ -2824,14 +2825,14 @@ const holeMat=new THREE.ShaderMaterial({
   void main(){
     vec3 d=normalize(vW-cameraPosition);
     float fy=cameraPosition.y-1.3;
-    vec3 col=mix(vec3(0.30),vec3(0.36),clamp(d.y*2.5,0.0,1.0));
+    vec3 col=mix(vec3(0.075),vec3(0.095),clamp(d.y*2.5,0.0,1.0));
     if(d.y<-0.001){float tt=(cameraPosition.y-fy)/(-d.y);vec2 p=(cameraPosition+d*tt).xz;vec2 g=abs(fract(p*0.5)-0.5);
-      float line=smoothstep(0.47,0.5,max(g.x,g.y));float fade=exp(-tt*0.025);col=mix(vec3(0.30),mix(vec3(0.27),vec3(0.2),line),fade);}
+      float line=smoothstep(0.47,0.5,max(g.x,g.y));float fade=exp(-tt*0.025);col=mix(vec3(0.075),mix(vec3(0.07),vec3(0.035),line),fade);}
     float dn=dot(d,-uN);
     if(dn>0.01){vec3 dc=uC-uN*45.0;float tt=dot(dc-cameraPosition,-uN)/dn;vec3 q=cameraPosition+d*tt;
       vec3 sd=vec3(-uN.z,0.0,uN.x);float u=dot(q-dc,sd),v=q.y-fy;
-      if(abs(u)<0.7&&v>0.0&&v<2.3)col=vec3(1.0,0.86,0.58)*1.3;
-      else col+=vec3(0.5,0.4,0.25)*0.25*exp(-length(vec2(u,v-1.1))*0.6);}
+      if(abs(u)<0.7&&v>0.0&&v<2.3)col=vec3(1.0,0.86,0.58)*0.9;
+      else col+=vec3(0.5,0.4,0.25)*0.08*exp(-length(vec2(u,v-1.1))*0.6);}
     gl_FragColor=vec4(col*uA,1.0);
   }`,
   fog:false,side:THREE.DoubleSide
@@ -2845,7 +2846,7 @@ function glHole(){
       const wx=x+k[0],wy=y+k[1];if(F.g[wy*F.W+wx]!==1)continue;
       const cx=x+0.5+k[0]*0.5,cz=y+0.5+k[1]*0.5,dx=cx-P.x,dz=cz-P.z,d=Math.hypot(dx,dz);
       if(d<3.2||d>7.5)continue;
-      const facing=-(k[0]*dx+k[1]*dz)/d,ahead=(dx*fx+dz*fz)/d;
+      const facing=(k[0]*dx+k[1]*dz)/d,ahead=(dx*fx+dz*fz)/d;
       if(facing<0.55||ahead<0.8||!los(P.x,P.z,x+0.5,y+0.5))continue;
       const sc=ahead*facing+Math.random()*0.1;if(sc>bs){bs=sc;best={x,y,k,cx,cz}}
     }

@@ -21,3 +21,17 @@ Click **Host for friends** on the title screen. The invite link is copied for yo
 - **Voice chat:** choose Push to talk (hold C, or the TALK button) or Open mic, either on the title screen or in the pause menu. The host decides whether voices fade with distance and get muffled behind walls.
 - **The mimic:** while your mic is live, your browser cuts what you say into short clips and shares them with the room. The host's game sends out a creature that wears one player's look and name tag and plays their clips near someone else. If it reaches you, its chest splits open. A flash bomb drives it off, and the minimap never shows it, so check where your friend really is. The host can turn it off.
 - Clips live only in the browsers in the room and are gone when you leave. `docs/mimic-brain.md` describes the optional local-AI line picker.
+
+## Things that look like bugs (they are not)
+
+From depth 2, every minute or two, something goes wrong on purpose. It only happens on your own screen, and never while a creature is hunting you.
+
+- **A hang:** the picture freezes and the sound sticks on one buzzing note. When it lets go, the way you came may be walled up, you may be facing the other way, or something pale is standing ahead.
+- **Rubber-banding:** "Reconnecting…" and you are snapped back a few steps. Another time you are snapped forward somewhere you have never been, and your footsteps carry on behind you. In a shared game it says it is reconnecting to *you*, your friends see a frozen copy of you left standing where you were, and sometimes a friend in front of you rewinds and walks the last two seconds again.
+- **A lying HUD:** the wrong depth, a fourth shard, a garbled message, or a chat line from someone who is not in your game (in a shared game, it is from you).
+- **A T-posing figure:** arms straight out, lit from nowhere, sliding toward you in jerky steps. Look away and it is gone.
+- **A wall that never loaded:** a gap showing a grey floor that goes on forever and one lit doorway. Walk up and the wall pops back in.
+- **Falling through the floor** (depth 3 and deeper): you sink under the maze, fall toward a dark grid, and wake at the start of the floor, with the map showing only the path you walked.
+- **A hall that loops** (the Humming Rooms only): you are quietly put back at the start of a long hall. On the third pass a light is dead. On the fourth, something is standing at the far end.
+
+For testing, `__game.glitch('freeze' | 'rubber' | 'rubberfwd' | 'replay' | 'hud' | 'tpose' | 'hole' | 'fall' | 'loop')` in the console forces one.
