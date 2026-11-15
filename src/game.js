@@ -1294,9 +1294,23 @@ const ROOMS=createRooms(renderer,{post:POST,low:Q===0,
   hurtFx:()=>{const h=$('hurt');h.style.transition='none';h.style.opacity=1;requestAnimationFrame(()=>{h.style.transition='opacity .9s';h.style.opacity=0})},
   hint:()=>touch.on?'Stick: move, pull down to drop faster · JUMP turns the stone · DROP slams it down':pad.id?'Stick or D-pad: move · A turn · X slam down':'A D move · W turn · S faster · Space slam down'});
 const ROOM_NAME={galaxy:'a door full of stars',kiln:'the glass kiln',fall:'a door with no floor behind it'};
+// a fallen player rides along with the friend they follow, into that friend's strange door too
+let RW=null,rvT=0;const NOIN={l:0,r:0,d:0,rot:0,drop:0,lx:0,ly:0};
+function roomWatch(){
+  const f=MP.on&&P.down&&(state==='play'||state==='pause')?MP.peers.get(MP.follow):null,rv=f&&f.away&&f.d===R.depth&&f.rv&&f.rv.d===R.depth&&performance.now()-f.rv.at<2000?f.rv:null;
+  if(rv){
+    if(!ROOMS.watching||!RW||RW.id!==f.id||RW.w!==rv.w){ROOMS.watch(rv.w,rv.q);RW={id:f.id,w:rv.w};document.body.classList.add('rwatch');$('fade').style.transition='none'}
+    const nm=f.name.replace(/[<>&"']/g,''),lb=`Watching ${nm} · ${ROOM_NAME[rv.w]}`+(mpAlive().length>1?' · E to switch':'');
+    ROOMS.label=lb;if(rv.w!=='kiln'){const el=$('roomHud'),h=`<small>${lb}</small>`;if(el.innerHTML!==h)el.innerHTML=h}
+  }else if(RW||ROOMS.watching){
+    if(ROOMS.watching)ROOMS.abort();
+    RW=null;document.body.classList.remove('rwatch');
+    if(state!=='room'){$('fade').style.transition='opacity .4s';$('fade').style.opacity=0}
+  }
+}
 function sdoorOpen(D){
   if(state!=='play'||D.used||P.down||P.grab)return;
-  D.used=true;nearDoor=null;buildStatic(F);clearPrompt();
+  D.used=true;nearDoor=null;buildStatic(F);clearPrompt();RW=null;document.body.classList.remove('rwatch');
   mpSend({k:'sd',d:R.depth,i:F.sdoors.indexOf(D),w:D.kind});
   sfx('door');
   state='room';P.away=true;P.vx=P.vz=0;mapBig=false;
@@ -1682,6 +1696,7 @@ function mpRecv(m,from){
       D.used=true;if(nearDoor===D)nearDoor=null;buildStatic(F);
       say(p.name+' opened a strange door',2.5);mpSys(p.name+' opened '+(ROOM_NAME[m.w]||'a strange door'));
       break;}
+    case 'rv':if(m.q&&typeof m.q==='object'&&(m.w==='galaxy'||m.w==='kiln'||m.w==='fall')){p.rv={w:m.w,q:m.q,d:m.d,at:performance.now()};if(RW&&RW.id===from&&RW.w===m.w)ROOMS.sync(m.q)}break;
     case 'sdr':if(inRun)say(m.r==='esc'?p.name+' beat the glass kiln':m.r==='fall'?p.name+' fell to their death':p.name+' was buried in the glass kiln',3);break;
     case 'warp':{
       const n=(m.d|0)-R.depth;
@@ -1773,6 +1788,8 @@ function mpTick(raw){
     MP.pt=1/15;
     mpSend({k:'p',d:R.depth,a:[r3(P.x),r3(P.z),r3(P.y),r3(P.yaw),r3(P.pitch),Math.round(P.fuel),(P.down?1:0)|(P.inSafe||P.away?2:0)|4|(P.away?8:0),P.hp]});
   }
+  rvT-=raw;
+  if(state==='room'&&rvT<=0&&MP.peers.size){rvT=0.1;const q=ROOMS.snap();if(q)mpSend({k:'rv',d:R.depth,w:ROOMS.kind,q})}
   if(MP.host&&state!=='trans'){
     MP.mt-=raw;
     if(MP.mt<=0){
@@ -3397,7 +3414,9 @@ function step(now){
   const dt=Math.min(raw,0.05);
   pollPad();
   if((state==='play')!==wasPlaying){wasPlaying=state==='play';document.body.classList.toggle('playing',wasPlaying)}
+  roomWatch();
   if(state==='room'){ROOMS.update(dt,roomInput());if(state==='room')$('fade').style.opacity=ROOMS.fade()}
+  else if(ROOMS.watching){ROOMS.update(dt,NOIN);$('fade').style.opacity=ROOMS.fade()}
   const live=()=>state==='play'||(MP.on&&(state==='pause'||state==='talk'||state==='room'));
   // a fake hang: nothing moves for you, though the room carries on
   if(GL.frz>0){GL.frz-=raw;if(GL.frz<=0)glUnfreeze();mpTick(raw);return raw}
@@ -3416,8 +3435,8 @@ function frame(now){
   if(state==='play')adapt(raw);
   setHum();
   if(GL.frz<=0){
-    if(!window.__norender){if(state==='room'&&ROOMS.active){resize();renderer.toneMappingExposure=1;ROOMS.render()}else render(now/1000)}
-    if(state!=='title'){drawHUD();if(state!=='room')drawMap()}
+    if(!window.__norender){if((state==='room'||ROOMS.watching)&&ROOMS.active){resize();renderer.toneMappingExposure=1;ROOMS.render()}else render(now/1000)}
+    if(state!=='title'){drawHUD();if(state!=='room'&&!ROOMS.watching)drawMap()}
     mpTags();
   }
   requestAnimationFrame(frame);
@@ -3426,5 +3445,5 @@ setInterval(()=>{if(MP.host&&document.hidden&&performance.now()-last>200)step(pe
 // a backdrop maze behind the title screen
 R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
 {const rc=cleanCode(new URLSearchParams(location.search).get('room'));if(rc)mpPrepareJoin(rc)}
-window.__game={glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={get watching(){return RW},roomLeave,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);
