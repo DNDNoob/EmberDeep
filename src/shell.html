@@ -20,6 +20,9 @@
   #hurt{background:radial-gradient(ellipse at center,rgba(160,0,0,0) 30%,rgba(200,10,10,.75) 100%);opacity:0;transition:opacity .5s}
   #flashfx{background:#dff1ff;opacity:0;transition:opacity .7s}
   #fade{background:#000;opacity:0;transition:opacity .4s}
+  #roomHud{position:fixed;left:0;right:0;top:calc(14px + env(safe-area-inset-top));text-align:center;font-size:17px;line-height:1.5;letter-spacing:.05em;color:#ffd9a0;pointer-events:none;text-shadow:0 2px 6px #000,0 0 12px #000;z-index:6}
+  #roomHud small{font-size:13px;color:#cdbfae}
+  body.inroom #hud,body.inroom #map,body.inroom #prompt,body.inroom #vig,body.inroom #tMap,body.inroom #tPause,body.inroom #chill,body.inroom .ptag{display:none!important}
   #hud{position:fixed;inset:0;pointer-events:none;text-shadow:0 1px 3px #000,0 0 8px #000}
   #tl{position:absolute;left:22px;top:18px;font-size:15px;line-height:1.5;letter-spacing:.04em}
   #depthName{font-size:20px;font-family:Georgia,"Times New Roman",serif;letter-spacing:.08em}
@@ -177,6 +180,7 @@
 <div id="toast"></div>
 <div id="chat" hidden><div id="chatLog"></div><input id="chatIn" class="plain" type="text" maxlength="200" placeholder="Say something, Enter to send, Esc to close" autocomplete="off"></div>
 <div id="prompt"></div>
+<div id="roomHud"></div>
 <div id="talk" class="hidden"><div id="talkPurse"></div><div id="talkName"></div><div id="talkText"></div><div id="talkOpts"></div><div id="talkHint"></div></div>
 <div id="fade" class="fx"></div>
 
@@ -188,7 +192,7 @@
     <b>Mouse or ← →</b><span>Look around</span>
     <b>Shift</b><span>Sprint (uses stamina)</span>
     <b>Space</b><span>Jump (or right mouse button). Hold it to keep hopping; a running jump goes farther</span>
-    <b>E or left click</b><span>Flash bomb: stuns nearby creatures. Near a friendly face: talk</span>
+    <b>E or left click</b><span>Flash bomb: stuns nearby creatures. Near a friendly face: talk. Facing a strange door: open it, if you dare</span>
     <b>M or Tab</b><span>Full map</span>
     <b>F</b><span>Fullscreen &nbsp;·&nbsp; <b>V</b> mute &nbsp;·&nbsp; <b>[ ]</b> brightness &nbsp;·&nbsp; <b>Esc</b> pause</span>
   </div>
