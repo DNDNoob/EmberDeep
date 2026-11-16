@@ -43,6 +43,7 @@ const VIEWS = {
   hands:    {dist: 0.5,  turn: 20,  aimY: seated ? 0.3 : 0.6, camY: seated ? 0.45 : 0.7},
   ear:      {dist: 0.2,  turn: 90,  aimY: seated ? 0.62 : 0.93, camY: seated ? 0.62 : 0.93, headLock: true},
   ear34:    {dist: 0.24, turn: 55,  aimY: seated ? 0.62 : 0.94, camY: seated ? 0.62 : 0.94, headLock: true},
+  closeup:  {dist: 0.2,  turn: 0,   aimY: 0.9, camY: 0.9},
   portrait: {dist: 0.62, turn: 0,   aimY: seated ? 0.62 : 0.94, camY: seated ? 0.62 : 0.94},   // face at face height, for detail
 };
 // the Keeper's recipe height is 0.93: aim and camera heights of standing views follow it
