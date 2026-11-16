@@ -43,6 +43,8 @@ const VIEWS = {
   hands:    {dist: 0.5,  turn: 20,  aimY: seated ? 0.3 : 0.6, camY: seated ? 0.45 : 0.7},
   portrait: {dist: 0.62, turn: 0,   aimY: seated ? 0.62 : 0.94, camY: seated ? 0.62 : 0.94},   // face at face height, for detail
 };
+// the Keeper's recipe height is 0.93: aim and camera heights of standing views follow it
+if (A.npc === 'keeper') for (const o of Object.values(VIEWS)) { o.aimY = +(o.aimY * 0.93).toFixed(3); if (o.camY) o.camY = +(o.camY * 0.93).toFixed(3); }
 const [w, h] = A.size.split('x').map(Number);
 mkdirSync(A.out, {recursive: true});
 const b = await chromium.launch();
