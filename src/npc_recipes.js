@@ -56,16 +56,16 @@ export const KEEPER = {
   body: {stoop: 0.05, belly: 0.7, narrow: 0.93, arms: ARMS},
   garments: [
     {type: 'robe', ease: 0.012, hang: 0.03, collar: {r: 0.037}},
-    {type: 'sleeve', arm: 0, ease: 0.011, bell: 0.038, cuff: {len: 0.028}},
-    {type: 'sleeve', arm: 1, ease: 0.011, bell: 0.036, cuff: {len: 0.028}},
+    {type: 'sleeve', arm: 0, ease: 0.011, bell: 0.044, cuff: {len: 0.028}},
+    {type: 'sleeve', arm: 1, ease: 0.011, bell: 0.042, cuff: {len: 0.028}},
     {type: 'sash', y: 0.017, h: 0.027, thick: 0.006}
   ],
   eyes: {frame: 'H', sclera: 'sclera', iris: 'iris', pupil: 'pupil', lid: 'skin', lid2: 'skinDeep'},
   build() {
     const U = {off: this.rig.waist, R: K.rotZ(this.rig.lean)};
     const H = K.head({age: 0.9, brow: 1.25, jaw: 1.0, ears: 1.05, nose: {len: 1.1, width: 1.05, droop: 0.9, bulb: 1.15}, tris: [1000, 380]});
-    const skirt = K.robeSkirt({height: 0.57, waist: 0.097, aspect: 1.12});
-    const B = K.body(this.body), D = K.dress(B, this.garments), torso = D.parts.torso;
+    const skirt = K.robeSkirt({height: 0.57, waist: 0.097, aspect: 1.12, tris: [440, 170]});
+    const B = K.body(this.body), D = K.dress(B, this.garments.map(g => g.type === 'robe' ? {...g, tris: [570, 220]} : g)), torso = D.parts.torso;
     const skirtBody = (x, y, z) => skirt.sdf(x, y, z) / 0.8;
     const hem = K.trimBand(skirtBody, (x, y, z) => y - 0.042, {thick: 0.007, bounds: [-0.25, -0.01, -0.25, 0.25, 0.06, 0.25], cell: 0.0048, tris: [200, 70], cull: (x, y) => y < 0.0035});
     // hide what the other parts cover: the skirt top inside the torso, the torso bottom inside the skirt
