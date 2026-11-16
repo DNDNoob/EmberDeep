@@ -18,8 +18,8 @@ import * as K from './npc_kit.js';
 /* ---------- The Keeper: old robed shopkeeper, white beard, lantern staff ---------- */
 // Arm joint centres in U coords (waist origin): shoulder, elbow, wrist, and radii of the bare arm [deltoid, elbow, wrist].
 const ARMS = [
-  {S: [0, 0.325, 0.1], E: [0.07, 0.125, 0.15], W: [0.2, 0.15, 0.16], r: [0.034, 0.026, 0.018], back: 0.034},   // staff arm (+Z)
-  {S: [0, 0.325, -0.1], E: [0.02, 0.13, -0.145], W: [0.086, 0.06, -0.07], r: [0.034, 0.026, 0.018], back: 0.024} // hand resting on the sash
+  {S: [0, 0.325, 0.095], E: [0.07, 0.125, 0.165], W: [0.2, 0.15, 0.17], r: [0.03, 0.026, 0.018], back: 0.034},   // staff arm (+Z)
+  {S: [0, 0.325, -0.095], E: [0.02, 0.13, -0.16], W: [0.086, 0.06, -0.075], r: [0.03, 0.026, 0.018], back: 0.024} // hand resting on the sash
 ];
 export const KEEPER = {
   id: 'keeper-v6', seed: 4242,
@@ -56,15 +56,15 @@ export const KEEPER = {
   body: {stoop: 0.05, belly: 0.7, narrow: 0.93, arms: ARMS},
   garments: [
     {type: 'robe', ease: 0.012, hang: 0.03, collar: {r: 0.037}},
-    {type: 'sleeve', arm: 0, ease: 0.011, bell: 0.034, cuff: {len: 0.028}},
-    {type: 'sleeve', arm: 1, ease: 0.011, bell: 0.032, cuff: {len: 0.028}},
+    {type: 'sleeve', arm: 0, ease: 0.011, bell: 0.038, cuff: {len: 0.028}},
+    {type: 'sleeve', arm: 1, ease: 0.011, bell: 0.036, cuff: {len: 0.028}},
     {type: 'sash', y: 0.017, h: 0.027, thick: 0.006}
   ],
   eyes: {frame: 'H', sclera: 'sclera', iris: 'iris', pupil: 'pupil', lid: 'skin', lid2: 'skinDeep'},
   build() {
     const U = {off: this.rig.waist, R: K.rotZ(this.rig.lean)};
     const H = K.head({age: 0.9, brow: 1.25, jaw: 1.0, ears: 1.05, nose: {len: 1.1, width: 1.05, droop: 0.9, bulb: 1.15}, tris: [1000, 380]});
-    const skirt = K.robeSkirt({height: 0.57, aspect: 1.12});
+    const skirt = K.robeSkirt({height: 0.57, waist: 0.097, aspect: 1.12});
     const B = K.body(this.body), D = K.dress(B, this.garments), torso = D.parts.torso;
     const skirtBody = (x, y, z) => skirt.sdf(x, y, z) / 0.8;
     const hem = K.trimBand(skirtBody, (x, y, z) => y - 0.042, {thick: 0.007, bounds: [-0.25, -0.01, -0.25, 0.25, 0.06, 0.25], cell: 0.0048, tris: [200, 70], cull: (x, y) => y < 0.0035});

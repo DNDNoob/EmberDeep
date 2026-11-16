@@ -435,7 +435,7 @@ export function dress(B, list) {
     const ring = Math.hypot(Math.hypot(x - nxp, z) - cr * 1.12, y - cy) - ct;       // collar roll
     d = smin(d, ring, 0.014);
     d = smin(d, sdEllipsoid(x + 0.05 - B.stoop * 0.3, y - cy + 0.005, z, 0.05, 0.042, 0.078), 0.04); // cowl bunched at the back
-    return smax(d, -(y + 0.045), 0.004);
+    return smax(d, -(y + 0.012), 0.004);
   };
   const sl = sleeves.map(sg => {
     const a = B.arms[sg.arm], e = sg.ease ?? 0.011, bell = sg.bell ?? 0.034, re = a.r[1] + e * 1.3, rw = a.r[2] + bell, nf = sg.folds ?? 1;
@@ -457,7 +457,7 @@ export function dress(B, list) {
   const torsoFold = (x, y, z) => {
     let d = base(x, y, z);
     if (d < 0.03) {
-      const m = smoothstep((sash ? sash.y + sash.h : 0.045) + 0.01, (sash ? sash.y + sash.h : 0.045) + 0.07, y), a = Math.atan2(z, x - nxp);
+      const m = smoothstep((sash ? sash.y + sash.h : 0.045) + 0.01, (sash ? sash.y + sash.h : 0.045) + 0.07, y) * smoothstep(B.Y.shoulder + 0.01, B.Y.shoulder - 0.07, y), a = Math.atan2(z, x - nxp);
       d += (robe.folds ?? 1) * 0.0045 * m * (Math.sin(11 * a + 4 * fbm(x * 18, y * 9, z * 18, 2)) + 0.5 * fbm(x * 40, y * 40, z * 40, 2));
     }
     return d;
