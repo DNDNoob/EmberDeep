@@ -116,6 +116,8 @@
   .tbtn.on{background:rgba(255,190,110,.4)}
   #tJump{right:calc(24px + env(safe-area-inset-right));bottom:calc(30px + env(safe-area-inset-bottom));width:86px;height:86px}
   #tFlash{right:calc(124px + env(safe-area-inset-right));bottom:calc(22px + env(safe-area-inset-bottom));width:66px;height:66px}
+  #tPick{right:calc(124px + env(safe-area-inset-right));bottom:calc(96px + env(safe-area-inset-bottom));width:52px;height:52px;font-size:11px}
+  body:not(.haspick) #tPick{display:none}
   #tPause{right:calc(150px + env(safe-area-inset-right));top:calc(12px + env(safe-area-inset-top));width:42px;height:42px;font-size:14px}
   #tMap{right:calc(10px + env(safe-area-inset-right));top:calc(10px + env(safe-area-inset-top));width:130px;height:130px;border-radius:10px;border:0;background:none}
   #stickBase,#stickKnob{position:absolute;border-radius:50%;pointer-events:none;display:none;transform:translate(-50%,-50%)}
@@ -179,6 +181,7 @@
   <div id="tPause" class="tbtn">II</div>
   <div id="tFlash" class="tbtn">FLASH</div>
   <div id="tJump" class="tbtn">JUMP</div>
+  <div id="tPick" class="tbtn">PICK</div>
   <div id="tTalk" class="tbtn">TALK</div>
   <div id="tChat" class="tbtn">CHAT</div>
 </div>

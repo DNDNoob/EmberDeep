@@ -1296,8 +1296,8 @@ const DUST=[];{const dr=mulberry32(99);for(let i=0;i<(Q>=2?90:Q>=1?45:0);i++)DUS
 /* ---------- game state ---------- */
 let state='title';           // title | play | pause | trans | dead
 let F=null;                  // current floor
-const P={y:0,vy:0,vx:0,vz:0,airSpeed:2.7,jumpQ:0,keys:0,x:0,z:0,yaw:0,pitch:0,hp:3,fuel:100,stam:100,winded:false,flash:1,ward:0,shards:0,inv:0,bob:0,tx:-1,ty:-1,stepPh:0};
-const R={seed:'',depth:1,score:0,time:0,gems:0,wind:false};
+const P={pick:0,y:0,vy:0,vx:0,vz:0,airSpeed:2.7,jumpQ:0,keys:0,x:0,z:0,yaw:0,pitch:0,hp:3,fuel:100,stam:100,winded:false,flash:1,ward:0,shards:0,inv:0,bob:0,tx:-1,ty:-1,stepPh:0};
+const R={seed:'',depth:1,score:0,time:0,gems:0,wind:false,pk:{}};
 /* ---------- lasting upgrades, bought from the Keeper with gems ---------- */
 const UPG=[
   {k:'heart',name:'Vitality',desc:'One more heart',cost:[15,30,50]},
@@ -1439,9 +1439,8 @@ function roomEnd(res){
   }
   roomClose();
   if(res.k==='win'){
-    const g=4+R.depth;wallet+=g;R.gems+=g;R.score+=80*R.depth;store.set('wallet',wallet);
-    if(P.hp<maxHp())P.hp++;P.fuel=Math.min(100,P.fuel+30);P.inv=2;
-    say('The kiln lets you go. '+g+' gems, and your wounds close a little.',4.5);sfx('shard');
+    R.score+=80*R.depth;P.pick++;P.inv=2;
+    say('The kiln lets you go. It leaves you a pickaxe: one swing, one wall.',5);sfx('shard');
     mpSend({k:'sdr',r:'esc'});mpSys(myName()+' beat the glass kiln');
     return;
   }
@@ -1491,6 +1490,8 @@ function loadFloor(depth){
   P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;P.inSafe=false;nearNpc=null;
   sealMsgT=0;doorMsgT=0;
   onTileChange();
+  pkReapply();
+  if(MP.guest&&MP.hostId)mpSend({k:'pkq',d:depth},MP.hostId);
   glReset();
 }
 function onTileChange(){
@@ -1519,7 +1520,7 @@ function startRun(seed,depth,force){
   if(MP.guest&&!force){mpJoinClick();return}
   const sd=force?depth:clamp(depth||+$('startSel').value||1,1,deepest);
   P.down=false;
-  R.seed=(seed||randSeed()).toUpperCase();R.score=0;R.time=0;R.gems=0;R.startDepth=sd;
+  R.seed=(seed||randSeed()).toUpperCase();R.pk={};P.pick=0;R.score=0;R.time=0;R.gems=0;R.startDepth=sd;
   P.hp=maxHp();P.fuel=100;P.stam=100;P.winded=false;P.flash=1+Math.floor((sd-1)/3)+(up.band|0);P.ward=0;R.wind=false;P.inv=0;P.chill=0;lowFuelSaid=false;
   loadFloor(sd);
   state='play';
@@ -1622,8 +1623,96 @@ function flashStun(x,z,lv){
 }
 function openDoor(quiet){
   if(!F.door)return;
-  P.keys=Math.max(0,P.keys-1);F.doorOpen=true;F.g[F.door.ty*F.W+F.door.tx]=0;F.frames.push(F.door);F.door=null;buildMesh(F);buildSdf(F);onTileChange();
+  P.keys=Math.max(0,P.keys-1);F.doorOpen=true;F.g[F.door.ty*F.W+F.door.tx]=0;F.frames.push(F.door);F.door=null;buildMesh(F);buildSdf(F);onTileChange();F.pkMemo=null;pkReapply();
   if(!quiet){sfx('door');say('The gate grinds open',2.5)}
+}
+/* ---------- the kiln pickaxe: one swing, one wall, for good ---------- */
+let pkShake=0;const pkFx=[];
+// why a wall tile may not be broken: '' when it may. The outer border, the gate (and its stone frame), strange doors, the sanctuary,
+// noclip pockets and anyone standing in a nook stay as they are, and while the gate is shut nothing may join its two sides.
+function pkWhy(tx,ty){
+  if(!F||!Number.isInteger(tx)||!Number.isInteger(ty))return 'bad';
+  const W=F.W,H=F.H;
+  if(tx<1||ty<1||tx>W-2||ty>H-2)return 'border';
+  if(F.g[ty*W+tx]!==1)return 'notwall';
+  const near=(x,y,r)=>Math.abs(x-tx)<=r&&Math.abs(y-ty)<=r;
+  for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){const i=(ty+dy)*W+tx+dx;if(F.safeMask[i]||F.pocketMask[i])return 'kept'}
+  if(F.door&&near(F.door.tx,F.door.ty,1))return 'gate';
+  for(const D of F.frames)if(near(D.tx,D.ty,1))return 'gate';
+  for(const D of F.sdoors)if(near(D.tx+D.dx,D.ty+D.dz,1))return 'door';
+  for(const n of F.npcs)if(near(Math.floor(n.x),Math.floor(n.z),1))return 'kept';
+  if(!DIRS.some(d=>F.g[(ty+d[1])*W+tx+d[0]]===0))return 'sealed';
+  if(F.door){
+    const k=tx+','+ty;F.pkMemo=F.pkMemo||new Map();
+    if(!F.pkMemo.has(k)){
+      const a=bfs(F.g,W,H,F.start.tx,F.start.ty);F.g[ty*W+tx]=0;const b=bfs(F.g,W,H,F.start.tx,F.start.ty);F.g[ty*W+tx]=1;
+      let join=false;for(let i=0;i<W*H;i++)if(a[i]<0&&b[i]>=0&&i!==ty*W+tx){join=true;break}
+      F.pkMemo.set(k,join);
+    }
+    if(F.pkMemo.get(k))return 'gate';
+  }
+  return '';
+}
+// the wall tile you are looking at, from the player along the view direction (pitch is ignored)
+function pkAim(){
+  const cx=Math.cos(P.yaw),cz=Math.sin(P.yaw);
+  for(let t=0.1;t<=1.6;t+=0.05){
+    const x=P.x+cx*t,z=P.z+cz*t;
+    if(!solidAt(x,z))continue;
+    const tx=Math.floor(x),ty=Math.floor(z);
+    return {tx,ty,ok:pkWhy(tx,ty)===''};
+  }
+  return null;
+}
+// open the tile for good: floor and ceiling come back with the mesh, and everything that walks the maze sees the new way
+function pkOpen(tx,ty){
+  const i=ty*F.W+tx;F.g[i]=0;
+  const cxm=tx+0.5,czm=ty+0.5;
+  F.sconces=F.sconces.filter(q=>!(Math.floor(q.lx)+q.dx===tx&&Math.floor(q.lz)+q.dz===ty));
+  F.props=F.props.filter(q=>Math.max(Math.abs(q.x-cxm),Math.abs(q.z-czm))>0.66);
+  const r=mulberry32(hashStr(R.seed+'#pick'+R.depth+','+tx+','+ty));
+  for(let k=0;k<7;k++)F.rubble.push({x:tx+0.15+r()*0.7,z:ty+0.15+r()*0.7,s:0.05+r()*0.08,r:r()*6.28,sy:0.5+r()*0.6});
+  F.pkMemo=null;F.md=null;F.mdKey='';MIM.vdKey='';
+  buildMesh(F);buildStatic(F);buildSdf(F);
+  F.seen[i]=1;onTileChange();F.seen[i]=1;
+}
+function pkRecord(tx,ty){const a=R.pk[R.depth]||(R.pk[R.depth]=[]);if(!a.some(q=>q[0]===tx&&q[1]===ty)&&a.length<64)a.push([tx,ty])}
+// a break from a friend, the host's list, or the record of this floor. Everything is checked first.
+function pkApply(x,y,quiet){
+  if(!Number.isInteger(x)||!Number.isInteger(y)||pkWhy(x,y))return false;
+  pkOpen(x,y);pkRecord(x,y);pkFx.push(...pkDebris(x,y));
+  if(!quiet){const d=Math.hypot(x+0.5-P.x,y+0.5-P.z);if(d<12){const v=clamp(1-d/12,0.2,1);noise(0.3,0.45*v,500,0.8);tone(90,0.25,'sawtooth',0.18*v,0,-50);pkShake=Math.max(pkShake,0.5*v)}}
+  return true;
+}
+// after a floor is rebuilt (or its gate opens) the holes already made for this floor come back
+function pkReapply(){for(const q of (R.pk[R.depth]||[]).slice())if(Number.isInteger(q[0])&&Number.isInteger(q[1])&&!pkWhy(q[0],q[1])){pkOpen(q[0],q[1])}}
+function pkDebris(tx,ty){
+  const o=[],t0=performance.now(),r=Math.random;
+  for(let k=0;k<26;k++){const a=r()*6.283,v=0.4+r()*1.3;o.push({x:tx+0.5,y:0.3+r()*0.9,z:ty+0.5,vx:Math.cos(a)*v,vy:r()*1.4,vz:Math.sin(a)*v,s:0.03+r()*0.09,dust:k>=10,t0,life:0.7+r()*0.9})}
+  return o;
+}
+function pkFxDraw(){
+  const now=performance.now();
+  for(let i=pkFx.length-1;i>=0;i--){
+    const q=pkFx[i],t=(now-q.t0)/1000;
+    if(t>q.life){pkFx.splice(i,1);continue}
+    const f=t/q.life,x=q.x+q.vx*t*(1-f*0.5),z=q.z+q.vz*t*(1-f*0.5),y=Math.max(0.02,q.y+q.vy*t-2.6*t*t);
+    if(q.dust)spr(x,y+0.1*f,z,q.s*(2+f*5),q.s*(2+f*5),7,0.55,0.5,0.44,0.5*(1-f),0);
+    else spr(x,y,z,q.s,q.s,7,0.32,0.28,0.25,1-f*0.4,0);
+  }
+}
+function usePick(){
+  if(state!=='play'||P.pick<=0||P.down||P.away||P.grab)return;
+  const a=pkAim();
+  if(!a)return;
+  if(!a.ok){say('This wall will not break',1.6);sfx('step');return}
+  pkApply(a.tx,a.ty,true);
+  P.pick--;P.inv=Math.max(P.inv,0.4);
+  mpSend({k:'pk',d:R.depth,x:a.tx,y:a.ty});
+  noise(0.5,0.7,380,0.7);noise(0.25,0.5,1800,1);tone(70,0.4,'sawtooth',0.3,0,-40);tone(180,0.08,'square',0.25,0.03,-100);tone(1400,0.12,'triangle',0.12,0.01,-800);
+  pkShake=1;rumble(260,0.9,0.6);
+  say('The wall gives way. The pick crumbles in your hands.',3.5);
+  mpSys(myName()+' broke through a wall');
 }
 function setBlk(v){
   if(v===1){F.blk=1;F.boT=1.7;sfx('powerdown')}
@@ -1723,7 +1812,7 @@ function mpJoinClick(){
 function mpSendRun(to){
   if(!MP.host||!F)return;
   const got=[];F.items.forEach((it,i)=>{if(it.got)got.push(i)});
-  mpSend({k:'run',seed:R.seed,d:R.depth,sd:R.startDepth,t:r2(R.time),got,door:F.doorOpen?1:0,sdo:F.sdoors.map(q=>q.used?1:0),sh:P.shards,ke:P.keys,blk:F.blk|0},to);
+  mpSend({k:'run',seed:R.seed,d:R.depth,sd:R.startDepth,t:r2(R.time),got,door:F.doorOpen?1:0,sdo:F.sdoors.map(q=>q.used?1:0),pk:(R.pk[R.depth]||[]).slice(0,64),sh:P.shards,ke:P.keys,blk:F.blk|0},to);
 }
 function mpApplyRun(r){
   startRun(r.seed,r.d,true);
@@ -1731,6 +1820,7 @@ function mpApplyRun(r){
   for(const i of r.got||[]){const it=F.items[i];if(it)it.got=true}
   if(r.door&&F.door)openDoor(true);
   if(Array.isArray(r.sdo)){r.sdo.forEach((u,i)=>{if(u&&F.sdoors[i])F.sdoors[i].used=true});buildStatic(F)}
+  if(Array.isArray(r.pk))for(const q of r.pk.slice(0,64))if(Array.isArray(q))pkApply(q[0],q[1],true);
   P.shards=r.sh|0;P.keys=r.ke|0;
   if(F.back&&r.blk)F.blk=r.blk;
   say(`You joined ${hostName()}'s game`,3);
@@ -1808,6 +1898,15 @@ function mpRecv(m,from){
       if(inRun&&state!=='trans'&&n>=1&&n<=3)mpDescend(n,p.name+' woke a black hole. It throws you all '+n+(n>1?' floors':' floor')+' down');
       break;}
     case 'down':if(inRun&&state!=='trans'&&m.d===R.depth+1){say(p.name+' found the way down',2);mpDescend()}break;
+    case 'pk':
+      if(!inRun||!here||p.down||state==='trans')return;
+      if(pkApply(m.x,m.y,false)){say(p.name+' broke through a wall',2.5);mpSys(p.name+' broke through a wall')}
+      break;
+    case 'pks':
+      if(!fromHost||!inRun||!here||!Array.isArray(m.t))return;
+      for(const q of m.t.slice(0,64))if(Array.isArray(q))pkApply(q[0],q[1],true);
+      break;
+    case 'pkq':if(MP.host&&inRun&&here&&m.d===R.depth&&(R.pk[R.depth]||[]).length)mpSend({k:'pks',d:R.depth,t:R.pk[R.depth].slice(0,64)},from);break;
     case 'fl':if(MP.host&&inRun&&here)flashStun(+m.x,+m.z,+m.p);break;
     case 'hit':
       if(!fromHost||!inRun||P.down||P.away||state==='trans')return;
@@ -2318,6 +2417,7 @@ addEventListener('keydown',e=>{
   else if(state==='play'){
     if(e.code==='Space')P.jumpQ=0.15;
     if(e.code==='KeyE')act();
+    if(e.code==='KeyQ')usePick();
     if(e.code==='KeyM'||e.code==='Tab')mapBig=!mapBig;
     if(e.code==='Escape'||e.code==='KeyP')pause();
     if((e.code==='Enter'||e.code==='NumpadEnter'||e.code==='KeyT')&&MP.on){e.preventDefault();chatOpenBox()}
@@ -2413,6 +2513,7 @@ addEventListener('touchstart',()=>{enableTouch();initAudio()},{passive:true});
   btn('tFlash',()=>{touch.act=true;if(state==='play')act()},()=>{touch.act=false});
   btn('tPause',()=>{touch.jump=false;endStick();touch.lookId=null;touch.tapId=null;ROOMS.untap();pause()});
   btn('tMap',()=>{mapBig=!mapBig});
+  btn('tPick',()=>{usePick()});
   btn('tTalk',()=>{touch.talk=true},()=>{touch.talk=false});
   btn('tChat',()=>{chatOpenBox()});
   $('quitBtn').addEventListener('click',toTitle);
@@ -2436,7 +2537,7 @@ function pollPad(){
   const gp=pickPad();pad.gp=gp;
   if(!gp){if(pad.id){pad.id='';$('padLine').textContent='';pad.prev=[]}return}
   if(pad.id!==gp.id){pad.id=gp.id;initAudio();
-    $('padLine').innerHTML='Controller connected. <b>Left stick</b> move · <b>Right stick</b> look · <b>A</b> jump · <b>X</b> or <b>RT</b> flash · <b>LT</b> or click left stick to sprint · <b>Y</b> map · <b>Start</b> pause';
+    $('padLine').innerHTML='Controller connected. <b>Left stick</b> move · <b>Right stick</b> look · <b>A</b> jump · <b>X</b> or <b>RT</b> flash · <b>LT</b> or click left stick to sprint · <b>Y</b> map · <b>RB</b> pickaxe · <b>Start</b> pause';
     if(state==='play')say('Controller connected',2)}
   const B=i=>{const b=gp.buttons[i];return !!b&&(b.pressed||b.value>0.4)};
   pad.b0=B(0);pad.b2=B(2);pad.du=B(12);pad.dd=B(13);pad.dl=B(14);pad.dr=B(15);
@@ -2452,6 +2553,7 @@ function pollPad(){
     if(Math.hypot(pad.mx,pad.my)<0.3)pad.sprintLatch=false;
     if(pad.sprintLatch)pad.sprint=true;
     if(hit(2)||hit(1)||hit(7))act();
+    if(hit(5))usePick();
     if(hit(3))mapBig=!mapBig;
     if(hit(9))pause();
     if(hit(14))setBright(bright-0.15);
@@ -2647,7 +2749,8 @@ function update(dt){
     let nd=null;
     if(!best&&ctl){let dd=0.72;for(const D of F.sdoors){if(D.used)continue;const d=Math.hypot(D.x-P.x,D.z-P.z);if(d<dd&&(D.x-P.x)*Math.cos(P.yaw)+(D.z-P.z)*Math.sin(P.yaw)>d*0.45){dd=d;nd=D}}}
     if(best!==nearNpc||nd!==nearDoor){nearNpc=best;nearDoor=nd;if(state!=='room')$('tFlash').textContent=best?'TALK':nd?'OPEN':'FLASH'}
-    if(state!=='room')setText('prompt',best?(touch.on?'TALK':pad.id?'X':'E')+': speak with '+NPC[best.type].name:nd?(touch.on?'OPEN':pad.id?'X':'E')+': open the strange door':'');}
+    const pt=!best&&!nd&&state==='play'?pkAim():null;
+    if(state!=='room')setText('prompt',best?(touch.on?'TALK':pad.id?'X':'E')+': speak with '+NPC[best.type].name:nd?(touch.on?'OPEN':pad.id?'X':'E')+': open the strange door':pt?pt.ok?(touch.on?'PICK':pad.id?'RB':'Q')+': break through this wall':'This wall will not break':'');}
   if(P.fuel<20&&!lowFuelSaid){lowFuelSaid=true;say(P.fuel<=0?'Your torch is out':'Your torch is guttering. Find oil.',3)}
   if(P.inv>0)P.inv-=dt;
   if(P.chill>0){P.chill-=dt;$('chill').style.opacity=clamp(P.chill/1.2,0,1)}else if(P.chill<0||P.chill===0&&$('chill').style.opacity!=='0'){P.chill=0;$('chill').style.opacity='0'}
@@ -3258,6 +3361,7 @@ function render(t){
   const yaw=title?titleYaw:P.yaw, pitch=title?0:P.pitch;
   const ex=P.x, ez=P.z, ey=EYE+(title?0:P.y+Math.sin(P.bob*2)*0.018);
   {const cp=Math.cos(pitch);camera.position.set(ex,ey,ez);camera.lookAt(ex+cp*Math.cos(yaw),ey+Math.sin(pitch),ez+cp*Math.sin(yaw))}
+  if(pkShake>0){const k=0.05*pkShake;camera.position.x+=(Math.random()-0.5)*k;camera.position.y+=(Math.random()-0.5)*k;camera.position.z+=(Math.random()-0.5)*k;pkShake=Math.max(0,pkShake-0.03)}
   if(P.grab){const k=0.012+0.02*Math.min(1,P.grab.t);camera.position.x+=(Math.random()-0.5)*k;camera.position.y+=(Math.random()-0.5)*k;camera.position.z+=(Math.random()-0.5)*k}
   const B=F.biome;
   const fwx=Math.cos(yaw),fwz=Math.sin(yaw),rx=-fwz,rz=fwx;
@@ -3408,6 +3512,7 @@ function render(t){
   }
   if(flashT>0){const k=1-flashT,rr=0.4+k*5.5;
     for(let i=0;i<18;i++){const a=i/18*6.283+k;spr(ex+Math.cos(a)*rr,0.25+((i*7)%5)*0.16,ez+Math.sin(a)*rr,0.25,0.25,7,0.8,0.9,1.0,flashT*0.8,1)}}
+  pkFxDraw();
   for(const m of DUST){
     const px=ex+((m[0]+Math.sin(t*0.21+m[3])*0.4-ex)%8+12)%8-4,pz=ez+((m[2]+Math.cos(t*0.17+m[3])*0.4-ez)%8+12)%8-4;
     const py=0.05+((m[1]+t*0.012+Math.sin(t*0.3+m[3])*0.05)%1.15);
@@ -3466,7 +3571,8 @@ function drawHUD(){
   setHTML('hearts','♥'.repeat(Math.max(0,P.hp))+'<i>'+'♥'.repeat(Math.max(0,maxHp()-Math.max(0,P.hp)))+'</i>');
   setW('fuelFill',P.fuel);setW('stamFill',P.stam);
   setText('shards',GL.hudOv.shards||'◆ '+P.shards+' / 3 shards');
-  setText('flashes','✦ '+P.flash+' flash'+(P.flash===1?'':'es'));
+  setText('flashes','✦ '+P.flash+' flash'+(P.flash===1?'':'es')+(P.pick>0?'   ⛏ '+P.pick:''));
+  document.body.classList.toggle('haspick',P.pick>0&&state==='play');
   setText('keysLine',(P.keys?'⚷ gate key':'')+(P.ward?(P.keys?' · ':'')+'◈ ward stone':''));
   setText('embers','● '+wallet+(wallet===1?' gem':' gems')+' · Level '+plLevel());
   setText('mpLine',mpHudLine());
@@ -3554,5 +3660,5 @@ setInterval(()=>{if(MP.host&&document.hidden&&performance.now()-last>200)step(pe
 // a backdrop maze behind the title screen
 R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
 {const rc=cleanCode(new URLSearchParams(location.search).get('room'));if(rc)mpPrepareJoin(rc)}
-window.__game={doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);
