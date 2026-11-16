@@ -2152,7 +2152,8 @@ function mpBinary(buf,meta,from){
 // Optional: the host's own local AI (Andrew's AI-Router) listens to each clip and picks lines.
 // POST {url}/transcribe with the clip's audio returns {text}; POST {url}/pick with the clips and
 // the moment returns {key}. Anything that fails just falls back to the built-in choice.
-const BRAIN={on:!!store.get('brain',false),url:String(store.get('brainUrl','http://127.0.0.1:7792/emberdeep')),next:'',busy:false,ok:null};
+// the service moved from port 7792 to 7794; a saved old default follows it
+const BRAIN={on:!!store.get('brain',false),url:String(store.get('brainUrl','http://127.0.0.1:7794/emberdeep')).replace('127.0.0.1:7792/','127.0.0.1:7794/'),next:'',busy:false,ok:null};
 function mimicHear(id,c){
   if(!MP.host||!BRAIN.on)return;
   fetch(BRAIN.url+'/transcribe',{method:'POST',headers:{'Content-Type':c.type||'audio/webm'},body:c.buf.slice(0)})
