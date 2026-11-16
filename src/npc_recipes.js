@@ -18,8 +18,8 @@ import * as K from './npc_kit.js';
 /* ---------- The Keeper: old robed shopkeeper, white beard, lantern staff ---------- */
 // Arm joint centres in U coords (waist origin): shoulder, elbow, wrist, and radii of the bare arm [deltoid, elbow, wrist].
 const ARMS = [
-  {S: [0, 0.325, 0.095], E: [0.07, 0.125, 0.165], W: [0.2, 0.15, 0.17], r: [0.03, 0.026, 0.018], back: 0.034},   // staff arm (+Z)
-  {S: [0, 0.325, -0.095], E: [0.02, 0.13, -0.16], W: [0.086, 0.06, -0.075], r: [0.03, 0.026, 0.018], back: 0.024} // hand resting on the sash
+  {S: [0, 0.325, 0.105], E: [0.07, 0.115, 0.17], W: [0.225, 0.15, 0.18], r: [0.03, 0.026, 0.018], back: 0.034},   // staff arm (+Z)
+  {S: [0, 0.325, -0.105], E: [0.0, 0.12, -0.165], W: [0.105, 0.04, -0.075], r: [0.03, 0.026, 0.018], back: 0.024} // hand resting on the sash
 ];
 export const KEEPER = {
   id: 'keeper-v6', seed: 4242,
@@ -53,7 +53,7 @@ export const KEEPER = {
     {part: 'restHand', frame: 'rest', mat: 'skin', col: 'skin', col2: 'skinDeep'}
   ],
   // Body first, clothes over it (docs/npc-kit.md): the body is only an SDF; the garments are the meshes.
-  body: {stoop: 0.05, belly: 0.7, narrow: 0.93, arms: ARMS},
+  body: {stoop: 0.05, belly: 0.5, narrow: 1.0, waistNarrow: 0.86, arms: ARMS},
   garments: [
     {type: 'robe', ease: 0.012, hang: 0.03, collar: {r: 0.037}},
     {type: 'sleeve', arm: 0, ease: 0.011, bell: 0.044, cuff: {len: 0.028}},

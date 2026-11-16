@@ -391,14 +391,14 @@ export function robeTorso(p) {
            sleeves = tubes around the arm SDFs widening to bell mouths, sash and cuffs = raised bands on those shells.
    ===================================================================================== */
 // p: {unit (head height in figure metres, default HEAD_H*0.6), stoop (forward shear of the upper body per m), belly 0..1,
-//     narrow (chest width factor), ratios:{...ANTHRO overrides}, y:{chest, ribs, belly, pelvis, shoulder, neck},
+//     narrow (chest width factor), waistNarrow, ratios:{...ANTHRO overrides}, y:{chest, ribs, belly, pelvis, shoulder, neck},
 //     arms:[{S,E,W,r:[deltoid, elbow, wrist], back}] in U coords (joint centres; arms stay rigid and separate)}
 export function body(p = {}) {
   const u = p.unit ?? HEAD_H * 0.6, o = p.ratios || {}, g = k => (o[k] ?? ANTHRO[k]) * u;
   const Y = {chest: 0.235, ribs: 0.135, belly: 0.03, pelvis: -0.05, shoulder: 0.335, neck: 0.4, ...(p.y || {})};
   const stoop = p.stoop ?? 0, belly = p.belly ?? 0, nx = 0.005;
-  const cw = g('chestBreadth') / 2 * (p.narrow ?? 1), cd = g('chestDepth') / 2, ww = g('waistBreadth') / 2 * (p.narrow ?? 1), wd = g('waistDepth') / 2, hw = g('hipBreadth') / 2;
-  const sw = Math.max(...p.arms.map(a => Math.abs(a.S[2]))), nr = g('neckRadius') / 2;
+  const cw = g('chestBreadth') / 2 * (p.narrow ?? 1), cd = g('chestDepth') / 2, ww = g('waistBreadth') / 2 * (p.waistNarrow ?? p.narrow ?? 1), wd = g('waistDepth') / 2, hw = g('hipBreadth') / 2;
+  const sw = Math.max(...p.arms.map(a => Math.abs(a.S[2]))), nr = g('neckRadius') * 0.6;   // neck circumference is taken at the Adam's apple; the neck column is ~0.6 of that radius
   const torso = (x, y, z) => { // ribcage, belly, pelvis, neck and trapezius slopes; no arms
     const xs = x - stoop * Math.max(0, y - 0.03), az = Math.abs(z);
     let d = sdEllipsoid(xs, y - Y.chest, z, cd, 0.095, cw);
