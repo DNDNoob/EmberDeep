@@ -389,13 +389,13 @@ function genFloor(seedStr,depth){
       }
     }
     for(let i=dc.length-1;i>0;i--){const j=(dr()*(i+1))|0;const t=dc[i];dc[i]=dc[j];dc[j]=t}
-    const plan=doorPlan(seedStr,depth),rot=plan.perType===false,want=rot?plan.kinds.length:(plan.kinds.length?2+(dr()<0.5?1:0):0);
+    const plan=doorPlan(seedStr,depth),want=plan.count;
     const place=gap=>{for(const c of dc){
       if(sdoors.length>=want)break;
       if(sdoors.some(q=>Math.abs(q.tx-c[0])+Math.abs(q.ty-c[1])<gap))continue;
-      sdoors.push({tx:c[0],ty:c[1],dx:c[2],dz:c[3],x:c[4],z:c[5],r:Math.atan2(-c[3],-c[2]),kind:plan.kinds[rot?sdoors.length:0],used:false,ph:dr()*6.28});
+      sdoors.push({tx:c[0],ty:c[1],dx:c[2],dz:c[3],x:c[4],z:c[5],r:Math.atan2(-c[3],-c[2]),kind:plan.kinds[sdoors.length],used:false,ph:dr()*6.28});
     }};
-    place(6);if(rot&&sdoors.length<want)place(3);
+    place(6);if(sdoors.length<want)place(3);
     // every door wears a look. A disguise kind (the trap) picks one with the door rng AFTER placement so positions and kinds never move.
     const own=doorDisguises();
     for(const D of sdoors){const k=DOOR_KINDS[D.kind]||{};D.look=k.disguise?(own[(dr()*own.length)|0]||'wood'):(k.look||'wood')}}
@@ -1158,8 +1158,8 @@ function buildProp(pr,F){
    A door has a KIND (what happens when it opens: DOOR_KINDS) and a LOOK (how its leaf is drawn: DOOR_LOOKS).
    Behaviour (rooms, ROOM_NAME, network messages) always follows D.kind; drawing and the keyhole glow follow D.look.
    To add a new door type: add one entry to DOOR_LOOKS (leaf + optional glow) and one to DOOR_KINDS ({look:'name'}).
-   Types rotate through DOOR_KINDS in registry order, floor after floor (doorPlan): under DOOR_ROTATE_MIN types a floor holds a
-   single type; from there it holds doorCountFor(depth) different ones, each floor carrying on where the last stopped. Nothing else to edit.
+   A floor holds only ONE COPY of each door type, so its doors are all different kinds. Types rotate through DOOR_KINDS in registry order,
+   floor after floor (doorPlan): a floor gets min(types, doorCountFor(depth)) consecutive types, each floor carrying on where the last stopped. Nothing else to edit.
    Any kind marked {disguise:true} (the trap) automatically passes as every look owned by a non-disguise kind,
    including ones added later: genFloor picks one with the door's seeded rng, so every player agrees on it.
    'wood' is the plain fallback for an unknown look. Stone jambs, lintel and the "used" state are shared code below. */
@@ -1220,19 +1220,17 @@ const DOOR_LOOKS={
   }
 };
 const DOOR_KINDS={galaxy:{look:'galaxy'},kiln:{look:'kiln'},fall:{disguise:true}};
-const DOOR_ROTATE_MIN=5,DOOR_EXPLORE_PER_MIN=150;
+const DOOR_EXPLORE_PER_MIN=150;
 const doorOrder=()=>Object.keys(DOOR_KINDS);
 // doors on a floor: k doors spread over a floor mean a runner must uncover ~1/(k+1) of it to meet one, and a minute of running uncovers ~DOOR_EXPLORE_PER_MIN new tiles
-const doorCountFor=depth=>{const cw=Math.min(8+depth,20);return Math.max(1,Math.ceil(2*cw*cw/DOOR_EXPLORE_PER_MIN)-1)};
-// which kind each door slot on a floor gets. Few types: the whole floor is ONE type, stepping along the registry floor by floor.
-// Enough types: DOOR_ROTATE_MIN+ means several distinct types per floor, doorCountFor(depth) of them, each floor carrying on where the last stopped.
+const doorCountFor=depth=>{const cw=Math.min(8+depth,20);return Math.max(2,Math.ceil(2*cw*cw/DOOR_EXPLORE_PER_MIN)-1)};
+// which kind each door slot on a floor gets: one copy of each type, so min(types, doorCountFor(depth)) DISTINCT kinds, taken consecutively from the registry
+// and carrying on where the previous floor stopped (start point = per-seed offset + doors of earlier floors). Deterministic from (seed, depth, registry).
 const doorPlan=(seedStr,depth,order=doorOrder())=>{
-  const N=order.length;if(!N)return{kinds:[],perType:true};
-  const off=hashStr(seedStr+'#doorrot')%N;
-  if(N<DOOR_ROTATE_MIN)return{kinds:[order[(off+depth-1)%N]],perType:true};
-  let cur=off;for(let d=1;d<depth;d++)cur+=Math.min(N,doorCountFor(d));
+  const N=order.length;if(!N)return{kinds:[],count:0};
+  let cur=hashStr(seedStr+'#doorrot')%N;for(let d=1;d<depth;d++)cur+=Math.min(N,doorCountFor(d));
   const n=Math.min(N,doorCountFor(depth)),kinds=[];for(let i=0;i<n;i++)kinds.push(order[(cur+i)%N]);
-  return{kinds,perType:false}};
+  return{kinds,count:n}};
 const doorLookOf=D=>DOOR_LOOKS[D.look]?D.look:DOOR_LOOKS[(DOOR_KINDS[D.kind]||{}).look]?DOOR_KINDS[D.kind].look:'wood';
 // the looks a trap door may wear: every look owned by a non-disguise kind
 const doorDisguises=()=>{const o=[];for(const k in DOOR_KINDS){const l=DOOR_KINDS[k].look;if(!DOOR_KINDS[k].disguise&&l&&DOOR_LOOKS[l]&&!o.includes(l))o.push(l)}return o};

@@ -9,24 +9,27 @@ pg.on('pageerror',e=>errs.push(String(e)));pg.on('console',m=>{if(m.type()==='er
 await pg.addInitScript(()=>{window.__norender=true});
 await pg.goto(pathToFileURL(root+'/index.html').href);await pg.waitForFunction(()=>window.__game&&window.__game.genFloor);
 let fails=0;const bad=m=>{fails++;console.log('FAIL',m)};
-// 1. real registry
+// 1. real registry: every floor holds ONE COPY of each type (distinct kinds), min(N,doorCountFor(depth)) doors, sequence continues floor to floor
 const r1=await pg.evaluate(()=>{
-  const G=window.__game,ord=G.doorOrder(),out={bad:[],few:0,floors:0,hist:{},diff:0,order:ord};
-  for(let s=0;s<30;s++){const seed='seed'+s;let prev=null;
+  const G=window.__game,ord=G.doorOrder(),N=ord.length,out={bad:[],floors:0,hist:{},short:0,perDepth:{},diff:0,order:ord,sample:[]};
+  for(let s=0;s<30;s++){const seed='seed'+s;let last=null;
     for(let d=1;d<=20;d++){
       const f=G.genFloor(seed,d),f2=G.genFloor(seed,d);out.floors++;
       const ks=f.sdoors.map(q=>q.kind);
       if(JSON.stringify(f.sdoors.map(q=>[q.tx,q.ty,q.kind,q.look]))!==JSON.stringify(f2.sdoors.map(q=>[q.tx,q.ty,q.kind,q.look])))out.diff++;
-      out.hist[ks.length]=(out.hist[ks.length]||0)+1;if(ks.length<2)out.few++;
-      if(new Set(ks).size>1)out.bad.push(seed+' d'+d+' mixed '+ks);
-      if(ks.length&&prev!==null&&ord[(ord.indexOf(prev)+1)%ord.length]!==ks[0])out.bad.push(seed+' d'+d+' seq '+prev+'->'+ks[0]);
-      if(ks.length)prev=ks[0];else prev=null;
+      out.hist[ks.length]=(out.hist[ks.length]||0)+1;const want=Math.min(N,G.doorCountFor(d));out.perDepth[d]=ks.length;
+      if(ks.length!==want){out.short++;out.bad.push(seed+' d'+d+' count '+ks.length+' != '+want)}
+      if(new Set(ks).size!==ks.length)out.bad.push(seed+' d'+d+' duplicate kinds '+ks);
+      for(let i=1;i<ks.length;i++)if(ord.indexOf(ks[i])!==(ord.indexOf(ks[i-1])+1)%N)out.bad.push(seed+' d'+d+' inner seq '+ks);
+      if(ks.length){if(last!==null&&ord[(last+1)%N]!==ks[0])out.bad.push(seed+' d'+d+' seq skip/repeat '+ord[last]+'->'+ks[0]);last=ord.indexOf(ks[ks.length-1])}else last=null;
+      if(s===0&&d<=8)out.sample.push('d'+d+': '+ks.join(','));
     }}
   return out});
-console.log('T1 floors',r1.floors,'door-count histogram',JSON.stringify(r1.hist),'floors with <2 doors',r1.few,'nondeterministic',r1.diff);
-if(r1.bad.length)bad('T1 '+r1.bad.slice(0,5).join('; '));if(r1.diff)bad('T1 nondeterministic');
+console.log('T1 floors',r1.floors,'door-count histogram',JSON.stringify(r1.hist),'floors short of min(N,doorCountFor)',r1.short,'nondeterministic',r1.diff);
+console.log('T1 doors per depth',JSON.stringify(r1.perDepth));console.log(r1.sample.join('\n'));
+if(r1.bad.length)bad('T1 '+r1.bad.slice(0,5).join('; '));if(r1.diff)bad('T1 nondeterministic');if(r1.short)bad('T1 '+r1.short+' floors placed wrong door count');
 // 2. synthetic registries
-for(const N of [5,6,10,13]){
+for(const N of [1,2,5,6,10,13]){
   const r=await pg.evaluate(N=>{const G=window.__game,ord=Array.from({length:N},(_,i)=>'t'+(i+1)),o={bad:[],pat:[]};
     for(let s=0;s<20;s++){const seed='syn'+s;let last=null;
       for(let d=1;d<=25;d++){const p=G.doorPlan(seed,d,ord),k=p.kinds;
