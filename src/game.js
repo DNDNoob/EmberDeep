@@ -11,6 +11,7 @@ import {makeSurfaces} from './textures.js';
 import {openRoom,newRoomCode,cleanCode} from './net.js';
 import {createVoice} from './voice.js';
 import {createRooms,kilnGame,KILN} from './rooms.js';
+import {createBabyFace,createFallVoid} from './babyface.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('gl');
@@ -1535,7 +1536,7 @@ function showTips(){
   t.forEach((msg,i)=>tipTimers.push(setTimeout(()=>{if(state==='play'&&R.depth===d)say(msg,4)},4200+i*4600)));
 }
 function toTitle(){
-  roomLeave();
+  roomLeave();glFallEnd();
   if(MP.on)mpLeave(false);
   state='title';
   ['pause','dead','hud','map','talk'].forEach(id=>$(id).classList.add('hidden'));talk=null;clearPrompt();
@@ -2343,6 +2344,7 @@ document.addEventListener('mousemove',e=>{
   const mx=e.movementX,my=e.movementY;
   if(!isFinite(mx)||!isFinite(my)||Math.abs(mx)>600||Math.abs(my)>600)return;
   if(state==='room'){ROOMS.look(mx*0.0022*sens,my*0.0022*sens);return}
+  if(glLook(mx*0.0022*sens,-my*0.0022*sens))return;
   P.yaw+=mx*0.0022*sens;
   P.pitch=clamp(P.pitch-my*0.0022*sens,-0.9,0.9);
 });
@@ -2391,7 +2393,7 @@ addEventListener('touchstart',()=>{enableTouch();initAudio()},{passive:true});
       if(t.identifier===touch.stickId)setStick(t.clientX,t.clientY);
       else if(t.identifier===touch.lookId){
         if(state==='room')ROOMS.look((t.clientX-touch.lx)*0.0062*sens,(t.clientY-touch.ly)*0.005*sens);
-        if(state==='play'){P.yaw+=(t.clientX-touch.lx)*0.0062*sens;P.pitch=clamp(P.pitch-(t.clientY-touch.ly)*0.005*sens,-0.9,0.9)}
+        if(state==='play'&&!glLook((t.clientX-touch.lx)*0.0062*sens,-(t.clientY-touch.ly)*0.005*sens)){P.yaw+=(t.clientX-touch.lx)*0.0062*sens;P.pitch=clamp(P.pitch-(t.clientY-touch.ly)*0.005*sens,-0.9,0.9)}
         touch.lx=t.clientX;touch.ly=t.clientY;
       }
     }
@@ -2804,9 +2806,10 @@ function update(dt){
 const GL={cd:60,used:{},frz:0,frzAfter:null,buzz:null,hist:[],histT:0,rb:null,rbN:0,figs:[],hole:null,fall:null,loop:null,
   ghosts:[],walked:null,peerH:new Map(),hudOv:{},hudSeq:null,chatT:0,dip:0,netEl:null,netT:0};
 function glReset(){
+  glFallEnd();
   GL.cd=F.back?28+Math.random()*30:55+Math.random()*60;GL.used={};GL.frz=0;GL.frzAfter=null;GL.hist=[];GL.rb=null;
   GL.figs=[];GL.ghosts=[];GL.fall=null;GL.loop=null;GL.hudOv={};GL.hudSeq=null;GL.dip=0;GL.walked=new Uint8Array(F.W*F.H);
-  glHoleOff();if(GL.grid){scene.remove(GL.grid);GL.grid=null}
+  glHoleOff();
   for(const p of MP.peers.values())p.glRep=null;
 }
 const glOpen=(x,y)=>x>0&&y>0&&x<F.W-1&&y<F.H-1&&F.g[y*F.W+x]===0&&!F.safeMask[y*F.W+x]&&!F.pocketMask[y*F.W+x];
@@ -2824,6 +2827,7 @@ function glTick(dt,chasing){
   if(!F||state==='title')return;
   if(GL.netT>0){GL.netT-=dt;if(GL.netT<=0)glNet('')}
   if(GL.chatT>0)GL.chatT-=dt;
+  if(!BABY&&!GL.prep&&R.depth>=3){GL.prep=1;window.requestIdleCallback?requestIdleCallback(glFallBuild,{timeout:9000}):setTimeout(glFallBuild,3000)}   // build the face while nobody is looking
   // a short memory of where you have been, for the rubber band and the fall
   GL.histT-=dt;
   if(GL.histT<=0){GL.histT=0.1;GL.hist.push([P.x,P.z,P.yaw]);if(GL.hist.length>40)GL.hist.shift();
@@ -3108,31 +3112,82 @@ function glHoleTick(dt){
   if(h.t>45)glHoleOff();
 }
 
-/* 6. falling through the floor, under the maze, into a dark grid, and waking at the start */
+/* 6. falling through the floor, out of the underside of the maze, down a black void to a giant baby, and into its mouth */
+// Sink through the stone, hang a beat, then fall (gently, to a terminal speed) while the camera eases to look down
+// at the face. The mouth opens as you near it; you drop in, the screen goes dark, and you wake at the start.
+const FALL={hang:1.6,tFall:5.2,vt:19,tau:1.4,wake:8.4,pitch:-1.35,gridY:-5,far:420};
+FALL.dist=FALL.vt*(FALL.tFall-FALL.tau*(1-Math.exp(-FALL.tFall/FALL.tau)));   // metres from where you hang to the lips
+let BABY=null,VOID=null;
+function glFallBuild(){   // built once, kept for every later fall
+  if(BABY)return true;
+  try{BABY=createBabyFace(THREE,{quality:Q});VOID=createFallVoid(THREE,{quality:Q})}catch(e){BABY=VOID=null;return false}
+  return true;
+}
+// mouse and touch look during the fall only nudge the view
+function glLook(dyaw,dpitch){const L=GL.fall;if(!L)return false;P.yaw+=dyaw*0.3;L.li=clamp(L.li+dpitch*0.3,-0.25,0.25);return true}
 function glFall(){
-  if(glTrapAt(P.tx,P.ty)||Math.hypot(F.exit.x-P.x,F.exit.z-P.z)<2)return false;
-  GL.fall={t:0,vy:0};P.vx=P.vz=0;P.inv=99;
-  if(!GL.grid){GL.grid=new THREE.GridHelper(400,200,0x3a3a40,0x26262c);GL.grid.position.set(P.x,-34,P.z);scene.add(GL.grid)}
+  if(glTrapAt(P.tx,P.ty)||Math.hypot(F.exit.x-P.x,F.exit.z-P.z)<2||!glFallBuild())return false;
+  const fx=Math.cos(P.yaw),fz=Math.sin(P.yaw),g=BABY.group;
+  GL.fall={t:0,li:0,fx,fz,x0:P.x,z0:P.z,far:camera.far,ao:gtaoPass&&gtaoPass.enabled,sy:0,coo:0,wind:0};
+  P.vx=P.vz=0;P.inv=99;
+  // the head lies face-up: its forehead points the way you were looking, so it is the right way up on screen
+  g.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(-fz,0,fx),new THREE.Vector3(fx,0,fz),new THREE.Vector3(0,1,0)));
+  GL.fall.lipY=EYE-0.95-FALL.dist;                                          // camera height as it crosses the lips
+  scene.add(g,VOID.group);camera.far=FALL.far;camera.updateProjectionMatrix();if(gtaoPass)gtaoPass.enabled=false;
+  BABY.update(0,{camPos:camera.position,open:0,t:0,fade:0});VOID.update(0,{camPos:camera.position,t:0,fade:0,gridY:FALL.gridY});
+  renderer.compile(scene,camera);
   tone(70,2.6,'sine',0.12,0.3,-40);noise(0.25,0.08,2400,3);
   return true;
 }
+// tear everything down; safe to call at any time, whatever stage the fall is in
+function glFallEnd(waking){
+  const L=GL.fall;GL.fall=null;
+  if(BABY&&BABY.group.parent)scene.remove(BABY.group);
+  if(VOID&&VOID.group.parent)scene.remove(VOID.group);
+  if(!L)return;
+  camera.far=L.far;camera.updateProjectionMatrix();if(gtaoPass)gtaoPass.enabled=L.ao;
+  const f=$('fade').style;f.transition='';if(!waking)f.opacity=0;
+  P.y=0;P.vy=0;P.pitch=0;if(P.inv>50)P.inv=0;
+}
 function glFallTick(dt){
   const L=GL.fall;if(!L)return;
-  L.t+=dt;
-  if(L.t<0.9)P.y=-0.85*(L.t/0.9)**2;          // sink slowly through the stone
-  else if(L.t<1.6)P.y=-0.85-0.05*(L.t-0.9);    // hang for a moment just under it, looking at the underside
-  else{L.vy+=9*dt;P.y-=L.vy*dt}
-  if(L.t>1.6&&!L.wind){L.wind=1;noise(2.6,0.12,180,0.6)}
-  if(L.t>3.6&&!L.dark){L.dark=1;$('fade').style.opacity=1}
-  if(L.t>4.6){
+  L.t+=dt;const t=L.t,sm=(a,b,x)=>{x=clamp((x-a)/(b-a),0,1);return x*x*(3-2*x)};
+  const tf=Math.max(0,t-FALL.hang),k=FALL.tau;
+  if(t<0.9)P.y=-0.85*(t/0.9)**2;                 // sink slowly through the stone
+  else if(t<FALL.hang)P.y=-0.85-0.05*(t-0.9);    // hang for a moment just under it, looking at the underside
+  else P.y=-0.95-FALL.vt*(tf-k*(1-Math.exp(-tf/k)));   // then drop, up to a terminal speed
+  const vy=tf>0?FALL.vt*(1-Math.exp(-tf/k)):0;
+  // look down at the face: ease the pitch, with a slow sway, and let the player's own input push a little
+  if(t>1.45)P.pitch+=(FALL.pitch-0.17*sm(3.5,6.4,t)+L.li+0.035*Math.sin(t*1.7)-P.pitch)*(1-Math.exp(-dt*1.8));
+  const cam=glFallCam||(glFallCam=new THREE.Vector3());cam.set(P.x,EYE+P.y,P.z);
+  // where the face is: under you at first, sliding so that its mouth is directly beneath you when you reach it
+  const e=sm(0,FALL.tFall,tf),mouthD=(-BABY.mouth[1])*BABY.scale,lipD=BABY.lipZ*BABY.scale;
+  BABY.group.position.set(L.x0+L.fx*mouthD*e,L.lipY-lipD,L.z0+L.fz*mouthD*e);
+  const toLip=cam.y-L.lipY;                                    // metres still to fall to the lips
+  const open=0.10+0.90*sm(55,6,toLip)+(tf>0?0.05*Math.sin(t*5)*sm(60,30,toLip):0);
+  const fade=sm(1.5,3.2,t);
+  BABY.update(dt,{camPos:cam,open:t>FALL.hang+FALL.tFall+0.6?Math.max(0,1-(t-FALL.hang-FALL.tFall-0.6)*2):open,t,fade});
+  VOID.update(dt,{camPos:cam,t,fade:sm(0.9,1.6,t),gridY:FALL.gridY,px:renderer.getPixelRatio()});
+  // sound: wind that rises with speed, a coo as the face wakes, a giggle as the mouth opens, a rising coo at the gape
+  if(vy>0&&t>L.wind){L.wind=t+0.45;noise(0.9,0.06+0.07*vy/FALL.vt,200+vy*22,0.6)}
+  if(tf>1.2&&L.coo<1){L.coo=1;tone(392,0.5,'sine',0.05,0,+90,-0.2);tone(588,0.5,'sine',0.02,0,+130,-0.2)}
+  if(tf>2.6&&L.coo<2){L.coo=2;[440,523,587,523,659,740].forEach((f,i)=>tone(f,0.11,'sine',0.06,i*0.12,f*0.08,(i%2?0.3:-0.3)))}
+  if(tf>FALL.tFall-0.9&&L.coo<3){L.coo=3;tone(330,0.9,'sine',0.07,0,+330);tone(660,0.9,'sine',0.025,0.02,+500)}
+  const tl=FALL.hang+FALL.tFall;                              // the moment you pass the lips
+  if(t>tl-0.3&&!L.dark){L.dark=1;const f=$('fade').style;f.transition='opacity .5s ease-in';f.opacity=1}
+  if(t>tl+0.6&&!L.gulp){L.gulp=1;tone(95,0.3,'sine',0.28,0,-45);noise(0.2,0.2,300,1.4);tone(70,0.4,'sine',0.2,0.32,-30)}
+  if(t>FALL.wake){
     // wake at the start of the floor. The map remembers only the path you walked
-    GL.fall=null;if(GL.grid){scene.remove(GL.grid);GL.grid=null}
+    glFallEnd(true);
     P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.y=0;P.vy=0;P.inv=2;
     if(GL.walked)for(let i=0;i<F.seen.length;i++)F.seen[i]=GL.walked[i];
+    $('fade').style.opacity=1;
     onTileChange();tone(48,0.4,'sine',0.3);noise(0.2,0.2,200,1);
+    say('Something enormous giggles, far beneath the floor.',4);
     setTimeout(()=>{$('fade').style.opacity=0},400);
   }
 }
+let glFallCam=null;
 
 /* 7. the humming rooms: a long hall that quietly puts you back at its start */
 function glLoopTry(forced){
@@ -3548,5 +3603,5 @@ setInterval(()=>{if(MP.host&&document.hidden&&performance.now()-last>200)step(pe
 // a backdrop maze behind the title screen
 R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
 {const rc=cleanCode(new URLSearchParams(location.search).get('room'));if(rc)mpPrepareJoin(rc)}
-window.__game={doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={update,render,camera,scene,get BABY(){return BABY},get Q(){return Q},doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);
