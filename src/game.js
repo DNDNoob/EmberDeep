@@ -1217,9 +1217,24 @@ const DOOR_LOOKS={
       doorKnob(f,[0.55,0.46,0.22,4]);
     },
     glow(D,t){return[1.0,0.5,0.15,0.4+0.2*Math.sin(t*13+D.ph)]}
+  },
+  mirror:{
+    leaf(f,D,c){
+      const fr=[0.07,0.045,0.03,6];
+      slab(f,[0.02,0.515,0],[0.03,1.03,0.5],fr);
+      slab(f,[0.04,0.52,0],[0.012,0.9,0.4],[0.04,0.03,0.02,6]);
+      slab(f,[0.0465,0.52,0],[0.006,0.86,0.37],[0.36,0.41,0.48,11]);
+      for(const y of[0.07,0.97])for(const z of[-0.22,0.22])ball(f,[0.042,y,z],0.02,[0.55,0.42,0.18,4],true);
+      for(const y of[0.025,1.005])ball(f,[0.042,y,0],[0.012,0.02,0.07],[0.5,0.38,0.16,4],true);
+      slab(f,[0.0505,0.56,0.02],[0.003,0.62,0.035],[0.62,0.67,0.74,11],rX(0.35));
+      const r=doorRng(D,'mirror');
+      for(let i=0;i<14;i++){const z=(r()-0.5)*0.34,y=0.1+r()*0.84,s=0.006+r()*0.016,e=r()<0.5?z*0.5:z;ball(f,[0.0505,y,e],[0.002,s,s*(0.6+r()*0.8)],[0.2,0.18,0.15,3],true)}
+      doorKnob(f,[0.6,0.62,0.68,4]);
+    },
+    glow(D,t){return[0.85,0.92,1.0,0.32+0.2*Math.sin(t*1.3+D.ph)*Math.sin(t*0.6+D.ph*2)]}
   }
 };
-const DOOR_KINDS={galaxy:{look:'galaxy'},kiln:{look:'kiln'},fall:{disguise:true}};
+const DOOR_KINDS={galaxy:{look:'galaxy'},kiln:{look:'kiln'},fall:{disguise:true},mirror:{look:'mirror'}};
 const DOOR_EXPLORE_PER_MIN=150;
 const doorOrder=()=>Object.keys(DOOR_KINDS);
 // doors on a floor: k doors spread over a floor mean a runner must uncover ~1/(k+1) of it to meet one, and a minute of running uncovers ~DOOR_EXPLORE_PER_MIN new tiles
@@ -1392,8 +1407,9 @@ const ROOMS=createRooms(renderer,{post:POST,low:Q===0,
   say:(t,s)=>say(t,s),tone:(...a)=>tone(...a),noise:(...a)=>noise(...a),rumble:(...a)=>rumble(...a),
   hud:h=>{const el=$('roomHud');if(el.innerHTML!==h)el.innerHTML=h},
   hurtFx:()=>{const h=$('hurt');h.style.transition='none';h.style.opacity=1;requestAnimationFrame(()=>{h.style.transition='opacity .9s';h.style.opacity=0})},
-  hint:()=>touch.on?'Stick: move, pull down to drop faster · JUMP turns the stone · DROP slams it down':pad.id?'Stick or D-pad: move · A turn · X slam down':'A D move · W turn · S faster · Space slam down'});
-const ROOM_NAME={galaxy:'a door full of stars',kiln:'the glass kiln',fall:'a door with no floor behind it'};
+  hint:k=>k==='mirror'?(touch.on?'Drag to look · SPRAY or THUMB picks':pad.id?'Right stick looks · Left stick or D-pad chooses · A picks':'Mouse looks · A D chooses · Space or W picks'):
+    touch.on?'Stick: move, pull down to drop faster · JUMP turns the stone · DROP slams it down':pad.id?'Stick or D-pad: move · A turn · X slam down':'A D move · W turn · S faster · Space slam down'});
+const ROOM_NAME={galaxy:'a door full of stars',kiln:'the glass kiln',fall:'a door with no floor behind it',mirror:'a room behind a mirror'};
 // a fallen player rides along with the friend they follow, into that friend's strange door too
 let RW=null,rvT=0;const NOIN={l:0,r:0,d:0,rot:0,drop:0,lx:0,ly:0};
 function roomWatch(){
@@ -1414,7 +1430,7 @@ function sdoorOpen(D){
   mpSend({k:'sd',d:R.depth,i:F.sdoors.indexOf(D),w:D.kind});
   sfx('door');
   state='room';P.away=true;P.vx=P.vz=0;mapBig=false;
-  document.body.classList.add('inroom');$('tFlash').textContent=D.kind==='kiln'?'DROP':'FLASH';$('tJump').textContent=D.kind==='kiln'?'TURN':'JUMP';
+  document.body.classList.add('inroom');$('tFlash').textContent=D.kind==='kiln'?'DROP':D.kind==='mirror'?'SPRAY':'FLASH';$('tJump').textContent=D.kind==='kiln'?'TURN':D.kind==='mirror'?'THUMB':'JUMP';
   $('fade').style.transition='none';$('fade').style.opacity=1;
   ROOMS.start(D.kind,roomEnd);
 }
@@ -1438,6 +1454,12 @@ function roomEnd(res){
     return;
   }
   roomClose();
+  if(res.k==='win'&&res.why==='mirror'){
+    const g=2+R.depth;wallet+=g;R.gems+=g;R.score+=40*R.depth;store.set('wallet',wallet);
+    say('You got lucky son.',4.5);sfx('shard');
+    mpSend({k:'sdr',r:'lucky'});mpSys(myName()+' hid behind a mirror and got lucky');
+    return;
+  }
   if(res.k==='win'){
     const g=4+R.depth;wallet+=g;R.gems+=g;R.score+=80*R.depth;store.set('wallet',wallet);
     if(P.hp<maxHp())P.hp++;P.fuel=Math.min(100,P.fuel+30);P.inv=2;
@@ -1445,16 +1467,18 @@ function roomEnd(res){
     mpSend({k:'sdr',r:'esc'});mpSys(myName()+' beat the glass kiln');
     return;
   }
-  mpSend({k:'sdr',r:fall?'fall':'kiln'});mpSys(myName()+(fall?' opened a door and fell to their death':' was buried in the glass kiln'));
+  const mir=res.why==='mirror';
+  mpSend({k:'sdr',r:mir?'mirror':fall?'fall':'kiln'});mpSys(myName()+(mir?' was eaten by the thing behind the mirror':fall?' opened a door and fell to their death':' was buried in the glass kiln'));
   P.hp=0;
-  $('deadTitle').textContent=fall?'THE PIT TAKES YOU':'THE KILN KEEPS YOU';
+  $('deadTitle').textContent=mir?'IT SAW YOU LOOKING':fall?'THE PIT TAKES YOU':'THE KILN KEEPS YOU';
   die();
-  if(MP.on)say(fall?'There was no floor. Your friends can still bring you back on the next floor.':'The kiln filled up. Your friends can still bring you back on the next floor.',5);
+  if(MP.on)say(mir?'The glass gave way. Your friends can still bring you back on the next floor.':fall?'There was no floor. Your friends can still bring you back on the next floor.':'The kiln filled up. Your friends can still bring you back on the next floor.',5);
 }
 function roomInput(){
-  return {l:keys.KeyA||keys.ArrowLeft||pad.mx<-0.5||touch.mx<-0.5||pad.dl,r:keys.KeyD||keys.ArrowRight||pad.mx>0.5||touch.mx>0.5||pad.dr,
-    d:keys.KeyS||keys.ArrowDown||pad.my>0.5||touch.my>0.5||pad.dd,rot:keys.KeyW||keys.ArrowUp||keys.KeyE||pad.b0||pad.du||touch.jump,
-    drop:keys.Space||pad.b2||touch.act,lx:pad.lx*1.35+(ROOMS.kind==='galaxy'?(keys.ArrowRight?1:0)-(keys.ArrowLeft?1:0):0),ly:pad.ly};
+  const mir=ROOMS.kind==='mirror';
+  return {touch:touch.on,l:keys.KeyA||(!mir&&keys.ArrowLeft)||pad.mx<-0.5||touch.mx<-0.5||pad.dl,r:keys.KeyD||(!mir&&keys.ArrowRight)||pad.mx>0.5||touch.mx>0.5||pad.dr,
+    d:keys.KeyS||keys.ArrowDown||pad.my>0.5||touch.my>0.5||pad.dd,rot:keys.KeyW||(!mir&&keys.ArrowUp)||keys.KeyE||pad.b0||pad.du||touch.jump,
+    drop:keys.Space||pad.b2||touch.act,lx:pad.lx*1.35+(ROOMS.kind==='galaxy'||mir?(keys.ArrowRight?1:0)-(keys.ArrowLeft?1:0):0),ly:pad.ly+(mir?(keys.ArrowDown?1:0)-(keys.ArrowUp?1:0):0)};
 }
 let doorMsgT=0, tipTimers=[];
 let mapBig=false, usingLock=false, pausedAt=0, flashT=0, sealMsgT=0, lowFuelSaid=false, pingT=0, beatT=0, titleYaw=0;
@@ -1798,8 +1822,8 @@ function mpRecv(m,from){
       D.used=true;if(nearDoor===D)nearDoor=null;buildStatic(F);
       say(p.name+' opened a strange door',2.5);mpSys(p.name+' opened '+(ROOM_NAME[m.w]||'a strange door'));
       break;}
-    case 'rv':if(m.q&&typeof m.q==='object'&&(m.w==='galaxy'||m.w==='kiln'||m.w==='fall')){p.rv={w:m.w,q:m.q,d:m.d,at:performance.now()};if(RW&&RW.id===from&&RW.w===m.w)ROOMS.sync(m.q)}break;
-    case 'sdr':if(inRun)say(m.r==='esc'?p.name+' beat the glass kiln':m.r==='fall'?p.name+' fell to their death':p.name+' was buried in the glass kiln',3);break;
+    case 'rv':if(m.q&&typeof m.q==='object'&&(m.w==='galaxy'||m.w==='kiln'||m.w==='fall'||m.w==='mirror')){p.rv={w:m.w,q:m.q,d:m.d,at:performance.now()};if(RW&&RW.id===from&&RW.w===m.w)ROOMS.sync(m.q)}break;
+    case 'sdr':if(inRun)say(m.r==='esc'?p.name+' beat the glass kiln':m.r==='fall'?p.name+' fell to their death':m.r==='lucky'?p.name+' hid behind a mirror and got lucky':m.r==='mirror'?p.name+' was eaten by the thing behind the mirror':p.name+' was buried in the glass kiln',3);break;
     case 'warp':{
       const n=(m.d|0)-R.depth;
       if(inRun&&state!=='trans'&&n>=1&&n<=3)mpDescend(n,p.name+' woke a black hole. It throws you all '+n+(n>1?' floors':' floor')+' down');

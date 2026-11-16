@@ -24,12 +24,13 @@ Click **Host for friends** on the title screen. The invite link is copied for yo
 
 ## Strange doors
 
-Every floor has two or three doors set into its walls. Face one and press E (or OPEN / X) and you are somewhere else. `src/rooms.js` holds the three rooms, each with a small scene of its own.
+Every floor has two or three doors set into its walls. Face one and press E (or OPEN / X) and you are somewhere else. `src/rooms.js` holds the four rooms, each with a small scene of its own.
 
 - **A door full of stars:** you float over a little solar system until its sun collapses into a black hole, eats the planets and throws you back out, one to three floors deeper. In a shared game the whole party is thrown down together, and fallen players rise as on any descent.
 - **The glass kiln:** a glass box of falling ember stones. Burn four full rows to open the way out, for gems and a heart. Ash rises from the bottom every 16 seconds; if the box fills, you die.
 - **A door with no floor:** you are shoved through and fall.
-- The keyhole is the only hint: cold blue light, warm amber light, or nothing.
+- **A mirror:** you stand in a dark back room and watch a lit parlor with three people through a big pane. It takes a while to see that you are behind the glass. Then something comes in, kills them, turns and starts smashing through to you. A can of pepper spray rolls up to your foot: spray the monster and it breaks through faster and eats you, or suck your thumb and hope the bad things go away (you spray yourself, it only rages while you look at it, and it wanders off). Looking away slows it. Surviving pays a few gems.
+- The keyhole is the only hint: cold blue light, warm amber light, pale silver shimmer, or nothing.
 - While someone is inside a room their friends cannot see them and creatures ignore them. A used door is boarded up for everyone, including players who join later.
 
 
