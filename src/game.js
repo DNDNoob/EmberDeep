@@ -541,7 +541,7 @@ function paintedMaterial(glowBase){
 	vec3 irradiance=directLight.color*(mSss>0.001?pow(saturate((nlS+mSss)/(1.0+mSss)),2.0)*mix(vec3(1.0),vec3(1.0,0.5,0.34),mSss*(1.0-saturate(nlS*3.0))):vec3(dotNL));`))
       .replace('#include <color_fragment>',`
   {vec3 alb=vColor.rgb,q=vLoc.xyz;int m=int(floor(vLoc.w+0.002));mAux=fract(vLoc.w+0.002)*1.1;
-    float fine=clamp(1.6+vViewPosition.z*0.45,0.0,1.0);
+    float fine=clamp(1.6-vViewPosition.z*0.45,0.0,1.0); // vViewPosition.z is the distance: fade fine detail out with it
     float mott=fbm3(q*34.0);
     if(m==1){alb*=0.92+0.16*mott;mRough=0.55;mSss=0.2;mRimK=0.02;}
     else if(m==12){ // sculpted skin (npc_kit): colour variation comes painted per vertex, mAux marks wrinkle areas
@@ -574,7 +574,7 @@ function paintedMaterial(glowBase){
       float gr=n3(vec3(q.x*80.0,q.y*6.0,q.z*80.0)),pl=smoothstep(0.42,0.5,abs(fract(atan(q.z,q.x)*1.9+0.5)-0.5));
       alb*=(0.7+0.36*gr)*(0.72+0.28*pl);mRough=0.78;
     }else if(m==7){mGlow=1.0;}
-    else if(m==8){mRough=0.07;}
+    else if(m==8){mRough=0.12;}
     else if(m==9){
       float sp=fbm3(q*60.0),cr=smoothstep(0.035,0.0,abs(n3(q*13.0)-0.5));
       alb*=0.72+0.45*sp;alb*=1.0-cr*0.5;mRough=0.88;
@@ -586,23 +586,24 @@ function paintedMaterial(glowBase){
   }`)
       .replace('#include <normal_fragment_maps>',`#include <normal_fragment_maps>
   if(mBump>0.5){ // real bump from a procedural height (metres), so pores, weave and strands catch the light without any triangles
-    vec3 q=vLoc.xyz;int m=int(floor(vLoc.w+0.002));float fn=clamp(1.6+vViewPosition.z*0.45,0.0,1.0);float hh=0.0;
+    vec3 q=vLoc.xyz;int m=int(floor(vLoc.w+0.002));float fn=clamp(1.6-vViewPosition.z*0.45,0.0,1.0);float hh=0.0;
     if(m==12){hh=0.00012*n3(q*380.0)+mAux*0.0005*(1.0-abs(n3(vec3(q.x*70.0,q.y*330.0,q.z*70.0))*2.0-1.0));} // pores, and creases where the mesh asks for them
     else if(m==13||m==15){hh=0.0006*(n3(q*160.0)-0.5)+0.0003*fn*sin(q.y*1500.0)*sin((q.x+q.z)*1500.0);}
     else if(m==14){hh=0.0009*n3(vec3(q.x*700.0,q.y*24.0,q.z*700.0));}
     vec2 dh=vec2(dFdx(hh),dFdy(hh))*fn;
     vec3 sX=dFdx(-vViewPosition),sY=dFdy(-vViewPosition),R1=cross(sY,normal),R2=cross(normal,sX);
     float fDet=dot(sX,R1)*faceDirection;
-    vec3 nb=abs(fDet)*normal-sign(fDet)*(dh.x*R1+dh.y*R2);if(dot(nb,nb)>1e-24)normal=normalize(nb); // tiny far triangles give a zero vector: NaN would bloom into white squares
+    vec3 pb=dh.x*R1+dh.y*R2;float pl=length(pb),pm=0.6*abs(fDet);if(pl>pm)pb*=pm/pl; // bound the tilt: derivatives on sub-pixel triangles and silhouettes are huge
+    vec3 nb=abs(fDet)*normal-sign(fDet)*pb;if(dot(nb,nb)>0.1*fDet*fDet&&fDet*fDet>1e-30)normal=normalize(nb); // never normalize a (near) zero vector: NaN would bloom into white squares
   }`)
       .replace('#include <roughnessmap_fragment>','float roughnessFactor=mRough;')
       .replace('#include <metalnessmap_fragment>','float metalnessFactor=mMetal;')
       .replace('#include <emissivemap_fragment>',`#include <emissivemap_fragment>
   {vec3 ec=pow(max(vColor.rgb,vec3(0.0)),vec3(2.2));
     totalEmissiveRadiance+=ec*(mGlow*1.6+uGlowBase);
-    if(mRimK>0.0){float fr=pow(1.0-abs(dot(normalize(normal),normalize(vViewPosition))),3.0);totalEmissiveRadiance+=ec*fr*mRimK;} // soft fresnel rim / cloth sheen
-    if(mRim>0.5){float rim=pow(1.0-abs(dot(normalize(normal),normalize(vViewPosition))),3.0);totalEmissiveRadiance+=ec*rim*rim*1.6;}}`);
-    sh.fragmentShader=sh.fragmentShader.replace('#include <dithering_fragment>','#include <dithering_fragment>\n  gl_FragColor.rgb=any(isnan(gl_FragColor.rgb))?vec3(0.0):min(gl_FragColor.rgb,vec3(12.0)); // firefly clamp: specular spikes on slivers overflow the half-float target and bloom into squares');
+    if(mRimK>0.0){float fr=pow(saturate(1.0-abs(dot(normalize(normal),normalize(vViewPosition)))),3.0);totalEmissiveRadiance+=ec*fr*mRimK;} // soft fresnel rim / cloth sheen
+    if(mRim>0.5){float rim=pow(saturate(1.0-abs(dot(normalize(normal),normalize(vViewPosition)))),3.0);totalEmissiveRadiance+=ec*rim*rim*1.6;}}`);
+    sh.fragmentShader=sh.fragmentShader.replace('#include <dithering_fragment>','#include <dithering_fragment>\n  {uvec3 nb3=floatBitsToUint(gl_FragColor.rgb);bvec3 bad=equal(nb3&uvec3(0x7f800000u),uvec3(0x7f800000u));gl_FragColor.rgb=any(bad)?vec3(0.0):clamp(gl_FragColor.rgb,vec3(0.0),vec3(12.0));} // isnan() can be optimised away on ANGLE/D3D; test the exponent bits (NaN and Inf) instead. // firefly clamp: specular spikes on slivers overflow the half-float target and bloom into squares');
   };
   m.customProgramCacheKey=()=>'painted';
   return m;
@@ -878,15 +879,25 @@ const MAT={skin:12,cloth:13,hair:14,trim:15,eye:8,wood:6,metal:4,glow:7};
 // emit() for kit meshes (stride 9): the paint channel blends col -> col2 per vertex, baked occlusion darkens it,
 // the detail mask rides in the fraction of the material id (wrinkles, fine bump). R2 rotates the mesh inside the
 // frame, c places it.
-function emitS(mesh,f,c,col,col2,mat,R2){
+function emitS(mesh,f,c,col,col2,mat,R2,sc,dr){
   const cnt=mesh.length/9,T=TB;if(T.n+cnt>T.cap)return;
-  const R=R2?m3(f.R,R2):f.R,p=fpt(f,c),b=T.buf,lo=f.lo||ZERO3;let o=T.n*13;
+  sc=sc||1;const R=R2?m3(f.R,R2):f.R,cs=sc===1?c:[c[0]*sc,c[1]*sc,c[2]*sc],p=fpt(f,cs),b=T.buf,lo=f.lo||ZERO3;let o=T.n*13;
   const c0=col[0],c1=col[1],c2=col[2],d0=col2[0]-c0,d1=col2[1]-c1,d2=col2[2]-c2;
   const l0=c[0]+lo[0],l1=c[1]+lo[1],l2=c[2]+lo[2];
+  // drape: vertices below dr.y0 blend towards a second frame (dr.f) that follows the head only partly, so a long beard
+  // keeps hanging on the chest instead of swinging with the head (linear blend skinning, full weight at dr.y1)
+  let R3=null,p3=null,y0=0,iy=0;
+  if(dr){R3=R2?m3(dr.f.R,R2):dr.f.R;p3=fpt(dr.f,cs);y0=dr.y0;iy=1/(dr.y1-dr.y0)}
   for(let i=0;i<mesh.length;i+=9){
     const x=mesh[i],y=mesh[i+1],z=mesh[i+2],nx=mesh[i+3],ny=mesh[i+4],nz=mesh[i+5],w=mesh[i+6],ao=mesh[i+8];
-    b[o++]=p[0]+R[0]*x+R[1]*y+R[2]*z;b[o++]=p[1]+R[3]*x+R[4]*y+R[5]*z;b[o++]=p[2]+R[6]*x+R[7]*y+R[8]*z;
-    b[o++]=R[0]*nx+R[1]*ny+R[2]*nz;b[o++]=R[3]*nx+R[4]*ny+R[5]*nz;b[o++]=R[6]*nx+R[7]*ny+R[8]*nz;
+    let X=p[0]+sc*(R[0]*x+R[1]*y+R[2]*z),Y=p[1]+sc*(R[3]*x+R[4]*y+R[5]*z),Z=p[2]+sc*(R[6]*x+R[7]*y+R[8]*z);
+    let NX=R[0]*nx+R[1]*ny+R[2]*nz,NY=R[3]*nx+R[4]*ny+R[5]*nz,NZ=R[6]*nx+R[7]*ny+R[8]*nz;
+    if(dr){let k=(y-y0)*iy;k=k<0?0:k>1?1:k;k=k*k*(3-2*k);
+      if(k>0){const X2=p3[0]+sc*(R3[0]*x+R3[1]*y+R3[2]*z),Y2=p3[1]+sc*(R3[3]*x+R3[4]*y+R3[5]*z),Z2=p3[2]+sc*(R3[6]*x+R3[7]*y+R3[8]*z);
+        const A=R3[0]*nx+R3[1]*ny+R3[2]*nz,B=R3[3]*nx+R3[4]*ny+R3[5]*nz,C=R3[6]*nx+R3[7]*ny+R3[8]*nz;
+        X+=(X2-X)*k;Y+=(Y2-Y)*k;Z+=(Z2-Z)*k;NX+=(A-NX)*k;NY+=(B-NY)*k;NZ+=(C-NZ)*k;
+        const il=1/(Math.hypot(NX,NY,NZ)||1);NX*=il;NY*=il;NZ*=il}}
+    b[o++]=X;b[o++]=Y;b[o++]=Z;b[o++]=NX;b[o++]=NY;b[o++]=NZ;
     b[o++]=(c0+d0*w)*ao;b[o++]=(c1+d1*w)*ao;b[o++]=(c2+d2*w)*ao;b[o++]=l0+x;b[o++]=l1+y;b[o++]=l2+z;b[o++]=mat+0.82*mesh[i+7];
   }
   T.n+=cnt;
@@ -896,20 +907,24 @@ function emitS(mesh,f,c,col,col2,mat,R2){
 function humanoidFrames(rec,n,B,t,ph,breath,nod,jaw){
   const rig=rec.rig,U=subF(B,rig.waist,rZ(rig.lean));
   const H=subF(U,[rig.neck[0],rig.neck[1]+breath,rig.neck[2]],m3(m3(rYaw(n.hy),rZ(n.hp+(rig.headTilt??0.12)+nod)),rX(Math.sin(t*0.5+ph)*0.03)));
-  return {B,U:{p:fpt(U,[0,breath,0]),R:U.R},U0:U,H,J:subF(H,[0,-jaw*(rig.jaw/0.006),0])};
+  const fr={B,U:{p:fpt(U,[0,breath,0]),R:U.R},U0:U,H,J:subF(H,[0,-jaw*(rig.jaw/0.006),0])};
+  // D: head origin, but turning and nodding only a fraction as much as the head (what a hanging beard follows)
+  if(rig.drape){const k=rig.drape.follow;fr.D=subF(U,[rig.neck[0]+rig.drape.push,rig.neck[1]+breath,rig.neck[2]],m3(rYaw(n.hy*k),rZ((n.hp+(rig.headTilt??0.12)+nod)*k)))}
+  return fr;
 }
 // Draw every part of a baked recipe into its frame, then the eyes (upper lids rotate to blink).
 function drawRecipe(baked,lod,fr,blink){
   const rec=baked.recipe,pal=rec.palette;
+  const pr=rec.proportions,hs=pr?pr.headScale:1,scOf=fn=>pr&&pr.frames.includes(fn)?hs:1; // head-frame parts are drawn at headScale
   for(const q of rec.parts){const f=fr[q.frame],m=baked.parts[q.part];if(!f||!m)continue;
-    emitS(m[lod],f,q.at||ZERO3,pal[q.col],pal[q.col2||q.col],MAT[q.mat],q.R)}
+    emitS(m[lod],f,q.at||ZERO3,pal[q.col],pal[q.col2||q.col],MAT[q.mat],q.R,scOf(q.frame),q.drape&&fr.D?{f:fr.D,y0:q.drape[0],y1:q.drape[1]}:null)}
   const E=baked.eyes,ec=rec.eyes;if(!E||!fr[ec.frame])return;
-  const H=fr[ec.frame],a=baked.anchors.eye,lidR=rZ(E.lidAngle(blink));
+  const H=fr[ec.frame],a=baked.anchors.eye,lidR=rZ(E.lidAngle(blink)),es=scOf(ec.frame);
   for(const z of[-a[2],a[2]]){const c=[a[0],a[1],z];
-    emitS(E.ball,H,c,pal[ec.sclera],pal[ec.sclera],MAT.eye);
-    emitS(E.iris,H,c,pal[ec.iris],pal[ec.pupil],MAT.eye);
-    emitS(E.lid,H,c,pal[ec.lid],pal[ec.lid2],MAT.skin,lidR);
-    emitS(E.lower,H,c,pal[ec.lid],pal[ec.lid2],MAT.skin)}
+    emitS(E.ball,H,c,pal[ec.sclera],pal[ec.sclera],MAT.eye,null,es);
+    emitS(E.iris,H,c,pal[ec.iris],pal[ec.pupil],MAT.eye,null,es);
+    emitS(E.lid,H,c,pal[ec.lid],pal[ec.lid2],MAT.skin,lidR,es);
+    emitS(E.lower,H,c,pal[ec.lid],pal[ec.lid2],MAT.skin,null,es)}
 }
 // ?npc=classic keeps the old primitive Keeper for comparison
 // The Keeper: recipe KEEPER in src/npc_recipes.js, posed here; the staff and lantern stay primitive.
@@ -931,7 +946,7 @@ function buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,lod){
   for(const q of[[-1,-1],[1,-1],[-1,1],[1,1]])slab(SB,[0.07+q[0]*0.021,0.92,q[1]*0.021],[0.006,0.07,0.006],[0.16,0.15,0.14,4]);
   ball(SB,[0.07,0.918,0],0.018,[3.0,1.5,0.4,7],true);
   out.lantern=fpt(SB,[0.07,0.918,0]);
-  out.top=1.0;
+  out.top=1.05;
 }
 function buildNpc(n,t,ex,ey,ez,dtR){
   const dxp=ex-n.x,dzp=ez-n.z,dist=Math.hypot(dxp,dzp),toP=Math.atan2(dzp,dxp);
@@ -947,8 +962,9 @@ function buildNpc(n,t,ex,ey,ez,dtR){
   let diff=wrap(toP-n.yaw);
   if(!seated&&!n.lock&&dist<5&&(Math.abs(diff)>0.45||talking)){const st=Math.sign(diff)*Math.min(Math.abs(diff),2.6*dtR);n.yaw+=st;diff-=st}
   const lim=seated?1.25:1.0,wantY=n.lockHead?0:dist<6?clamp(diff,-lim,lim):Math.sin(t*0.4+n.ph)*0.35;
-  const headY0=seated?0.62:0.84,wantP=dist<6?clamp(Math.atan2(ey-headY0,Math.max(dist,0.3)),-0.45,0.4):0;
+  const headY0=seated?0.62:n.type==='keeper'?0.95:0.84,wantP=dist<6?clamp(Math.atan2(ey-headY0,Math.max(dist,0.3)),-0.45,0.4):0;
   const k=Math.min(1,dtR*6);n.hy+=(wantY-n.hy)*k;n.hp+=(wantP-n.hp)*k;
+  if(n.pose){n.hy=n.pose[0];n.hp=n.pose[1]}
   const ph=n.ph,br=Math.sin(t*1.7+ph),breath=br*0.004;
   const blink=STUDIO&&STUDIO.open?1:((t*0.23+ph)%1)<0.035?0.12:1;
   const nod=talking?Math.sin(t*5.5)*0.05:0,jaw=talking?Math.max(0,Math.sin(t*9))*0.006:0;
@@ -3673,7 +3689,7 @@ function studio(o){
   let n=F.npcs.find(q=>q.type===o.type);
   if(!n){n={type:o.type,ph:1.3,used:true,gift:0,tip:0};F.npcs.push(n)}
   for(const q of F.npcs)if(q!==n){q.x=-50;q.z=-50}
-  n.x=S.x;n.z=S.z;n.ox=0;n.oz=0;n.lock=true;n.lockHead=!!o.headLock;n.hy=0;n.hp=0;
+  n.x=S.x;n.z=S.z;n.ox=0;n.oz=0;n.lock=true;n.lockHead=!!o.headLock;n.hy=0;n.hp=0;n.pose=o.pose||null; // pose [yaw,pitch]: fixed head angles for checking extremes
   n.yaw=Math.atan2(S.dz,S.dx)+o.turn*Math.PI/180;
   const cx=S.x+S.dx*o.dist,cz=S.z+S.dz*o.dist,aim=o.aimY==null?(o.type==='delver'?0.55:0.8):o.aimY;
   STUDIO.cam={x:cx,z:cz,y:o.camY,yaw:Math.atan2(-S.dz,-S.dx),pitch:Math.atan2(aim-o.camY,o.dist)};

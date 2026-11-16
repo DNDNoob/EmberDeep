@@ -11,6 +11,8 @@ Files:
 | `src/npc_recipes.js` | Characters as recipes (`KEEPER`) |
 | `src/game.js` | Posing: `emitS`, `humanoidFrames`, `drawRecipe`, `buildKeeperSculpt`; shader materials 12-15 in `paintedMaterial` |
 | `tools/npc_stats.mjs` | Bake a recipe in Node; prints triangles per part and LOD, and bake time |
+| `tools/npc_measure.mjs` | Head height, head width, crown height and heads-tall ratio of a recipe |
+| `tools/npc_mesh_check.mjs` | Scans baked meshes for NaN, zero normals and degenerate triangles (what makes white squares on real GPUs) |
 | `tools/npc_shot.mjs` | Headless screenshots of one NPC at standard angles under the same light |
 
 ## Pipeline
@@ -32,6 +34,7 @@ export const ILSE = {
   id: 'ilse-v1', seed: 77,                       // change id whenever the shape changes
   palette: {skin: [0.92,0.71,0.57], skinDeep: [0.8,0.45,0.38], ...},
   rig: {waist: [0,0.42,0], lean: 0, neck: [0.003,0.29,0], jaw: 0.004, headTilt: 0},
+  proportions: {headScale: 0.62, frames: ['H', 'J']},   // see Proportions
   parts: [
     {part: 'head', frame: 'H', mat: 'skin', col: 'skin', col2: 'skinDeep'},
     {part: 'hair', frame: 'H', mat: 'hair', col: 'hair', col2: 'hairDeep'},
@@ -69,10 +72,45 @@ All are in `src/npc_kit.js`. Units are metres, in the part's frame: +X is forwar
 
 A custom part is any `{sdf, bounds, cell, tris, cull?, paint?}` written with the primitives from `sculpt.js`.
 
+## Proportions (read this before building a new human)
+
+Build the head at its natural size, then set the figure's proportions in the recipe, not by editing the head SDF:
+
+```js
+proportions: {headScale: 0.6, frames: ['H', 'J']},   // frames drawn at headScale (head, jaw/beard; the eyes follow the frame in recipe.eyes)
+```
+
+`drawRecipe` scales those frames' meshes about the neck origin (positions only; normals are rotation-only), so hair, brows, moustache, beard and eyes stay attached and head turn, nod and jaw still work. The unscaled kit head is about 0.237 m chin to crown (4 heads tall on a 0.96 m body: cartoonish), so `headScale` is the knob. Lengthen the body to match: `robeTorso({len})` stretches chest, collar and cowl (the arms in `ARMS` are in U coordinates, so move the shoulders up yourself), `robeSkirt({height})` and `rig.waist` / `rig.neck` set the leg length and neck height. Run `node tools/npc_measure.mjs KEEPER` to read the result.
+
+| Target | Value |
+|---|---|
+| Height | 7 to 7.5 heads (heroic 8). The Keeper: 7.25 (head 0.142 m, crown at 1.03 m; was 4.06) |
+| Head width (ears included) | ~0.75 of head height (0.106 m) |
+| Shoulders (outer, with sleeves) | 2.5 to 3 head widths. Keeper 0.28 m |
+| Hand | wrist to fingertip ~ chin to hairline, i.e. 0.7 to 0.75 head heights (~0.1 m; `hand({size: 1})` already is) |
+| Neck | ~0.5 of head width across; the head's neck cylinder is scaled with it |
+| Elbow / waist / crotch | ~3 / 3.0 / 3.5 heads down from the crown (the robe hides the rest) |
+| Beard / hair | live in head frames: they scale with the head. Lengthen `beard({length})` to compensate |
+
+## Drape: parts that hang instead of following the head
+
+A long beard in the head frame swings through the chest when the head pitches or yaws. Mark it as a drape part and give the rig a drape frame:
+
+```js
+rig:   {..., drape: {follow: 0.3, push: 0.012}},        // D = torso frame at the neck, turning 30% of the head angles, 12 mm forward
+parts: [{part: 'beard', frame: 'J', ..., drape: [-0.015, -0.13]}],   // local y where the blend starts and is complete
+```
+
+Vertices below `drape[0]` blend (linear blend skinning, smoothstep) from the part's frame to `D`, so the top of the beard grows from the jaw and follows it, the tip hangs near-vertical on the chest, and there is no seam. `tools/npc_shot.mjs --pose YAW,PITCH` fixes the head angles to check extremes (try `0,-0.45` and `1,0.4`).
+
+## White squares on real GPUs
+
+Sparkling squares flashing around head and hands on real hardware came from the shader, not the meshes: the procedural bump fade used `1.6 + vViewPosition.z*0.45` (z is the distance, so it never faded: pore, strand and weave noise aliased at any distance), derivatives on sub-pixel triangles gave huge bump slopes, `pow(1.0 - abs(dot(..)), 3.0)` could see a base slightly below 0 from rounding (NaN), and `isnan()` can be compiled away on ANGLE/D3D. Now: fade fixed, bump tilt bounded and skipped when the perturbed normal collapses, `saturate` inside the rim `pow`s, a bit-pattern NaN/Inf test and a clamp at the end of the fragment shader, eye roughness 0.12. Meshes are also sanitized at bake time (`sanitize()` in npc_kit.js drops non-finite and zero-area triangles and renormalises normals); `node tools/npc_mesh_check.mjs` verifies it.
+
 ## Budgets
 
-- Near LOD (within 6 m, Q>=1): at most **~6k triangles (18k vertices) for the whole character**, eyes included. The Keeper uses 5.9k, plus about 2k vertices of primitive staff. Far LOD: about 40% of that.
-- Rough split: head 1250, beard and hair 900, hands 380 each, torso 650, skirt 480, trims 100 to 200 each, eyes 600 for both.
+- Near LOD (within 6 m, Q>=1): at most **~6k triangles (18k vertices) for the whole character**, eyes included. The Keeper uses 5.6k, plus about 2k vertices of primitive staff. Far LOD: about 40% of that.
+- Rough split: head 1000 (it is drawn smaller now), beard and hair 800, hands 380 each, torso 650, skirt 480, trims 100 to 200 each, eyes 600 for both.
 - All characters share `CH.cap` = 90k vertices per frame.
 - Bake time: about 1.5 s for the Keeper in total. `bakeRecipeIdle()` at load spreads it across ticks, one part per tick. Add new recipes to the idle bake next to `KEEPER` in game.js.
 - Check budgets with `node tools/npc_stats.mjs KEEPER` (`--obj DIR` dumps the near meshes).

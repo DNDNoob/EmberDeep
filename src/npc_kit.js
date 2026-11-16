@@ -304,18 +304,19 @@ export function trimBand(base, region, p = {}) {
 // p: {arms:[{S,E,W,r:[shoulder,elbow,mouth]}...] in U coords, chest:[rx,ry,rz], sash:{y,h}, cuffLen}
 // Returns the cloth spec plus trims {sash, cuffs:[...]} and sleeve ends {ends:[{at,dir,r}]} for placing hands.
 export function robeTorso(p) {
-  const ch = p.chest || [0.08, 0.145, 0.108], sash = p.sash || {y: 0.017, h: 0.027}, waist = p.waist ?? 0.094;
+  const len = p.len ?? 1; // vertical stretch of chest, collar and cowl (1 = the original short torso)
+  const ch = p.chest || [0.08, 0.145 * len, 0.108], sash = p.sash || {y: 0.017, h: 0.027}, waist = p.waist ?? 0.094;
   const arms = p.arms.map(a => {
     const F = norm3([a.W[0] - a.E[0], a.W[1] - a.E[1], a.W[2] - a.E[2]]), end = [a.W[0] - (a.back ?? 0.03) * F[0], a.W[1] - (a.back ?? 0.03) * F[1], a.W[2] - (a.back ?? 0.03) * F[2]];
     return {...a, F, end};
   });
   const sleeve = (x, y, z, a) => smin(sdRoundCone(x, y, z, a.S[0], a.S[1], a.S[2], a.E[0], a.E[1], a.E[2], a.r[0], a.r[1]), sdRoundCone(x, y, z, a.E[0], a.E[1], a.E[2], a.end[0], a.end[1], a.end[2], a.r[1], a.r[2]), 0.03);
   function body(x, y, z) {
-    let d = smin(sdEllipsoid(x, y - 0.14, z, ch[0], ch[1], ch[2]), sdEllipsoid(x + 0.035, y - 0.245, z, 0.085, 0.04, 0.115), 0.04);
+    let d = smin(sdEllipsoid(x, y - 0.14 * len, z, ch[0], ch[1], ch[2]), sdEllipsoid(x + 0.035, y - 0.245 * len, z, 0.085, 0.04, ch[2] * 1.06), 0.04);
     for (const a of arms) d = smin(d, sleeve(x, y, z, a), 0.035);
     d = smin(d, sdEllipsoid(x, y - sash.y, z, waist * 0.98, sash.h * 1.7, waist), 0.03); // waist, as wide as the skirt top so the sash can wrap both
-    d = smin(d, sdEllipsoid(x, y - 0.268, z, 0.052, 0.02, 0.058), 0.02);            // collar roll
-    d = smin(d, sdEllipsoid(x + 0.052, y - 0.255, z, 0.05, 0.042, 0.078), 0.04);    // cowl bunched at the back
+    d = smin(d, sdEllipsoid(x, y - 0.268 * len, z, 0.052, 0.02, 0.058), 0.02);            // collar roll
+    d = smin(d, sdEllipsoid(x + 0.052, y - 0.255 * len, z, 0.05, 0.042, 0.078), 0.04);    // cowl bunched at the back
     for (const a of arms) d = ssub(d, sdSphere(x - (a.end[0] + 0.03 * a.F[0]), y - (a.end[1] + 0.03 * a.F[1]), z - (a.end[2] + 0.03 * a.F[2]), a.r[2] * 0.76), 0.004); // sleeve mouths
     return d;
   }
@@ -334,7 +335,7 @@ export function robeTorso(p) {
   };
   const covers = (x, y, z) => trims.sash.covers(x, y, z) || trims.cuffs.some(c => c.covers(x, y, z));
   return {sdf, body, trims, ends: arms.map(a => ({at: a.W, end: a.end, dir: a.F, r: a.r[2]})),
-    bounds: [-0.16, -0.045, -0.25, 0.27, 0.33, 0.25], cell: p.cell || 0.0105, tris: p.tris || [650, 240], cull: covers, project: 0.004};
+    bounds: [-0.16, -0.045, -0.25, 0.27, 0.33 * len + 0.02, 0.25], cell: p.cell || 0.0105, tris: p.tris || [650, 240], cull: covers, project: 0.004};
 }
 
 /* =====================================================================================
@@ -395,13 +396,34 @@ export function eyeRig(p = {}) {
   }, (u, v, o) => { o[0] = v > 0.5 ? 0.6 : 0.2; o[2] = v > 0.7 ? 0.6 : 1; }));
   // closing: rotate the lid edge from `open` down to just past the lower lid
   const shut = open + arch - low + 4 * D2R;
-  return {ball, iris, lid, lower, r, lidAngle: blink => -(1 - blink) * shut};
+  // sanitize: the iris cap has zero-area triangles at its pole
+  return {ball: sanitize(ball), iris: sanitize(iris), lid: sanitize(lid), lower: sanitize(lower), r, lidAngle: blink => -(1 - blink) * shut};
 }
 
 /* =====================================================================================
    BAKING AND CACHING
    ===================================================================================== */
 // Bake one part spec -> [nearMesh, farMesh] (stride 8 Float32Arrays).
+// Mesh hygiene (stride 9): drop non-finite and degenerate triangles, renormalise normals, replace unusable normals with the
+// face normal. A zero or NaN normal on real GPUs becomes NaN in the shader, and NaN in an HDR target blooms into white squares.
+export function sanitize(M, minArea = 1e-10) {
+  const out = new Float32Array(M.length); let o = 0, dropped = 0;
+  for (let i = 0; i < M.length; i += 27) {
+    let ok = true;
+    for (let k = 0; k < 27 && ok; k++) ok = Number.isFinite(M[i + k]);
+    const ux = M[i + 9] - M[i], uy = M[i + 10] - M[i + 1], uz = M[i + 11] - M[i + 2], wx = M[i + 18] - M[i], wy = M[i + 19] - M[i + 1], wz = M[i + 20] - M[i + 2];
+    const fx = uy * wz - uz * wy, fy = uz * wx - ux * wz, fz = ux * wy - uy * wx, fl = Math.hypot(fx, fy, fz);
+    if (!ok || fl < 2 * minArea) { dropped++; continue; }
+    for (let v = 0; v < 3; v++) {
+      const b = i + v * 9, l = Math.hypot(M[b + 3], M[b + 4], M[b + 5]);
+      for (let k = 0; k < 9; k++) out[o + k] = M[b + k];
+      if (l > 1e-4) { out[o + 3] /= l; out[o + 4] /= l; out[o + 5] /= l; } else { out[o + 3] = fx / fl; out[o + 4] = fy / fl; out[o + 5] = fz / fl; }
+      o += 9;
+    }
+  }
+  const r = out.slice(0, o); r.stride = 9; r.dropped = dropped; return r;
+}
+
 export function bakePart(spec, seed = 1) {
   setSeed(seed);
   const t0 = performance.now();
@@ -409,7 +431,7 @@ export function bakePart(spec, seed = 1) {
   const t1 = performance.now();
   const near = simplify(raw, spec.tris[0]), far = simplify(near, spec.tris[1]);
   const fo = {paint: spec.paint || (() => {}), project: spec.project ?? spec.cell * 0.5, normalSdf: spec.normalSdf, eps: 0.0006, ao: spec.ao ?? 0.012};
-  const out = [flatten(near, spec.sdf, fo), flatten(far, spec.sdf, fo)];
+  const out = [sanitize(flatten(near, spec.sdf, fo)), sanitize(flatten(far, spec.sdf, fo))];
   out.ms = performance.now() - t0; out.netsMs = t1 - t0; out.raw = raw.T.length / 3;
   return out;
 }

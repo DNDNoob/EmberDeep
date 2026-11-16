@@ -11,6 +11,7 @@
 //   --query 'npc=classic'     extra URL query (e.g. the classic Keeper)
 //   --seed STUDIO1 --depth 2  floor the studio corridor is picked from
 //   --file index.html         which build to load (default the repo's index.html)
+//   --pose YAW,PITCH          fixed head angles in radians (check beard/neck at extremes)
 //   --hud                     keep the HUD visible (hidden by default)
 //   --stats                   print character vertex counts and sculpt time
 //
@@ -32,13 +33,15 @@ for (let i = 2; i < process.argv.length; i++) {
 const seated = A.npc === 'delver';
 // standard views: camera distance (m), NPC turn away from camera (deg), camera height, look-at height
 const VIEWS = {
-  front:    {dist: 1.05, turn: 0,   aimY: seated ? 0.5 : 0.82},
+  front:    {dist: 1.05, turn: 0,   aimY: seated ? 0.5 : 0.8},
   '34':     {dist: 1.15, turn: 38,  aimY: seated ? 0.45 : 0.78, headLock: true},
+  full:     {dist: 1.75,  turn: 0,   aimY: seated ? 0.4 : 0.52, camY: seated ? 0.5 : 0.6},
+  full34:   {dist: 1.75,  turn: 38,  aimY: seated ? 0.4 : 0.52, camY: seated ? 0.5 : 0.6, headLock: true},
   side:     {dist: 1.1,  turn: 90,  aimY: seated ? 0.45 : 0.8, headLock: true},
   wide:     {dist: 3.2,  turn: 15,  aimY: seated ? 0.35 : 0.5},
-  face:     {dist: 0.38, turn: 0,   aimY: seated ? 0.62 : 0.88, camY: seated ? 0.62 : 0.88},
+  face:     {dist: 0.38, turn: 0,   aimY: seated ? 0.62 : 0.95, camY: seated ? 0.62 : 0.95},
   hands:    {dist: 0.5,  turn: 20,  aimY: seated ? 0.3 : 0.6, camY: seated ? 0.45 : 0.7},
-  portrait: {dist: 0.62, turn: 0,   aimY: seated ? 0.62 : 0.87, camY: seated ? 0.62 : 0.87},   // face at face height, for detail
+  portrait: {dist: 0.62, turn: 0,   aimY: seated ? 0.62 : 0.94, camY: seated ? 0.62 : 0.94},   // face at face height, for detail
 };
 const [w, h] = A.size.split('x').map(Number);
 mkdirSync(A.out, {recursive: true});
@@ -57,7 +60,7 @@ for (const v of A.views.split(',')) {
   const o = VIEWS[v];
   if (!o) { console.log('unknown view', v); continue; }
   const t0 = Date.now();
-  const r = await pg.evaluate(o => window.__game.studio(o), {type: A.npc, seed: A.seed, depth: +A.depth, ...o});
+  const r = await pg.evaluate(o => window.__game.studio(o), {type: A.npc, seed: A.seed, depth: +A.depth, ...o, ...(A.pose ? {pose: A.pose.split(',').map(Number), headLock: true} : {})});
   await frames(+A.scale > 1 ? 3 : 6); // head tracking settles, shaders compile
   const file = resolve(A.out, `${A.prefix || A.npc}-${v}.png`);
   await pg.screenshot({path: file, timeout: 600000});
