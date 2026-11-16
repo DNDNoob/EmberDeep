@@ -21,10 +21,10 @@ const ARMS = [
   {S: [0, 0.32, -0.1], E: [0.02, 0.16, -0.13], W: [0.086, 0.06, -0.064], r: [0.04, 0.042, 0.052], back: 0.024} // hand resting on the sash
 ];
 export const KEEPER = {
-  id: 'keeper-v3', seed: 4242,
+  id: 'keeper-v4', seed: 4242,
   // Human proportions (see docs/npc-kit.md): the head is built at its natural size and drawn at headScale; the torso is
   // stretched (len) and the skirt (legs) raised so the figure is ~7.25 heads tall with shoulders about 2.7 head widths wide.
-  proportions: {headScale: 0.6, frames: ['H', 'J']},
+  proportions: {headScale: 0.6, frames: ['H', 'J'], height: 0.93},   // height: uniform scale of the whole figure and its props (crown 1.03 m * 0.93 = 0.96 m)
   palette: {
     skin: [0.8, 0.6, 0.47], skinDeep: [0.66, 0.34, 0.28],
     robe: [0.36, 0.1, 0.07], robeDeep: [0.24, 0.06, 0.05],
@@ -41,6 +41,7 @@ export const KEEPER = {
     {part: 'cuff0', frame: 'U', mat: 'trim', col: 'gold', col2: 'goldDeep'},
     {part: 'cuff1', frame: 'U', mat: 'trim', col: 'gold', col2: 'goldDeep'},
     {part: 'head', frame: 'H', mat: 'skin', col: 'skin', col2: 'skinDeep'},
+    {part: 'ears', frame: 'H', mat: 'skin', col: 'skin', col2: 'skinDeep'},
     {part: 'hair', frame: 'H', mat: 'hair', col: 'white', col2: 'whiteDeep'},
     {part: 'brows', frame: 'H', mat: 'hair', col: 'white', col2: 'whiteDeep'},
     {part: 'moustache', frame: 'H', mat: 'hair', col: 'white', col2: 'whiteDeep'},
@@ -67,7 +68,7 @@ export const KEEPER = {
     const [e0, e1] = torso.ends;
     return {
       parts: {skirt, hem, torso, sash: torso.trims.sash, cuff0: torso.trims.cuffs[0], cuff1: torso.trims.cuffs[1],
-        head: H, hair: K.hairCap(H, {crown: 0.128}), brows: K.brows(H, {size: 1.15, droop: 1.1}), moustache: K.moustache(H, {size: 1.1}),
+        head: H, ears: K.ears(H), hair: K.hairCap(H, {crown: 0.128}), brows: K.brows(H, {size: 1.15, droop: 1.1}), moustache: K.moustache(H, {size: 1.1}),
         beard: K.beard(H, {length: 0.27, fork: 1, tris: [480, 180]}), gripHand: sleeveCull(grip), restHand: sleeveCull(rest)},
       eyes: {r: H.eye.r, iris: 0.5, open: 9, low: -21, arch: 9},
       anchors: {

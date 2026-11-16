@@ -81,11 +81,7 @@ export function head(p = {}) {
     d = smin(d, sdEllipsoid(x - (mouthX - 0.002), y - (mouthY + 0.007), z, 0.009, 0.009, 0.019), 0.012);
     d = smin(d, sdEllipsoid(x - (mouthX - 0.003), y - (mouthY - 0.006), z, 0.008, 0.006, 0.015), 0.006);         // lower lip
     d = ssub(d, sdEllipsoid(x - mouthX - 0.004, y - mouthY, z, 0.006, 0.0016, 0.016), 0.002);                     // mouth slit
-    // ears, big with age
-    const es = ears * (1 + 0.15 * age);
-    { const ux = x - 0.004, uz = zs - 0.08, ca = 0.94, sa = 0.34, ex2 = ux * ca - uz * sa, ez2 = ux * sa + uz * ca; // ears stand out ~20 degrees
-      d = smin(d, sdEllipsoid(ex2, y - (ey - 0.008), ez2, 0.016 * es, 0.028 * es, 0.0065), 0.008);
-      d = ssub(d, sdEllipsoid(ex2 - 0.002, y - (ey - 0.006), ez2 - 0.005, 0.0095 * es, 0.018 * es, 0.004), 0.004); } // concha
+    // ears are their own part (ears(H) below), not blended into the head, so they keep a rim and a bowl
     d = smin(d, sdRoundCone(x, y, z, -0.004, 0.02, 0, -0.008, -0.07, 0, 0.034 * neck, 0.04 * neck), 0.03);         // neck
     // carve: eye sockets (the eyeball fills them), orbital hollow, temples, nasolabial folds, under-eye bags
     d = ssub(d, sdSphere(x - ex, y - ey, zs - ez, er * 1.04), 0.003);
@@ -114,6 +110,28 @@ export function head(p = {}) {
     cull: (x, y) => y < -0.045, project: 0.003,
     eye: E, noseTip: nt, noseRoot: nb, mouth: [mouthX, mouthY, 0], age
   };
+}
+
+/* ---------- ears: a separate small SDF part (both ears), stuck on the side of the head ---------- */
+// A thin plate (concha floor) inside a raised helix ring, an antihelix ridge, a lobe, a tragus, and a short root that sinks
+// into the skull. Parts are joined with tiny smooth-min radii (1.5 to 3 mm), so the rim, bowl and lobe stay distinct. The ear
+// is tilted so its rear edge stands off the skull. p: {size, x, y, z (plate centre on the side of the head), flare (rad)}
+export function ears(H, p = {}) {
+  const es = (p.size ?? 1) * (1 + 0.12 * H.age), cx = p.x ?? -0.006, cy = p.y ?? 0.076, cz = p.z ?? 0.079, fl = p.flare ?? 0.35, ca = Math.cos(fl), sa = Math.sin(fl);
+  function sdf(x, y, z) {
+    const ux = x - cx, uz = Math.abs(z) - cz;
+    const u = (ux * ca - uz * sa) / es, w = (ux * sa + uz * ca) / es, v = (y - cy) / es;   // u forward, v up, w out of the head
+    const aa = 0.0165 * (1 + 0.18 * v / 0.03), q = (Math.hypot(u / aa, v / 0.031) - 1) * 0.02;   // egg outline, wider at the top
+    let d = Math.hypot(q, w - 0.0034) - 0.0033;                                            // helix: the raised rim
+    d = smin(d, smax(q + 0.0025, Math.abs(w + 0.0004) - 0.0019, 0.0015), 0.0015);           // concha floor
+    d = smin(d, sdCapsule(u, v, w, -0.0075, 0.016, 0.0028, 0.002, -0.004, 0.0028, 0.0026), 0.002);   // antihelix
+    d = smin(d, sdEllipsoid(u + 0.0005, v + 0.0265, w - 0.0008, 0.0085, 0.0085, 0.0042), 0.0025);    // lobe
+    d = smin(d, sdSphere(u - 0.0115, v + 0.003, w - 0.0004, 0.0046), 0.0018);                // tragus
+    d = smin(d, sdEllipsoid(u - 0.004, v + 0.001, w + 0.0075, 0.009, 0.019, 0.0085), 0.003); // root, sinks into the skull
+    return d * es;
+  }
+  return {sdf, bounds: [-0.05, 0.02, -0.115, 0.04, 0.135, 0.115], cell: p.cell || 0.0023, tris: p.tris || [520, 190],
+    cull: (x, y, z) => H.sdf(x, y, z) < -0.0008, project: 0.0015, paint: (x, y, z, o) => { o[0] = 0.32; o[1] = 0; }};
 }
 
 /* ---------- hair on the head: a fringe round the back and sides, bald crown (horseshoe) ---------- */

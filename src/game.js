@@ -905,17 +905,19 @@ function emitS(mesh,f,c,col,col2,mat,R2,sc,dr){
 // Standard humanoid frames for a recipe: B at the feet, U at the waist (lean + breathing), H at the neck
 // (tracks the player, nods, idles), J = H moved down by the jaw while talking.
 function humanoidFrames(rec,n,B,t,ph,breath,nod,jaw){
-  const rig=rec.rig,U=subF(B,rig.waist,rZ(rig.lean));
-  const H=subF(U,[rig.neck[0],rig.neck[1]+breath,rig.neck[2]],m3(m3(rYaw(n.hy),rZ(n.hp+(rig.headTilt??0.12)+nod)),rX(Math.sin(t*0.5+ph)*0.03)));
-  const fr={B,U:{p:fpt(U,[0,breath,0]),R:U.R},U0:U,H,J:subF(H,[0,-jaw*(rig.jaw/0.006),0])};
+  const rig=rec.rig,S=rec.proportions&&rec.proportions.height||1,wa=rig.waist,ne=rig.neck; // S: overall figure scale (proportions.height)
+  const U=subF(B,[wa[0]*S,wa[1]*S,wa[2]*S],rZ(rig.lean));
+  const H=subF(U,[ne[0]*S,(ne[1]+breath)*S,ne[2]*S],m3(m3(rYaw(n.hy),rZ(n.hp+(rig.headTilt??0.12)+nod)),rX(Math.sin(t*0.5+ph)*0.03)));
+  const fr={B,U:{p:fpt(U,[0,breath*S,0]),R:U.R},U0:U,H,J:subF(H,[0,-jaw*(rig.jaw/0.006)*S,0])};
   // D: head origin, but turning and nodding only a fraction as much as the head (what a hanging beard follows)
-  if(rig.drape){const k=rig.drape.follow;fr.D=subF(U,[rig.neck[0]+rig.drape.push,rig.neck[1]+breath,rig.neck[2]],m3(rYaw(n.hy*k),rZ((n.hp+(rig.headTilt??0.12)+nod)*k)))}
+  if(rig.drape){const k=rig.drape.follow;fr.D=subF(U,[(ne[0]+rig.drape.push)*S,(ne[1]+breath)*S,ne[2]*S],m3(rYaw(n.hy*k),rZ((n.hp+(rig.headTilt??0.12)+nod)*k)))}
   return fr;
 }
 // Draw every part of a baked recipe into its frame, then the eyes (upper lids rotate to blink).
+// Scale: proportions.height scales the whole figure; proportions.headScale additionally scales the head frames.
 function drawRecipe(baked,lod,fr,blink){
   const rec=baked.recipe,pal=rec.palette;
-  const pr=rec.proportions,hs=pr?pr.headScale:1,scOf=fn=>pr&&pr.frames.includes(fn)?hs:1; // head-frame parts are drawn at headScale
+  const pr=rec.proportions,hs=pr?pr.headScale:1,S=pr&&pr.height||1,scOf=fn=>S*(pr&&pr.frames.includes(fn)?hs:1);
   for(const q of rec.parts){const f=fr[q.frame],m=baked.parts[q.part];if(!f||!m)continue;
     emitS(m[lod],f,q.at||ZERO3,pal[q.col],pal[q.col2||q.col],MAT[q.mat],q.R,scOf(q.frame),q.drape&&fr.D?{f:fr.D,y0:q.drape[0],y1:q.drape[1]}:null)}
   const E=baked.eyes,ec=rec.eyes;if(!E||!fr[ec.frame])return;
@@ -930,23 +932,25 @@ function drawRecipe(baked,lod,fr,blink){
 // The Keeper: recipe KEEPER in src/npc_recipes.js, posed here; the staff and lantern stay primitive.
 function buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,lod){
   const K=bakeRecipe(KEEPER),A=K.anchors,fr=humanoidFrames(KEEPER,n,B,t,ph,breath,nod,jaw),U=fr.U0;
+  const S=KEEPER.proportions.height||1,q3=(x,y,z)=>[x*S,y*S,z*S]; // props are authored at 1:1 and scaled with the figure
   const wood=[0.3,0.2,0.12,6];
   // staff hand follows a slow sway; the staff hangs from it, through the fist
-  const g=A.gripAt,hw=fpt(U,[g[0],g[1]+br*0.01,g[2]]);
+  const g=A.gripAt,hw=fpt(U,q3(g[0],g[1]+br*0.01,g[2]));
   fr.grip={p:hw,R:m3(B.R,A.gripR)};
-  fr.rest=subF(fr.U,A.restAt,A.restR);
+  fr.rest=subF(fr.U,q3(...A.restAt),A.restR);
   drawRecipe(K,lod,fr,blink);
-  ball(fr.U,A.gem,0.02,[2.2,0.9,0.25,7],true);
-  const sp=fpt(fr.grip,[A.gripAxis[0],A.gripAxis[1],0]),SB={p:[sp[0],0,sp[2]],R:B.R};
-  seg(SB,[0,0,0],[0.003,0.34,-0.002],0.0135,0.0125,wood);seg(SB,[0.003,0.34,-0.002],[-0.002,0.68,0.003],0.0125,0.0115,wood);seg(SB,[-0.002,0.68,0.003],[0,1.0,0],0.0115,0.011,wood);
-  ball(SB,[0.003,0.34,-0.002],[0.0155,0.02,0.0155],wood,true);ball(SB,[-0.002,0.68,0.003],[0.014,0.018,0.014],wood,true);
-  seg(SB,[0,1.0,0],[0.07,1.06,0],0.011,0.009,wood);
-  seg(SB,[0.07,1.06,0],[0.07,1.0,0],0.004,0.004,[0.15,0.14,0.13,4]);
-  slab(SB,[0.07,0.955,0],[0.05,0.012,0.05],[0.16,0.15,0.14,4]);slab(SB,[0.07,0.885,0],[0.05,0.012,0.05],[0.16,0.15,0.14,4]);
-  for(const q of[[-1,-1],[1,-1],[-1,1],[1,1]])slab(SB,[0.07+q[0]*0.021,0.92,q[1]*0.021],[0.006,0.07,0.006],[0.16,0.15,0.14,4]);
-  ball(SB,[0.07,0.918,0],0.018,[3.0,1.5,0.4,7],true);
-  out.lantern=fpt(SB,[0.07,0.918,0]);
-  out.top=1.05;
+  ball(fr.U,q3(...A.gem),0.012*S,[0.7,0.28,0.08,7],true); // belt gem: a faint warm glint, no light of its own
+  const sp=fpt(fr.grip,[A.gripAxis[0]*S,A.gripAxis[1]*S,0]),SB={p:[sp[0],0,sp[2]],R:B.R};
+  const sg=(a,b,r0,r1,col)=>seg(SB,q3(...a),q3(...b),r0*S,r1*S,col),sb=(c,r,col)=>ball(SB,q3(...c),typeof r==='number'?r*S:r.map(v=>v*S),col,true),sl=(c,z,col)=>slab(SB,q3(...c),q3(...z),col);
+  sg([0,0,0],[0.003,0.34,-0.002],0.0135,0.0125,wood);sg([0.003,0.34,-0.002],[-0.002,0.68,0.003],0.0125,0.0115,wood);sg([-0.002,0.68,0.003],[0,1.0,0],0.0115,0.011,wood);
+  sb([0.003,0.34,-0.002],[0.0155,0.02,0.0155],wood);sb([-0.002,0.68,0.003],[0.014,0.018,0.014],wood);
+  sg([0,1.0,0],[0.07,1.06,0],0.011,0.009,wood);
+  sg([0.07,1.06,0],[0.07,1.0,0],0.004,0.004,[0.15,0.14,0.13,4]);
+  sl([0.07,0.955,0],[0.05,0.012,0.05],[0.16,0.15,0.14,4]);sl([0.07,0.885,0],[0.05,0.012,0.05],[0.16,0.15,0.14,4]);
+  for(const q of[[-1,-1],[1,-1],[-1,1],[1,1]])sl([0.07+q[0]*0.021,0.92,q[1]*0.021],[0.006,0.07,0.006],[0.16,0.15,0.14,4]);
+  sb([0.07,0.918,0],0.018,[3.0,1.5,0.4,7]);
+  out.lantern=fpt(SB,q3(0.07,0.918,0));
+  out.top=1.05*S;
 }
 function buildNpc(n,t,ex,ey,ez,dtR){
   const dxp=ex-n.x,dzp=ez-n.z,dist=Math.hypot(dxp,dzp),toP=Math.atan2(dzp,dxp);
@@ -962,7 +966,7 @@ function buildNpc(n,t,ex,ey,ez,dtR){
   let diff=wrap(toP-n.yaw);
   if(!seated&&!n.lock&&dist<5&&(Math.abs(diff)>0.45||talking)){const st=Math.sign(diff)*Math.min(Math.abs(diff),2.6*dtR);n.yaw+=st;diff-=st}
   const lim=seated?1.25:1.0,wantY=n.lockHead?0:dist<6?clamp(diff,-lim,lim):Math.sin(t*0.4+n.ph)*0.35;
-  const headY0=seated?0.62:n.type==='keeper'?0.95:0.84,wantP=dist<6?clamp(Math.atan2(ey-headY0,Math.max(dist,0.3)),-0.45,0.4):0;
+  const headY0=seated?0.62:n.type==='keeper'?0.95*(KEEPER.proportions.height||1):0.84,wantP=dist<6?clamp(Math.atan2(ey-headY0,Math.max(dist,0.3)),-0.45,0.4):0;
   const k=Math.min(1,dtR*6);n.hy+=(wantY-n.hy)*k;n.hp+=(wantP-n.hp)*k;
   if(n.pose){n.hy=n.pose[0];n.hp=n.pose[1]}
   const ph=n.ph,br=Math.sin(t*1.7+ph),breath=br*0.004;
@@ -3326,7 +3330,7 @@ if(POST){
     gtaoPass.blendIntensity=1.0;
     gtaoPass.updateGtaoMaterial({radius:0.3,distanceExponent:1.4,thickness:1.2,scale:1.25,samples:12,distanceFallOff:1,screenSpaceRadius:false});
     const ov=gtaoPass.overrideVisibility.bind(gtaoPass);
-    gtaoPass.overrideVisibility=function(){ov();sprMesh.visible=false};
+    gtaoPass.overrideVisibility=function(){ov();sprMesh.visible=false;charMesh.visible=false}; // characters stay out of the AO depth/normal pass: see docs/npc-kit.md, white squares
     composer.addPass(gtaoPass);
   }
   bloomPass=new UnrealBloomPass(new THREE.Vector2(4,4),0.5,0.55,1.0);composer.addPass(bloomPass);
