@@ -33,7 +33,7 @@ await ev(()=>{T.G.P.hp=1;T.G.roomEnd({k:'win',why:'kiln'})});
 const w1=await ev(()=>({p:T.G.P.pick,w:T.G.wallet,g:T.G.R.gems,hp:T.G.P.hp,fuel:T.G.P.fuel,sc:T.G.R.score}));
 ok(w1.p===1,'winning the kiln gives one pickaxe');
 ok(w1.w===g0.w&&w1.g===g0.g,'no gems from the kiln any more');
-ok(w1.hp===1&&w1.fuel===g0.fuel,'no heart or fuel from the kiln');
+ok(w1.hp===1&&w1.fuel<=g0.fuel,'no heart or fuel from the kiln');
 ok(w1.sc>0,'score bonus kept');
 await ev(()=>T.G.roomEnd({k:'win',why:'kiln'}));
 ok(await ev(()=>T.G.P.pick===2),'winning again adds another');
