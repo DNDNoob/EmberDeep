@@ -202,7 +202,7 @@ void main(){float a=0.0;
 export function createRooms(renderer,o0){
   // a watcher is not the one in the room: no speech or shaking for them, and a fast-forward makes no sound
   const o=Object.assign({},o0,{say:(...a)=>{if(!A.watching)o0.say(...a)},rumble:(...a)=>{if(!A.watching)o0.rumble(...a)},
-    tone:(...a)=>{if(!A.mute)o0.tone(...a)},noise:(...a)=>{if(!A.mute)o0.noise(...a)},hint:k=>A.watching?A.label:o0.hint(k)});
+    tone:(...a)=>{if(!A.mute)o0.tone(...a)},noise:(...a)=>{if(!A.mute)o0.noise(...a)},hint:k=>A.watching?A.label:o0.hint(k),gems:n=>{if(!A.watching&&o0.gems)o0.gems(n)},sfx:n=>{if(!A.mute&&!A.watching&&o0.sfx)o0.sfx(n)}});
   const nf=v=>typeof v==='number'&&isFinite(v),Z={mx:0,my:0,press:0,lx:0,ly:0};
   const scene=new THREE.Scene(),cam=new THREE.PerspectiveCamera(72,1,0.05,2000);
   scene.background=new THREE.Color(0x000000);
@@ -695,7 +695,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
   // you stand in the back room of a one-way mirror; the timeline (seconds) is fixed, only the smashing and your choice move
   const MIR0={ENTER:17,K:[19,20.9,22.7],STOP:23.7,HEAD:24.4,BODY:26.6,WALK:28.2,SMASH:30.6,CAN:31.2,CHOICE:32.2,NB:13,BREAK:14,SZ:-4.1,LOOK:0.8};
   function mirror(seed){
-    const LOW=!!o.low,TAU=Math.PI*2,S={held:false,ht:-9,aim:false,splats:[],sn:0,spj:-1,spc:0,spt:[0,1.5,-1],btn:['USE',false],t:0,yaw:0,pitch:0.02,said:0,ch:0,ct:-1,bt:-1,sm:0,sel:-1,prev:null,lk:0,shk:0,leaveT:-1,want:null,touch:false,nb:0,blind:0,ph:'watch'};
+    const LOW=!!o.low,TAU=Math.PI*2,S={held:false,ht:-9,aim:false,splats:[],sn:0,spj:-1,spc:0,spt:[0,1.5,-1],btn:['USE',false],t:0,yaw:0,pitch:0.02,said:0,ch:0,ct:-1,bt:-1,sm:0,sel:-1,prev:null,lk:0,shk:0,leaveT:-1,want:null,touch:false,nb:0,blind:0,ph:'watch',px:0,pz:0.1,ux:0,uz:0,bobP:0,bob:0,eyeY:1.6,fr:false,fb:0,gb:-1,st:false,tg:'',tx:0,tz:0.1,tyaw:0,tpit:0.02,hasPose:false,fs2:0};
     cam.fov=66;cam.near=0.05;cam.far=60;
     const wrap=a=>{a%=TAU;return a>Math.PI?a-TAU:a<-Math.PI?a+TAU:a},ang=(dx,dz)=>Math.atan2(dx,dz),nrm=(x,z)=>{const l=Math.hypot(x,z)||1;return[x/l,z/l]};
     const CC=c=>Array.isArray(c)?new THREE.Color().setRGB(c[0],c[1],c[2]):new THREE.Color(c);
@@ -823,10 +823,13 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     box(group,lit(0x000000,{lit:0}),DX,1.2,PZ-0.9,1.1,2.4,1.2);
     for(const s of[-1,1])box(group,gilt,DX+s*0.58,1.18,PZ+0.0,0.08,2.36,0.1);box(group,gilt,DX,2.34,PZ,1.24,0.08,0.1);
     S.door=grp(group,DX-0.55,0,PZ+0.02);box(S.door,lit(0x3a1f12,{pat:6,rim:0.4,rc:[0.5,0.3,0.15],sp:0.3}),0.55,1.15,0,1.1,2.3,0.07);ball(S.door,gilt,0.95,1.1,0.06,0.03,0.03,0.03);
+    // the parlor face of the mirror wall: wallpaper around the frame, and the frame's gilt moulding, for when you walk through
+    {const z=WZ-0.325;box(group,paper,(-PX-PW)/2,PH/2,z,PX-PW,PH,0.05);box(group,paper,(PX+PW)/2,PH/2,z,PX-PW,PH,0.05);box(group,paper,0,(PY1+PH)/2,z,PW*2,PH-PY1,0.05);box(group,paper,0,PY0/2,z,PW*2,PY0,0.05);
+      for(const s of[-1,1])box(group,gilt,s*(PW+0.05),(PY0+PY1)/2,z-0.02,0.1,PY1-PY0+0.2,0.06);box(group,gilt,0,PY1+0.05,z-0.02,PW*2+0.2,0.1,0.06);box(group,gilt,0,PY0-0.05,z-0.02,PW*2+0.2,0.1,0.06)}
     // furniture
     const cloth=lit(0xa99d86,{rim:0.4,rc:[0.5,0.35,0.2],wrap:0.6}),dwood=lit(0x3a2112,{rim:0.5,rc:[0.6,0.35,0.15],sp:0.5,wrap:0.3}),china=lit(0xb8b2a2,{rim:0.4,rc:[0.5,0.4,0.3],sp:0.6});
         cyl(group,dwood,TX,0.37,TZ,0.07,0.13,0.74);cyl(group,dwood,TX,0.76,TZ,0.62,0.62,0.04,20);cyl(group,cloth,TX,0.6,TZ,0.6,0.72,0.34,20);cyl(group,cloth,TX,0.775,TZ,0.6,0.6,0.012,20);
-    cyl(group,china,TX+0.1,0.82,TZ-0.05,0.07,0.05,0.07);ball(group,china,TX-0.25,0.84,TZ+0.1,0.09,0.08,0.09);cyl(group,china,TX+0.3,0.805,TZ+0.18,0.04,0.03,0.04);cyl(group,china,TX-0.1,0.805,TZ-0.3,0.04,0.03,0.04);
+    S.cup=cyl(group,china,TX+0.1,0.82,TZ-0.05,0.07,0.05,0.07);S.cup0=S.cup.position.clone();ball(group,china,TX-0.25,0.84,TZ+0.1,0.09,0.08,0.09);cyl(group,china,TX+0.3,0.805,TZ+0.18,0.04,0.03,0.04);cyl(group,china,TX-0.1,0.805,TZ-0.3,0.04,0.03,0.04);
     const chair=(x,z,yaw)=>{const c=grp(group,x,0,z);c.rotation.y=yaw;box(c,dwood,0,0.45,0,0.44,0.05,0.44);box(c,dwood,0,0.78,-0.21,0.44,0.62,0.04);
       for(const a of[-1,1])for(const b of[-1,1])cyl(c,dwood,a*0.19,0.22,b*0.19,0.02,0.018,0.44);box(c,lit(0x3a1a2a,{rim:0.4,rc:[0.5,0.3,0.2],wrap:0.5}),0,0.485,0,0.38,0.03,0.38);return c};
     S.chairA=chair(...SEAT[seatK]);S.chairB=chair(...SEAT[seat2]);
@@ -976,7 +979,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       for(let i=0;i<3;i++){const a=i/3*TAU+0.5,l=cyl(st,woodV,Math.cos(a)*0.14,SH/2,Math.sin(a)*0.14,0.017,0.024,SH,8);l.rotation.set(-0.07*Math.sin(a),0,0.07*Math.cos(a))}
       const rg2=new THREE.Mesh(new THREE.TorusGeometry(0.155,0.01,6,18),woodV);rg2.rotation.x=Math.PI/2;rg2.position.y=0.3;st.add(rg2)}
     S.can=makeCan(canQ);S.can.scale.setScalar(0.95);S.can.position.set(SX,SH+0.125,SZ);S.can.spin.rotation.y=Math.atan2(SX,SZ-0.1)+0.2;group.add(S.can);
-    S.canC=[SX,SH+0.14,SZ];{const dx=SX,dy=S.canC[1]-1.6,dz=SZ-0.1;S.canAim={yaw:Math.atan2(dx,-dz),pitch:Math.asin(dy/Math.hypot(dx,dy,dz))}}
+    S.canC=[SX,SH+0.14,SZ];Object.defineProperty(S,'canAim',{get:()=>{const dx=SX-S.px,dy=S.canC[1]-S.eyeY,dz=SZ-S.pz;return{yaw:Math.atan2(dx,-dz),pitch:Math.asin(dy/Math.hypot(dx,dy,dz))}}});
     S.hand=new THREE.Group();S.hand.visible=false;group.add(S.hand);
     {const skin=lit(0xd2a085,{rim:0.9,rc:[0.8,0.5,0.4],wrap:0.5}),sl=lit(0x2a2f3a,{rim:0.6,rc:[0.4,0.5,0.8]});
       const a=cyl(S.hand,sl,0.34,-0.5,-0.4,0.07,0.06,0.9);a.rotation.set(1.0,0,-0.35);ball(S.hand,skin,0.2,-0.2,-0.58,0.075,0.07,0.1);
@@ -1038,11 +1041,127 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       }
       return m;
     };
+    // ---- walking: boxes [x0,x1,z0,z1] and circles [x,z,r] you cannot enter; the pane is a wall until it is broken ----
+    const RAD=0.22,SPEED=2.2;
+    const WB=[[-BX-0.6,-BX,-2.2,BZ+0.6],[BX,BX+0.6,-2.2,BZ+0.6],[-BX-0.6,BX+0.6,BZ,BZ+0.6],[-PX-0.6,-PW,-2.2,WZ],[PW,PX+0.6,-2.2,WZ],[-PX-0.6,-PX,PZ-0.6,-2.2],[PX,PX+0.6,PZ-0.6,-2.2],[-PX-0.6,PX+0.6,PZ-0.6,PZ],
+      [-1.7-0.34,-1.7+0.34,-0.9-0.34,-0.9+0.34],[1.75-0.3,1.75+0.3,1.9-0.3,1.9+0.3],[1.75-0.27,1.75+0.27,-1.0-0.27,-1.0+0.27],[SX-0.2,SX+0.2,SZ-0.2,SZ+0.2],
+      [sbX-0.78,sbX+0.78,-6.45-0.28,-6.45+0.28],[sofX-0.68,sofX+0.68,-6.72,-6.1]];
+    const WBG=WB.concat([[-PW-0.1,PW+0.1,-2.2,WZ-0.04]]);
+    const circ=()=>[[TX,TZ,0.66],[LA[0],LA[1],0.22],[LB[0],LB[1],0.22],[S.chairA.position.x,S.chairA.position.z,0.27],[S.chairB.position.x,S.chairB.position.z,S.st?0.36:0.27]];
+    const collide=()=>{
+      const bl=S.gb<0?WBG:WB,cs=circ();
+      for(let it=0;it<2;it++){
+        for(const b of bl){const qx=clamp(S.px,b[0],b[1]),qz=clamp(S.pz,b[2],b[3]),ex=S.px-qx,ez=S.pz-qz,d=Math.hypot(ex,ez);
+          if(d<RAD){if(d>1e-6){S.px=qx+ex/d*RAD;S.pz=qz+ez/d*RAD}else{const m=[S.px-b[0],b[1]-S.px,S.pz-b[2],b[3]-S.pz],i=m.indexOf(Math.min(...m));
+            if(i===0)S.px=b[0]-RAD;else if(i===1)S.px=b[1]+RAD;else if(i===2)S.pz=b[2]-RAD;else S.pz=b[3]+RAD}}}
+        for(const c of cs){const ex=S.px-c[0],ez=S.pz-c[1],d=Math.hypot(ex,ez),r=c[2]+RAD;if(d<r){if(d>1e-6){S.px=c[0]+ex/d*r;S.pz=c[1]+ez/d*r}else S.px=c[0]+r}}
+      }
+    };
+    // the walk bob follows how fast the view is really moving, for you and for a watcher alike
+    const view=(dt,sp)=>{if(dt<=0)return;const a=clamp(sp/SPEED,0,1);S.bobP+=sp*dt*2.9;S.bob+=(Math.sin(S.bobP)*0.026*a-S.bob)*Math.min(1,dt*20);S.eyeY=1.6+S.bob;
+      const n=Math.floor(S.bobP/Math.PI);if(n!==S.fs2){S.fs2=n;if(a>0.35&&!A.watching)o.noise(0.07,0.03,170+(n&1)*30,1)}};
+    // how shut your eyes are after you spray yourself: it slows you down too
+    const veilK=h=>h<0?0:ss(0.85,1.5,h)*(1-0.82*ss(4.4,8.0,h))*(1-0.5*ss(8.0,11.5,h))*(1-ss(11.5,15,h));
+    const walk=(dt,inp,hold)=>{
+      const mx=nf(inp.mx)?clamp(inp.mx,-1,1):0,my=nf(inp.my)?clamp(inp.my,-1,1):0,sy=Math.sin(S.yaw),cy=Math.cos(S.yaw);let dx=cy*mx-sy*my,dz=sy*mx+cy*my;const l=Math.hypot(dx,dz);if(l>1){dx/=l;dz/=l}
+      const sp=SPEED*(1-0.65*veilK(hold)),k=Math.min(1,dt*12);S.ux+=(dx*sp-S.ux)*k;S.uz+=(dz*sp-S.uz)*k;
+      const ox=S.px,oz=S.pz;S.px+=S.ux*dt;S.pz+=S.uz*dt;collide();view(dt,Math.hypot(S.px-ox,S.pz-oz)/Math.max(dt,1e-4));
+    };
+    const watchWalk=dt=>{
+      if(!S.hasPose||Math.hypot(S.tx-S.px,S.tz-S.pz)>3){S.px=S.tx;S.pz=S.tz;S.hasPose=true;return}
+      const k=Math.min(1,dt*10),ox=S.px,oz=S.pz;S.px+=(S.tx-S.px)*k;S.pz+=(S.tz-S.pz)*k;view(dt,Math.hypot(S.px-ox,S.pz-oz)/Math.max(dt,1e-4));
+    };
+    // stepping through the frame: the bodies are gone, one chair is pulled out and the other lies on its side, a cup is on the floor
+    const stepIn=()=>{
+      S.st=true;for(const e of cast)e.p.R.visible=false;mon.R.visible=false;
+      const a=SEAT[seatK],b=SEAT[seat2],pull=seatK==='B'?0.3:0.5;
+      S.chairA.position.set(a[0]-Math.sin(a[2])*pull,0,a[1]-Math.cos(a[2])*pull);S.chairA.rotation.set(0,a[2]+0.3,0);
+      S.chairB.position.set(b[0],0.2,b[1]);S.chairB.rotation.set(-1.45,b[2],0.2);
+      S.cup.position.set(TX+0.5,0.045,TZ+0.7);S.cup.rotation.set(0,0.5,1.4);
+    };
+    // each blow on the glass from this side; the third one gives and the pieces fall into the parlor
+    const fblow=()=>{S.fb++;blow(12+S.fb);S.shk=Math.max(S.shk,0.22);if(S.fb>=3&&S.gb<0){shatter();S.gb=S.t;S.shIn=true;S.shards.material.color.setRGB(0.62,0.68,0.76)}};
+    // ---- easter egg B, a mirror inside a mirror: a small framed glass on a parlor wall, and behind it another tiny dark room with someone in it. Self-contained: replace the function to swap the idea ----
+    const mirrorEggMirror=()=>{
+      const M={ph:0,te:0,used:false,from:null,to:null,fx:0,tl:0,done:false};
+      // a free wall spot, never the wall with the pane: left, right or the far wall beside the door
+      let at=null;
+      for(const sd of shuf(['L','R','F'])){
+        if(sd==='F'){const x=dPlace(0.8);if(x!==null){at={x,z:PZ,yaw:0};break}}
+        else{const lz=sd==='L'?LA[1]:LB[1];let z=null;for(let i=0;i<40;i++){const c=rg(-5.8,-3.4);if(Math.abs(c-lz)>0.95){z=c;break}}if(z!==null){at={x:sd==='L'?-PX:PX,z,yaw:sd==='L'?Math.PI/2:-Math.PI/2};break}}}
+      if(!at)at={x:-PX,z:-4.4,yaw:Math.PI/2};
+      const n=[Math.sin(at.yaw),Math.cos(at.yaw)],K=grp(group,at.x,0,at.z);K.rotation.y=at.yaw;S.mini=[+at.x.toFixed(2),+at.z.toFixed(2)];
+      const W2=0.28,Y0=1.1,Y1=1.9,YC=1.5,D=0.34,GZ=0.31;
+      // the cabinet: dark wood body, gilt lip, a deep shadow box
+      const dim=lit(0x3a2c1c,{pat:5,lit:0.5,wrap:0.4}),dimV=lit(0x2e2216,{pat:6,lit:0.5,wrap:0.4}),dk2=lit(0x14110e,{lit:0.4,rim:0.5,rc:[0.3,0.3,0.4]});
+      box(K,dwood,0,Y0-0.03,D/2,W2*2+0.12,0.06,D);box(K,dwood,0,Y1+0.03,D/2,W2*2+0.12,0.06,D);for(const sg of[-1,1])box(K,dwood,sg*(W2+0.03),YC,D/2,0.06,Y1-Y0,D);
+      for(const sg of[-1,1])box(K,gilt,sg*(W2+0.045),YC,D+0.005,0.09,Y1-Y0+0.18,0.025);box(K,gilt,0,Y1+0.045,D+0.005,W2*2+0.18,0.09,0.025);box(K,gilt,0,Y0-0.045,D+0.005,W2*2+0.18,0.09,0.025);
+      // inside: back boards, raw bracing, a stool with a can on it, and someone standing in the dark
+      box(K,dim,0,YC,0.03,W2*2,Y1-Y0,0.02);for(const sg of[-1,1])box(K,dimV,sg*0.2,YC,0.05,0.03,Y1-Y0,0.025);
+      for(const q of[[0.1,0.9],[-0.12,-0.7]]){const e=box(K,dimV,q[0],YC,0.052,0.028,0.95,0.02);e.rotation.z=q[1]}
+      box(K,dim,0,Y0+0.005,D/2,W2*2,0.012,D-0.02);
+      {const st=grp(K,-0.13,Y0,0.13),ml=lit(0x6e5030,{pat:5,lit:0.55,wrap:0.4});cyl(st,ml,0,0.2,0,0.046,0.046,0.012,10);for(let i=0;i<3;i++){const a=i/3*TAU+0.5;cyl(st,ml,Math.cos(a)*0.03,0.1,Math.sin(a)*0.03,0.004,0.006,0.2,5)}
+        const c=makeCan(lit(0xffffff,{map:label,rim:0.2,rc:[0.5,0.45,0.4],lit:0.45,wrap:0.5}));c.scale.setScalar(0.24);c.position.set(0,0.2+0.036,0);st.add(c)}
+      const fig=M.fig=grp(K,0.1,Y0,0.15),fs=lit(0x55514d,{lit:0.5,rim:0.6,rc:[0.25,0.3,0.45],wrap:0.3});
+      for(const sg of[-1,1]){cyl(fig,fs,sg*0.014,0.12,0,0.008,0.01,0.24,6);const a=cyl(fig,fs,sg*0.05,0.36,0,0.006,0.008,0.27,6);a.rotation.z=sg*0.08}
+      fig.torso=grp(fig,0,0.24,0);cyl(fig.torso,fs,0,0.1,0,0.026,0.036,0.22,8);fig.head=grp(fig.torso,0,0.27,0);ball(fig.head,fs,0,0.02,0.004,0.034,0.048,0.036);
+      M.eyes=[-1,1].map(sg=>{const e=ball(fig.head,lit([4,3.2,1.2],{lit:0,glow:1,u:1}),sg*0.014,0.028,0.032,0.0055,0.004,0.004),g=glow(0xffd070,0.06,0);g.position.set(sg*0.014,0.028,0.04);fig.head.add(g);return g});
+      // the glass: a dim, ordinary mirror from a distance; clear when you lean in
+      M.skin=new THREE.Mesh(new THREE.PlaneGeometry(W2*2,Y1-Y0),new THREE.MeshBasicMaterial({map:canvasTex(64,128,(c,w,h)=>{const g=c.createLinearGradient(0,0,w,h);g.addColorStop(0,'#3a424c');g.addColorStop(0.35,'#1c2128');g.addColorStop(0.5,'#4a525c');g.addColorStop(0.62,'#1a1d23');g.addColorStop(1,'#2a3038');c.fillStyle=g;c.fillRect(0,0,w,h)}),transparent:true,opacity:1,depthWrite:true}));
+      M.skin.position.set(0,YC,GZ);K.add(M.skin);
+      const sheen=new THREE.Mesh(new THREE.PlaneGeometry(W2*2,Y1-Y0),new THREE.MeshBasicMaterial({color:0x9fb2c6,transparent:true,opacity:0.07,depthWrite:false}));sheen.position.set(0,YC,GZ+0.003);K.add(sheen);
+      // world box for the cabinet so you cannot walk into it
+      {const cs=[[-W2-0.06,0],[W2+0.06,0],[-W2-0.06,D+0.03],[W2+0.06,D+0.03]].map(q=>[at.x+Math.cos(at.yaw)*q[0]+Math.sin(at.yaw)*q[1],at.z-Math.sin(at.yaw)*q[0]+Math.cos(at.yaw)*q[1]]),
+        bx=[Math.min(...cs.map(q=>q[0])),Math.max(...cs.map(q=>q[0])),Math.min(...cs.map(q=>q[1])),Math.max(...cs.map(q=>q[1]))];WB.push(bx);WBG.push(bx)}
+      const C=[at.x+n[0]*GZ,YC,at.z+n[1]*GZ];
+      M.pose=()=>{const k=M.ph===1?ss(0,1.2,M.te):0,L=M.ph===1?ss(0.3,3.6,M.te):0,vis=M.ph<2&&!M.used;
+        M.skin.material.opacity=1-0.9*k;fig.visible=vis;for(const g of M.eyes){g.material.opacity=vis?0.9*ss(0.3,1.2,M.te)*(M.ph===1?1:0):0;g.scale.setScalar(0.03+0.03*L)}
+        fig.position.z=lerp(0.15,0.235,L);fig.position.x=lerp(0.1,0.03,L);fig.torso.rotation.x=0.45*L;fig.head.rotation.x=0.25*L;fig.head.rotation.y=Math.sin(M.te*0.8)*0.12*(1-L)};
+      M.aimed=(ox,oy,oz,fx,fy,fz)=>{if(M.ph||M.used||!S.st)return false;const rx=C[0]-ox,ry=C[1]-oy,rz=C[2]-oz,al=rx*fx+ry*fy+rz*fz;return al>0.2&&al<1.7&&Math.hypot(rx-fx*al,ry-fy*al,rz-fz*al)<0.36};
+      M.start=()=>{if(M.ph||M.used)return;M.ph=1;M.te=0;M.done=false;M.from=[S.px,S.pz,S.eyeY,S.yaw,S.pitch];const yw=Math.atan2(-n[0],n[1]);M.to=[at.x+n[0]*(GZ+0.5),at.z+n[1]*(GZ+0.5),YC,S.yaw+wrap(yw-S.yaw),0];o.tone(180,0.25,'sine',0.05,0,-50)};
+      // lean in, hold with it leaning in too, a soft knock from its side; pulling back (or waiting) leaves the little room empty
+      M.update=(dt,ex)=>{
+        if(!M.ph){M.pose();return}
+        const t0=M.te,te=M.te+=dt,at_=x=>t0<x&&te>=x;
+        if(M.ph===1){const k=ss(0,1.2,te),F=M.from,T=M.to;S.px=lerp(F[0],T[0],k);S.pz=lerp(F[1],T[1],k);S.eyeY=lerp(F[2],T[2],k);S.yaw=lerp(F[3],T[3],k);S.pitch=lerp(F[4],T[4],k);S.ux=S.uz=0;
+          if(at_(4.2)){o.noise(0.08,0.1,220,1.4);o.tone(140,0.12,'sine',0.14,0,-40)}
+          if((ex&&te>1.5)||te>=5.6){M.ph=2;M.te=0;o.tone(70,0.5,'sine',0.06)}}
+        else if(M.ph===2){const k=ss(0,0.8,te),F=M.from,T=M.to;S.px=lerp(T[0],F[0],k);S.pz=lerp(T[1],F[1],k);S.eyeY=lerp(T[2],F[2],k);S.ux=S.uz=0;if(te>=0.8){M.ph=3;M.used=true}}
+        M.pose();
+      };
+      M.snap=()=>({em:M.ph,et:+M.te.toFixed(2)});
+      M.apply=q=>{if(!Number.isInteger(q.em)||q.em<0||q.em>3||!nf(q.et)||q.et<0||q.et>60)return;
+        if(q.em>0&&M.ph===0&&!M.used){if(!S.st){if(S.gb<0){S.fb=3;S.gb=S.t;S.pane.visible=false;S.drip.visible=false;S.shIn=true;S.shards.material.color.setRGB(0.62,0.68,0.76)}stepIn()}M.start()}
+        if(q.em===3&&M.ph<3){M.ph=3;M.used=true}else if(q.em>0&&M.ph>0&&M.ph<3&&q.em>=M.ph){M.ph=q.em;if(Math.abs(q.et-M.te)>0.4)M.te=q.et}};
+      M.act=()=>M.ph===1||M.ph===2;
+      M.pose();return M;
+    };
+    // ---- easter egg C, the thank-you note: a guestbook open on the parlor table ----
+    const mirrorEggBook=()=>{
+      const B={st:0,paid:false},bx=TX+0.05,bz=TZ+0.38,b=grp(group,bx,0.78,bz);b.rotation.y=rg(-0.6,0.6);
+      const pg=canvasTex(128,128,(c,w,h)=>{c.fillStyle='#e6d6ae';c.fillRect(0,0,w,h);c.strokeStyle='rgba(60,40,25,.65)';c.lineWidth=2;for(let i=0;i<9;i++){c.beginPath();let x=10;c.moveTo(x,16+i*12);while(x<w-12){x+=6;c.lineTo(x,16+i*12+Math.sin(x*0.7+i*3)*2.5)}c.stroke()}});
+      box(b,lit(0x4a1a1a,{rim:0.4,rc:[0.5,0.3,0.2],wrap:0.5}),0,0.006,0,0.5,0.012,0.31);
+      for(const sg of[-1,1]){const p=box(b,lit(0xffffff,{map:pg,wrap:0.6,rim:0.2,rc:[0.5,0.4,0.3]}),sg*0.115,0.02,0,0.22,0.014,0.28);p.rotation.z=-sg*0.06}
+      S.book=[+bx.toFixed(2),+bz.toFixed(2)];
+      B.aimed=(ox,oy,oz,fx,fy,fz)=>{if(!S.st)return false;const rx=bx-ox,ry=0.8-oy,rz=bz-oz,al=rx*fx+ry*fy+rz*fz;return al>0.2&&al<1.8&&Math.hypot(rx-fx*al,ry-fy*al,rz-fz*al)<0.3};
+      B.toggle=()=>{if(B.st===1){B.st=2;o.tone(300,0.12,'triangle',0.05);return}B.st=1;o.noise(0.2,0.08,2600,1);o.tone(240,0.1,'triangle',0.04);
+        if(!B.paid){B.paid=true;o.gems(5);o.sfx('shard');o.say('+5 gems tucked in the book.',3.5)}};
+      B.html=()=>`<div style="position:fixed;left:50%;top:50%;transform:translate(-50%,-50%) rotate(-1.2deg);width:min(90vw,470px);box-sizing:border-box;padding:30px 34px 26px;text-align:left;font:italic 20px/1.55 'Segoe Script','Bradley Hand','Lucida Handwriting','Snell Roundhand',Georgia,'Times New Roman',serif;letter-spacing:0;color:#2a1810;text-shadow:none;background:radial-gradient(ellipse at 28% 18%,rgba(255,246,218,.97),rgba(226,200,146,.98) 62%,rgba(168,128,76,1) 100%);border-radius:3px;box-shadow:inset 0 0 38px rgba(110,70,30,.55),0 8px 40px #000,0 0 0 1px rgba(60,35,15,.8)">To whoever stood behind the glass:<br>Thank you for not looking. Most of them look.<br>Please take something for your trouble.<br><span style="display:block;text-align:right;margin-top:6px">&mdash; the Guest</span><small style="display:block;margin-top:14px;font:12px sans-serif;color:#6a5030;text-align:center;letter-spacing:.06em">${S.touch?'tap USE or walk to close':'press again or walk to close'}</small></div>`;
+      B.snap=()=>({eb:B.st,bp:B.paid?1:0});
+      B.apply=q=>{if(Number.isInteger(q.eb)&&q.eb>=0&&q.eb<=2)B.st=q.eb;if(q.bp===1)B.paid=true};
+      return B;
+    };
+    const emM=mirrorEggMirror(),emB=mirrorEggBook();
     // ---- update ----
     let T0=0;const at=x=>T0<x&&S.t>=x;
     S.update=(dt,inp)=>{
       T0=S.t;S.t+=dt;const t=S.t,W=A.watching,hold=S.ch===2?t-S.ct:-1;
-      S.yaw=clamp(S.yaw+inp.lx*1.6*dt,-3.3,3.3);S.pitch=clamp(S.pitch-inp.ly*1.4*dt,-1.25,1.0);S.touch=!!inp.touch;
+      S.yaw=wrap(S.yaw+inp.lx*1.6*dt);S.pitch=clamp(S.pitch-inp.ly*1.4*dt,-1.25,1.0);S.touch=!!inp.touch;
+      S.fr=S.ch===2&&hold>=LK.PROMPT&&S.bt<0;
+      // walking: not while it breaks through, not when you spray it, not while you lean in to the little glass
+      const mxw=nf(inp.mx)?inp.mx:0,myw=nf(inp.my)?inp.my:0;
+      if(W)watchWalk(dt);else if(S.bt<0&&S.ch!==1&&S.leaveT<0&&!emM.act())walk(dt,inp,hold);else{S.ux=S.uz=0;view(dt,0)}
+      if(S.gb>=0&&!S.st&&S.pz<WZ-0.32)stepIn();
       // sound of the parlor
       if(at(MIR.ENTER)){o.noise(0.5,0.8,180,0.6);o.tone(55,0.7,'sawtooth',0.35,0,-25);o.rumble(500,1,0.8);S.shk=Math.max(S.shk,0.25)}
       for(let i=0;i<MIR.K.length;i++)if(at(MIR.K[i])){o.noise(0.35,0.7,260,0.7);o.tone(80,0.35,'square',0.3,0,-45);o.tone(45,0.6,'sine',0.35,0.05,-15);o.rumble(350,1,0.9);S.shk=Math.max(S.shk,0.3)}
@@ -1052,11 +1171,18 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       // is the thing looked at?
       // heavy footsteps follow its legs
       const mp=S.pose(t),cp=Math.cos(S.pitch),fx=Math.sin(S.yaw)*cp,fy=Math.sin(S.pitch),fz=-Math.cos(S.yaw)*cp;
-      let dx=mp.x-0,dy=2.2-1.6,dz=mp.z-0.1;const dl=Math.hypot(dx,dy,dz)||1;
+      let dx=mp.x-S.px,dy=2.2-S.eyeY,dz=mp.z-S.pz;const dl=Math.hypot(dx,dy,dz)||1;
       const seen=(dx*fx+dy*fy+dz*fz)/dl>MIR.LOOK&&t>=MIR.WALK;S.lk=lerp(S.lk,seen?1:0,Math.min(1,dt*8));
       if(mp.wa>0&&S.ch!==2){const a=Math.floor(mp.w/Math.PI);if(S.fs!==undefined&&a!==S.fs){o.tone(50,0.14,'sine',0.25);o.noise(0.14,0.25,110,0.8)}S.fs=a}else S.fs=undefined;
       // is the can under the crosshair? a generous ray test, and the only thing that ever says so
-      {const c=S.canC,rx=c[0],ry=c[1]-1.6,rz=c[2]-0.1,al=rx*fx+ry*fy+rz*fz;S.aim=!S.held&&S.ch===0&&S.bt<0&&al>0.2&&Math.hypot(rx-fx*al,ry-fy*al,rz-fz*al)<0.17}
+      {const ey=S.eyeY;let tg='';const c=S.canC,rx=c[0]-S.px,ry=c[1]-ey,rz=c[2]-S.pz,al=rx*fx+ry*fy+rz*fz;
+        if(!S.held&&S.ch===0&&S.bt<0&&al>0.2&&al<3.4&&Math.hypot(rx-fx*al,ry-fy*al,rz-fz*al)<0.17)tg='can';
+        else if(S.fr&&S.leaveT<0&&!emM.act()&&emB.st!==1){
+          if(S.gb<0&&fz<-0.05){const q=(WZ-0.04-S.pz)/fz;if(q>0&&q<3.6){const hx=S.px+fx*q,hy=ey+fy*q;if(Math.abs(hx)<PW&&hy>PY0&&hy<PY1)tg='glass'}}
+          if(!tg&&fz>0.05&&S.pz>WZ-0.35){const q=(BZ-0.05-S.pz)/fz;if(q>0&&q<4.4){const hx=S.px+fx*q,hy=ey+fy*q;if(Math.abs(hx+0.4)<0.6&&hy>0&&hy<2.2)tg='door'}}
+          if(!tg&&emM.aimed(S.px,ey,S.pz,fx,fy,fz))tg='tiny';
+          if(!tg&&emB.aimed(S.px,ey,S.pz,fx,fy,fz))tg='book'}
+        S.tg=tg;S.aim=!!tg}
       // the glass
       if(t>=MIR.SMASH&&S.bt<0){
         let r=0;
@@ -1072,16 +1198,24 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       }
       if(S.want&&t>=S.want[1]&&S.ch===0){pick(S.want[0]);S.want=null}
       // choosing
-      const mxv=nf(inp.mx)?inp.mx:0,cur_={l:mxv<-0.5,r:mxv>0.5,ok:!!inp.press,spray:!!inp.spray,thumb:!!inp.thumb},P0=S.prev||cur_;S.prev=cur_;const e=k=>cur_[k]&&!P0[k];
+      const cur_={l:!!inp.sl,r:!!inp.sr,k1:!!inp.k1,k2:!!inp.k2,tab:!!inp.tab,ok:!!inp.press,spray:!!inp.spray,thumb:!!inp.thumb},P0=S.prev||cur_;S.prev=cur_;const e=k=>cur_[k]&&!P0[k];
       const live=S.held&&t>=MIR.CHOICE&&S.ch===0&&S.bt<0;S.live=live;
       if(!W&&S.ch===0&&S.bt<0){
-        if(!S.held){if(S.aim&&e('ok'))grab()}
+        if(!S.held){if(S.tg==='can'&&e('ok'))grab()}
         else if(live){
           if(inp.touch){if(e('spray'))pick(1);else if(e('thumb'))pick(2)}
-          else{if(e('l'))S.sel=0;if(e('r'))S.sel=1;if(e('ok')&&S.sel>=0)pick(S.sel===0?1:2)}
+          else{if(e('l'))S.sel=0;if(e('r'))S.sel=1;if(e('tab'))S.sel=S.sel===0?1:0;if(nf(inp.wh)&&inp.wh)S.sel=inp.wh>0?1:0;if(e('k1'))pick(1);else if(e('k2'))pick(2);else if(e('ok')&&S.sel>=0)pick(S.sel===0?1:2)}
         }else if(e('ok')&&t>=S.spc)spray(fx,fy,fz);
       }
-      if(S.ch===2&&hold>=LK.PROMPT&&S.leaveT<0&&!W){if(e('ok')||e('spray')||e('thumb')||hold>=LK.PROMPT+8){S.leaveT=t;o.tone(300,0.4,'sine',0.12,0,-100)}}
+      // once it is gone: break the glass, leave by the door, or look at what is in the parlor. No timer forces you out
+      if(!W&&S.fr&&S.leaveT<0&&e('ok')){
+        if(emB.st===1)emB.toggle();
+        else if(S.tg==='glass')fblow();
+        else if(S.tg==='door'){S.leaveT=t;o.tone(300,0.4,'sine',0.12,0,-100)}
+        else if(S.tg==='tiny')emM.start();
+        else if(S.tg==='book')emB.toggle()}
+      if(emB.st===1&&Math.abs(mxw)+Math.abs(myw)>0.3)emB.st=2;
+      emM.update(dt,!W&&(e('ok')||Math.abs(mxw)+Math.abs(myw)>0.4));
       if(S.leaveT>=0&&t-S.leaveT>=0.7)finish({k:'win',why:'mirror'});
       // after it gives
       if(S.bt>=0){const d=t-S.bt;if(at(S.bt+0.75)){o.hurtFx();o.noise(0.6,0.8,300,0.6);o.tone(70,0.6,'sawtooth',0.4,0,-40)}if(d>=1.9)finish({k:'dead',why:'mirror'})}
@@ -1094,7 +1228,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     // a squirt at the glass before it gives: a jet, then splats and runs on the pane. Nothing in the room minds.
     const spray=(fx,fy,fz)=>{
       S.spc=S.t+0.9;S.spj=S.t+0.55;o.noise(0.6,0.3,4500,0.5);o.tone(260,0.35,'sawtooth',0.04,0,-120);
-      const s=fz<-0.05?(WZ-0.04-0.1)/fz:6,hx=fx*s,hy=1.6+fy*s;S.spt=[hx,hy,0.1+fz*s];
+      const s=fz<-0.05?(WZ-0.04-S.pz)/fz:6,hx=S.px+fx*s,hy=S.eyeY+fy*s;S.spt=[hx,hy,S.pz+fz*s];
       if(fz<-0.05&&Math.abs(hx)<PW-0.08&&hy>PY0+0.08&&hy<PY1-0.08){const sp=[hx+(Math.random()-0.5)*0.05,hy-(PY0+PY1)/2+(Math.random()-0.5)*0.05,S.t+0.3,Math.random()];if(S.splats.length<10)S.splats.push(sp);else S.splats[S.sn++%10]=sp}
     };
     const pick=c=>{
@@ -1115,11 +1249,18 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       let h='';const t=S.t,op=(i,tx,tag)=>{const on=S.sel===i;return`<div style="display:block;margin:6px auto 0;padding:6px 14px;max-width:88vw;border:1px solid ${on?'#ffe0a8':'#6b5a48'};border-radius:6px;background:${on?'rgba(255,190,110,.26)':'rgba(0,0,0,.5)'};color:${on?'#fff2d6':'#d9c7ae'}">${S.touch?'<span style="opacity:.65;font-size:12px">['+tag+']</span> ':''}${tx}</div>`};
       const pr=(w,k)=>`<div style="position:fixed;left:0;right:0;top:61%;font-size:15px">${w} <small>[${o.hint(k)}]</small></div>`;
       S.btn=['USE',false];
-      if(S.bt<0&&S.ch===0&&S.live){S.btn=['SPRAY',true];h=op(0,'Spray the monster','SPRAY')+op(1,'Suck your thumb and hope the bad things go away','THUMB')+`<small style="display:block;margin-top:8px">${o.hint('mirror')}</small>`}
+      if(emB.st===1)h=emB.html();
+      else if(emM.act()){}
+      else if(S.bt<0&&S.ch===0&&S.live){S.btn=['SPRAY',true];h=op(0,'Spray the monster','SPRAY')+op(1,'Suck your thumb and hope the bad things go away','THUMB')+`<small style="display:block;margin-top:8px">${o.hint('mirror')}</small>`}
       else if(S.bt<0&&S.ch===0&&S.held){S.btn=['SPRAY',false];h=pr('Spray','mspray')}
-      else if(S.bt<0&&S.ch===0&&S.aim){S.btn=['PICK UP',false];h=pr('Pick up','mpick')}
-      else if(S.ch===2&&S.leaveT<0&&t-S.ct>=LK.PROMPT)h=`<b>It is gone.</b><br><small>${S.touch?'Tap SPRAY or THUMB to leave':'Press Space or E to leave'}</small>`;
-      if(S.ch>0)S.btn=['SPRAY',true];
+      else if(S.bt<0&&S.ch===0&&S.tg==='can'){S.btn=['PICK UP',false];h=pr('Pick up','mpick')}
+      else if(S.fr&&S.leaveT<0){
+        if(S.tg==='glass'){S.btn=['BREAK',false];h=pr('Break the glass','muse')}
+        else if(S.tg==='door'){S.btn=['LEAVE',false];h=pr('Leave','muse')}
+        else if(S.tg==='tiny'){S.btn=['LOOK',false];h=pr('Look closer','muse')}
+        else if(S.tg==='book'){S.btn=['READ',false];h=pr('Read','muse')}
+        else if(!S.st)h=`<b>It is gone.</b><br><small>Break the glass, or leave by the door behind you</small><br><small>${o.hint('mwalk')}</small>`}
+      if(S.ch>0&&!S.fr)S.btn=['SPRAY',true];
       o.hud(h);
     };
     const v3=new THREE.Vector3(),M4=new THREE.Matrix4(),Q4=new THREE.Quaternion(),E4=new THREE.Euler(),S3=new THREE.Vector3(),camQ=new THREE.Quaternion();
@@ -1131,17 +1272,17 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     const draw=(t,dt,mp)=>{
       const lit4=setLights(t),W=A.watching,hold=S.ch===2?t-S.ct:-1,dd=S.bt>=0?t-S.bt:-1;
       // camera
-      const sh=S.shk*(S.shk>0.2?0.06:0.04),cy=1.6+Math.sin(t*1.1)*0.008;
+      const sh=S.shk*(S.shk>0.2?0.06:0.04),cy=S.eyeY+Math.sin(t*1.1)*0.008;
       let yaw=S.yaw,pit=S.pitch;
       if(S.ch===1&&S.bt>=0||S.ch===1&&t-S.ct<2){const k=Math.min(1,dt*4);S.yaw=yaw=lerp(yaw,0,k);S.pitch=pit=lerp(pit,0.05,k)}
       if(dd>=0&&S.ch!==1){const k=Math.min(1,dt*2.5);S.yaw=yaw=lerp(yaw,0,k);S.pitch=pit=lerp(pit,0.1,k)}
-      cam.position.set((Math.random()-0.5)*sh,cy+(Math.random()-0.5)*sh,0.1+(Math.random()-0.5)*sh);
+      cam.position.set(S.px+(Math.random()-0.5)*sh,cy+(Math.random()-0.5)*sh,S.pz+(Math.random()-0.5)*sh);
       cam.rotation.set(pit,-yaw,Math.sin(t*0.4)*0.008+(Math.random()-0.5)*sh*0.8,'YXZ');cam.updateMatrixWorld();camQ.copy(cam.quaternion);
       // people
       CM[0]=mp.x;CM[1]=mp.z;const mOn=t>=MIR.ENTER+0.35;
-      for(const e of cast)drawCast(e,t);
+      if(!S.st)for(const e of cast)drawCast(e,t);
       // the thing
-      mon.R.visible=mOn;
+      mon.R.visible=mOn&&!S.st;
       if(mOn){
         const q=Object.assign({},mp);
         const sm=t>=MIR.SMASH-0.3&&S.bt<0&&S.ch!==2||(S.ch===2&&hold<3.2);
@@ -1176,7 +1317,15 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       {let a=0;if(t>=MIR.ENTER){const u=t-MIR.ENTER;a=-1.9*(u<0.18?u/0.18:1+0.08*Math.exp(-(u-0.18)*6)*Math.sin((u-0.18)*30))}
         if(S.ch===2&&hold>=LK.PROMPT-6.6+5.0)a=lerp(-1.9,0,ss(LK.PROMPT-6.6+5.4,LK.PROMPT-6.6+5.9,hold));S.door.rotation.y=a}
       // the pane
-      const U=S.pane.material.uniforms;U.uK.value=S.sm;U.uT.value=t;for(let i=0;i<10;i++){const h=hits[i];h.z=S.hitT[i]===undefined?0:(0.45+0.5*((i*37%10)/10))*ss(0,0.2,t-S.hitT[i])}
+      const U=S.pane.material.uniforms;U.uK.value=S.sm+0.12*S.fb;U.uT.value=t;for(let i=0;i<10;i++){const h=hits[i];h.z=S.hitT[i]===undefined?0:(0.45+0.5*((i*37%10)/10))*ss(0,0.2,t-S.hitT[i])}
+      if(S.gb>=0&&S.bt<0){
+        // broken from this side: the glass falls inward onto the parlor floor and stays there
+        const d=t-S.gb;S.shards.visible=true;
+        for(let i=0;i<S.sh.length;i++){const s=S.sh[i],vz=-(0.3+(s.v[2]-2.5)/7*1.6),vy=s.v[1]*0.5,vx=s.v[0]*0.5,y0=s.p[1],tl=(vy+Math.sqrt(vy*vy+18*(y0-0.03)))/9,g=Math.min(d,tl);
+          v3.set(s.p[0]+vx*g,Math.max(0.03,y0+vy*g-4.5*g*g),s.p[2]+vz*g);if(d>=tl)E4.set(-Math.PI/2,s.r[1]+s.w[1]*tl,0);else E4.set(s.r[0]+s.w[0]*g,s.r[1]+s.w[1]*g,s.r[2]+s.w[2]*g);
+          Q4.setFromEuler(E4);S3.setScalar(s.s);M4.compose(v3,Q4,S3);S.shards.setMatrixAt(i,M4)}
+        S.shards.instanceMatrix.needsUpdate=true;
+      }
       if(S.bt>=0){
         const d=t-S.bt;S.shards.visible=d<2.2;
         for(let i=0;i<S.sh.length;i++){const s=S.sh[i],g=Math.min(d,2.2);v3.set(s.p[0]+s.v[0]*g,s.p[1]+s.v[1]*g-4.5*g*g,s.p[2]+s.v[2]*g);E4.set(s.r[0]+s.w[0]*g,s.r[1]+s.w[1]*g,s.r[2]+s.w[2]*g);Q4.setFromEuler(E4);S3.setScalar(s.s);M4.compose(v3,Q4,S3);S.shards.setMatrixAt(i,M4)}
@@ -1203,7 +1352,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
         S.splash.material.opacity=ss(0.7,1.1,c)*0.9;S.splash.scale.setScalar(0.8+ss(0.7,1.8,c)*2.2);S.splash.visible=S.bt<0||t-S.bt<0.2}
       else S.splash.visible=false;
       if(S.ch===2){const c=hold;if(c>0.8&&c<2.6)emit(1,Math.max(1,Math.round(dt*220)),[cam.position.x+0.05,cam.position.y-0.1,cam.position.z-0.5],[cam.position.x,cam.position.y,cam.position.z+0.2]);
-        veil=ss(0.85,1.5,c)*(1-0.82*ss(4.4,8.0,c))*(1-0.5*ss(8.0,11.5,c));burn=ss(0.9,1.5,c);
+        veil=veilK(c);burn=ss(0.9,1.5,c);
         if(at(S.ct+0.9)){o.hurtFx();o.noise(1.0,0.4,4500,0.5)}
         if(at(S.ct+1.0))o.say('You spray yourself in the eyes.',3);
         for(const x of [0.9,1.4,1.9,2.4,2.9,3.3])if(at(S.ct+x)){o.tone(60,0.25,'sawtooth',0.28,0,-30);o.noise(0.3,0.5,170,0.7);o.rumble(150,0.8,0.4)}
@@ -1225,9 +1374,10 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       S.bloom=0.55+0.25*burn;
       if(!W)hudHtml();
     };
-    S.snap=()=>({t:+S.t.toFixed(3),yaw:+S.yaw.toFixed(2),pitch:+S.pitch.toFixed(2),sm:+S.sm.toFixed(3),ch:S.ch,ct:+S.ct.toFixed(2),bt:+S.bt.toFixed(2),sel:S.sel,lv:+S.leaveT.toFixed(2),sd:S.seed,hd:S.held?1:0,sp:S.splats.map(q=>[+q[0].toFixed(3),+q[1].toFixed(3),+q[2].toFixed(2),+q[3].toFixed(2)])});
+    S.snap=()=>({px:+S.px.toFixed(2),pz:+S.pz.toFixed(2),fb:S.fb,...emM.snap(),...emB.snap(),t:+S.t.toFixed(3),yaw:+S.yaw.toFixed(2),pitch:+S.pitch.toFixed(2),sm:+S.sm.toFixed(3),ch:S.ch,ct:+S.ct.toFixed(2),bt:+S.bt.toFixed(2),sel:S.sel,lv:+S.leaveT.toFixed(2),sd:S.seed,hd:S.held?1:0,sp:S.splats.map(q=>[+q[0].toFixed(3),+q[1].toFixed(3),+q[2].toFixed(2),+q[3].toFixed(2)])});
     S.apply=q=>{
-      if(nf(q.yaw))S.yaw=clamp(q.yaw,-3.3,3.3);if(nf(q.pitch))S.pitch=clamp(q.pitch,-1.25,1);
+      if(nf(q.yaw))S.yaw=wrap(clamp(q.yaw,-7,7));if(nf(q.pitch))S.pitch=clamp(q.pitch,-1.25,1);
+      if(nf(q.px)&&nf(q.pz)&&Math.abs(q.px)<5&&q.pz>-8&&q.pz<3.5){S.tx=q.px;S.tz=q.pz}
       if(Number.isInteger(q.sel)&&q.sel>=-1&&q.sel<=1)S.sel=q.sel;
       if((q.ch===1||q.ch===2)&&S.ch===0&&nf(q.ct)&&q.ct>=MIR.CHOICE&&q.ct<400)S.want=[q.ch,q.ct];
       if(nf(q.bt)&&q.bt>=0&&S.bt<0)S.wb=true;
@@ -1238,6 +1388,8 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       const to=clamp(q.t,0,400),d=to-S.t;
       if(d>0.25){A.mute++;try{for(let n=0;n<4200&&!held&&S.t<to-0.001;n++)S.update(Math.min(0.1,to-S.t),Z)}finally{A.mute--}}else if(d<-0.25)S.t=to;
       if(nf(q.sm)&&S.bt<0)S.sm=clamp(q.sm,0,q.bt>=0?1:0.995);
+      if(Number.isInteger(q.fb)&&q.fb>=0&&q.fb<=3)while(S.fb<q.fb)fblow();
+      emM.apply(q);emB.apply(q);
     };
     S.bloom=0.55;
     S.look=0;S.aimed=()=>S.aim;

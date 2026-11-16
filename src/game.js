@@ -1408,7 +1408,10 @@ const ROOMS=createRooms(renderer,{post:POST,low:Q===0,
   say:(t,s)=>say(t,s),tone:(...a)=>tone(...a),noise:(...a)=>noise(...a),rumble:(...a)=>rumble(...a),
   hud:h=>{const el=$('roomHud');if(el.innerHTML!==h)el.innerHTML=h},
   hurtFx:()=>{const h=$('hurt');h.style.transition='none';h.style.opacity=1;requestAnimationFrame(()=>{h.style.transition='opacity .9s';h.style.opacity=0})},
-  hint:k=>k==='mpick'||k==='mspray'?(touch.on?'tap '+(k==='mpick'?'PICK UP':'SPRAY'):pad.id?'A':'Space, E or click'):k==='mirror'?(touch.on?'Drag to look · SPRAY or THUMB picks':pad.id?'Right stick looks · Left stick or D-pad chooses · A picks':'Mouse or arrows look · A D chooses · Space or E picks'):
+  gems:n=>{wallet+=n;R.gems+=n;store.set('wallet',wallet)},sfx:n=>sfx(n),
+  hint:k=>k==='mpick'||k==='mspray'?(touch.on?'tap '+(k==='mpick'?'PICK UP':'SPRAY'):pad.id?'A':'Space, E or click'):k==='muse'?(touch.on?'tap USE':pad.id?'A':'Space, E or click'):
+    k==='mwalk'?(touch.on?'Left stick walks · drag looks · USE acts':pad.id?'Left stick walks · right stick looks · A acts':'WASD walk · mouse or arrows look · Space, E or click acts'):
+    k==='mirror'?(touch.on?'Left stick walks · drag to look · tap SPRAY or THUMB':pad.id?'Left stick walks · right stick looks · D-pad left or right chooses · A confirms':'WASD walk · mouse or arrows look · 1 / 2, Tab or wheel picks · Space or E confirms'):
     touch.on?'Left stick walk · drag to look · aim at a button and tap PRESS, or tap a button':pad.id?'Left stick walk · right stick look · aim at a button and press A or X':'WASD walk · mouse look · aim at a button and click, E or Space'});
 const ROOM_NAME={galaxy:'a door full of stars',kiln:'the glass kiln',fall:'a door with no floor behind it',mirror:'a room behind a mirror'};
 // a fallen player rides along with the friend they follow, into that friend's strange door too
@@ -1432,7 +1435,7 @@ function sdoorOpen(D){
   sfx('door');
   state='room';P.away=true;P.vx=P.vz=0;mapBig=false;
   document.body.classList.add('inroom');const kl=D.kind==='kiln';$('tFlash').textContent=kl?'PRESS':D.kind==='mirror'?'USE':'FLASH';$('tJump').textContent=D.kind==='mirror'?'THUMB':'JUMP';$('tJump').style.display=kl||D.kind==='mirror'?'none':'';
-  if(kl)document.body.classList.add('kilnroom');
+  if(kl)document.body.classList.add('kilnroom');if(D.kind==='mirror')document.body.classList.add('mirroom');
   $('fade').style.transition='none';$('fade').style.opacity=1;
   ROOMS.start(D.kind,roomEnd);
 }
@@ -1442,7 +1445,7 @@ function roomLeave(){
   ROOMS.abort();roomClose();
 }
 function roomClose(){
-  P.away=false;state='play';document.body.classList.remove('inroom','kilnroom');mouseL=false;ROOMS.untap();
+  P.away=false;state='play';document.body.classList.remove('inroom','kilnroom','mirroom');mouseL=false;ROOMS.untap();
   $('tFlash').textContent='FLASH';$('tJump').style.display='';
   $('fade').style.transition='opacity .4s';$('fade').style.opacity=0;
 }
@@ -1518,12 +1521,15 @@ function mirrorBtns(){const S=ROOMS.kind==='mirror'&&ROOMS.state(),b=S&&S.btn;if
 function roomInput(){
   const kb=ROOMS.kind==='kiln',mir=ROOMS.kind==='mirror',ax=(a,b)=>(a?1:0)-(b?1:0);
   // walking (the kiln hall) and looking; pressing is one thing for every device. The mirror also reads which touch button was hit (spray / thumb)
-  return {mx:clamp(ax(keys.KeyD||(kb&&keys.ArrowRight),keys.KeyA||(kb&&keys.ArrowLeft))+pad.mx+touch.mx+ax(pad.dr,pad.dl),-1,1),
-    my:clamp(ax(keys.KeyS||(kb&&keys.ArrowDown),keys.KeyW||(kb&&keys.ArrowUp))+pad.my+touch.my+ax(pad.dd,pad.du),-1,1),
+  const wh=roomWheel;roomWheel=0;
+  return {mx:clamp(ax(keys.KeyD||(kb&&keys.ArrowRight),keys.KeyA||(kb&&keys.ArrowLeft))+pad.mx+touch.mx+(mir?0:ax(pad.dr,pad.dl)),-1,1),
+    my:clamp(ax(keys.KeyS||(kb&&keys.ArrowDown),keys.KeyW||(kb&&keys.ArrowUp))+pad.my+touch.my+(mir?0:ax(pad.dd,pad.du)),-1,1),
+    sl:!!pad.dl,sr:!!pad.dr,k1:!!(keys.Digit1||keys.Numpad1),k2:!!(keys.Digit2||keys.Numpad2),tab:!!keys.Tab,wh,
     press:!!(mouseL||keys.KeyE||keys.Space||(keys.Enter&&!MP.on)||pad.b0||pad.b2||touch.act),
     touch:touch.on,spray:!!touch.act,thumb:!!touch.jump,
     lx:pad.lx*1.35+(ROOMS.kind==='galaxy'||mir?ax(keys.ArrowRight,keys.ArrowLeft):0),ly:pad.ly+(mir?ax(keys.ArrowDown,keys.ArrowUp):0)};
 }
+let roomWheel=0;addEventListener('wheel',e=>{if(state==='room'&&isFinite(e.deltaY))roomWheel=Math.sign(e.deltaY)},{passive:true});
 let doorMsgT=0, tipTimers=[];
 let mapBig=false, usingLock=false, pausedAt=0, flashT=0, sealMsgT=0, lowFuelSaid=false, pingT=0, beatT=0, titleYaw=0;
 let sens=store.get('sens',1);

@@ -14,6 +14,8 @@ const setup=`window.__open=seed=>{const G=window.__game;if(G.state==='room')G.ro
  window.__I=o=>Object.assign({mx:0,my:0,press:0,lx:0,ly:0},o||{});
  window.__run=(t,cb)=>{const G=window.__game,S=G.ROOMS.state(),I=window.__I();let n=0;while(S.t<t&&n++<20000&&G.state==='room'){if(cb)cb(S,I);G.ROOMS.update(1/60,I)}return S.t};
  window.__tap=(o)=>{const R=window.__game.ROOMS;R.update(1/60,window.__I(o));R.update(1/60,window.__I())};
+ window.__walk=(n,o)=>{const R=window.__game.ROOMS;for(let i=0;i<n&&window.__game.state==='room';i++)R.update(1/60,window.__I(o))};
+ window.__at=(x,z,yaw,pitch)=>{const S=window.__game.ROOMS.state();S.px=x;S.pz=z;S.ux=S.uz=0;window.__look(yaw,pitch)};
  window.__look=(yaw,pitch)=>{const S=window.__game.ROOMS.state();S.yaw=yaw;S.pitch=pitch};
  window.__grab=()=>{const S=window.__game.ROOMS.state();window.__look(S.canAim.yaw,S.canAim.pitch);window.__tap({press:1});return S.held}`;
 await pg.evaluate(setup);
@@ -35,12 +37,10 @@ const info=()=>pg.evaluate(()=>{const G=window.__game;return{state:G.state,hp:G.
    window.__look(0,0.1);window.__run(S.t+0.2);window.__tap({press:1});o.n1=S.splats.length;window.__run(S.t+0.1);window.__tap({press:1});o.n2=S.splats.length;window.__run(S.t+1.2);window.__tap({press:1});o.n3=S.splats.length;
    window.__run(S.mir.SMASH-4);o.sm=S.sm;o.ch=S.ch;o.bt=S.bt;o.state=G.state;o.sel=S.sel;o.hurt=G.P.hp;return o});
  console.log('c early spray',JSON.stringify(r));if(r.n1!==1||r.n2!==1||r.n3!==2)bad('c splats/cooldown '+[r.n1,r.n2,r.n3]);if(r.sm!==0||r.ch!==0||r.bt>=0||r.state!=='room')bad('c something happened')}
-// (d) the thumb: wins, the words, the sight; the sight ends with the floor
-{await pg.evaluate(()=>window.__open());const g0=(await info()).gems;
- const tt=await pg.evaluate(()=>{const S=window.__game.ROOMS.state();window.__grab();window.__run(S.mir.CHOICE+0.3);window.__game.ROOMS.state().pick(2);window.__run(S.t+120);return document.getElementById('toast').textContent});
- const r=await info();r.toast=tt;console.log('d thumb',JSON.stringify(r),'gems before',g0);
- if(r.state!=='play')bad('d state '+r.state);if(r.hp<=0)bad('d hp');if(r.gems<=g0)bad('d gems');if(r.toast!=='You got lucky son.')bad('d toast '+r.toast);if(!(r.xray>0&&r.xray===r.depth))bad('d xray flag');
- const r2=await pg.evaluate(()=>{const G=window.__game;G.loadFloor(G.R.depth+1);return{x:G.R.xray}});if(r2.x)bad('d xray not cleared on a new floor')}
+// (d) the thumb: nothing ends by itself any more; you are free in the room
+{await pg.evaluate(()=>window.__open());
+ const r=await pg.evaluate(()=>{const G=window.__game,S=G.ROOMS.state();window.__grab();window.__run(S.mir.CHOICE+0.3);S.pick(2);window.__run(S.ct+12.5);window.__look(1.5,0);window.__run(S.t+0.1);const o={fr:S.fr,hud:document.getElementById('roomHud').textContent};window.__run(S.t+90);o.state=G.state;o.toast=document.getElementById('toast').textContent;o.gb=S.gb;return o});
+ console.log('d thumb',JSON.stringify(r));if(!r.fr)bad('d not free');if(r.state!=='room')bad('d auto finished '+r.state);if(!/glass/.test(r.hud)||!/door/.test(r.hud))bad('d hint '+r.hud);if(r.gb>=0)bad('d glass broke by itself')}
 // (e) spraying the monster still kills you
 {await pg.evaluate(()=>window.__open());await pg.evaluate(()=>{const S=window.__game.ROOMS.state();window.__grab();window.__run(S.mir.CHOICE+0.3);window.__game.ROOMS.state().pick(1);window.__run(S.t+120)});
  const r=await info();console.log('e spray',JSON.stringify(r));if(r.state!=='dead'||r.hp>0)bad('e not dead');if(r.xray)bad('e xray after death')}
@@ -53,8 +53,63 @@ const brk=async yaw=>{await pg.evaluate(()=>window.__open(5));return pg.evaluate
 // the choice only unlocks after the smashing has started (and only once you hold the can); keyboard select needs left/right then confirm
 {await pg.evaluate(()=>window.__open());const r=await pg.evaluate(()=>{const G=window.__game,S=G.ROOMS.state();window.__grab();window.__run(S.mir.SMASH-3);const early=S.live;window.__run(S.mir.CHOICE+0.3);
    const noSel=(()=>{window.__tap({press:1});return S.ch})();
-   window.__tap({mx:1});window.__tap({press:1});return{early,noSel,ch:S.ch,sel:S.sel}});
- console.log('keyboard',JSON.stringify(r));if(r.early||r.noSel!==0||r.ch!==2)bad('keyboard choice')}
+   window.__tap({mx:1});const mv=S.sel;window.__tap({sr:1});const s1=S.sel;window.__tap({sl:1});const s0=S.sel;window.__tap({tab:1});const st=S.sel;window.__tap({press:1});return{early,noSel,ch:S.ch,sel:S.sel,mv,s1,s0,st}});
+ console.log('keyboard',JSON.stringify(r));if(r.early||r.noSel!==0||r.ch!==2||r.mv!==-1||r.s1!==1||r.s0!==0||r.st!==1)bad('keyboard choice')
+ {const k=await pg.evaluate(()=>{window.__open();const S=window.__game.ROOMS.state();window.__grab();window.__run(S.mir.CHOICE+0.3);window.__tap({k2:1});return S.ch});if(k!==2)bad('key 2 picks thumb '+k)}}
+
+// (k) walking: the view moves, walls and the intact glass stop you, the stool and crates are solid
+{await pg.evaluate(()=>window.__open(5));const r=await pg.evaluate(()=>{const G=window.__game,R=G.ROOMS,S=R.state(),o={};
+   window.__look(0,0);const c0=R.cam.position.x+','+R.cam.position.z;window.__walk(30,{my:-1});o.moved=S.pz;o.camMoved=c0!==R.cam.position.x+','+R.cam.position.z;
+   window.__walk(400,{my:-1});o.glass=S.pz;o.camZ=R.cam.position.z;window.__walk(400,{mx:-1});o.left=S.px;window.__walk(400,{mx:1});o.right=S.px;
+   window.__at(0,0.1,Math.PI,0);window.__walk(500,{my:-1});o.back=S.pz;
+   window.__at(0,0.1,0,0);window.__walk(40,{my:-1,mx:1});o.strafe=[S.px>0.1,S.pz<0.1];
+   window.__at(S.canC[0],0.5,0,0);window.__walk(200,{my:-1});o.stool=Math.hypot(S.px-S.canC[0],S.pz-S.canC[2]);
+   o.eye=R.cam.position.y;return o});
+ console.log('k walk',JSON.stringify(r));if(!(r.moved<0.1)||!r.camMoved)bad('k did not move');if(r.glass<-1.75||r.glass>-1.65)bad('k glass '+r.glass);if(r.left<-2.09)bad('k wall L '+r.left);if(r.right>2.09||r.right<0)bad('k wall R '+r.right);if(r.back>2.6)bad('k back wall '+r.back);if(!r.strafe[0]||!r.strafe[1])bad('k strafe');if(r.stool<0.2)bad('k stool '+r.stool);if(r.eye<1.5||r.eye>1.7)bad('k eye '+r.eye)}
+// (l) walk up to the can and pick it up from the new spot
+{await pg.evaluate(()=>window.__open(777));const r=await pg.evaluate(()=>{const R=window.__game.ROOMS,S=R.state(),o={};window.__at(-0.6,1.0,0,0);window.__look(S.canAim.yaw,S.canAim.pitch);window.__walk(40,{my:-1});window.__look(S.canAim.yaw,S.canAim.pitch);
+   window.__run(S.t+0.1);o.aim=S.aim;o.tg=S.tg;o.hud=document.getElementById('roomHud').textContent;o.far=(()=>{window.__at(-0.6,2.0,-1.0,0.3);window.__run(S.t+0.1);return S.aim})();
+   window.__look(S.canAim.yaw,S.canAim.pitch);window.__at(S.px,S.pz,S.canAim.yaw,S.canAim.pitch);window.__at(-0.2,0.2,S.canAim.yaw,S.canAim.pitch);window.__look(S.canAim.yaw,S.canAim.pitch);window.__run(S.t+0.1);window.__tap({press:1});o.held=S.held;return o});
+ console.log('l pickup',JSON.stringify(r));if(!r.aim||r.tg!=='can'||!/Pick up/.test(r.hud)||!r.held)bad('l pickup after walking');if(r.far)bad('l aim far')}
+// (m) after the thumb: 3 blows break the glass, you can walk into the parlor
+const free=`window.__free=(seed)=>{window.__open(seed);const S=window.__game.ROOMS.state();window.__grab();window.__run(S.mir.CHOICE+0.3);S.pick(2);window.__run(S.ct+12.5);return S}`;
+await pg.evaluate(free);
+{const r=await pg.evaluate(()=>{const G=window.__game,R=G.ROOMS,H=document.getElementById('roomHud'),o={};
+   o.blind=(()=>{window.__open(31);const S2=R.state();window.__grab();window.__run(S2.mir.CHOICE+0.3);S2.pick(2);window.__run(S2.ct+3);const a=S2.pz;window.__look(0,0);window.__walk(30,{my:-1});const slow=a-S2.pz;
+     window.__open(31);const S3=R.state();window.__grab();window.__run(S3.mir.CHOICE+0.3);S3.pick(2);window.__run(S3.ct+12.5);const b=S3.pz;window.__look(0,0);window.__walk(30,{my:-1});return[slow,b-S3.pz]})();
+   const S4=window.__free(31);window.__at(0,-0.6,0,0.05);window.__run(S4.t+0.1);o.glassHud=H.textContent;o.tg=S4.tg;
+   window.__tap({press:1});o.b1=S4.fb;window.__run(S4.t+0.3);window.__tap({press:1});o.b2=S4.fb;o.brokeEarly=S4.gb>=0;window.__run(S4.t+0.3);window.__tap({press:1});o.b3=S4.fb;o.gb=S4.gb>=0;o.state=G.state;
+   window.__run(S4.t+0.3);o.shards=S4.shards.visible;
+   window.__at(0,-1.0,0,0);window.__walk(150,{my:-1});o.z=S4.pz;o.st=S4.st;window.__walk(200,{my:-1});o.far=S4.pz;window.__walk(200,{mx:1});o.wallX=S4.px;
+   o.state2=G.state;return o});
+ console.log('m break',JSON.stringify(r));
+ if(!(r.blind[0]<r.blind[1]*0.8&&r.blind[0]>0))bad('m blind not slower '+r.blind);if(r.tg!=='glass'||!/Break the glass/.test(r.glassHud))bad('m prompt '+r.glassHud);if(r.b1!==1||r.b2!==2||r.brokeEarly)bad('m blows '+[r.b1,r.b2]);if(r.b3!==3||!r.gb||!r.shards)bad('m third blow');if(r.state!=='room'||r.state2!=='room')bad('m ended');
+ if(!(r.z<-2.3)||!r.st)bad('m not through '+r.z);if(r.far<-6.6)bad('m parlor wall '+r.far);if(r.wallX>3.5)bad('m side wall '+r.wallX)}
+// (n) leaving by the door after walking back from the parlor wins
+{const g0=(await info()).gems;const r=await pg.evaluate(()=>{const G=window.__game,R=G.ROOMS,S=window.__free(32),H=document.getElementById('roomHud'),o={};
+   window.__at(0,-0.6,0,0.05);for(let i=0;i<3;i++){window.__tap({press:1});window.__run(S.t+0.3)}window.__at(0,-1.0,0,0);window.__walk(100,{my:-1});o.in=S.st;
+   window.__at(-0.4,1.0,Math.PI,0);window.__run(S.t+0.1);o.hud=H.textContent;o.tg=S.tg;window.__tap({press:1});window.__run(S.t+1.5);o.state=G.state;o.toast=document.getElementById('toast').textContent;return o});
+ const i2=await info();console.log('n leave',JSON.stringify(r),i2.gems-g0);if(!r.in)bad('n did not step in');if(r.tg!=='door'||!/Leave/.test(r.hud))bad('n leave prompt '+r.hud);if(r.state!=='play'||r.toast!=='You got lucky son.')bad('n not won '+r.state+' '+r.toast);if(!(i2.xray>0))bad('n xray');if(i2.gems-g0<=0)bad('n gems')}
+// (o) the eggs: the little mirror runs once; the book pays 5 gems once; leaving after both still wins
+{const g0=(await info()).gems;const r=await pg.evaluate(()=>{const G=window.__game,R=G.ROOMS,S=window.__free(33),H=document.getElementById('roomHud'),T=document.getElementById('toast'),o={};
+   window.__at(0,-0.6,0,0.05);for(let i=0;i<3;i++){window.__tap({press:1});window.__run(S.t+0.3)}window.__at(0,-1.0,0,0);window.__walk(100,{my:-1});o.in=S.st;
+   const m=S.mini,n=m[0]<-3?[1,0]:m[0]>3?[-1,0]:[0,1],yw=Math.atan2(-n[0],n[1]);
+   window.__at(m[0]+n[0]*3,m[1]+n[1]*3,yw,-0.02);window.__run(S.t+0.1);o.farTg=S.tg;
+   window.__at(m[0]+n[0]*1.2,m[1]+n[1]*1.2,yw,-0.05);window.__run(S.t+0.1);o.mTg=S.tg;o.mHud=H.textContent;
+   window.__tap({press:1});const seen=[];for(let i=0;i<600;i++){R.update(1/60,window.__I());seen.push(R.snap().em)}
+   o.phases=[...new Set(seen)];o.after=R.snap().em;
+   window.__look(yw,-0.05);window.__run(S.t+0.1);o.again=S.tg;
+   const b=S.book;window.__at(b[0],b[1]+1.0,0,0);window.__look(0,-Math.atan2(0.8,1.0));window.__run(S.t+0.1);o.bTg=S.tg;o.bHud=H.textContent;
+   const g2=G.R.gems,w2=G.wallet;window.__tap({press:1});o.read=H.textContent;o.gained=G.R.gems-g2;o.walletGain=G.wallet-w2;o.toast=T.textContent;
+   window.__tap({press:1});o.closed=H.textContent;window.__tap({press:1});window.__tap({press:1});o.gained2=G.R.gems-g2;
+   window.__at(-0.4,1.0,Math.PI,0);window.__run(S.t+0.1);window.__tap({press:1});window.__run(S.t+1.5);o.state=G.state;return o});
+ const i2=await info();console.log('o eggs',JSON.stringify(Object.assign({},r,{read:r.read.slice(0,40)})),i2.gems-g0);
+ if(!r.in)bad('o not in');if(r.farTg==='tiny')bad('o prompt too far');if(r.mTg!=='tiny'||!/Look closer/.test(r.mHud))bad('o mirror prompt '+r.mTg+' '+r.mHud);if(!r.phases.includes(1)||!r.phases.includes(2)||r.after!==3)bad('o mirror phases '+r.phases+' '+r.after);if(r.again==='tiny')bad('o mirror twice');
+ if(r.bTg!=='book'||!/Read/.test(r.bHud))bad('o book prompt '+r.bTg+r.bHud);if(r.gained!==5||r.walletGain!==5)bad('o book gems '+r.gained);if(!/Thank you for not looking/.test(r.read))bad('o note text');if(r.closed.includes('Thank you'))bad('o not closed');if(r.gained2!==5)bad('o book paid twice '+r.gained2);if(r.toast!=='+5 gems tucked in the book.')bad('o toast '+r.toast);
+ if(r.state!=='play')bad('o not won after eggs');if(i2.gems-g0!==5+2+i2.depth)bad('o gems total '+(i2.gems-g0))}
+// (p) every seed places the little mirror on a wall and builds without throwing
+{const r=await pg.evaluate(()=>{const G=window.__game,out=new Set();let bad=0;for(let sd=1;sd<=40;sd++){window.__open(sd);const S=G.ROOMS.state(),m=S.mini;if(!m||!(Math.abs(m[0])===3.7||m[1]===-6.8))bad++;else out.add(Math.abs(m[0])===3.7?(m[0]<0?'L':'R'):'F')}G.ROOMS.abort();return{bad,sides:[...out].sort()}});
+ console.log('p mini',JSON.stringify(r));if(r.bad)bad('p placement');if(r.sides.length<2)bad('p sides '+r.sides)}
 // (h) seeds: different visits differ, the same seed matches, a watcher follows the seed it is sent
 {const r=await pg.evaluate(()=>{const G=window.__game,out={n:new Set(),door:new Set(),wall:new Set(),seat:new Set(),roles:new Set(),sv:new Set()};
    const get=sd=>{window.__open(sd);const S=G.ROOMS.state();return{cast:JSON.stringify(S.cast),lay:JSON.stringify(S.layout),n:S.cast.length,S}};
@@ -76,7 +131,7 @@ const brk=async yaw=>{await pg.evaluate(()=>window.__open(5));return pg.evaluate
    const S=R.state();window.__grab();window.__run(S.mir.CHOICE+0.4);window.__look(0,0.1);S.pick(2);window.__run(S.t+4);
    const q=R.snap();out.q=q;R.abort();G.roomLeave();
    try{R.watch('mirror',q);const W=R.state();out.wt=W.t;out.wch=W.ch;out.watching=R.watching;out.held=W.held;
-     for(const g of [{t:'x'},{t:NaN,yaw:Infinity},{yaw:{},pitch:'a',sel:9,ch:7,ct:-5,bt:'z',sm:null,hd:'y',sp:'q'},{sp:[[1,2],[NaN,0,0,0],[9,9,9,9],5,null]},null,5,'s',{t:1e9,sm:1e9},{t:-50}])R.sync(g);
+     for(const g of [{t:'x'},{t:NaN,yaw:Infinity},{yaw:{},pitch:'a',sel:9,ch:7,ct:-5,bt:'z',sm:null,hd:'y',sp:'q'},{sp:[[1,2],[NaN,0,0,0],[9,9,9,9],5,null]},{em:9,et:'x',eb:-3,fb:99,px:'z',pz:1e9,bp:'q'},{em:2,et:1e9,eb:7,fb:-1},{em:3,et:5,eb:1,fb:3,px:0,pz:-5},null,5,'s',{t:1e9,sm:1e9},{t:-50}])R.sync(g);
      R.update(1/60,{mx:0,my:0,press:0,lx:0,ly:0});out.t2=R.state().t;out.snap2=R.snap();out.ok=true}catch(e){out.err=String(e)}
    R.abort();return out});
  console.log('i watcher',JSON.stringify({wt:r.wt,wch:r.wch,held:r.held,watching:r.watching,t2:r.t2,err:r.err}));
