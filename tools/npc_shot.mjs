@@ -45,6 +45,7 @@ mkdirSync(A.out, {recursive: true});
 const b = await chromium.launch();
 const ctx = await b.newContext({viewport: {width: w, height: h}, deviceScaleFactor: +A.scale});
 const pg = await ctx.newPage(), errs = [];
+pg.setDefaultTimeout(600000); // software GL at 2x can take minutes per frame
 pg.on('pageerror', e => errs.push(String(e)));
 pg.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
 await pg.addInitScript(q => { localStorage.setItem('emberdeep.quality', JSON.stringify(q)); }, A.q);
@@ -57,9 +58,9 @@ for (const v of A.views.split(',')) {
   if (!o) { console.log('unknown view', v); continue; }
   const t0 = Date.now();
   const r = await pg.evaluate(o => window.__game.studio(o), {type: A.npc, seed: A.seed, depth: +A.depth, ...o});
-  await frames(6); // head tracking settles, shaders compile
+  await frames(+A.scale > 1 ? 3 : 6); // head tracking settles, shaders compile
   const file = resolve(A.out, `${A.prefix || A.npc}-${v}.png`);
-  await pg.screenshot({path: file});
+  await pg.screenshot({path: file, timeout: 600000});
   console.log(file, `Q${r.Q}`, `${((Date.now() - t0) / 1000).toFixed(1)}s`);
 }
 if (flags.has('stats')) console.log('stats', JSON.stringify(await pg.evaluate(() => ({ch: window.__game.CH.n, sculpt: window.__game.keeperStats}))));

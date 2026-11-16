@@ -29,14 +29,17 @@ idea → SDF (primitives + smooth-min + noise) → mesh (surface nets, once) →
 ## 3. Meshing
 
 - **Naive surface nets** on a voxel grid (one vertex per cell that crosses the surface, quads between them). It is short, robust and gives smooth, evenly spaced triangles. Normals come from the SDF gradient (central differences).
-- Size the grid to the part: about 4-6 mm cells for a face, 1-2 cm for a body, 0.5-1 m for terrain.
-- Build two levels of detail (fine and coarse grid) and switch by distance.
+- Size the grid to the smallest feature (about 5 mm for a face, 2-3 mm for fingers, 1 cm for a robe), then **simplify** (`simplify()` in sculpt.js, quadric edge collapse) to a triangle budget. Uniform grids waste triangles on flat areas; the simplifier keeps them where the shape bends.
+- Make the far LOD by simplifying the near mesh further, not by re-meshing.
+- Cull triangles that are hidden inside another part (hair inside the skull, cloth under a trim band, the torso inside the skirt) before simplifying.
+- Bake ambient occlusion per vertex from the SDF (`flatten(..., {ao})`): forms read under flat torch light even at Q0.
 - Cache meshes. Sculpting happens once at load or on first use, never per frame.
 
 ## 4. Characters
 
 - Sculpt each **rigid part** (head, torso, hands, beard) as its own SDF mesh and keep posing those parts with the existing frame system in `src/game.js` (`subF`, `emit`). This keeps every animation (breathing, head tracking, blinking, talking) and avoids skinning.
-- Eyes stay separate glossy spheres so blinking keeps working.
+- Eyes come from the kit's eye rig (eyeball, iris cap, upper lid that rotates to blink, lower lid), not from scaled spheres: a scaled sphere blink looks googly.
+- Characters are recipes for the NPC kit: see `docs/npc-kit.md`.
 - Silhouette first: the character must read from 10 m away in a dark corridor. Then the face. Then the small stuff.
 - Secondary motion comes from math in time: sway `sin(t*f + phase(position))`, stronger towards the tips (hair, beard, hems, tentacles), as Abyssal Garden does for its leaves.
 - Creatures follow the same recipe. Abyssal Garden builds its mantas from a parametric grid (span to outline via power and gaussian curves) and its whale tail from smooth-min capsules. Use parametric surfaces for flat, finned or winged shapes and SDFs for blobby or bony ones.
@@ -59,7 +62,7 @@ idea → SDF (primitives + smooth-min + noise) → mesh (surface nets, once) →
 ## 7. Performance budget (target: GTX 1660 Ti laptop, also phones on low)
 
 - Instance anything that repeats (moss, pebbles, mushrooms, bones) and cull by a coarse grid; merge neighbouring visible cells into one draw.
-- Per-frame CPU posing is the bottleneck for characters: about 20k vertices for a close NPC, far fewer at range.
+- Per-frame CPU posing is the bottleneck for characters: about 20k vertices (6k triangles) for a close NPC including props, about 40% of that at range. Sculpting runs at load, spread one part per tick (`bakeRecipeIdle`).
 - Every effect needs a low-quality path (`Q === 0` stays Lambert, no extras).
 - Abyssal Garden adapts resolution from GPU timings; worth copying if frame times become a problem.
 

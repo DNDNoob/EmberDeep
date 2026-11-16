@@ -89,6 +89,7 @@ export function head(p = {}) {
     d = smin(d, sdRoundCone(x, y, z, -0.004, 0.02, 0, -0.008, -0.07, 0, 0.034 * neck, 0.04 * neck), 0.03);         // neck
     // carve: eye sockets (the eyeball fills them), orbital hollow, temples, nasolabial folds, under-eye bags
     d = ssub(d, sdSphere(x - ex, y - ey, zs - ez, er * 1.04), 0.003);
+    d = smin(d, sdEllipsoid(x - (ex + 0.002), y - (ey - er * 1.02), zs - ez, er * 0.9, er * 0.32, er * 1.15), 0.003); // lower orbital rim closes the socket under the lid
     d = ssub(d, sdEllipsoid(x - (ex + 0.009), y - (ey + 0.001), zs - (ez - 0.001), 0.006, 0.0105, 0.017), 0.009);
     d = ssub(d, sdSphere(x - 0.04, y - (ey + 0.01), zs - 0.082, 0.014), 0.012 * (0.5 + age));
     if (age > 0) {
@@ -96,7 +97,6 @@ export function head(p = {}) {
       d = ssub(d, sdCapsule(x, y, zs, nt[0] - 0.011, nt[1] - 0.004, 0.019 * nose.width, mouthX - 0.004, mouthY - 0.012, 0.026, 0.0028 * age), 0.004);
       // a soft bag under each eye, with the tear trough above it
       d = smin(d, sdEllipsoid(x - (ex + 0.008), y - (ey - 0.0175), zs - ez, 0.004, 0.004 * (0.6 + age * 0.6), 0.011), 0.004);
-      d = ssub(d, sdCapsule(x, y, zs, ex + 0.011, ey - 0.0125, ez - 0.01, ex + 0.008, ey - 0.0135, ez + 0.01, 0.0018 * age), 0.003);
     }
     return d + 0.0005 * fbm(x * 45, y * 45, z * 45, 2);
   }

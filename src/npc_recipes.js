@@ -66,7 +66,7 @@ export const KEEPER = {
       parts: {skirt, hem, torso, sash: torso.trims.sash, cuff0: torso.trims.cuffs[0], cuff1: torso.trims.cuffs[1],
         head: H, hair: K.hairCap(H, {crown: 0.128}), brows: K.brows(H, {size: 1.15, droop: 1.1}), moustache: K.moustache(H, {size: 1.1}),
         beard: K.beard(H, {length: 0.2, fork: 1}), gripHand: sleeveCull(grip), restHand: sleeveCull(rest)},
-      eyes: {r: H.eye.r, iris: 0.5, open: 9, low: -25, arch: 9},
+      eyes: {r: H.eye.r, iris: 0.5, open: 9, low: -21, arch: 9},
       anchors: {
         eye: [H.eye.x, H.eye.y, H.eye.z],
         // staff hand: thumb up, palm facing the body, held axis vertical (hand Z -> down)
