@@ -348,7 +348,7 @@ export function robeTorso(p) {
   }
   const trims = {
     sash: trimBand(body, (x, y, z) => Math.abs(y - sash.y) - sash.h, {thick: 0.006, bounds: [-0.13, sash.y - sash.h - 0.01, -0.13, 0.13, sash.y + sash.h + 0.01, 0.13], tris: [170, 60], cell: 0.0042}),
-    cuffs: arms.map(a => trimBand(body, (x, y, z) => { const t = (x - a.end[0]) * a.F[0] + (y - a.end[1]) * a.F[1] + (z - a.end[2]) * a.F[2]; return Math.max(-0.028 - t, t - 0.016); },
+    cuffs: arms.map(a => trimBand(body, (x, y, z) => { const t = (x - a.end[0]) * a.F[0] + (y - a.end[1]) * a.F[1] + (z - a.end[2]) * a.F[2]; const vx = x - a.end[0], vy = y - a.end[1], vz = z - a.end[2], rad = Math.sqrt(Math.max(0, vx * vx + vy * vy + vz * vz - t * t)); return Math.max(-0.028 - t, t - 0.016, rad - (a.r[2] + 0.025)); },   // radial cap: without it the slab cut a band across the chest
       {thick: 0.005, bounds: [a.end[0] - 0.075, a.end[1] - 0.075, a.end[2] - 0.075, a.end[0] + 0.075, a.end[1] + 0.075, a.end[2] + 0.075], tris: [110, 40], cell: 0.0042}))
   };
   const covers = (x, y, z) => trims.sash.covers(x, y, z) || trims.cuffs.some(c => c.covers(x, y, z));
