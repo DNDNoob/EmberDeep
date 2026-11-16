@@ -11,7 +11,8 @@ import {makeSurfaces} from './textures.js';
 import {openRoom,newRoomCode,cleanCode} from './net.js';
 import {createVoice} from './voice.js';
 import {createRooms,kilnGame,KILN} from './rooms.js';
-import {getKeeperSculpt,keeperStats,KEEPER_TRIM_GLSL} from './keeper_sculpt.js';
+import {bakeRecipe,bakeRecipeIdle} from './npc_kit.js';
+import {KEEPER} from './npc_recipes.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('gl');
@@ -533,38 +534,27 @@ function paintedMaterial(glowBase){
     sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nattribute vec4 aLoc;varying vec4 vLoc;')
       .replace('#include <begin_vertex>','#include <begin_vertex>\nvLoc=aLoc;');
     sh.fragmentShader=sh.fragmentShader
-      .replace('#include <common>','#include <common>\nvarying vec4 vLoc;uniform float uGlowBase;float mRough=0.7;float mMetal=0.0;float mGlow=0.0;float mRim=0.0;float mSss=0.0;float mRimK=0.0;float mBump=0.0;'+KEEPER_TRIM_GLSL+MAT_GLSL)
+      .replace('#include <common>','#include <common>\nvarying vec4 vLoc;uniform float uGlowBase;float mRough=0.7;float mMetal=0.0;float mGlow=0.0;float mRim=0.0;float mSss=0.0;float mRimK=0.0;float mBump=0.0;float mAux=0.0;'+MAT_GLSL)
       .replace('#include <lights_physical_pars_fragment>',()=>THREE.ShaderChunk.lights_physical_pars_fragment.replace('vec3 irradiance = dotNL * directLight.color;',
         // cheap subsurface look: wrapped diffuse that lets light bleed past the terminator, tinted red where it fades
         `float nlS=dot(geometryNormal,directLight.direction);
 	vec3 irradiance=directLight.color*(mSss>0.001?pow(saturate((nlS+mSss)/(1.0+mSss)),2.0)*mix(vec3(1.0),vec3(1.0,0.5,0.34),mSss*(1.0-saturate(nlS*3.0))):vec3(dotNL));`))
       .replace('#include <color_fragment>',`
-  {vec3 alb=vColor.rgb,q=vLoc.xyz;int m=int(vLoc.w+0.5);
+  {vec3 alb=vColor.rgb,q=vLoc.xyz;int m=int(floor(vLoc.w+0.002));mAux=fract(vLoc.w+0.002)*1.1;
     float fine=clamp(1.6+vViewPosition.z*0.45,0.0,1.0);
     float mott=fbm3(q*34.0);
     if(m==1){alb*=0.92+0.16*mott;mRough=0.55;mSss=0.2;mRimK=0.02;}
-    else if(m==12){ // sculpted skin (the Keeper): ruddy nose and cheeks, shadowed sockets, strong subsurface
+    else if(m==12){ // sculpted skin (npc_kit): colour variation comes painted per vertex, mAux marks wrinkle areas
       alb*=0.9+0.2*mott;
-      float nose=smoothstep(0.022,0.0,length(q-vec3(0.102,0.054,0.0)));
-      float chk=smoothstep(0.03,0.0,length(vec3(q.x-0.062,q.y-0.058,abs(q.z)-0.046)));
-      alb=mix(alb,alb*vec3(1.12,0.78,0.72),clamp(nose*0.9+chk*0.5,0.0,1.0));
-      alb*=1.0-0.35*smoothstep(0.026,0.0,length(vec3(q.x-0.08,q.y-0.086,abs(q.z)-0.034)));
-      mRough=0.5;mSss=0.28;mRimK=0.015;mBump=1.0;
+      alb=mix(alb,alb*vec3(1.06,0.9,0.86),smoothstep(0.45,0.75,fbm3(q*90.0))*0.5); // blotches and age spots
+      mRough=0.52;mSss=0.28;mRimK=0.015;mBump=1.0;
     }else if(m==13){ // sculpted cloth: folds are in the geometry, so the shader only adds weave, nap and sheen
       float folds=n3(vec3(q.x*55.0,q.y*5.0,q.z*55.0));
       float weave=sin(q.y*1500.0)*sin((q.x+q.z)*1500.0);
       alb*=(0.88+0.2*folds)*(0.93+0.14*mott)*(1.0+0.06*weave*fine);mRough=0.9;mRimK=0.04;mBump=1.0;
-      float gh=1.0-smoothstep(0.040,0.044,q.y+0.0015*mott); // gold hem roll
-      alb=mix(alb,vec3(0.8,0.58,0.18),gh);mRough=mix(mRough,0.55,gh);
-    }else if(m==15){ // sculpted torso: same cloth, gold sash and cuffs
-      float folds=n3(vec3(q.x*55.0,q.y*5.0,q.z*55.0));
-      float weave=sin(q.y*1500.0)*sin((q.x+q.z)*1500.0);
-      alb*=(0.88+0.2*folds)*(0.93+0.14*mott)*(1.0+0.06*weave*fine);mRough=0.9;mRimK=0.04;mBump=1.0;
-      float sa=(1.0-smoothstep(0.046,0.05,q.y))*smoothstep(-0.034,-0.026,q.y)*smoothstep(0.125,0.108,length(q.xz*vec2(1.0,0.94)))*smoothstep(0.062,0.075,length(q-cE2));
-      vec3 d1=q-cE1,d2=q-cE2;float t1=dot(d1,cF1),t2=dot(d2,cF2);
-      float cu=smoothstep(-0.032,-0.028,t1)*(1.0-smoothstep(0.012,0.016,t1))*(1.0-smoothstep(0.075,0.085,length(d1-cF1*t1)));
-      cu=max(cu,smoothstep(-0.032,-0.028,t2)*(1.0-smoothstep(0.012,0.016,t2))*(1.0-smoothstep(0.075,0.085,length(d2-cF2*t2))));
-      float gg=clamp(sa+cu,0.0,1.0);alb=mix(alb,vec3(0.8,0.58,0.18)*(0.85+0.3*mott),gg);mRough=mix(mRough,0.5,gg);
+    }else if(m==15){ // sculpted trim: gold thread embroidery, a running pattern of stitched diamonds
+      float a=atan(q.z,q.x)*40.0,st=abs(fract(a+q.y*120.0)-0.5)+abs(fract(q.y*160.0)-0.5);
+      alb*=(0.82+0.3*smoothstep(0.35,0.45,st))*(0.9+0.2*mott);mRough=0.42;mMetal=0.35;mRimK=0.03;mBump=1.0;
     }else if(m==14){ // sculpted hair and beard
       float st=n3(vec3(q.x*150.0,q.y*8.0,q.z*150.0));alb*=0.72+0.5*st;mRough=0.45;mRimK=0.015;mBump=1.0;
     }
@@ -596,14 +586,14 @@ function paintedMaterial(glowBase){
   }`)
       .replace('#include <normal_fragment_maps>',`#include <normal_fragment_maps>
   if(mBump>0.5){ // real bump from a procedural height (metres), so pores, weave and strands catch the light without any triangles
-    vec3 q=vLoc.xyz;int m=int(vLoc.w+0.5);float fn=clamp(1.6+vViewPosition.z*0.45,0.0,1.0);float hh=0.0;
-    if(m==12){hh=0.0004*n3(q*380.0)+0.0006*smoothstep(0.125,0.14,q.y)*smoothstep(0.02,0.05,q.x)*smoothstep(0.075,0.04,abs(q.z))*sin(q.y*300.0+4.0*n3(q*30.0));}
+    vec3 q=vLoc.xyz;int m=int(floor(vLoc.w+0.002));float fn=clamp(1.6+vViewPosition.z*0.45,0.0,1.0);float hh=0.0;
+    if(m==12){hh=0.00012*n3(q*380.0)+mAux*0.0005*(1.0-abs(n3(vec3(q.x*70.0,q.y*330.0,q.z*70.0))*2.0-1.0));} // pores, and creases where the mesh asks for them
     else if(m==13||m==15){hh=0.0006*(n3(q*160.0)-0.5)+0.0003*fn*sin(q.y*1500.0)*sin((q.x+q.z)*1500.0);}
     else if(m==14){hh=0.0009*n3(vec3(q.x*700.0,q.y*24.0,q.z*700.0));}
     vec2 dh=vec2(dFdx(hh),dFdy(hh))*fn;
     vec3 sX=dFdx(-vViewPosition),sY=dFdy(-vViewPosition),R1=cross(sY,normal),R2=cross(normal,sX);
     float fDet=dot(sX,R1)*faceDirection;
-    normal=normalize(abs(fDet)*normal-sign(fDet)*(dh.x*R1+dh.y*R2));
+    vec3 nb=abs(fDet)*normal-sign(fDet)*(dh.x*R1+dh.y*R2);if(dot(nb,nb)>1e-24)normal=normalize(nb); // tiny far triangles give a zero vector: NaN would bloom into white squares
   }`)
       .replace('#include <roughnessmap_fragment>','float roughnessFactor=mRough;')
       .replace('#include <metalnessmap_fragment>','float metalnessFactor=mMetal;')
@@ -612,6 +602,7 @@ function paintedMaterial(glowBase){
     totalEmissiveRadiance+=ec*(mGlow*1.6+uGlowBase);
     if(mRimK>0.0){float fr=pow(1.0-abs(dot(normalize(normal),normalize(vViewPosition))),3.0);totalEmissiveRadiance+=ec*fr*mRimK;} // soft fresnel rim / cloth sheen
     if(mRim>0.5){float rim=pow(1.0-abs(dot(normalize(normal),normalize(vViewPosition))),3.0);totalEmissiveRadiance+=ec*rim*rim*1.6;}}`);
+    sh.fragmentShader=sh.fragmentShader.replace('#include <dithering_fragment>','#include <dithering_fragment>\n  gl_FragColor.rgb=any(isnan(gl_FragColor.rgb))?vec3(0.0):min(gl_FragColor.rgb,vec3(12.0)); // firefly clamp: specular spikes on slivers overflow the half-float target and bloom into squares');
   };
   m.customProgramCacheKey=()=>'painted';
   return m;
@@ -879,20 +870,59 @@ function face(H,o){
   ball(H,[0.089,ey-0.027,0],o.nose||[0.015,0.017,0.013],[sk[0]*0.93,sk[1]*0.88,sk[2]*0.86,1],true);
   if(o.mouth)slab(H,[0.08,0.034,0],[0.008,0.006+(o.talk||0),o.mouthW||0.03],o.mouth);
 }
-// ?npc=classic keeps the old primitive Keeper for comparison
 const NPC_CLASSIC=new URLSearchParams(location.search).get('npc')==='classic',ONE3=[1,1,1];
-// The Keeper from sculpted parts (src/keeper_sculpt.js), posed with the same frames and animation as the classic build.
+let STUDIO=null; // set by __game.studio(): fixed camera, frozen gameplay, for NPC screenshots
+/* ---------- sculpted NPCs (src/npc_kit.js + src/npc_recipes.js) ---------- */
+// material names used by recipes -> shader material ids in paintedMaterial()
+const MAT={skin:12,cloth:13,hair:14,trim:15,eye:8,wood:6,metal:4,glow:7};
+// emit() for kit meshes (stride 9): the paint channel blends col -> col2 per vertex, baked occlusion darkens it,
+// the detail mask rides in the fraction of the material id (wrinkles, fine bump). R2 rotates the mesh inside the
+// frame, c places it.
+function emitS(mesh,f,c,col,col2,mat,R2){
+  const cnt=mesh.length/9,T=TB;if(T.n+cnt>T.cap)return;
+  const R=R2?m3(f.R,R2):f.R,p=fpt(f,c),b=T.buf,lo=f.lo||ZERO3;let o=T.n*13;
+  const c0=col[0],c1=col[1],c2=col[2],d0=col2[0]-c0,d1=col2[1]-c1,d2=col2[2]-c2;
+  const l0=c[0]+lo[0],l1=c[1]+lo[1],l2=c[2]+lo[2];
+  for(let i=0;i<mesh.length;i+=9){
+    const x=mesh[i],y=mesh[i+1],z=mesh[i+2],nx=mesh[i+3],ny=mesh[i+4],nz=mesh[i+5],w=mesh[i+6],ao=mesh[i+8];
+    b[o++]=p[0]+R[0]*x+R[1]*y+R[2]*z;b[o++]=p[1]+R[3]*x+R[4]*y+R[5]*z;b[o++]=p[2]+R[6]*x+R[7]*y+R[8]*z;
+    b[o++]=R[0]*nx+R[1]*ny+R[2]*nz;b[o++]=R[3]*nx+R[4]*ny+R[5]*nz;b[o++]=R[6]*nx+R[7]*ny+R[8]*nz;
+    b[o++]=(c0+d0*w)*ao;b[o++]=(c1+d1*w)*ao;b[o++]=(c2+d2*w)*ao;b[o++]=l0+x;b[o++]=l1+y;b[o++]=l2+z;b[o++]=mat+0.82*mesh[i+7];
+  }
+  T.n+=cnt;
+}
+// Standard humanoid frames for a recipe: B at the feet, U at the waist (lean + breathing), H at the neck
+// (tracks the player, nods, idles), J = H moved down by the jaw while talking.
+function humanoidFrames(rec,n,B,t,ph,breath,nod,jaw){
+  const rig=rec.rig,U=subF(B,rig.waist,rZ(rig.lean));
+  const H=subF(U,[rig.neck[0],rig.neck[1]+breath,rig.neck[2]],m3(m3(rYaw(n.hy),rZ(n.hp+(rig.headTilt??0.12)+nod)),rX(Math.sin(t*0.5+ph)*0.03)));
+  return {B,U:{p:fpt(U,[0,breath,0]),R:U.R},U0:U,H,J:subF(H,[0,-jaw*(rig.jaw/0.006),0])};
+}
+// Draw every part of a baked recipe into its frame, then the eyes (upper lids rotate to blink).
+function drawRecipe(baked,lod,fr,blink){
+  const rec=baked.recipe,pal=rec.palette;
+  for(const q of rec.parts){const f=fr[q.frame],m=baked.parts[q.part];if(!f||!m)continue;
+    emitS(m[lod],f,q.at||ZERO3,pal[q.col],pal[q.col2||q.col],MAT[q.mat],q.R)}
+  const E=baked.eyes,ec=rec.eyes;if(!E||!fr[ec.frame])return;
+  const H=fr[ec.frame],a=baked.anchors.eye,lidR=rZ(E.lidAngle(blink));
+  for(const z of[-a[2],a[2]]){const c=[a[0],a[1],z];
+    emitS(E.ball,H,c,pal[ec.sclera],pal[ec.sclera],MAT.eye);
+    emitS(E.iris,H,c,pal[ec.iris],pal[ec.pupil],MAT.eye);
+    emitS(E.lid,H,c,pal[ec.lid],pal[ec.lid2],MAT.skin,lidR);
+    emitS(E.lower,H,c,pal[ec.lid],pal[ec.lid2],MAT.skin)}
+}
+// ?npc=classic keeps the old primitive Keeper for comparison
+// The Keeper: recipe KEEPER in src/npc_recipes.js, posed here; the staff and lantern stay primitive.
 function buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,lod){
-  const K=getKeeperSculpt(lod);
-  const robe=[0.36,0.1,0.07,13],skin=[0.8,0.6,0.47,12],white=[0.9,0.9,0.86,14],wood=[0.3,0.2,0.12,6];
-  emit(K.skirt,B,ZERO3,ONE3,robe);
-  const U=subF(B,[0,0.48,0],rZ(-0.15)),bo=[0,breath,0];
-  emit(K.torso,U,bo,ONE3,[robe[0],robe[1],robe[2],15]);
-  ball(U,[0.1,0.02,0],0.02,[2.2,0.9,0.25,7],true);
-  // staff arm: the hand follows a slow sway and the staff hangs from it
-  const W1=K.gripAt,hw=fpt(U,[W1[0],W1[1]+br*0.01,W1[2]]);
-  emit(K.grip,{p:hw,R:B.R},ZERO3,ONE3,skin);
-  const SB={p:[hw[0],0,hw[2]],R:B.R};
+  const K=bakeRecipe(KEEPER),A=K.anchors,fr=humanoidFrames(KEEPER,n,B,t,ph,breath,nod,jaw),U=fr.U0;
+  const wood=[0.3,0.2,0.12,6];
+  // staff hand follows a slow sway; the staff hangs from it, through the fist
+  const g=A.gripAt,hw=fpt(U,[g[0],g[1]+br*0.01,g[2]]);
+  fr.grip={p:hw,R:m3(B.R,A.gripR)};
+  fr.rest=subF(fr.U,A.restAt,A.restR);
+  drawRecipe(K,lod,fr,blink);
+  ball(fr.U,A.gem,0.02,[2.2,0.9,0.25,7],true);
+  const sp=fpt(fr.grip,[A.gripAxis[0],A.gripAxis[1],0]),SB={p:[sp[0],0,sp[2]],R:B.R};
   seg(SB,[0,0,0],[0.003,0.34,-0.002],0.0135,0.0125,wood);seg(SB,[0.003,0.34,-0.002],[-0.002,0.68,0.003],0.0125,0.0115,wood);seg(SB,[-0.002,0.68,0.003],[0,1.0,0],0.0115,0.011,wood);
   ball(SB,[0.003,0.34,-0.002],[0.0155,0.02,0.0155],wood,true);ball(SB,[-0.002,0.68,0.003],[0.014,0.018,0.014],wood,true);
   seg(SB,[0,1.0,0],[0.07,1.06,0],0.011,0.009,wood);
@@ -901,17 +931,6 @@ function buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,lod){
   for(const q of[[-1,-1],[1,-1],[-1,1],[1,1]])slab(SB,[0.07+q[0]*0.021,0.92,q[1]*0.021],[0.006,0.07,0.006],[0.16,0.15,0.14,4]);
   ball(SB,[0.07,0.918,0],0.018,[3.0,1.5,0.4,7],true);
   out.lantern=fpt(SB,[0.07,0.918,0]);
-  // resting hand on the sash
-  emit(K.rest,subF(U,K.restAt,K.restR),ZERO3,ONE3,skin);
-  // head, hair and the jaw-driven beard
-  const H=subF(U,[0.005,0.295+breath,0],m3(m3(rYaw(n.hy),rZ(n.hp+0.12+nod)),rX(Math.sin(t*0.5+ph)*0.03)));
-  emit(K.head,H,ZERO3,ONE3,skin);emit(K.hair,H,ZERO3,ONE3,white);emit(K.beard,H,[0,-jaw,0],ONE3,white);
-  const ey=0.085,iris=[0.55,0.3,0.1];
-  for(const z of[-0.034,0.034]){ // small hooded eyes sitting deep in the sockets
-    ball(H,[0.076,ey,z],[0.0105,0.0105*blink,0.0125],[0.96,0.95,0.92,8],true);
-    ball(H,[0.0825,ey-0.0005,z*0.98],[0.0058,0.0078*blink,0.0078],[iris[0],iris[1],iris[2],8],true);
-    ball(H,[0.0865,ey-0.0005,z*0.98],[0.0035,0.0045*blink,0.0045],[0.03,0.02,0.02,8],true);
-  }
   out.top=1.0;
 }
 function buildNpc(n,t,ex,ey,ez,dtR){
@@ -926,12 +945,12 @@ function buildNpc(n,t,ex,ey,ez,dtR){
   const wrap=a=>{while(a>Math.PI)a-=Math.PI*2;while(a<-Math.PI)a+=Math.PI*2;return a};
   const talking=talk&&talk.npc===n;
   let diff=wrap(toP-n.yaw);
-  if(!seated&&dist<5&&(Math.abs(diff)>0.45||talking)){const st=Math.sign(diff)*Math.min(Math.abs(diff),2.6*dtR);n.yaw+=st;diff-=st}
-  const lim=seated?1.25:1.0,wantY=dist<6?clamp(diff,-lim,lim):Math.sin(t*0.4+n.ph)*0.35;
+  if(!seated&&!n.lock&&dist<5&&(Math.abs(diff)>0.45||talking)){const st=Math.sign(diff)*Math.min(Math.abs(diff),2.6*dtR);n.yaw+=st;diff-=st}
+  const lim=seated?1.25:1.0,wantY=n.lockHead?0:dist<6?clamp(diff,-lim,lim):Math.sin(t*0.4+n.ph)*0.35;
   const headY0=seated?0.62:0.84,wantP=dist<6?clamp(Math.atan2(ey-headY0,Math.max(dist,0.3)),-0.45,0.4):0;
   const k=Math.min(1,dtR*6);n.hy+=(wantY-n.hy)*k;n.hp+=(wantP-n.hp)*k;
   const ph=n.ph,br=Math.sin(t*1.7+ph),breath=br*0.004;
-  const blink=((t*0.23+ph)%1)<0.035?0.12:1;
+  const blink=STUDIO&&STUDIO.open?1:((t*0.23+ph)%1)<0.035?0.12:1;
   const nod=talking?Math.sin(t*5.5)*0.05:0,jaw=talking?Math.max(0,Math.sin(t*9))*0.006:0;
   const B={p:[n.x+(n.ox||0),0,n.z+(n.oz||0)],R:rYaw(n.yaw)};
   const out={top:1,lantern:null};
@@ -3328,8 +3347,9 @@ function render(t){
   if(!F){renderer.clear();return}
   UT.value=t;
   const title=state==='title';
-  const yaw=title?titleYaw:P.yaw, pitch=title?0:P.pitch;
-  const ex=P.x, ez=P.z, ey=EYE+(title?0:P.y+Math.sin(P.bob*2)*0.018);
+  const SC=STUDIO&&STUDIO.cam;
+  const yaw=SC?SC.yaw:title?titleYaw:P.yaw, pitch=SC?SC.pitch:title?0:P.pitch;
+  const ex=SC?SC.x:P.x, ez=SC?SC.z:P.z, ey=SC?SC.y:EYE+(title?0:P.y+Math.sin(P.bob*2)*0.018);
   {const cp=Math.cos(pitch);camera.position.set(ex,ey,ez);camera.lookAt(ex+cp*Math.cos(yaw),ey+Math.sin(pitch),ez+cp*Math.sin(yaw))}
   if(P.grab){const k=0.012+0.02*Math.min(1,P.grab.t);camera.position.x+=(Math.random()-0.5)*k;camera.position.y+=(Math.random()-0.5)*k;camera.position.z+=(Math.random()-0.5)*k}
   const B=F.biome;
@@ -3602,7 +3622,7 @@ function step(now){
   const live=()=>state==='play'||(MP.on&&(state==='pause'||state==='talk'||state==='room'));
   // a fake hang: nothing moves for you, though the room carries on
   if(GL.frz>0){GL.frz-=raw;if(GL.frz<=0)glUnfreeze();mpTick(raw);return raw}
-  if(live()){
+  if(live()&&!STUDIO){
     // a host whose tab is in the background still runs the creatures, in catch-up steps
     if(raw>0.1&&MP.host&&document.hidden){let left=Math.min(raw,1);while(left>0&&live()){const s=Math.min(left,0.05);update(s);left-=s}}
     else update(dt);
@@ -3614,7 +3634,7 @@ function step(now){
 function frame(now){
   const raw=step(now);
   mpVoiceTick(Math.min(raw,0.1));chatTick();
-  if(state==='play')adapt(raw);
+  if(state==='play'&&!STUDIO)adapt(raw);
   setHum();
   if(GL.frz<=0){
     if(!window.__norender){if((state==='room'||ROOMS.watching)&&ROOMS.active){resize();renderer.toneMappingExposure=1;ROOMS.render()}else render(now/1000)}
@@ -3627,7 +3647,40 @@ setInterval(()=>{if(MP.host&&document.hidden&&performance.now()-last>200)step(pe
 // a backdrop maze behind the title screen
 R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
 {const rc=cleanCode(new URLSearchParams(location.search).get('room'));if(rc)mpPrepareJoin(rc)}
+// NPC photo studio for tools/npc_shot.mjs. Moves (or spawns) one NPC into a straight corridor far from
+// braziers, sconces and glowing items, freezes gameplay, and fixes the camera. Lit only by the player's
+// torch and the floor's ambient light, which is what the player sees in most of the maze.
+// o: {type:'keeper'|'map'|'delver', seed, depth, dist (m, camera to NPC), turn (deg, NPC yaw away from camera),
+//     camY (camera height, default the game's eye height), aimY (height to look at), headLock, open (no blink)}
+function studio(o){
+  o=Object.assign({type:'keeper',seed:'STUDIO1',depth:2,dist:1.1,turn:0,camY:EYE,aimY:null,headLock:false,open:true},o||{});
+  const key=o.seed+'/'+o.depth;
+  if(!STUDIO||STUDIO.key!==key||state!=='play'){STUDIO=null;startRun(o.seed,o.depth,true);
+    F.shades.length=0;for(const id of['title','pause','dead','talk'])$(id).classList.add('hidden');STUDIO={key,spot:null}}
+  rs=1;rsCeil=1;
+  if(!STUDIO.spot){ // a straight run of open floor, dim and empty
+    const W=F.W,g=F.g,free=(x,y)=>x>0&&y>0&&x<W-1&&y<F.H-1&&g[y*W+x]===0&&!F.safeMask[y*W+x]&&!F.traps.some(q=>q.tx===x&&q.ty===y)&&!F.props.some(q=>Math.floor(q.x)===x&&Math.floor(q.z)===y)&&!F.items.some(q=>!q.got&&Math.floor(q.x)===x&&Math.floor(q.z)===y);
+    const far=(x,z)=>F.sconces.every(q=>Math.hypot(q.lx-x,q.lz-z)>4.5)&&(!F.safe||Math.hypot(F.safe.x-x,F.safe.z-z)>9)&&Math.hypot(F.exit.x-x,F.exit.z-z)>6&&F.items.every(q=>q.got||q.type==='chest'||Math.hypot(q.x-x,q.z-z)>3.5);
+    let best=null,bs=-1;
+    for(let y=1;y<F.H-1;y++)for(let x=1;x<W-1;x++)for(const d of DIRS){
+      let ok=true;for(let k=-1;k<=4&&ok;k++)ok=free(x+d[0]*k,y+d[1]*k);if(!ok)continue;
+      const X=x+0.5,Z=y+0.5,sc=Math.min(9,...F.sconces.map(q=>Math.hypot(q.lx-X,q.lz-Z)))+Math.min(9,F.safe?Math.hypot(F.safe.x-X,F.safe.z-Z)-4:9)+(far(X,Z)?20:0);
+      if(sc>bs){bs=sc;best={x:X,z:Z,dx:d[0],dz:d[1]}}}
+    if(!best)throw new Error('studio: no quiet corridor on '+key+', try another seed');
+    STUDIO.spot=best;
+  }
+  const S=STUDIO.spot;
+  let n=F.npcs.find(q=>q.type===o.type);
+  if(!n){n={type:o.type,ph:1.3,used:true,gift:0,tip:0};F.npcs.push(n)}
+  for(const q of F.npcs)if(q!==n){q.x=-50;q.z=-50}
+  n.x=S.x;n.z=S.z;n.ox=0;n.oz=0;n.lock=true;n.lockHead=!!o.headLock;n.hy=0;n.hp=0;
+  n.yaw=Math.atan2(S.dz,S.dx)+o.turn*Math.PI/180;
+  const cx=S.x+S.dx*o.dist,cz=S.z+S.dz*o.dist,aim=o.aimY==null?(o.type==='delver'?0.55:0.8):o.aimY;
+  STUDIO.cam={x:cx,z:cz,y:o.camY,yaw:Math.atan2(-S.dz,-S.dx),pitch:Math.atan2(aim-o.camY,o.dist)};
+  STUDIO.open=o.open;P.x=cx;P.z=cz;
+  return {spot:S,cam:STUDIO.cam,Q};
+}
 // build the sculpted Keeper once, shortly after load, so the first sanctuary does not hitch
-if(!NPC_CLASSIC)setTimeout(()=>{try{getKeeperSculpt(Q>=1?0:1);getKeeperSculpt(1)}catch(e){console.error(e)}},1500);
-window.__game={keeperStats,getKeeperSculpt,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+if(!NPC_CLASSIC)setTimeout(()=>{try{bakeRecipeIdle(KEEPER)}catch(e){console.error(e)}},1500); // one part per tick, so the title screen never stalls
+window.__game={studio,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);
