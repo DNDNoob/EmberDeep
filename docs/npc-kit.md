@@ -58,6 +58,7 @@ All are in `src/npc_kit.js`. Units are metres, in the part's frame: +X is forwar
 
 | Builder | Parameters | Notes |
 |---|---|---|
+| `ears(H,p)` | `size`, `x,y,z` (plate centre on the side of the head), `flare` (rad, how far the rear edge stands off) | Separate small SDF part for both ears (helix rim, concha floor, antihelix, lobe, tragus, root; 1.5 to 3 mm smooth-min), cell 2.3 mm. Add `{part:'ears', frame:'H', mat:'skin'}`. `head()` has no ears of its own any more |
 | `head(p)` | `age` 0..1 (sag, nasolabial fold, eye bags, wrinkle mask), `jaw` (width), `chin`, `brow` (ridge weight, 1.2+ for deep-set eyes), `nose:{len,width,droop,bulb}`, `cheek:{bone,sag}`, `ears`, `eye:{x,y,z,r}` (centre, half spacing, radius), `skull:[rx,ry,rz]`, `neck` | Returns `.eye`, `.noseTip`, `.mouth`, plus `.skull`/`.jawSdf` for parts that wrap the head |
 | `hairCap(H,p)` | `thick`, `crown` (bald line height; raise above 0.2 for a full head), `front`, `hang` | Horseshoe fringe; culls itself inside the head |
 | `brows(H,p)` | `size`, `droop`, `lift` | Sits on the brow ridge, so it is always attached |
@@ -77,7 +78,7 @@ A custom part is any `{sdf, bounds, cell, tris, cull?, paint?}` written with the
 Build the head at its natural size, then set the figure's proportions in the recipe, not by editing the head SDF:
 
 ```js
-proportions: {headScale: 0.6, frames: ['H', 'J']},   // frames drawn at headScale (head, jaw/beard; the eyes follow the frame in recipe.eyes)
+proportions: {headScale: 0.6, frames: ['H', 'J'], height: 0.93},   // height: uniform scale of the whole figure (default 1); frames drawn at headScale (head, jaw/beard; the eyes follow the frame in recipe.eyes)
 ```
 
 `drawRecipe` scales those frames' meshes about the neck origin (positions only; normals are rotation-only), so hair, brows, moustache, beard and eyes stay attached and head turn, nod and jaw still work. The unscaled kit head is about 0.237 m chin to crown (4 heads tall on a 0.96 m body: cartoonish), so `headScale` is the knob. Lengthen the body to match: `robeTorso({len})` stretches chest, collar and cowl (the arms in `ARMS` are in U coordinates, so move the shoulders up yourself), `robeSkirt({height})` and `rig.waist` / `rig.neck` set the leg length and neck height. Run `node tools/npc_measure.mjs KEEPER` to read the result.
@@ -90,6 +91,7 @@ proportions: {headScale: 0.6, frames: ['H', 'J']},   // frames drawn at headScal
 | Hand | wrist to fingertip ~ chin to hairline, i.e. 0.7 to 0.75 head heights (~0.1 m; `hand({size: 1})` already is) |
 | Neck | ~0.5 of head width across; the head's neck cylinder is scaled with it |
 | Elbow / waist / crotch | ~3 / 3.0 / 3.5 heads down from the crown (the robe hides the rest) |
+| Overall height | `proportions.height` scales everything uniformly (meshes, rig offsets, anchors, props). The Keeper is built 1.03 m crown at height 1, shown at 0.93: crown 0.956 m (player eye height is 0.62 m, wall 1.25 m, Ilse/Brakk label heights 0.98/0.72). Props in game.js multiply by it; update `headY0` in `buildNpc` too |
 | Beard / hair | live in head frames: they scale with the head. Lengthen `beard({length})` to compensate |
 
 ## Drape: parts that hang instead of following the head
@@ -105,7 +107,7 @@ Vertices below `drape[0]` blend (linear blend skinning, smoothstep) from the par
 
 ## White squares on real GPUs
 
-Sparkling squares flashing around head and hands on real hardware came from the shader, not the meshes: the procedural bump fade used `1.6 + vViewPosition.z*0.45` (z is the distance, so it never faded: pore, strand and weave noise aliased at any distance), derivatives on sub-pixel triangles gave huge bump slopes, `pow(1.0 - abs(dot(..)), 3.0)` could see a base slightly below 0 from rounding (NaN), and `isnan()` can be compiled away on ANGLE/D3D. Now: fade fixed, bump tilt bounded and skipped when the perturbed normal collapses, `saturate` inside the rim `pow`s, a bit-pattern NaN/Inf test and a clamp at the end of the fragment shader, eye roughness 0.12. Meshes are also sanitized at bake time (`sanitize()` in npc_kit.js drops non-finite and zero-area triangles and renormalises normals); `node tools/npc_mesh_check.mjs` verifies it.
+Real cause, found by toggling things in software GL at Q2 (`?npc` default): **bloom blocks from fireflies**. Bright specular pixels on skin and hair silhouettes (grazing GGX, close torch, a few HDR units) go through `UnrealBloomPass` and its coarse mips, which spread each such pixel into a soft 8 to 32 px square that flickers as the camera moves. Evidence: the blocks vanish with the head hidden, with bloom strength 0, and with the final colour clamp at 2.5, and they stay with the shader NaN guards, GTAO off, dust off and shadows off. The meshes are clean (no stray islands, no slivers, no NaN: `tools/npc_mesh_check.mjs`). Fix: sculpted characters (material ids 12 to 15) are clamped to 3.0 at the end of the fragment shader (eyes 5.0, the rest 12.0). Earlier fixes (bump fade, bounded tilt, saturate in rim `pow`, NaN bit test) stay: they guard real NaNs. Debug recipe: in a page script set `__game.KEEPER.parts = KEEPER.parts.filter(...)` and `__game.bakeRecipe(KEEPER).eyes = null`, re-run `studio()`, and compare screenshots.
 
 ## Budgets
 
