@@ -143,9 +143,31 @@ node tools/npc_shot.mjs --file old.html --prefix before --views face            
 
 `__game.studio()` moves the NPC into a straight corridor far from braziers and sconces, freezes gameplay, and fixes the camera. The light is the player's torch plus ambient: what players see in most of the maze, and the same for every build. Every view takes 30 to 50 s (software GL). Use `face` and `hands` while iterating, and look at every PNG.
 
+## Body first, clothes over it (the standard way to dress a human)
+
+Do not sculpt a robe or tunic as one blob. Build the body as a distance field, then make each garment a shell over it. Only the garments (and skin that shows: head, neck, hands) are meshed; the body SDF is never drawn, it just defines the shapes.
+
+```js
+body: {stoop: 0.05, belly: 0.5, narrow: 1, waistNarrow: 0.86, arms: ARMS},   // ratios come from ANTHRO (ANSUR II); override with ratios:{chestDepth: 1.2}
+garments: [
+  {type: 'robe', ease: 0.012, hang: 0.03, collar: {r: 0.037}},                // torso offset by ease, hangs straight down from the belly
+  {type: 'sleeve', arm: 0, ease: 0.011, bell: 0.044, cuff: {len: 0.028}},     // tube around arm 0, widening to a bell mouth, gold cuff band
+  {type: 'sleeve', arm: 1, ease: 0.011, bell: 0.042, cuff: {len: 0.028}},
+  {type: 'sash', y: 0.017, h: 0.027, thick: 0.006}
+],
+// build():  const B = K.body(this.body), D = K.dress(B, this.garments);   parts: {...D.parts}   anchors: D.ends[i].at / .dir for the hands
+```
+
+- `K.body(p)` (frame U, waist origin): ribcage (two ellipsoids), belly, pelvis, neck, trapezius slopes, from ANTHRO ratios times `unit` (head height of the figure, default `HEAD_H*0.6`). `stoop` shears the upper body forward, `belly` pushes the belly out. Arms are rigid and separate: `{S, E, W, r:[deltoid, elbow, wrist]}` joint centres in U coordinates, each its own SDF with only a 10 mm blend, so there is a real armpit and a gap between the arm and the ribs. They are posed by the same frames as before (U), so breathing and sway still apply. Choose S/E/W lengths from ANTHRO (`upperArmLength` 1.56 heads, `forearmLength` 1.15) and give the elbows some abduction (z 0.165 against ribs at 0.09) or the sleeves fuse with the torso.
+- `K.dress(B, list)` returns `{parts, ends, torsoBase, sleeveBase}`. `parts.torso` is `body.torso - ease` with the lower section extruded straight down from `hang` (the cloth does not cling to the belly), a neck opening, a collar roll and a cowl, and folds from noise. `sleeve0..n` are round cones around the arms (`ease`, widening to `bell`), with elbow crook and forearm folds. `sash`, `cuff0..n` are `trimBand`s over those shells (the cuff region is radially capped: see the cuff-slab pitfall).
+- Layering: every shell is its own mesh. Each culls what lies inside another shell (4 mm), so where sleeve meets robe there is a real intersection crease. Both get `aoSdf` (baked AO also sees the other shell) and a `paint` that darkens (toward `col2`) within 14 mm of the other shell, so the join reads in shading.
+- Skirt: `robeSkirt({aspect})` makes the top oval (belly deeper than wide) fading to round at the hem, so it continues the robe's hanging section. The lower garment is still the `skirt` part in frame B.
+- Budget: torso ~570 tris, each sleeve ~380, no extra cost for the body. Keeper total 19.9k vertices near.
+- Ilse would use `garments: [{type:'tunic'...}]`: a tight robe shell (`ease` 0.004, `hang` at the hips, no flare) plus fitted sleeves (`bell` 0) and trousers as two leg tube shells around leg SDFs added to `body()` (not built yet), boots as the lower part of those tubes with a cuff. Brakk (seated): pass a `body` with a pelvis lower and thighs forward, armour as shells with big `ease` on chest and shoulders (pauldrons are sleeve caps with a larger `ease`) and no hang. Neither is rebuilt yet; `dress()` currently implements robe, sleeve and sash.
+
 ## Human proportions: read `docs/anthropometry.md`
 
-`src/anthro.js` exports `ANTHRO` (ratios of head height from ANSUR II / Farkas) and `HEAD_H`. Defaults of `head()` (`eye.r`, `eye.z`) and `ears()` come from it, so a new NPC gets anatomical eyes (24 mm ball, 64 mm IPD, 11.7 mm iris) and ears (0.27 head height, 30 deg flare, 17 deg tilt) for free. `node tools/npc_measure.mjs NAME` prints the recipe's ratios against the reference with a tolerance column. Lessons from the Keeper v5:
+`src/anthro.js` exports `ANTHRO` (ratios of head height from the real ANSUR II data in `src/ansur2_stats.json`; `anthro(group, pct)` for other populations) and `HEAD_H`. Defaults of `head()` (`eye.r`, `eye.z`) and `ears()` come from it, so a new NPC gets anatomical eyes (24 mm ball, 64 mm IPD, 11.7 mm iris) and ears (0.27 head height, 30 deg flare, 17 deg tilt) for free. `node tools/npc_measure.mjs NAME` prints the recipe's ratios against the reference with a tolerance column. Lessons from the Keeper v5:
 
 - **Eyes**: a deep orbital carve in front of the eyeball (the old 6 mm pit) read as a dark ring and sunken eyes. Keep only a shallow hollow, put the eyeball front level with the brow and cheek, keep paint around the socket light (0.2) and use a small pink spot at the inner corner as the tear duct. Lids: `open` 12, `low` -24, `lidT` 2.1 mm for an old man.
 - **Ears**: build them pivoted on the front edge and flare the plate out; a plate centred on the skull lies flat and reads as an oval stuck on the cheek. Check front view: the rims must be visible beside the head.
