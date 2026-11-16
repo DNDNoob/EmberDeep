@@ -8,42 +8,98 @@ pg.on('pageerror',e=>errs.push(String(e)));pg.on('console',m=>{if(m.type()==='er
 await pg.addInitScript(()=>{window.__norender=true});
 await pg.goto(pathToFileURL(root+'/index.html').href);await pg.waitForFunction(()=>window.__game&&window.__game.genFloor);
 let fails=0;const bad=m=>{fails++;console.log('FAIL',m)};
-// open a mirror door on a fresh run; returns after the room has started
-const setup=`window.__open=()=>{const G=window.__game;if(G.state==='room')G.roomLeave();if(G.state!=='play')G.startRun('mirror'+Math.random(),2,true);
-  const D=G.F.sdoors[0];D.kind='mirror';D.look='mirror';D.used=false;window.__says=[];window.__ends=[];G.sdoorOpen(D);return G.state};
- window.__run=(t,cb)=>{const G=window.__game,S=G.ROOMS.state(),I={mx:0,my:0,press:0,lx:0,ly:0};let n=0;while(S.t<t&&n++<20000&&G.state==='room'){if(cb)cb(S,I);G.ROOMS.update(1/60,I)}return S.t}`;
+// open a mirror door on a fresh run (optionally with a given seed); __run fast-forwards the room, __grab walks the crosshair to the can and takes it
+const setup=`window.__open=seed=>{const G=window.__game;if(G.state==='room')G.roomLeave();if(G.state!=='play')G.startRun('mirror'+Math.random(),2,true);
+  const D=G.F.sdoors[0];D.kind='mirror';D.look='mirror';D.used=false;document.getElementById('toast').textContent='';G.sdoorOpen(D);if(seed!==undefined)G.ROOMS.start('mirror',G.roomEnd,seed);return G.state};
+ window.__I=o=>Object.assign({mx:0,my:0,press:0,lx:0,ly:0},o||{});
+ window.__run=(t,cb)=>{const G=window.__game,S=G.ROOMS.state(),I=window.__I();let n=0;while(S.t<t&&n++<20000&&G.state==='room'){if(cb)cb(S,I);G.ROOMS.update(1/60,I)}return S.t};
+ window.__tap=(o)=>{const R=window.__game.ROOMS;R.update(1/60,window.__I(o));R.update(1/60,window.__I())};
+ window.__look=(yaw,pitch)=>{const S=window.__game.ROOMS.state();S.yaw=yaw;S.pitch=pitch};
+ window.__grab=()=>{const S=window.__game.ROOMS.state();window.__look(S.canAim.yaw,S.canAim.pitch);window.__tap({press:1});return S.held}`;
 await pg.evaluate(setup);
-const info=()=>pg.evaluate(()=>{const G=window.__game;return{state:G.state,hp:G.P.hp,gems:G.R.gems,toast:document.getElementById('toast').textContent,title:document.getElementById('deadTitle').textContent}});
-// (a) thumb
+const info=()=>pg.evaluate(()=>{const G=window.__game;return{state:G.state,hp:G.P.hp,gems:G.R.gems,xray:G.R.xray,depth:G.R.depth,toast:document.getElementById('toast').textContent,title:document.getElementById('deadTitle').textContent}});
+// (a) no words before you hold the can: the toast never changes in the first 30 seconds
+{await pg.evaluate(()=>window.__open());const r=await pg.evaluate(()=>{const T=document.getElementById('toast'),seen=new Set();window.__run(30,()=>seen.add(T.textContent));return[...seen]});
+ console.log('a silent',JSON.stringify(r));if(r.length!==1||r[0]!=='')bad('a text before the can: '+JSON.stringify(r))}
+// (b) aiming: away shows nothing, at the can shows "Pick up", pressing away does nothing, pressing at it takes it
+{await pg.evaluate(()=>window.__open());const r=await pg.evaluate(()=>{const S=window.__game.ROOMS.state(),H=document.getElementById('roomHud'),o={};
+   window.__look(0,0.02);window.__run(S.t+0.5);o.awayHud=H.textContent;o.awayAim=S.aim;window.__tap({press:1});o.awayHeld=S.held;
+   window.__look(S.canAim.yaw,S.canAim.pitch);window.__run(S.t+0.2);o.atHud=H.textContent;o.atAim=S.aim;o.btn=S.btn.join();
+   window.__look(S.canAim.yaw+0.5,S.canAim.pitch);window.__run(S.t+0.1);o.offAim=S.aim;
+   window.__look(S.canAim.yaw,S.canAim.pitch);window.__run(S.t+0.1);window.__tap({press:1});o.held=S.held;o.canVis=S.can.visible;window.__run(S.t+0.6);o.heldHud=H.textContent;o.handVis=S.hand.visible;return o});
+ console.log('b aim',JSON.stringify(r));
+ if(r.awayHud!==''||r.awayAim||r.awayHeld)bad('b prompt/pickup while looking away');if(!r.atAim||!/Pick up/.test(r.atHud))bad('b no prompt at the can');if(r.offAim)bad('b aim too wide');
+ if(!r.held||r.canVis||!r.handVis)bad('b pickup');if(!/Spray/.test(r.heldHud)||/Pick up/.test(r.heldHud))bad('b held hud')}
+// (c) spraying before the smashing: a splat on the glass, nothing else
+{await pg.evaluate(()=>window.__open(777));const r=await pg.evaluate(()=>{const G=window.__game,S=G.ROOMS.state(),o={};window.__grab();window.__run(S.t+1);
+   window.__look(0,0.1);window.__run(S.t+0.2);window.__tap({press:1});o.n1=S.splats.length;window.__run(S.t+0.1);window.__tap({press:1});o.n2=S.splats.length;window.__run(S.t+1.2);window.__tap({press:1});o.n3=S.splats.length;
+   window.__run(S.mir.SMASH-4);o.sm=S.sm;o.ch=S.ch;o.bt=S.bt;o.state=G.state;o.sel=S.sel;o.hurt=G.P.hp;return o});
+ console.log('c early spray',JSON.stringify(r));if(r.n1!==1||r.n2!==1||r.n3!==2)bad('c splats/cooldown '+[r.n1,r.n2,r.n3]);if(r.sm!==0||r.ch!==0||r.bt>=0||r.state!=='room')bad('c something happened')}
+// (d) the thumb: wins, the words, the sight; the sight ends with the floor
 {await pg.evaluate(()=>window.__open());const g0=(await info()).gems;
- await pg.evaluate(()=>{window.__run(34);window.__game.ROOMS.state().pick(2);window.__run(120)});
- const r=await info();console.log('a thumb',JSON.stringify(r),'gems before',g0);
- if(r.state!=='play')bad('a state '+r.state);if(r.hp<=0)bad('a hp');if(r.gems<=g0)bad('a gems');if(r.toast!=='You got lucky son.')bad('a toast '+r.toast)}
-// (b) spray
-{await pg.evaluate(()=>window.__open());await pg.evaluate(()=>{window.__run(34);window.__game.ROOMS.state().pick(1);window.__run(120)});
- const r=await info();console.log('b spray',JSON.stringify(r));if(r.state!=='dead'||r.hp>0)bad('b not dead')}
-// (c) no choice
-{await pg.evaluate(()=>window.__open());const t=await pg.evaluate(()=>{window.__run(200);return window.__game.ROOMS.state()?window.__game.ROOMS.state().t:-1});
- const r=await info();console.log('c idle',JSON.stringify(r));if(r.state!=='dead'||r.hp>0)bad('c not dead')}
-// (d) looking away is slower than staring
-const brk=async yaw=>{await pg.evaluate(()=>window.__open());return pg.evaluate(yaw=>{const S=window.__game.ROOMS.state();S.yaw=yaw;S.pitch=0;window.__run(130,(S)=>{S.yaw=yaw;S.pitch=0});return S.bt},yaw)};
-{const stare=await brk(0),away=await brk(Math.PI);console.log('d break time stare',stare,'away',away);if(!(stare>0)||!(away>stare+8))bad('d away not slower: '+stare+' vs '+away)}
-// the choice only unlocks after the smashing has started, and keyboard select needs left/right then confirm
-{await pg.evaluate(()=>window.__open());const r=await pg.evaluate(()=>{const S=window.__game.ROOMS.state();window.__run(20);const early=S.ch;const I={mx:0,my:0,press:0,lx:0,ly:0};window.__run(33);
-   const G=window.__game;G.ROOMS.update(1/60,Object.assign({},I,{press:1}));G.ROOMS.update(1/60,I);const noSel=S.ch;
-   G.ROOMS.update(1/60,Object.assign({},I,{mx:1}));G.ROOMS.update(1/60,I);G.ROOMS.update(1/60,Object.assign({},I,{press:1}));G.ROOMS.update(1/60,I);return{early,noSel,ch:S.ch,sel:S.sel}});
- console.log('keyboard',JSON.stringify(r));if(r.early!==0||r.noSel!==0||r.ch!==2)bad('keyboard choice')}
-// (e) watcher: snapshot round trip and garbage
-{const r=await pg.evaluate(()=>{const G=window.__game,R=G.ROOMS;G.roomLeave&&0;const out={};
+ const tt=await pg.evaluate(()=>{const S=window.__game.ROOMS.state();window.__grab();window.__run(S.mir.CHOICE+0.3);window.__game.ROOMS.state().pick(2);window.__run(S.t+120);return document.getElementById('toast').textContent});
+ const r=await info();r.toast=tt;console.log('d thumb',JSON.stringify(r),'gems before',g0);
+ if(r.state!=='play')bad('d state '+r.state);if(r.hp<=0)bad('d hp');if(r.gems<=g0)bad('d gems');if(r.toast!=='You got lucky son.')bad('d toast '+r.toast);if(!(r.xray>0&&r.xray===r.depth))bad('d xray flag');
+ const r2=await pg.evaluate(()=>{const G=window.__game;G.loadFloor(G.R.depth+1);return{x:G.R.xray}});if(r2.x)bad('d xray not cleared on a new floor')}
+// (e) spraying the monster still kills you
+{await pg.evaluate(()=>window.__open());await pg.evaluate(()=>{const S=window.__game.ROOMS.state();window.__grab();window.__run(S.mir.CHOICE+0.3);window.__game.ROOMS.state().pick(1);window.__run(S.t+120)});
+ const r=await info();console.log('e spray',JSON.stringify(r));if(r.state!=='dead'||r.hp>0)bad('e not dead');if(r.xray)bad('e xray after death')}
+// (f) never taking the can: it breaks through on its own
+{await pg.evaluate(()=>window.__open());await pg.evaluate(()=>{window.__run(200)});
+ const r=await info();console.log('f idle',JSON.stringify(r));if(r.state!=='dead'||r.hp>0)bad('f not dead')}
+// looking away is slower than staring
+const brk=async yaw=>{await pg.evaluate(()=>window.__open(5));return pg.evaluate(yaw=>{const S=window.__game.ROOMS.state();S.yaw=yaw;S.pitch=0;window.__run(130,(S)=>{S.yaw=yaw;S.pitch=0});return S.bt},yaw)};
+{const stare=await brk(0),away=await brk(Math.PI);console.log('g break time stare',stare,'away',away);if(!(stare>0)||!(away>stare+8))bad('g away not slower: '+stare+' vs '+away)}
+// the choice only unlocks after the smashing has started (and only once you hold the can); keyboard select needs left/right then confirm
+{await pg.evaluate(()=>window.__open());const r=await pg.evaluate(()=>{const G=window.__game,S=G.ROOMS.state();window.__grab();window.__run(S.mir.SMASH-3);const early=S.live;window.__run(S.mir.CHOICE+0.3);
+   const noSel=(()=>{window.__tap({press:1});return S.ch})();
+   window.__tap({mx:1});window.__tap({press:1});return{early,noSel,ch:S.ch,sel:S.sel}});
+ console.log('keyboard',JSON.stringify(r));if(r.early||r.noSel!==0||r.ch!==2)bad('keyboard choice')}
+// (h) seeds: different visits differ, the same seed matches, a watcher follows the seed it is sent
+{const r=await pg.evaluate(()=>{const G=window.__game,out={n:new Set(),door:new Set(),wall:new Set(),seat:new Set(),roles:new Set(),sv:new Set()};
+   const get=sd=>{window.__open(sd);const S=G.ROOMS.state();return{cast:JSON.stringify(S.cast),lay:JSON.stringify(S.layout),n:S.cast.length,S}};
+   const A=get(11),B=get(12),A2=get(11);out.sameSeed=A.cast===A2.cast&&A.lay===A2.lay;out.diff=A.cast!==B.cast&&A.lay!==B.lay;
+   for(let sd=1;sd<=60;sd++){const g=get(sd),S=g.S;out.n.add(g.n);out.door.add(S.layout.DX);out.wall.add(S.layout.wall);out.seat.add(S.layout.seat);for(const c of S.cast){out.roles.add(c.role);if(c.sv)out.sv.add(c.sv)}
+     if(S.mir.ENTER<16.7||S.mir.ENTER>18.3||S.mir.K.length!==g.n)out.badTime=[sd,S.mir.ENTER];for(let i=0;i<40;i++)G.ROOMS.update(1/60,window.__I())}
+   // a watcher built for one seed is rebuilt when a snapshot of another arrives
+   window.__open(21);const Sa=G.ROOMS.state();window.__run(8);const qa=G.ROOMS.snap();window.__open(22);const Sb=G.ROOMS.state();window.__run(8);const qb=G.ROOMS.snap();const cb=JSON.stringify(Sb.cast);
+   G.roomLeave();G.ROOMS.abort();G.ROOMS.watch('mirror',qa);const W1=G.ROOMS.state();out.w1=W1.seed===21&&JSON.stringify(W1.cast)===JSON.stringify(Sa.cast);
+   G.ROOMS.sync(qb);const W2=G.ROOMS.state();out.w2=W2.seed===22&&JSON.stringify(W2.cast)===cb;out.wt=W2.t;
+   for(const bad_ of [{sd:'x'},{sd:1.5},{sd:-3},{sd:1e12},{sd:NaN},{sd:null}]){const o=G.ROOMS.state();G.ROOMS.sync(Object.assign({},qb,bad_));if(G.ROOMS.state()!==o)out.rebuiltOnJunk=true}
+   G.ROOMS.abort();return{sameSeed:out.sameSeed,diff:out.diff,n:[...out.n].sort(),door:[...out.door],wall:out.wall.size,seat:[...out.seat],roles:[...out.roles],sv:[...out.sv],badTime:out.badTime,w1:out.w1,w2:out.w2,wt:out.wt,rebuiltOnJunk:out.rebuiltOnJunk}});
+ console.log('h seeds',JSON.stringify(r));
+ if(!r.sameSeed)bad('h same seed differs');if(!r.diff)bad('h seeds equal');if(r.n.join()!=='2,3,4')bad('h cast sizes '+r.n);if(r.door.length<3)bad('h doors '+r.door);if(r.wall<4)bad('h wallpapers');if(r.seat.length<2)bad('h seats');if(r.roles.length<4)bad('h roles');if(r.sv.length<4)bad('h variants '+r.sv);if(r.badTime)bad('h timing '+r.badTime);
+ if(!r.w1||!r.w2)bad('h watcher seed '+r.w1+' '+r.w2);if(r.rebuiltOnJunk)bad('h junk seed rebuilt the room')}
+// (i) watcher: snapshot round trip and garbage
+{const r=await pg.evaluate(()=>{const G=window.__game,R=G.ROOMS;const out={};
    G.startRun('mirrorw',2,true);const D=G.F.sdoors[0];D.kind='mirror';D.look='mirror';D.used=false;G.sdoorOpen(D);
-   const S=R.state();let I={mx:0,my:0,press:0,lx:0,ly:0};while(S.t<36)R.update(1/60,I);S.pick(2);while(S.t<40)R.update(1/60,I);
+   const S=R.state();window.__grab();window.__run(S.mir.CHOICE+0.4);window.__look(0,0.1);S.pick(2);window.__run(S.t+4);
    const q=R.snap();out.q=q;R.abort();G.roomLeave();
-   try{R.watch('mirror',q);const W=R.state();out.wt=W.t;out.wch=W.ch;out.watching=R.watching;
-     for(const g of [{t:'x'},{t:NaN,yaw:Infinity},{yaw:{},pitch:'a',sel:9,ch:7,ct:-5,bt:'z',sm:null},null,5,'s',{t:1e9,sm:1e9},{t:-50}])R.sync(g);
+   try{R.watch('mirror',q);const W=R.state();out.wt=W.t;out.wch=W.ch;out.watching=R.watching;out.held=W.held;
+     for(const g of [{t:'x'},{t:NaN,yaw:Infinity},{yaw:{},pitch:'a',sel:9,ch:7,ct:-5,bt:'z',sm:null,hd:'y',sp:'q'},{sp:[[1,2],[NaN,0,0,0],[9,9,9,9],5,null]},null,5,'s',{t:1e9,sm:1e9},{t:-50}])R.sync(g);
      R.update(1/60,{mx:0,my:0,press:0,lx:0,ly:0});out.t2=R.state().t;out.snap2=R.snap();out.ok=true}catch(e){out.err=String(e)}
    R.abort();return out});
- console.log('e watcher',JSON.stringify({wt:r.wt,wch:r.wch,watching:r.watching,t2:r.t2,err:r.err}));
- if(r.err||!r.ok)bad('e threw '+r.err);if(!(Math.abs(r.wt-r.q.t)<0.3))bad('e t round trip '+r.wt+' vs '+r.q.t);if(r.wch!==2)bad('e choice not replayed');if(!isFinite(r.t2))bad('e garbage broke time')}
+ console.log('i watcher',JSON.stringify({wt:r.wt,wch:r.wch,held:r.held,watching:r.watching,t2:r.t2,err:r.err}));
+ if(r.err||!r.ok)bad('i threw '+r.err);if(!(Math.abs(r.wt-r.q.t)<0.3))bad('i t round trip '+r.wt+' vs '+r.q.t);if(r.wch!==2||!r.held)bad('i choice not replayed');if(!isFinite(r.t2))bad('i garbage broke time')}
+// (j) the burning eyes: a creature behind one wall shows, behind two and far does not, and a straight line of sight is left to the normal view
+{const r=await pg.evaluate(()=>{const G=window.__game;G.startRun('xray-fixed',2,true);const F=G.F,W=F.W,H=F.H,out={};
+   G.R.xray=G.R.depth;const at=(px,pz,mx,mz)=>{G.P.x=px;G.P.z=pz;G.P.down=false;G.onTileChange();F.shades.length=0;F.shades.push({type:0,x:mx,z:mz,state:0,stun:0});G.XR.t=0;G.xrayTick(0);return G.XR.list.length};
+   const open=(x,y)=>x>=0&&y>=0&&x<W&&y<H&&F.g[y*W+x]===0;let one=null,two=null,near=null,vis=null,far=null;
+   for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){if(!open(x,y))continue;
+     for(let dx=1;dx<=12;dx++){const x2=x+dx;if(!open(x2,y))continue;const px=x+0.5,pz=y+0.5,mx=x2+0.5,w=G.wallsBetween(px,pz,mx,pz),clear=!(()=>{for(let i=1;i<dx*5;i++)if(G.solidAt(px+(mx-px)*i/(dx*5),pz))return true;return false})();
+       G.P.x=px;G.P.z=pz;G.onTileChange();const ds=F.dist[y*W+x2];
+       if(!one&&w===1&&dx<=4)one=[px,pz,mx,pz];if(!two&&w>=2&&dx<=8&&(ds<0||ds>6))two=[px,pz,mx,pz];if(!far&&w===1&&dx>=13)far=[px,pz,mx,pz];if(!vis&&clear&&dx>=3)vis=[px,pz,mx,pz]}}
+   out.found=[!!one,!!two,!!vis];
+   if(one)out.one=at(...one);if(two)out.two=at(...two);if(vis)out.vis=at(...vis);
+   // a mob 13+ tiles away through a single wall is too far: build it by hand on an open row
+   out.xrayOff=(()=>{G.R.xray=0;const n=one?at(...one):-1;G.R.xray=G.R.depth;return n})();
+   // around a corner within six steps counts even with two walls in the line
+   let corner=null;for(let y=1;y<H-1&&!corner;y++)for(let x=1;x<W-1&&!corner;x++){if(!open(x,y))continue;G.P.x=x+0.5;G.P.z=y+0.5;G.onTileChange();
+     for(let y2=Math.max(1,y-5);y2<Math.min(H-1,y+6)&&!corner;y2++)for(let x2=Math.max(1,x-5);x2<Math.min(W-1,x+6);x2++){if(!open(x2,y2))continue;const ds=F.dist[y2*W+x2];if(ds<2||ds>6)continue;
+       const mx=x2+0.5,mz=y2+0.5;if(G.wallsBetween(x+0.5,y+0.5,mx,mz)>=2){let ok=true;const n=40;for(let i=1;i<n;i++)if(G.solidAt(x+0.5+(mx-x-0.5)*i/n,y+0.5+(mz-y-0.5)*i/n)){ok=false;break}if(!ok){corner=[x+0.5,y+0.5,mx,mz];break}}}}
+   if(corner)out.corner=at(...corner);out.cornerFound=!!corner;return out});
+ console.log('j xray',JSON.stringify(r));
+ if(!r.found[0]||!r.found[1])bad('j no test geometry '+r.found);if(r.one!==1)bad('j one wall not shown');if(r.two!==0)bad('j two walls shown');if(r.vis!==0)bad('j straight line flagged');if(r.xrayOff!==0)bad('j shown without the reward');if(r.cornerFound&&r.corner!==1)bad('j corner not shown')}
 // a mirror door is visible in the registry order
 {const o=await pg.evaluate(()=>window.__game.doorOrder());console.log('order',o.join(','));if(o.join()!=='galaxy,kiln,fall,mirror')bad('registry order')}
 if(errs.length){console.log('console errors:',errs.slice(0,5));bad('console errors')}

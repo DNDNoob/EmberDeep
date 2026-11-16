@@ -1408,7 +1408,7 @@ const ROOMS=createRooms(renderer,{post:POST,low:Q===0,
   say:(t,s)=>say(t,s),tone:(...a)=>tone(...a),noise:(...a)=>noise(...a),rumble:(...a)=>rumble(...a),
   hud:h=>{const el=$('roomHud');if(el.innerHTML!==h)el.innerHTML=h},
   hurtFx:()=>{const h=$('hurt');h.style.transition='none';h.style.opacity=1;requestAnimationFrame(()=>{h.style.transition='opacity .9s';h.style.opacity=0})},
-  hint:k=>k==='mirror'?(touch.on?'Drag to look · SPRAY or THUMB picks':pad.id?'Right stick looks · Left stick or D-pad chooses · A picks':'Mouse or arrows look · A D chooses · Space or E picks'):
+  hint:k=>k==='mpick'||k==='mspray'?(touch.on?'tap '+(k==='mpick'?'PICK UP':'SPRAY'):pad.id?'A':'Space, E or click'):k==='mirror'?(touch.on?'Drag to look · SPRAY or THUMB picks':pad.id?'Right stick looks · Left stick or D-pad chooses · A picks':'Mouse or arrows look · A D chooses · Space or E picks'):
     touch.on?'Left stick walk · drag to look · aim at a button and tap PRESS, or tap a button':pad.id?'Left stick walk · right stick look · aim at a button and press A or X':'WASD walk · mouse look · aim at a button and click, E or Space'});
 const ROOM_NAME={galaxy:'a door full of stars',kiln:'the glass kiln',fall:'a door with no floor behind it',mirror:'a room behind a mirror'};
 // a fallen player rides along with the friend they follow, into that friend's strange door too
@@ -1431,7 +1431,7 @@ function sdoorOpen(D){
   mpSend({k:'sd',d:R.depth,i:F.sdoors.indexOf(D),w:D.kind});
   sfx('door');
   state='room';P.away=true;P.vx=P.vz=0;mapBig=false;
-  document.body.classList.add('inroom');const kl=D.kind==='kiln';$('tFlash').textContent=kl?'PRESS':D.kind==='mirror'?'SPRAY':'FLASH';$('tJump').textContent=D.kind==='mirror'?'THUMB':'JUMP';$('tJump').style.display=kl?'none':'';
+  document.body.classList.add('inroom');const kl=D.kind==='kiln';$('tFlash').textContent=kl?'PRESS':D.kind==='mirror'?'USE':'FLASH';$('tJump').textContent=D.kind==='mirror'?'THUMB':'JUMP';$('tJump').style.display=kl||D.kind==='mirror'?'none':'';
   if(kl)document.body.classList.add('kilnroom');
   $('fade').style.transition='none';$('fade').style.opacity=1;
   ROOMS.start(D.kind,roomEnd);
@@ -1446,6 +1446,44 @@ function roomClose(){
   $('tFlash').textContent='FLASH';$('tJump').style.display='';
   $('fade').style.transition='opacity .4s';$('fade').style.opacity=0;
 }
+/* ---------- burning eyes: after the mirror, for the rest of that floor, the creatures show through a wall or around a corner ---------- */
+const XR={list:[],t:0,pool:null};
+const xrayOn=()=>R.xray>0&&R.xray===R.depth&&!!F;
+// how many wall cells the straight line between two points passes through (a grid walk), not counting the cell you stand in or the one it stands in
+function wallsBetween(x0,z0,x1,z1){
+  let tx=Math.floor(x0),ty=Math.floor(z0);const ex=Math.floor(x1),ey=Math.floor(z1),dx=x1-x0,dz=z1-z0,sx=dx>0?1:-1,sz=dz>0?1:-1,ax=dx===0?1e9:Math.abs(1/dx),az=dz===0?1e9:Math.abs(1/dz);
+  let mx=dx===0?1e9:(dx>0?tx+1-x0:x0-tx)*ax,mz=dz===0?1e9:(dz>0?ty+1-z0:z0-ty)*az,n=0,g=0;
+  while((tx!==ex||ty!==ey)&&g++<80){if(mx<mz){tx+=sx;mx+=ax}else{ty+=sz;mz+=az}if((tx!==ex||ty!==ey)&&solidAt(tx+0.5,ty+0.5))n++}
+  return n;
+}
+// every hostile thing within about 12 tiles that you cannot see straight on, but that has at most one wall in the way or is six steps away round a corner
+function xrayTick(dt){
+  XR.t-=dt;if(XR.t>0)return;XR.t=0.1;XR.list.length=0;
+  if(!xrayOn()||state==='title'||P.down)return;
+  const c=[];for(const s of F.shades)if(s.x>0)c.push([s.x,s.z,s.type]);
+  if(MP.on&&MIM.st!==0&&MIM.rx>0)c.push([MIM.rx,MIM.rz,9]);
+  for(const m of c){
+    const d=Math.hypot(m[0]-P.x,m[1]-P.z);if(d>12||d<0.6||los(P.x,P.z,m[0],m[1]))continue;
+    const tx=Math.floor(m[0]),ty=Math.floor(m[1]),ds=F.dist&&tx>=0&&ty>=0&&tx<F.W&&ty<F.H?F.dist[ty*F.W+tx]:-1;
+    if(wallsBetween(P.x,P.z,m[0],m[1])<=1||(ds>=0&&ds<=6))XR.list.push({x:m[0],z:m[1],t:m[2],d});
+  }
+}
+// drawn as a glowing figure that ignores depth, so a wall does not hide it
+function xrayDraw(t){
+  if(!XR.pool){
+    const cv=document.createElement('canvas');cv.width=64;cv.height=128;const g=cv.getContext('2d');
+    const gr=g.createLinearGradient(0,10,0,124);gr.addColorStop(0,'rgba(255,70,20,0.5)');gr.addColorStop(1,'rgba(255,40,10,0.14)');
+    g.shadowColor='rgba(255,90,20,1)';g.shadowBlur=14;g.fillStyle=gr;g.strokeStyle='rgba(255,120,45,0.7)';g.lineWidth=2;
+    g.beginPath();g.ellipse(32,25,11,13,0,0,7);g.fill();g.stroke();g.beginPath();g.moveTo(12,56);g.quadraticCurveTo(32,34,52,56);g.quadraticCurveTo(48,90,45,122);g.lineTo(19,122);g.quadraticCurveTo(16,90,12,56);g.closePath();g.fill();g.stroke();
+    g.shadowBlur=0;g.fillStyle='rgba(255,210,120,0.95)';g.fillRect(26,22,3,4);g.fillRect(36,22,3,4);
+    const tex=new THREE.CanvasTexture(cv);XR.pool=[];
+    for(let i=0;i<16;i++){const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true,depthTest:false,depthWrite:false,blending:THREE.AdditiveBlending,fog:false,toneMapped:false}));sp.renderOrder=999;sp.visible=false;sp.frustumCulled=false;scene.add(sp);XR.pool.push(sp)}
+  }
+  const on=xrayOn()&&state!=='title';
+  for(let i=0;i<XR.pool.length;i++){const sp=XR.pool[i],m=on&&XR.list[i];
+    if(!m){sp.visible=false;continue}
+    sp.visible=true;sp.position.set(m.x,0.95,m.z);sp.scale.set(m.t===1?1.0:0.9,m.t===1?2.3:1.9,1);sp.material.opacity=0.5+0.25*Math.sin(t*3.2+i*1.7)}
+}
 function roomEnd(res){
   const fall=res.k==='dead'&&res.why==='fall';
   if(res.k==='warp'){
@@ -1458,7 +1496,7 @@ function roomEnd(res){
   roomClose();
   if(res.k==='win'&&res.why==='mirror'){
     const g=2+R.depth;wallet+=g;R.gems+=g;R.score+=40*R.depth;store.set('wallet',wallet);
-    say('You got lucky son.',4.5);sfx('shard');
+    R.xray=R.depth;XR.t=0;say('You got lucky son.',4.5);sfx('shard');setTimeout(()=>{if(R.xray>0&&R.xray===R.depth&&state==='play')say('Your eyes still burn. Something about the dark looks thinner.',4.5)},4700);
     mpSend({k:'sdr',r:'lucky'});mpSys(myName()+' hid behind a mirror and got lucky');
     return;
   }
@@ -1475,6 +1513,8 @@ function roomEnd(res){
   die();
   if(MP.on)say(mir?'The glass gave way. Your friends can still bring you back on the next floor.':fall?'There was no floor. Your friends can still bring you back on the next floor.':'The kiln filled up. Your friends can still bring you back on the next floor.',5);
 }
+// the mirror room's touch buttons say nothing about the can until you are looking at it or holding it
+function mirrorBtns(){const S=ROOMS.kind==='mirror'&&ROOMS.state(),b=S&&S.btn;if(!b)return;const a=$('tFlash'),j=$('tJump'),d=b[1]?'':'none';if(a.textContent!==b[0])a.textContent=b[0];if(j.style.display!==d)j.style.display=d}
 function roomInput(){
   const kb=ROOMS.kind==='kiln',mir=ROOMS.kind==='mirror',ax=(a,b)=>(a?1:0)-(b?1:0);
   // walking (the kiln hall) and looking; pressing is one thing for every device. The mirror also reads which touch button was hit (spray / thumb)
@@ -1510,7 +1550,7 @@ function los(x0,z0,x1,z1){
 function loadFloor(depth){
   R.depth=depth;
   if(depth>deepest){deepest=depth;store.set('deepest',deepest)}
-  F=genFloor(R.seed,depth);panelLvl=1;P.grab=null;if(typeof MIM!=='undefined')mimicReset();
+  R.xray=0;F=genFloor(R.seed,depth);panelLvl=1;P.grab=null;if(typeof MIM!=='undefined')mimicReset();
   buildMesh(F);buildStatic(F);buildSdf(F);
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
   P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;P.inSafe=false;nearNpc=null;
@@ -1597,7 +1637,7 @@ let toastTimer=0;
 function say(t,secs){const el=$('toast');el.textContent=t;el.style.opacity=1;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.style.opacity=0,(secs||2.5)*1000)}
 
 function die(){
-  roomLeave();
+  roomLeave();R.xray=0;
   if(MP.on&&!MP.wiping){mpDown();return}
   state='dead';clearPrompt();
   mpDeadPanel();
@@ -2724,7 +2764,7 @@ function watcher(s,dt,pfx,pfz){
 }
 /* ---------- update ---------- */
 function update(dt){
-  R.time+=dt;
+  R.time+=dt;xrayTick(dt);
   // in a shared game the world keeps going while you pause or talk, but you stand still
   if(P.grab)mimicGrabTick(dt);
   const ctl=state==='play'&&!P.grab&&!GL.fall&&!(GL.rb&&!GL.rb.fwd);
@@ -3592,7 +3632,7 @@ function render(t){
   }
   if(flashT>0){const k=1-flashT,rr=0.4+k*5.5;
     for(let i=0;i<18;i++){const a=i/18*6.283+k;spr(ex+Math.cos(a)*rr,0.25+((i*7)%5)*0.16,ez+Math.sin(a)*rr,0.25,0.25,7,0.8,0.9,1.0,flashT*0.8,1)}}
-  pkFxDraw();
+  pkFxDraw();xrayDraw(t);
   for(const m of DUST){
     const px=ex+((m[0]+Math.sin(t*0.21+m[3])*0.4-ex)%8+12)%8-4,pz=ez+((m[2]+Math.cos(t*0.17+m[3])*0.4-ez)%8+12)%8-4;
     const py=0.05+((m[1]+t*0.012+Math.sin(t*0.3+m[3])*0.05)%1.15);
@@ -3710,7 +3750,7 @@ function step(now){
   pollPad();
   if((state==='play'||state==='room')!==wasPlaying){wasPlaying=state==='play'||state==='room';document.body.classList.toggle('playing',wasPlaying)}
   roomWatch();
-  if(state==='room'){ROOMS.update(dt,roomInput());if(state==='room'){$('fade').style.opacity=ROOMS.fade();$('roomCross').classList.toggle('on',ROOMS.aimed())}}
+  if(state==='room'){ROOMS.update(dt,roomInput());if(state==='room'){$('fade').style.opacity=ROOMS.fade();$('roomCross').classList.toggle('on',ROOMS.aimed());mirrorBtns()}}
   else if(ROOMS.watching){ROOMS.update(dt,NOIN);$('fade').style.opacity=ROOMS.fade()}
   const live=()=>state==='play'||(MP.on&&(state==='pause'||state==='talk'||state==='room'));
   // a fake hang: nothing moves for you, though the room carries on
@@ -3740,5 +3780,5 @@ setInterval(()=>{if(MP.host&&document.hidden&&performance.now()-last>200)step(pe
 // a backdrop maze behind the title screen
 R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
 {const rc=cleanCode(new URLSearchParams(location.search).get('room'));if(rc)mpPrepareJoin(rc)}
-window.__game={update,render,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={XR,xrayTick,wallsBetween,update,render,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);

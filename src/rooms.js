@@ -14,6 +14,8 @@ import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
 const ss=(a,b,x)=>{const t=clamp((x-a)/(b-a),0,1);return t*t*(3-2*t)};
 const lerp=(a,b,t)=>a+(b-a)*t;
+// a small seeded generator (mulberry32): one per visit to the mirror room, so a room can be rebuilt exactly for a watcher
+const rng32=a=>()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296};
 
 // the falling stones of the kiln: clusters of two to four cells
 const SHAPES=[
@@ -103,6 +105,7 @@ float vor(vec2 p){vec2 i=floor(p),f=fract(p);float d1=8.0,d2=8.0;
   return sqrt(d2)-sqrt(d1);}`;
 const LIT_FS=`uniform vec3 uCol,uRimC;uniform float uRim,uSpec,uWrap,uGlow,uLit,uPat,uAlpha;
 uniform vec3 uLP[4],uLC[4],uBP,uBC,uAmbP,uAmbB;uniform float uWallZ;
+uniform vec3 uWain,uTrim,uRugA,uRugB,uRugC;uniform vec4 uRug;uniform float uWpat,uWsc,uRugP;
 #ifdef USE_MAP
 uniform sampler2D uMap;
 #endif
@@ -115,14 +118,14 @@ vec3 pat(int k,vec3 p,vec3 n,vec3 c){
     c*=(0.65+0.6*h1(id))*(0.7+0.5*fb(q*8.0))*(0.45+0.55*smoothstep(0.0,0.05,j));}
   else if(k==3){float y=p.y;
     if(y<1.05){float px=fract(q.x/0.85);float ins=smoothstep(0.05,0.08,px)*smoothstep(0.05,0.08,1.0-px)*smoothstep(0.12,0.15,y)*smoothstep(0.12,0.15,0.93-y);
-      float gr=fb(vec2(q.x*6.0,y*50.0));c=vec3(0.2,0.085,0.05)*(0.7+0.6*gr)*(0.7+0.4*ins);if(y>0.96)c=vec3(0.42,0.22,0.1)*(0.8+0.4*gr);}
-    else{float u=q.x/0.26;float st=smoothstep(0.3,0.5,abs(fract(u)-0.5));vec2 d=vec2(abs(fract(u)-0.5),abs(fract(y/0.34)-0.5));float dm=smoothstep(0.17,0.12,d.x+d.y*0.55);
+      float gr=fb(vec2(q.x*6.0,y*50.0));c=uWain*(0.7+0.6*gr)*(0.7+0.4*ins);if(y>0.96)c=uTrim*(0.8+0.4*gr);}
+    else{float u=q.x/uWsc;float st=smoothstep(0.3,0.5,abs(fract(u)-0.5));vec2 d=vec2(abs(fract(u)-0.5),abs(fract(y/0.34)-0.5));float dm=smoothstep(0.17,0.12,d.x+d.y*0.55);if(uWpat>0.5&&uWpat<1.5)dm=0.0;if(uWpat>1.5)st=0.0;
       c=mix(c*0.8,c*1.25,st);c=mix(c,vec3(0.55,0.4,0.15),dm*0.55*(1.0-st));c*=0.75+0.4*fb(q*2.5);}}
   else if(k==4){float row=floor(q.y/0.18),xo=q.x+row*0.73,len=floor(xo/1.4);vec2 id=vec2(len,row);float fx=fract(xo/1.4),fz=fract(q.y/0.18);
     float j=min(min(fz,1.0-fz)*0.18,min(fx,1.0-fx)*1.4);float gr=fb(vec2(q.x*3.0,q.y*60.0)+id*5.0);
     c*=(0.55+0.75*h1(id))*(0.7+0.55*gr)*(0.5+0.5*smoothstep(0.0,0.006,j));
-    vec2 r=q-vec2(0.0,-4.1);vec2 dd=abs(r);if(dd.x<2.3&&dd.y<1.45){float e=min(2.3-dd.x,1.45-dd.y);vec3 rc=vec3(0.34,0.05,0.07);float lz=abs(fract((r.x+r.y)*1.7)-0.5)+abs(fract((r.x-r.y)*1.7)-0.5);rc*=0.85+0.35*smoothstep(0.62,0.4,lz);
-      if(e<0.2)rc=vec3(0.1,0.09,0.2)*(0.8+0.5*fb(q*30.0));if(e>0.2&&e<0.27)rc=vec3(0.5,0.36,0.12);if(e>0.27&&e<0.45)rc=vec3(0.3,0.05,0.07)*(0.8+0.4*fb(q*12.0));if(e<0.05)rc=vec3(0.5,0.42,0.3);c=rc*(0.8+0.35*fb(q*40.0));}}
+    vec2 r=q-uRug.xy;vec2 dd=abs(r);if(dd.x<uRug.z&&dd.y<uRug.w){float e=min(uRug.z-dd.x,uRug.w-dd.y);vec3 rc=uRugA;float lz=uRugP<0.5?abs(fract((r.x+r.y)*1.7)-0.5)+abs(fract((r.x-r.y)*1.7)-0.5):uRugP<1.5?abs(fract(r.x*2.6)-0.5)*1.45:abs(fract(max(dd.x/uRug.z,dd.y/uRug.w)*5.0)-0.5)*1.45;rc*=0.85+0.35*smoothstep(0.62,0.4,lz);
+      if(e<0.2)rc=uRugB*(0.8+0.5*fb(q*30.0));if(e>0.2&&e<0.27)rc=uRugC;if(e>0.27&&e<0.45)rc=uRugA*0.88*(0.8+0.4*fb(q*12.0));if(e<0.05)rc=vec3(0.5,0.42,0.3);c=rc*(0.8+0.35*fb(q*40.0));}}
   else if(k==5){float g=fb(q*vec2(3.0,42.0));float kn=smoothstep(0.1,0.0,length(fract(q*vec2(0.9,2.2))-0.5)-0.04);c*=(0.6+0.7*g)*(1.0-0.3*kn);}
   else if(k==6){float g=fb(q*vec2(42.0,3.0));c*=(0.6+0.7*g);}
   else if(k==7){float g=fb(q*30.0);c*=0.65+0.55*g+0.15*sin(q.x*70.0)*sin(q.y*70.0);}
@@ -177,6 +180,21 @@ void main(){
   float cr=cracks(p);
   col=mix(col,vec3(1.1,1.15,1.25),cr);a=clamp(a+cr*0.6,0.0,0.9);
   gl_FragColor=vec4(col,a);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}`;
+
+// orange spray on the back of the glass: a splat, beads around it, and a few runs that creep down the pane
+const DRIP_FS=`uniform vec4 uS[10];uniform float uT;varying vec2 vP;
+float hh(float n){return fract(sin(n*91.3458)*47453.5453);}
+void main(){float a=0.0;
+  for(int i=0;i<10;i++){vec4 s=uS[i];if(s.z<0.0)continue;float age=uT-s.z;if(age<0.0)continue;float gr=smoothstep(0.0,0.25,age);
+    a=max(a,smoothstep(0.075,0.025,length(vP-s.xy))*(0.5+0.35*hh(s.w))*gr);
+    for(int k=0;k<7;k++){float fk=float(k)+s.w*13.0;vec2 o=vec2(hh(fk)-0.5,hh(fk+7.0)-0.5)*0.34;float br=0.008+0.012*hh(fk+3.0);a=max(a,smoothstep(br,br*0.4,length(vP-s.xy-o))*0.8*gr);}
+    for(int k=0;k<3;k++){float fk=float(k)+s.w*29.0;float ox=(hh(fk)-0.5)*0.12,sp=0.03+0.05*hh(fk+2.0),L=min(0.9,max(0.0,age-0.5)*sp);
+      vec2 q=vP-s.xy-vec2(ox,0.0);float inside=step(-L,q.y)*step(q.y,0.0),w=0.005+0.003*hh(fk+5.0);
+      a=max(a,smoothstep(w,w*0.3,abs(q.x))*inside*0.55*gr);a=max(a,smoothstep(0.016,0.006,length(q+vec2(0.0,L)))*0.9*gr*step(0.01,L));}}
+  gl_FragColor=vec4(vec3(1.0,0.42,0.08)*0.85,a*0.8);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`;
@@ -675,15 +693,66 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
 
   /* ---------- behind the mirror ---------- */
   // you stand in the back room of a one-way mirror; the timeline (seconds) is fixed, only the smashing and your choice move
-  const MIR={ENTER:17,K:[19,20.9,22.7],STOP:23.7,HEAD:24.4,BODY:26.6,WALK:28.2,SMASH:30.6,CAN:31.2,CHOICE:32.2,NB:13,BREAK:14,SZ:-4.1,LOOK:0.8};
-  function mirror(){
-    const LOW=!!o.low,TAU=Math.PI*2,S={t:0,yaw:0,pitch:0.02,said:0,ch:0,ct:-1,bt:-1,sm:0,sel:-1,prev:null,lk:0,shk:0,leaveT:-1,want:null,touch:false,nb:0,blind:0,ph:'watch'};
+  const MIR0={ENTER:17,K:[19,20.9,22.7],STOP:23.7,HEAD:24.4,BODY:26.6,WALK:28.2,SMASH:30.6,CAN:31.2,CHOICE:32.2,NB:13,BREAK:14,SZ:-4.1,LOOK:0.8};
+  function mirror(seed){
+    const LOW=!!o.low,TAU=Math.PI*2,S={held:false,ht:-9,aim:false,splats:[],sn:0,spj:-1,spc:0,spt:[0,1.5,-1],btn:['USE',false],t:0,yaw:0,pitch:0.02,said:0,ch:0,ct:-1,bt:-1,sm:0,sel:-1,prev:null,lk:0,shk:0,leaveT:-1,want:null,touch:false,nb:0,blind:0,ph:'watch'};
     cam.fov=66;cam.near=0.05;cam.far=60;
     const wrap=a=>{a%=TAU;return a>Math.PI?a-TAU:a<-Math.PI?a+TAU:a},ang=(dx,dz)=>Math.atan2(dx,dz),nrm=(x,z)=>{const l=Math.hypot(x,z)||1;return[x/l,z/l]};
     const CC=c=>Array.isArray(c)?new THREE.Color().setRGB(c[0],c[1],c[2]):new THREE.Color(c);
+    // ---- this visit's room: one seed drives the cast, the furniture, the colours and the timing (a watcher rebuilds the same room from it) ----
+    seed=Number.isInteger(seed)&&seed>=0&&seed<4294967296?seed:(Math.random()*4294967296)>>>0;S.seed=seed;
+    const rr=rng32(seed),rg=(a,b)=>a+(b-a)*rr(),pk=a=>a[rr()*a.length|0],shuf=a=>{a=a.slice();for(let i=a.length-1;i>0;i--){const j=rr()*(i+1)|0;[a[i],a[j]]=[a[j],a[i]]}return a};
+    const PX=3.7,PZ=-6.8,PH=3.4;
+    const WALLS=[[0x5a1618,[0.2,0.085,0.05],[0.42,0.22,0.1]],[0x1f3a2a,[0.07,0.11,0.08],[0.26,0.3,0.16]],[0x2a2f4a,[0.07,0.08,0.13],[0.2,0.22,0.35]],[0x5a4220,[0.17,0.11,0.06],[0.4,0.28,0.12]],[0x4a1c3a,[0.12,0.05,0.09],[0.32,0.15,0.22]],[0x1f4045,[0.05,0.1,0.11],[0.15,0.28,0.3]]];
+    const RUGS=[[[0.34,0.05,0.07],[0.1,0.09,0.2],[0.5,0.36,0.12]],[[0.08,0.2,0.16],[0.2,0.1,0.05],[0.5,0.42,0.2]],[[0.16,0.1,0.3],[0.3,0.08,0.1],[0.55,0.45,0.2]],[[0.38,0.26,0.1],[0.1,0.14,0.08],[0.55,0.18,0.1]],[[0.2,0.2,0.22],[0.3,0.05,0.07],[0.5,0.5,0.45]]];
+    const wall=pk(WALLS),rugK=pk(RUGS),floorC=pk([0x6a4a2c,0x5a3a22,0x7a5a38,0x4a3426,0x6a5a42]),wpat=rr()*3|0,wsc=rg(0.2,0.34),rugP=rr()*3|0;
+    const SKIN=[0xd7a98a,0xe2b698,0xc99876,0x9a6a4a,0x6e4630,0xefc7a8,0xb88462],HAIR=[0x2a1a12,0x1c140f,0xc9c4bc,0x6a3a1c,0x8a5a2a,0xd2b070,0x4a1a12,0x7a7a80];
+    const TOPS=[0x3a1f33,0x1f6a4a,0x1c3a6a,0x6a1c1c,0x5a4a1c,0x2a4a5a,0x6a3a5a,0x2a2a30,0x7a6a4a,0x3a5a2a];
+    const mkCfg=()=>{const f=rr()<0.55,skin=pk(SKIN),hair=pk(HAIR);
+      if(f){const top=pk(TOPS);return{skin,hair,top,bot:top,collar:pk([0xeee6d6,0xd8cfe0,0xe8d8c0]),dress:1,bun:rr()<0.65?1:0,seed:rg(0,6),h:rg(0.93,1.03)}}
+      return{skin,hair,top:pk([0xe6dfd0,0xd0d8e0,0x9aa0a8,0xe0d0b0]),bot:pk([0x2a2a30,0x26303a,0x3a2a22]),vest:pk([0x5a1d26,0x1d3a5a,0x2a4a2a,0x4a3a1a]),tie:pk([0x1a1a1a,0x5a1010,0x103a5a]),beard:rr()<0.45?1:0,seed:rg(0,6),h:rg(1.02,1.1)}};
+    const DX=pk([2.3,-2.4,0.15]);   // which door of the parlor the thing comes through
+    const occ=[],crowd=(x,z,r)=>occ.some(q=>Math.hypot(q[0]-x,q[1]-z)<q[2]+r),spot=(xa,xb,za,zb,r)=>{let x,z;for(let i=0;i<60;i++){x=rg(xa,xb);z=rg(za,zb);if(!crowd(x,z,r))break}occ.push([x,z,r]);return[x,z]};
+    const fw=[[DX-1.0,DX+1.0]],fwFree=(a,b)=>fw.every(q=>b+0.15<q[0]||a-0.15>q[1]),fwPlace=w=>{for(let i=0;i<60;i++){const x=rg(-PX+w/2+0.25,PX-w/2-0.25);if(fwFree(x-w/2,x+w/2)){fw.push([x-w/2,x+w/2]);return x}}return null};
+    const sbX=fwPlace(1.5)??(DX>0?-2.2:2.2),sofX=fwPlace(1.4)??(DX>0?-0.4:0.9);
+    const TZ=rg(-5.2,-4.55),TX=rg(-1.7,0.9);let seatK=pk(['L','R','B']);if(seatK==='B'&&!fwFree(TX-0.6,TX+0.6))seatK=pk(['L','R']);if(seatK==='B')fw.push([TX-0.6,TX+0.6]);
+    const SEAT={L:[TX-1.0,TZ,Math.PI/2],R:[TX+1.0,TZ,-Math.PI/2],B:[TX,TZ-1.05,0]},seat2=seatK==='L'?'R':seatK==='R'?'L':pk(['L','R']);
+    occ.push([TX,TZ,1.25]);for(const k of [seatK,seat2])occ.push([SEAT[k][0],SEAT[k][1],0.5]);
+    const PS={x0:rg(-2.0,-0.6),L:rg(2.0,3.0),z:rg(-3.7,-3.2),sp:rg(0.5,0.7),s:pk([-1,1]),tg:rg(9,11.8)};
+    for(let i=0;i<5;i++)occ.push([PS.x0+PS.L*i/4,PS.z,0.55]);
+    const pace=t=>{const sp=PS.sp,L=PS.L,u=((t*sp)%(2*L)+2*L)%(2*L),d=u<L?u:2*L-u,sn=Math.sin(Math.PI*u/L);return{x:PS.s>0?PS.x0+d:PS.x0+L-d,z:PS.z,yaw:PS.s*Math.PI/2*Math.tanh(sn*5),wa:Math.min(1,Math.abs(sn)*4),w:t*sp*5.2}};
+    const LA=[-rg(2.75,3.3),rg(-5.2,-2.7)],LB=[rg(2.75,3.3),rg(-5.2,-2.7)];occ.push([LA[0],LA[1],0.5],[LB[0],LB[1],0.5]);
+    const GL=[rg(-0.5,0.7),-2.6],side=pk([-1,1]),A0=spot(side<0?-3.2:2.2,side<0?-2.2:3.2,-4.1,-3.0,0.55),QS=spot(-3.2,3.2,-4.4,-2.9,0.6);
+    // wall hangings keep clear of the door and of each other
+    const decor=[[DX-1.1,DX+1.1]],dFree=(x,w)=>decor.every(q=>x+w/2+0.1<q[0]||x-w/2-0.1>q[1]),dPlace=w=>{for(let i=0;i<60;i++){const x=rg(-3.0,3.0);if(dFree(x,w)){decor.push([x-w/2,x+w/2]);return x}}return null};
+    // the cast: two to four people, each with a routine of their own; the preener is always one of them
+    const nP=2+(rr()*3|0),roles=shuf(['glass'].concat(shuf(['pace','sit','stand']).slice(0,nP-1)));
+    const cast=roles.map(role=>({role,c:mkCfg(),sv:role==='sit'?pk(['tea','read','nod']):''}));
+    const ENTER=16.8+rg(0,1.4),PT=[3.0,0];PT[1]=Math.min(4.6,ENTER-13.1);const tA=rg(PT[0],Math.max(PT[0],PT[1]));
+    const GT={tA,tB:tA+3.8,tC:tA+10.2,tD:tA+12.9,ord:shuf([0,1,2])},DUR=[2.2,1.6,1.5];
+    const k0=ENTER+2+rg(0,0.4),kl=ENTER+[0,0,4.8,5.7,6.4][nP]+rg(-0.3,0.3),Ks=[...Array(nP)].map((_,i)=>lerp(k0,kl,i/(nP-1))+(i>0&&i<nP-1?rg(-0.15,0.15):0));
+    const HEAD=Math.max(kl+0.6,kl+1.7+rg(-1.5,1.5)),BODY=HEAD+2.2+rg(-0.3,0.3),WALK=BODY+1.6+rg(-0.3,0.3),SMASH=WALK+2.4;
+    const MIR=Object.assign({},MIR0,{ENTER,K:Ks,STOP:Math.min(kl+1,HEAD-0.1),HEAD,BODY,WALK,SMASH,CAN:SMASH+0.6,CHOICE:SMASH+0.9});S.mir=MIR;
+    const PA=[DX,-7.6],PB=[DX,-6.0],near=(v,from,dd)=>{const q=nrm(from[0]-v[0],from[1]-v[1]);return[v[0]+q[0]*dd,v[1]+q[1]*dd]};
+    for(const e of cast){
+      if(e.role==='pace'){const p=pace(ENTER);e.V=[p.x,p.z]}
+      else if(e.role==='sit')e.V=SEAT[seatK].slice(0,2);
+      else if(e.role==='glass'){e.V=QS;e.T=GT;e.A0=A0}
+      else{const x=rr()<0.5?fwPlace(1.2):null;if(x!==null){e.sv='gaze';e.V=[x,-6.0];decor.push([x-0.55,x+0.55]);e.pic=x}else{e.sv='sway';e.V=spot(-3.2,3.2,-4.4,-2.9,0.6);e.yaw0=rg(-0.9,0.9)}}
+      e.y0=e.role==='sit'?0.55:0.95;e.fd=e.role==='sit'?0.9:1.0}
+    const order=shuf(cast.map((_,i)=>i)),Ms=[],Vs=[];let prevM=PB;
+    order.forEach((ci,i)=>{const e=cast[ci];e.k=Ks[i];e.M=near(e.V,prevM,i===1?1.3:1.25);prevM=e.M;Ms.push(e.M);Vs.push(e.V)});
+    const PICS=[dPlace(0.9),dPlace(0.9)].filter(x=>x!==null).map(x=>[x,1.95]);if(cast.some(e=>e.pic!==undefined))PICS.push([cast.find(e=>e.pic!==undefined).pic,1.95]);
+    const clkX=dPlace(0.5)??(DX>0?-0.2:0.2);
+    // the lights go out in some order as it works through the room: which one fails, and how far, comes from the seed
+    const LO=shuf([1,0.65,0.4,0.5]).map(d=>({t:Ks[rr()*nP|0]+0.1+rr()*0.9,d}));
+    // the stool and the can on it: a little off to one side, below your eyes
+    const SH=0.92,SX=pk([-1,1])*rg(0.62,0.85),SZ=rg(-1.4,-1.25);
     // ---- one small lit shader for everything: wrap light, two zones (parlor / back room), fresnel rim, world-space patterns ----
     const LU={uLP:{value:[0,1,2,3].map(()=>new THREE.Vector3())},uLC:{value:[0,1,2,3].map(()=>new THREE.Vector3())},uBP:{value:new THREE.Vector3(0.5,2.4,0.6)},uBC:{value:new THREE.Vector3(0.5,0.62,0.9)},
-      uAmbP:{value:new THREE.Vector3(0.05,0.03,0.02)},uAmbB:{value:new THREE.Vector3(0.022,0.03,0.05)},uWallZ:{value:-1.9}};
+      uAmbP:{value:new THREE.Vector3(0.05,0.03,0.02)},uAmbB:{value:new THREE.Vector3(0.022,0.03,0.05)},uWallZ:{value:-1.9},
+      uWain:{value:new THREE.Vector3(...wall[1])},uTrim:{value:new THREE.Vector3(...wall[2])},uWpat:{value:wpat},uWsc:{value:wsc},
+      uRug:{value:new THREE.Vector4(clamp(TX+rg(-0.5,0.5),-1.2,1.2),TZ+rg(0,0.5),rg(1.8,2.4),rg(1.15,1.5))},uRugA:{value:new THREE.Vector3(...rugK[0])},uRugB:{value:new THREE.Vector3(...rugK[1])},uRugC:{value:new THREE.Vector3(...rugK[2])},uRugP:{value:rugP}};
     const cache=new Map();
     const lit=(col,p={})=>{
       const key=p.u?null:JSON.stringify([col,p]);if(key&&cache.has(key))return cache.get(key);
@@ -747,35 +816,33 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     {const n=LOW?40:110,pos=new Float32Array(n*3);S.dustSeed=[];for(let i=0;i<n;i++){S.dustSeed.push([rnd()*TAU,rnd()*TAU,0.1+rnd()*0.25]);pos[i*3]=(rnd()-0.5)*4;pos[i*3+1]=0.3+rnd()*2.4;pos[i*3+2]=-1.6+rnd()*4}
       const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(pos,3));S.dust=new THREE.Points(g,new THREE.PointsMaterial({size:0.035,map:glowTex,color:0x9db8ff,transparent:true,opacity:0.5,blending:THREE.AdditiveBlending,depthWrite:false}));S.dust.frustumCulled=false;group.add(S.dust)}
     // ---- the parlor ----
-    const PX=3.7,PZ=-6.8,PH=3.4,paper=lit(0x5a1618,{pat:3,rim:0.15,rc:[0.5,0.3,0.15],wrap:0.5}),pfl=lit(0x6a4a2c,{pat:4,rim:0.2,rc:[0.5,0.3,0.15],wrap:0.5,sp:0.25}),pce=lit(0x6e6252,{wrap:0.5});
+    const paper=lit(wall[0],{pat:3,rim:0.15,rc:[0.5,0.3,0.15],wrap:0.5}),pfl=lit(floorC,{pat:4,rim:0.2,rc:[0.5,0.3,0.15],wrap:0.5,sp:0.25}),pce=lit(0x6e6252,{wrap:0.5});
     plane(group,pfl,0,0,(WZ+PZ)/2-0.15,PX*2,PZ-WZ,-Math.PI/2);plane(group,pce,0,PH,(WZ+PZ)/2-0.15,PX*2,PZ-WZ,Math.PI/2);
     plane(group,paper,-PX,PH/2,(WZ+PZ)/2-0.15,WZ-PZ,PH,0,Math.PI/2);plane(group,paper,PX,PH/2,(WZ+PZ)/2-0.15,WZ-PZ,PH,0,-Math.PI/2);
-    const DX=2.3;   // the far door
-    box(group,paper,(-PX+DX-0.55)/2,PH/2,PZ-0.1,DX-0.55+PX,PH,0.2);box(group,paper,(PX+DX+0.55)/2,PH/2,PZ-0.1,PX-DX-0.55,PH,0.2);box(group,paper,DX,(2.3+PH)/2,PZ-0.1,1.1,PH-2.3,0.2);
+        box(group,paper,(-PX+DX-0.55)/2,PH/2,PZ-0.1,DX-0.55+PX,PH,0.2);box(group,paper,(PX+DX+0.55)/2,PH/2,PZ-0.1,PX-DX-0.55,PH,0.2);box(group,paper,DX,(2.3+PH)/2,PZ-0.1,1.1,PH-2.3,0.2);
     box(group,lit(0x000000,{lit:0}),DX,1.2,PZ-0.9,1.1,2.4,1.2);
     for(const s of[-1,1])box(group,gilt,DX+s*0.58,1.18,PZ+0.0,0.08,2.36,0.1);box(group,gilt,DX,2.34,PZ,1.24,0.08,0.1);
     S.door=grp(group,DX-0.55,0,PZ+0.02);box(S.door,lit(0x3a1f12,{pat:6,rim:0.4,rc:[0.5,0.3,0.15],sp:0.3}),0.55,1.15,0,1.1,2.3,0.07);ball(S.door,gilt,0.95,1.1,0.06,0.03,0.03,0.03);
     // furniture
     const cloth=lit(0xa99d86,{rim:0.4,rc:[0.5,0.35,0.2],wrap:0.6}),dwood=lit(0x3a2112,{rim:0.5,rc:[0.6,0.35,0.15],sp:0.5,wrap:0.3}),china=lit(0xb8b2a2,{rim:0.4,rc:[0.5,0.4,0.3],sp:0.6});
-    const TX=-1.0,TZ=-4.3;
-    cyl(group,dwood,TX,0.37,TZ,0.07,0.13,0.74);cyl(group,dwood,TX,0.76,TZ,0.62,0.62,0.04,20);cyl(group,cloth,TX,0.6,TZ,0.6,0.72,0.34,20);cyl(group,cloth,TX,0.775,TZ,0.6,0.6,0.012,20);
+        cyl(group,dwood,TX,0.37,TZ,0.07,0.13,0.74);cyl(group,dwood,TX,0.76,TZ,0.62,0.62,0.04,20);cyl(group,cloth,TX,0.6,TZ,0.6,0.72,0.34,20);cyl(group,cloth,TX,0.775,TZ,0.6,0.6,0.012,20);
     cyl(group,china,TX+0.1,0.82,TZ-0.05,0.07,0.05,0.07);ball(group,china,TX-0.25,0.84,TZ+0.1,0.09,0.08,0.09);cyl(group,china,TX+0.3,0.805,TZ+0.18,0.04,0.03,0.04);cyl(group,china,TX-0.1,0.805,TZ-0.3,0.04,0.03,0.04);
     const chair=(x,z,yaw)=>{const c=grp(group,x,0,z);c.rotation.y=yaw;box(c,dwood,0,0.45,0,0.44,0.05,0.44);box(c,dwood,0,0.78,-0.21,0.44,0.62,0.04);
       for(const a of[-1,1])for(const b of[-1,1])cyl(c,dwood,a*0.19,0.22,b*0.19,0.02,0.018,0.44);box(c,lit(0x3a1a2a,{rim:0.4,rc:[0.5,0.3,0.2],wrap:0.5}),0,0.485,0,0.38,0.03,0.38);return c};
-    S.chairA=chair(TX,TZ-1.05,0);S.chairB=chair(TX-0.9,TZ+0.1,Math.PI/2);
-    box(group,dwood,-2.2,0.45,-6.45,1.5,0.9,0.5);box(group,gilt,-2.2,0.92,-6.45,1.56,0.04,0.54);
-    box(group,lit(0x203826,{rim:0.4,rc:[0.5,0.4,0.2],wrap:0.4}),0.5,0.3,-6.4,1.3,0.6,0.55);
+    S.chairA=chair(...SEAT[seatK]);S.chairB=chair(...SEAT[seat2]);
+    box(group,dwood,sbX,0.45,-6.45,1.5,0.9,0.5);box(group,gilt,sbX,0.92,-6.45,1.56,0.04,0.54);
+    {const sf=lit(pk([0x203826,0x2a2a4a,0x4a2a20,0x4a3a1a,0x3a2036]),{rim:0.4,rc:[0.5,0.4,0.2],wrap:0.4});box(group,sf,sofX,0.3,-6.4,1.3,0.6,0.55);box(group,sf,sofX,0.72,-6.62,1.3,0.45,0.14)}
     const lamp=(x,z,i)=>{const L={};cyl(group,dwood,x,0.04,z,0.2,0.22,0.08);cyl(group,dwood,x,0.85,z,0.025,0.025,1.6);
       L.shade=cyl(group,lit([2.3,1.35,0.55],{lit:0,glow:1,u:1,dbl:1}),x,1.75,z,0.12,0.25,0.34,12);L.g=glow(0xffa550,2.2,0.5);L.g.position.set(x,1.75,z);group.add(L.g);return L};
-    S.lampA=lamp(-3.1,-3.0);S.lampB=lamp(3.15,-3.6);
+    S.lampA=lamp(LA[0],LA[1]);S.lampB=lamp(LB[0],LB[1]);
     // a chandelier over the table, and the candles on the sideboard
     cyl(group,iron,TX,3.3,TZ,0.01,0.01,0.8);cyl(group,gilt,TX,2.9,TZ,0.28,0.28,0.04,14);S.chFl=[];
     for(let i=0;i<6;i++){const a=i/6*TAU;cyl(group,china,TX+Math.cos(a)*0.28,2.97,TZ+Math.sin(a)*0.28,0.015,0.015,0.1);S.chFl.push(ball(group,lit([3,1.9,0.7],{lit:0,glow:1,u:1}),TX+Math.cos(a)*0.28,3.06,TZ+Math.sin(a)*0.28,0.015,0.03,0.015))}
     S.chG=glow(0xffb060,1.1,0.3);S.chG.position.set(TX,3.05,TZ);group.add(S.chG);
-    S.candle=ball(group,lit([3,1.9,0.7],{lit:0,glow:1,u:1}),-2.2,1.07,-6.45,0.02,0.04,0.02);S.candleG=glow(0xffb060,0.9,0.5);S.candleG.position.set(-2.2,1.1,-6.45);group.add(S.candleG);
+    S.candle=ball(group,lit([3,1.9,0.7],{lit:0,glow:1,u:1}),sbX,1.07,-6.45,0.02,0.04,0.02);S.candleG=glow(0xffb060,0.9,0.5);S.candleG.position.set(sbX,1.1,-6.45);group.add(S.candleG);
     // pictures and a clock
-    for(const q of[[-2.9,1.95],[0.55,1.95]]){const c=lit([0.06+rnd()*0.1,0.1+rnd()*0.08,0.1+rnd()*0.1],{rim:0.3,rc:[0.4,0.3,0.2]});box(group,gilt,q[0],q[1],PZ+0.03,0.86,0.66,0.05);box(group,c,q[0],q[1],PZ+0.065,0.72,0.52,0.02)}
-    cyl(group,gilt,-1.0,2.5,PZ+0.04,0.24,0.24,0.04,16).rotation.x=Math.PI/2;cyl(group,china,-1.0,2.5,PZ+0.065,0.2,0.2,0.02,16).rotation.x=Math.PI/2;
+    for(const q of PICS){const c=lit([0.06+rr()*0.1,0.1+rr()*0.08,0.1+rr()*0.1],{rim:0.3,rc:[0.4,0.3,0.2]});box(group,gilt,q[0],q[1],PZ+0.03,0.86,0.66,0.05);box(group,c,q[0],q[1],PZ+0.065,0.72,0.52,0.02)}
+    cyl(group,gilt,clkX,2.5,PZ+0.04,0.24,0.24,0.04,16).rotation.x=Math.PI/2;cyl(group,china,clkX,2.5,PZ+0.065,0.2,0.2,0.02,16).rotation.x=Math.PI/2;
     // ---- people ----
     const person=c=>{
       const h=c.h||1,R=new THREE.Group(),P={R,h,ph:c.seed||0},rcp=[0.55,0.38,0.22];
@@ -793,6 +860,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       for(const s of[1,-1]){const a=limb(tor,s*0.205,0.42,0,0.27,0.25,0.05,0.042,0.036,tp,c.bare?sk:tp,sk,0.04);P.ua.push(a.u);P.fa.push(a.f)}
       for(const s of[1,-1]){const l=limb(hips,s*0.09,0,0,0.46,0.46,0.078,0.062,0.045,bt,c.dress?sk:bt,sh,0.05);ball(l.f,sh,0,-0.455,0.05,0.047,0.04,0.1);P.ul.push(l.u);P.fl.push(l.f)}
       if(c.dress)P.skirt=cyl(hips,bt,0,-0.38,0,0.14,0.34,0.8,LOW?8:14);
+      P.book=box(tor,lit(0x5a2a1a,{rim:0.4,rc:rcp}),0,0.17,0.2,0.2,0.03,0.27);P.book.rotation.x=-0.55;P.book.visible=false;
       return P;
     };
     const posePerson=(P,q)=>{
@@ -803,11 +871,46 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
         P.ua[i].rotation.set(-A[0],0,sg*A[1]);P.fa[i].rotation.x=-A[2];
         P.ul[i].rotation.set(-sg*w*wa*0.5-s*1.5,0,sg*((q.sp||0)+s*0.08));P.fl[i].rotation.x=s*1.5+Math.max(0,-sg*w)*0.7*wa+(q.kb||0)}
     };
-    const peps=[{c:{skin:0xd7a98a,hair:0xc9c4bc,top:0x3a1f33,bot:0x3a1f33,collar:0xeee6d6,dress:1,bun:1,seed:1.3,h:0.97}},
-      {c:{skin:0xe2b698,hair:0x2a1a12,top:0x1f6a4a,bot:0x1f6a4a,collar:0xf2ead8,dress:1,bun:1,seed:2.1,h:1.0}},
-      {c:{skin:0xc99876,hair:0x1c140f,top:0xe6dfd0,bot:0x2a2a30,vest:0x5a1d26,tie:0x1a1a1a,beard:1,seed:0.4,h:1.06}}];
-    for(const e of peps){e.p=person(e.c);group.add(e.p.R)}
-    const [W1,W2,M1]=peps.map(e=>e.p);
+    for(const e of cast){e.p=person(e.c);group.add(e.p.R)}
+    // each role is one small routine, a function of the clock: it says where the person is and how they hold themselves
+    const ENT=MIR.ENTER+0.35,CM=[99,99],SY=SEAT[seatK][2];
+    const ROLE={
+      pace:e=>t=>{const pz=pace(Math.min(t,MIR.ENTER)),sw=ss(ENT,MIR.ENTER+1.0,t),gl=ss(PS.tg,PS.tg+0.6,t)*(1-ss(PS.tg+1.3,PS.tg+1.9,t)),yw0=pz.yaw,yw=t<ENT?yw0:lerp(yw0,ang(CM[0]-e.V[0],CM[1]-e.V[1]),sw);
+        const q={w:pz.w*(t<MIR.ENTER?1:0),wa:t<MIR.ENTER?pz.wa:0,lean:0.04,hy:lerp(Math.sin(t*0.5)*0.08,clamp(wrap(ang(0-pz.x,0.1-pz.z)-yw0),-1.2,1.2),gl)*(1-sw),hp:0.02};
+        if(t>=ENT)Object.assign(q,startle,{wa:0});return{x:pz.x,z:pz.z,yw,q}},
+      sit:e=>t=>{const V=e.V,sw=ss(ENT,MIR.ENTER+1.2,t),sip=Math.max(0,Math.sin(t*0.45))**6,rel=clamp(wrap(ang(CM[0]-V[0],CM[1]-V[1])-SY),-1.3,1.3);
+        const q={sit:1,lean:0.04+0.03*Math.sin(t*0.3),hy:lerp(Math.sin(t*0.37)*0.25,rel,sw),hp:0.05+0.05*Math.sin(t*0.9),mo:Math.max(0,Math.sin(t*5.3))>0.6&&t<MIR.ENTER?0.5:0,aL:[1.05,0.12,1.0-sip*0.2],aR:[1.0+sip*0.6,0.1,1.0+sip*1.1]};
+        if(e.sv==='read'){q.hp=0.42+0.05*Math.sin(t*0.7);q.hy=lerp(Math.sin(t*0.3)*0.06,rel,sw);q.mo=0;q.aL=[0.95,0.2,1.55];q.aR=[0.95+0.3*Math.max(0,Math.sin(t*0.5))**8,0.2,1.55]}
+        else if(e.sv==='nod'){q.hp=0.34+0.2*Math.sin(t*0.6);q.lean=0.16+0.05*Math.sin(t*0.5);q.mo=0;q.aL=[0.5,0.2,0.4];q.aR=[0.5,0.2,0.4]}
+        e.p.book.visible=e.sv==='read'&&t<ENT+0.3;
+        if(t>=ENT){q.aL=[0.9,0.3,2.0];q.aR=[0.9,0.3,2.0];q.lean=-0.1;q.hp=lerp(q.hp,-0.05,sw)}
+        return{x:V[0],z:V[1],yw:SY,q}},
+      glass:e=>t=>{const T=e.T,A0=e.A0,Q=e.V,wk=(a,b,t0,t1)=>{const k=ss(t0,t1,t);return[lerp(a[0],b[0],k),lerp(a[1],b[1],k)]};let p,yw,q;
+        if(t<T.tA){p=A0;yw=A0[0]<0?-Math.PI/2:Math.PI/2;q={w:0,wa:0,lean:0.03,hy:Math.sin(t*0.4)*0.3,aL:[1.0,0.2,1.8],aR:[0.15,0.1,0.2]}}
+        else if(t<T.tB){p=wk(A0,GL,T.tA,T.tB);yw=lerp(ang(GL[0]-A0[0],GL[1]-A0[1]),0,ss(T.tB-1.4,T.tB-0.3,t));q={w:t*5.4,wa:ss(T.tA,T.tA+0.5,t)*(1-ss(T.tB-0.4,T.tB,t)),lean:0.03,hy:0}}
+        else if(t<T.tC){p=GL;yw=0;const u=t-T.tB,a=[0,0,0];let s0=0.7;for(const j of T.ord){a[j]=ss(s0,s0+0.45,u)*(1-ss(s0+DUR[j]-0.4,s0+DUR[j],u));s0+=DUR[j]}
+          // collar, teeth and hair, in the order this woman happens to do them
+          const [c1,c2,c3]=a;
+          q={lean:0.12*ss(0.2,1.2,u)+0.1*c2,hy:Math.sin(u*0.9)*0.05+0.35*c2*Math.sin(u*2)*0.4,hp:-0.1*c2+0.05*c3,hr:0.12*c2,mo:c2,
+            aL:[lerp(0.1,0.65,c1)+c3*1.9,lerp(0.12,0.28,c1)+0.2*c3,lerp(0.2,2.3+Math.sin(u*7)*0.12*c1,c1)+c3*0.2],aR:[lerp(0.1,0.7,c1)+c2*0.1,0.2,lerp(0.2,2.2,c1)]};
+          if(c2>0.1)q.aL=[0.3,0.2,0.3];if(c3>0.1)q.aL=[1.9+Math.sin(u*5)*0.1,0.3,0.9]}
+        else if(t<T.tD){p=wk(GL,Q,T.tC,T.tD);yw=lerp(0,ang(Q[0]-GL[0],Q[1]-GL[1]),ss(T.tC,T.tC+0.7,t));q={w:t*5.4,wa:ss(T.tC+0.2,T.tC+0.7,t)*(1-ss(T.tD-0.5,T.tD,t)),lean:0.03}}
+        else{p=Q;yw=lerp(ang(Q[0]-GL[0],Q[1]-GL[1]),ang(CM[0]-Q[0],CM[1]-Q[1]),ss(ENT,MIR.ENTER+1.1,t));
+          q={lean:0.03,hy:Math.sin(t*0.5)*0.2,aL:[0.9,0.3,1.4+Math.sin(t*0.6)*0.2],aR:[0.1,0.1,0.2]};if(t>=ENT){q.aL=startle.aL;q.aR=startle.aR}}
+        return{x:p[0],z:p[1],yw,q}},
+      stand:e=>t=>{const V=e.V,sw=ss(ENT,MIR.ENTER+1.1,t),gz=e.sv==='gaze',y0=gz?Math.PI:e.yaw0,yw=lerp(y0,y0+wrap(ang(CM[0]-V[0],CM[1]-V[1])-y0),sw);
+        const q=gz?{lean:0.03,hp:-0.12+0.04*Math.sin(t*0.5),hy:Math.sin(t*0.3)*0.15*(1-sw),aL:[-0.35,0.05,0.9],aR:[-0.35,0.05,0.9]}:{lean:0.03+0.02*Math.sin(t*0.6),hp:0.02,hy:Math.sin(t*0.45)*0.5*(1-sw),aL:[0.5,0.15,1.7],aR:[0.4,0.15,1.6]};
+        q.ty=Math.sin(t*0.5)*0.05;if(t>=ENT)Object.assign(q,startle,{hy:0,ty:0});return{x:V[0],z:V[1],yw,q}}};
+    for(const e of cast)e.f=ROLE[e.role](e);
+    const drawCast=(e,t)=>{
+      const P=e.p,sit=e.role==='sit';
+      if(t>=e.k){const f=fling(P,t,e.k,e.V,e.M,e.y0,e.fd);posePerson(P,Object.assign(flop(P,t,e.k,f.k),{t,sit:sit?1-f.k:0}));
+        if(sit)S.chairA.position.set(e.V[0]-f.k*0.5,0.22*Math.sin(f.k*Math.PI)*0.3,e.V[1]-f.k*0.5),S.chairA.rotation.set(-1.45*f.k,SY,0.2*f.k);return}
+      if(sit){S.chairA.position.set(e.V[0],0,e.V[1]);S.chairA.rotation.set(0,SY,0)}
+      const o=e.f(t);P.R.position.set(o.x,0,o.z);P.R.rotation.set(0,o.yw,0);o.q.t=t;posePerson(P,o.q);
+    };
+    S.cast=cast.map(e=>({role:e.role,sv:e.sv,x:+e.V[0].toFixed(2),z:+e.V[1].toFixed(2),skin:e.c.skin,hair:e.c.hair,top:e.c.top,h:+e.c.h.toFixed(3),k:+e.k.toFixed(2)}));
+    S.layout={DX,TX:+TX.toFixed(2),TZ:+TZ.toFixed(2),seat:seatK,sbX:+sbX.toFixed(2),sofX:+sofX.toFixed(2),wall:wall[0],rug:rugK[0].join(),floor:floorC,wpat,rugP,stool:[+SX.toFixed(2),+SZ.toFixed(2)],pics:PICS.length};
     // ---- the thing ----
     const mon=(()=>{
       const R=new THREE.Group(),M={R},rc=[0.25,0.4,0.8],sk=lit(0x6c6762,{rim:0.9,rc,wrap:0.3,sp:0.12}),dk=lit(0x1b1a18,{rim:1.2,rc}),mo=lit(0x5a0709,{glow:0.5,rim:0.4,rc:[0.8,0.2,0.1]}),th=lit(0xe9dcbc,{rim:0.6,rc:[0.5,0.5,0.5],sp:0.3});
@@ -846,6 +949,9 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     const hits=[...Array(10)].map((_,i)=>new THREE.Vector4(HP[i][0],HP[i][1]+0.1,0,rnd()));S.hitT=[];
     S.pane=new THREE.Mesh(new THREE.PlaneGeometry(PW*2,PY1-PY0),new THREE.ShaderMaterial({uniforms:{uH:{value:hits},uK:{value:0},uT:{value:0}},transparent:true,depthWrite:false,vertexShader:'varying vec2 vP;void main(){vP=position.xy;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',fragmentShader:PANE_FS}));
     S.pane.position.set(0,(PY0+PY1)/2,WZ-0.04);S.pane.renderOrder=5;group.add(S.pane);
+    // what you spray at the glass before it breaks: splats, beads and runs, on the pane's near face
+    S.drip=new THREE.Mesh(new THREE.PlaneGeometry(PW*2,PY1-PY0),new THREE.ShaderMaterial({uniforms:{uS:{value:[...Array(10)].map(()=>new THREE.Vector4(0,0,-1,0))},uT:{value:0}},transparent:true,depthWrite:false,vertexShader:'varying vec2 vP;void main(){vP=position.xy;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',fragmentShader:DRIP_FS}));
+    S.drip.position.set(0,(PY0+PY1)/2,WZ-0.034);S.drip.renderOrder=5;group.add(S.drip);
     // shards for the moment it gives
     {const n=LOW?44:96,g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(new Float32Array([-0.5,-0.3,0,0.5,-0.2,0,0.1,0.6,0]),3));
       S.shards=new THREE.InstancedMesh(g,new THREE.MeshBasicMaterial({color:new THREE.Color(1.1,1.2,1.35),side:THREE.DoubleSide,transparent:true,opacity:0.85}),n);S.shards.frustumCulled=false;S.shards.visible=false;S.shards.instanceMatrix.setUsage(THREE.DynamicDrawUsage);group.add(S.shards);
@@ -858,15 +964,19 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     S.veil=new THREE.Mesh(new THREE.PlaneGeometry(1,1),new THREE.ShaderMaterial({uniforms:{uK:{value:0},uT:{value:0}},transparent:true,depthTest:false,depthWrite:false,vertexShader:'varying vec2 vU;void main(){vU=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
       fragmentShader:'uniform float uK,uT;varying vec2 vU;void main(){vec2 p=vU-0.5;float r=length(p);float b=0.5+0.5*sin(uT*3.0+p.x*7.0+sin(p.y*9.0+uT));vec3 c=vec3(1.7,0.42,0.06)*(0.25+0.9*b*smoothstep(0.75,0.0,r))*(0.6+0.4*smoothstep(0.0,0.5,r));gl_FragColor=vec4(c,clamp(uK,0.0,1.0));}'}));
     S.veil.renderOrder=1000;S.veil.frustumCulled=false;S.veil.visible=false;group.add(S.veil);
-    // ---- the can, on the floor and in your hand ----
+    // ---- the can: on a stool in front of you, then in your hand ----
     const label=canvasTex(512,256,(c,w,h)=>{c.fillStyle='#b3200f';c.fillRect(0,0,w,h);const g=c.createLinearGradient(0,0,0,h);g.addColorStop(0,'rgba(255,200,80,.55)');g.addColorStop(0.5,'rgba(255,120,30,0)');g.addColorStop(1,'rgba(0,0,0,.45)');c.fillStyle=g;c.fillRect(0,0,w,h);
       c.fillStyle='#ffe9c0';c.fillRect(w*0.25,0,w*0.5,h);c.fillStyle='#c4200a';c.fillRect(w*0.26,8,w*0.48,h-16);c.fillStyle='#fff3d6';c.textAlign='center';c.textBaseline='middle';c.font='bold 62px Arial Black,Impact,sans-serif';c.fillText('PEPPER',w*0.5,h*0.36);
       c.font='bold 52px Arial Black,Impact,sans-serif';c.fillText('SPRAY',w*0.5,h*0.62);c.font='bold 22px Arial,sans-serif';c.fillText('MAX STRENGTH · STREAM',w*0.5,h*0.84);
       c.fillStyle='#ffb52a';c.beginPath();c.moveTo(w*0.5,h*0.04);c.bezierCurveTo(w*0.56,h*0.14,w*0.52,h*0.2,w*0.5,h*0.22);c.bezierCurveTo(w*0.48,h*0.2,w*0.44,h*0.14,w*0.5,h*0.04);c.fill()});
-    const canMat=lit(0xffffff,{map:label,glow:0.85,rim:0.8,rc:[1.0,0.6,0.3],sp:0.4,wrap:0.5}),canTop=lit(0x16161a,{rim:1.0,rc:[0.8,0.8,1],sp:0.6});
-    const makeCan=()=>{const g=new THREE.Group(),s=grp(g);cyl(s,canMat,0,0,0,0.05,0.05,0.26,16);cyl(s,iron,0,0.145,0,0.036,0.05,0.03,16);cyl(s,canTop,0,0.19,0,0.034,0.034,0.06,12);box(s,canTop,0.0,0.225,0.02,0.02,0.02,0.045);cyl(s,lit(0xc01a10,{rim:0.6,rc:[1,0.5,0.3]}),0.03,0.21,-0.0,0.012,0.012,0.04);g.spin=s;return g};
-    S.can=makeCan();S.can.visible=false;S.can.scale.setScalar(1.8);S.can.rotation.set(0,0.3,Math.PI/2);S.can.position.set(0.2,0.07,-0.65);group.add(S.can);
-    S.canG=glow(0xff7a30,0.55,0.0);S.canG.position.set(0.2,0.1,-0.65);group.add(S.canG);
+    const canMat=lit(0xffffff,{map:label,glow:0.85,rim:0.8,rc:[1.0,0.6,0.3],sp:0.4,wrap:0.5}),canQ=lit(0xffffff,{map:label,glow:0,rim:0.25,rc:[0.5,0.45,0.4],sp:0.3,wrap:0.5}),canTop=lit(0x16161a,{rim:1.0,rc:[0.8,0.8,1],sp:0.6});
+    const makeCan=m=>{const g=new THREE.Group(),s=grp(g);cyl(s,m||canMat,0,0,0,0.05,0.05,0.26,16);cyl(s,iron,0,0.145,0,0.036,0.05,0.03,16);cyl(s,canTop,0,0.19,0,0.034,0.034,0.06,12);box(s,canTop,0.0,0.225,0.02,0.02,0.02,0.045);cyl(s,lit(0xc01a10,{rim:0.6,rc:[1,0.5,0.3]}),0.03,0.21,-0.0,0.012,0.012,0.04);g.spin=s;return g};
+    // a plain wooden stool, a little to one side and below your eyes, so the glass stays clear
+    {const st=grp(group,SX,0,SZ);cyl(st,wood,0,SH-0.025,0,0.2,0.2,0.05,14);
+      for(let i=0;i<3;i++){const a=i/3*TAU+0.5,l=cyl(st,woodV,Math.cos(a)*0.14,SH/2,Math.sin(a)*0.14,0.017,0.024,SH,8);l.rotation.set(-0.07*Math.sin(a),0,0.07*Math.cos(a))}
+      const rg2=new THREE.Mesh(new THREE.TorusGeometry(0.155,0.01,6,18),woodV);rg2.rotation.x=Math.PI/2;rg2.position.y=0.3;st.add(rg2)}
+    S.can=makeCan(canQ);S.can.scale.setScalar(0.95);S.can.position.set(SX,SH+0.125,SZ);S.can.spin.rotation.y=Math.atan2(SX,SZ-0.1)+0.2;group.add(S.can);
+    S.canC=[SX,SH+0.14,SZ];{const dx=SX,dy=S.canC[1]-1.6,dz=SZ-0.1;S.canAim={yaw:Math.atan2(dx,-dz),pitch:Math.asin(dy/Math.hypot(dx,dy,dz))}}
     S.hand=new THREE.Group();S.hand.visible=false;group.add(S.hand);
     {const skin=lit(0xd2a085,{rim:0.9,rc:[0.8,0.5,0.4],wrap:0.5}),sl=lit(0x2a2f3a,{rim:0.6,rc:[0.4,0.5,0.8]});
       const a=cyl(S.hand,sl,0.34,-0.5,-0.4,0.07,0.06,0.9);a.rotation.set(1.0,0,-0.35);ball(S.hand,skin,0.2,-0.2,-0.58,0.075,0.07,0.1);
@@ -874,14 +984,14 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     S.hand.userData.cam=true;
     // lights
     const WARM=[1.0,0.62,0.32];
-    LU.uLP.value[0].set(-3.1,1.75,-3.0);LU.uLP.value[1].set(3.15,1.75,-3.6);LU.uLP.value[2].set(TX,2.6,TZ);LU.uLP.value[3].set(-2.2,1.4,-6.3);
+    LU.uLP.value[0].set(LA[0],1.75,LA[1]);LU.uLP.value[1].set(LB[0],1.75,LB[1]);LU.uLP.value[2].set(TX,2.6,TZ);LU.uLP.value[3].set(sbX,1.4,-6.3);
     const LI=[1.15,1.15,1.35,0.7];
     const setLights=t=>{
       let a=1,b=1,c=1,d=1;
       const flick=ss(MIR.ENTER-0.1,MIR.ENTER,t)*(1-ss(MIR.ENTER+3.5,MIR.ENTER+4.5,t));
       const fk=k=>1-flick*(0.5+0.5*Math.sin(t*(31+k*7)+Math.sin(t*13+k)*4))*0.8*(Math.sin(t*(7+k*3))>-0.2?1:0.25);
       a=fk(0);b=fk(1);c=fk(2);d=fk(3);
-      b*=1-ss(21.2,21.5,t);a*=1-0.65*ss(22.9,23.2,t);c*=1-0.4*ss(23.2,23.6,t);d*=1-0.5*ss(22.0,22.3,t);
+      a*=1-LO[0].d*ss(LO[0].t,LO[0].t+0.3,t);b*=1-LO[1].d*ss(LO[1].t,LO[1].t+0.3,t);c*=1-LO[2].d*ss(LO[2].t,LO[2].t+0.4,t);d*=1-LO[3].d*ss(LO[3].t,LO[3].t+0.3,t);
       const k=[a,b,c,d];for(let i=0;i<4;i++){const I=LI[i]*k[i];LU.uLC.value[i].set(WARM[0]*I,WARM[1]*I,WARM[2]*I)}
       const sw=Math.sin(t*0.9)*0.02;S.lampA.shade.material.uniforms.uCol.value.setRGB(2.3*a,1.35*a,0.55*a);S.lampB.shade.material.uniforms.uCol.value.setRGB(2.3*b,1.35*b,0.55*b);
       S.lampA.g.material.opacity=0.5*a;S.lampB.g.material.opacity=0.5*b;S.chG.material.opacity=0.3*c;S.candleG.material.opacity=0.5*d;
@@ -889,11 +999,6 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       return[a,b,c,d];
     };
     // ---- how the people and the thing move: all of it a function of the clock ----
-    const pace=t=>{const sp=0.62,L=2.7,u=((t*sp)%(2*L)+2*L)%(2*L),d=u<L?u:2*L-u,sn=Math.sin(Math.PI*u/L);return{x:2.3-d,z:-3.3,yaw:-Math.PI/2*Math.tanh(sn*5),wa:Math.min(1,Math.abs(sn)*4),w:t*sp*5.2}};
-    const MP0=pace(MIR.ENTER),V1=[MP0.x,-3.3],V2=[-2.0,-3.9],V3=[TX,TZ-1.05];
-    const PA=[DX,-7.6],PB=[DX,-6.0];
-    const near=(v,from,dd)=>{const n=nrm(from[0]-v[0],from[1]-v[1]);return[v[0]+n[0]*dd,v[1]+n[1]*dd]};
-    const MA=near(V1,PB,1.25),MB=near(V2,MA,1.3),MC=[V3[0]+1.2,V3[1]-0.2];
     const G0=[0.1,MIR.SZ];
     const sg=(t,a,b,p,q)=>{const k=ss(a,b,t);return[lerp(p[0],q[0],k),lerp(p[1],q[1],k)]};
     // victims: thrown away from the thing, they land and lie still
@@ -908,27 +1013,25 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     const startle={aL:[0.55,0.45,1.9],aR:[0.55,0.45,1.9],hp:-0.15};
     const mpos={x:0,z:0,yaw:0};
     S.pose=t=>{
-      const ph=[];
-      // ---- the monster's path ----
+      const K=MIR.K,n=K.length,Ml=Ms[n-1],Vl=Vs[n-1];
+      // ---- the monster's path: in at the door, then from one victim to the next in the order it takes them ----
       let m={x:99,z:99,yaw:0,w:0,wa:0,e:0.2,jaw:0};
-      const ET=MIR.ENTER+0.35;
+      const ET=MIR.ENTER+0.35,e1=MIR.ENTER+1.2;
       if(t>=ET){
-        let p,yw=null,wa=1;
-        if(t<18.2){p=sg(t,ET,18.2,PA,PB);yw=ang(PB[0]-PA[0],PB[1]-PA[1])}
-        else if(t<19){p=sg(t,18.2,19,PB,MA);yw=ang(V1[0]-PB[0],V1[1]-PB[1])}
-        else if(t<MIR.K[1]-0.05){p=sg(t,MIR.K[0]+0.1,MIR.K[1]-0.05,MA,MB);yw=ang(V2[0]-MA[0],V2[1]-MA[1])}
-        else if(t<MIR.K[2]-0.05){p=sg(t,MIR.K[1]+0.1,MIR.K[2]-0.05,MB,MC);yw=ang(V3[0]-MB[0],V3[1]-MB[1])}
-        else if(t<MIR.WALK){p=MC;yw=ang(V3[0]-MC[0],V3[1]-MC[1])}
-        else{p=sg(t,MIR.WALK,MIR.SMASH-0.3,MC,G0);yw=null}
-        const moving=(t<19&&t>=ET)||(t>MIR.K[0]+0.1&&t<MIR.K[1]-0.05)||(t>MIR.K[1]+0.1&&t<MIR.K[2]-0.05)||(t>=MIR.WALK&&t<MIR.SMASH-0.3);
-        m.x=p[0];m.z=p[1];m.yaw=yw===null?lerp(ang(V3[0]-MC[0],V3[1]-MC[1]),0,ss(MIR.WALK,MIR.WALK+0.8,t)):yw;m.w=t*7.2;m.wa=moving?1:0;
+        let p,yw=null,moving=false;
+        if(t<e1){p=sg(t,ET,e1,PA,PB);yw=ang(PB[0]-PA[0],PB[1]-PA[1]);moving=true}
+        else if(t<K[0]){p=sg(t,e1,K[0],PB,Ms[0]);yw=ang(Vs[0][0]-PB[0],Vs[0][1]-PB[1]);moving=true}
+        else{let rest=true;
+          for(let i=0;i<n-1;i++)if(t<K[i+1]-0.05){p=sg(t,K[i]+0.1,K[i+1]-0.05,Ms[i],Ms[i+1]);yw=ang(Vs[i+1][0]-Ms[i][0],Vs[i+1][1]-Ms[i][1]);moving=t>K[i]+0.1;rest=false;break}
+          if(rest){if(t<MIR.WALK){p=Ml;yw=ang(Vl[0]-Ml[0],Vl[1]-Ml[1])}else{p=sg(t,MIR.WALK,MIR.SMASH-0.3,Ml,G0);yw=null;moving=t<MIR.SMASH-0.3}}}
+        m.x=p[0];m.z=p[1];m.yaw=yw===null?lerp(ang(Vl[0]-Ml[0],Vl[1]-Ml[1]),0,ss(MIR.WALK,MIR.WALK+0.8,t)):yw;m.w=t*7.2;m.wa=moving?1:0;
         // strikes
-        for(let i=0;i<3;i++){const dt=t-MIR.K[i];if(dt>-0.55&&dt<0.5){const u=dt<0?ss(-0.55,0,dt):1-ss(0,0.5,dt);m[i%2?'aL':'aR']=[lerp(0.1,i===1?2.7:2.9,Math.min(1,ss(-0.55,-0.1,dt)))*(dt<0?1:1-ss(0,0.08,dt)*0.55),0.2,0.25];m.lean=0.45+0.5*(dt<0?0:1-ss(0,0.45,dt))+0.2*(dt<0?ss(-0.55,0,dt):0);m.ty=0}}
+        for(let i=0;i<n;i++){const dt=t-K[i];if(dt>-0.55&&dt<0.5){const u=dt<0?ss(-0.55,0,dt):1-ss(0,0.5,dt);m[i%2?'aL':'aR']=[lerp(0.1,i%2?2.7:2.9,Math.min(1,ss(-0.55,-0.1,dt)))*(dt<0?1:1-ss(0,0.08,dt)*0.55),0.2,0.25];m.lean=0.45+0.5*(dt<0?0:1-ss(0,0.45,dt))+0.2*(dt<0?ss(-0.55,0,dt):0);m.ty=0}}
         m.e=0.35+0.2*ss(MIR.ENTER+1,MIR.ENTER+2,t);
         if(t>=MIR.STOP){m.wa=0;m.e=0.3}
         // the long turn: head first, then the rest
-        if(t>=MIR.HEAD&&t<MIR.WALK){const base=ang(V3[0]-MC[0],V3[1]-MC[1]),toGlass=wrap(0-base),hk=ss(MIR.HEAD,MIR.HEAD+2.8,t),bk=ss(MIR.BODY,MIR.BODY+1.9,t);
-          m.hy=clamp(toGlass,-2.5,2.5)*hk*(1-bk*0.0)-toGlass*bk;m.yaw=base+toGlass*bk;m.hy=clamp(toGlass*hk-toGlass*bk,-2.6,2.6)+Math.sin(t*3)*0.03*hk*(1-bk);m.hp=0.12*hk;
+        if(t>=MIR.HEAD&&t<MIR.WALK){const base=ang(Vl[0]-Ml[0],Vl[1]-Ml[1]),toGlass=wrap(0-base),hk=ss(MIR.HEAD,MIR.HEAD+2.8,t),bk=ss(MIR.BODY,MIR.BODY+1.9,t);
+          m.yaw=base+toGlass*bk;m.hy=clamp(toGlass*hk-toGlass*bk,-2.6,2.6)+Math.sin(t*3)*0.03*hk*(1-bk);m.hp=0.12*hk;
           m.e=0.3+1.2*ss(MIR.HEAD+2.0,MIR.HEAD+3.3,t);m.sag=0}
         if(t>=MIR.WALK){m.e=1.5;m.wa=t<MIR.SMASH-0.3?1:0;m.hy=0}
         if(t>=MIR.SMASH-0.3){m.x=G0[0];m.z=G0[1];m.yaw=0;m.lean=0.5}
@@ -940,22 +1043,20 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     S.update=(dt,inp)=>{
       T0=S.t;S.t+=dt;const t=S.t,W=A.watching,hold=S.ch===2?t-S.ct:-1;
       S.yaw=clamp(S.yaw+inp.lx*1.6*dt,-3.3,3.3);S.pitch=clamp(S.pitch-inp.ly*1.4*dt,-1.25,1.0);S.touch=!!inp.touch;
-      const say=(x,s,d)=>{if(at(x))o.say(s,d||3.5)};
-      say(1.0,'A mirror. There are people in it.',3.5);say(8.7,'She leans in and fixes her collar. She looks straight through you.',4);say(13.3,'You have no reflection. You are standing behind the glass.',4.2);
-      say(25.6,'It turns. It can see you.',3.2);say(MIR.SMASH+0.4,'It is coming through the glass.',3);say(MIR.CAN+0.1,'Something rolls against your foot.',3.2);
       // sound of the parlor
       if(at(MIR.ENTER)){o.noise(0.5,0.8,180,0.6);o.tone(55,0.7,'sawtooth',0.35,0,-25);o.rumble(500,1,0.8);S.shk=Math.max(S.shk,0.25)}
-      for(let i=0;i<3;i++)if(at(MIR.K[i])){o.noise(0.35,0.7,260,0.7);o.tone(80,0.35,'square',0.3,0,-45);o.tone(45,0.6,'sine',0.35,0.05,-15);o.rumble(350,1,0.9);S.shk=Math.max(S.shk,0.3)}
-      for(const x of [19.6,21.5,22.9])if(at(x))o.noise(0.3,0.5,150,0.7);
-      for(const x of [18.4,18.9,19.7,20.2,21.0,21.4,22.0,22.3])if(at(x)){o.tone(50,0.14,'sine',0.25);o.noise(0.14,0.25,110,0.8)}
-      if(at(21.3))o.tone(2000,0.2,'triangle',0.05,0,-1500);
+      for(let i=0;i<MIR.K.length;i++)if(at(MIR.K[i])){o.noise(0.35,0.7,260,0.7);o.tone(80,0.35,'square',0.3,0,-45);o.tone(45,0.6,'sine',0.35,0.05,-15);o.rumble(350,1,0.9);S.shk=Math.max(S.shk,0.3)}
       if(at(MIR.HEAD)){o.tone(62,2.8,'sawtooth',0.1,0,-14)}if(at(MIR.HEAD+2.4)){o.tone(150,1.4,'sine',0.14,0,40)}
       if(at(MIR.WALK))for(let i=0;i<5;i++)o.tone(46,0.13,'sine',0.22,i*0.42);
       if(t<MIR.WALK&&t>MIR.ENTER&&Math.random()<dt*0.5)o.noise(0.08,0.1,3000,2);
       // is the thing looked at?
+      // heavy footsteps follow its legs
       const mp=S.pose(t),cp=Math.cos(S.pitch),fx=Math.sin(S.yaw)*cp,fy=Math.sin(S.pitch),fz=-Math.cos(S.yaw)*cp;
       let dx=mp.x-0,dy=2.2-1.6,dz=mp.z-0.1;const dl=Math.hypot(dx,dy,dz)||1;
       const seen=(dx*fx+dy*fy+dz*fz)/dl>MIR.LOOK&&t>=MIR.WALK;S.lk=lerp(S.lk,seen?1:0,Math.min(1,dt*8));
+      if(mp.wa>0&&S.ch!==2){const a=Math.floor(mp.w/Math.PI);if(S.fs!==undefined&&a!==S.fs){o.tone(50,0.14,'sine',0.25);o.noise(0.14,0.25,110,0.8)}S.fs=a}else S.fs=undefined;
+      // is the can under the crosshair? a generous ray test, and the only thing that ever says so
+      {const c=S.canC,rx=c[0],ry=c[1]-1.6,rz=c[2]-0.1,al=rx*fx+ry*fy+rz*fz;S.aim=!S.held&&S.ch===0&&S.bt<0&&al>0.2&&Math.hypot(rx-fx*al,ry-fy*al,rz-fz*al)<0.17}
       // the glass
       if(t>=MIR.SMASH&&S.bt<0){
         let r=0;
@@ -972,9 +1073,13 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       if(S.want&&t>=S.want[1]&&S.ch===0){pick(S.want[0]);S.want=null}
       // choosing
       const mxv=nf(inp.mx)?inp.mx:0,cur_={l:mxv<-0.5,r:mxv>0.5,ok:!!inp.press,spray:!!inp.spray,thumb:!!inp.thumb},P0=S.prev||cur_;S.prev=cur_;const e=k=>cur_[k]&&!P0[k];
-      if(!W&&t>=MIR.CHOICE&&S.ch===0&&S.bt<0){
-        if(inp.touch){if(e('spray'))pick(1);else if(e('thumb'))pick(2)}
-        else{if(e('l'))S.sel=0;if(e('r'))S.sel=1;if(e('ok')&&S.sel>=0)pick(S.sel===0?1:2)}
+      const live=S.held&&t>=MIR.CHOICE&&S.ch===0&&S.bt<0;S.live=live;
+      if(!W&&S.ch===0&&S.bt<0){
+        if(!S.held){if(S.aim&&e('ok'))grab()}
+        else if(live){
+          if(inp.touch){if(e('spray'))pick(1);else if(e('thumb'))pick(2)}
+          else{if(e('l'))S.sel=0;if(e('r'))S.sel=1;if(e('ok')&&S.sel>=0)pick(S.sel===0?1:2)}
+        }else if(e('ok')&&t>=S.spc)spray(fx,fy,fz);
       }
       if(S.ch===2&&hold>=LK.PROMPT&&S.leaveT<0&&!W){if(e('ok')||e('spray')||e('thumb')||hold>=LK.PROMPT+8){S.leaveT=t;o.tone(300,0.4,'sine',0.12,0,-100)}}
       if(S.leaveT>=0&&t-S.leaveT>=0.7)finish({k:'win',why:'mirror'});
@@ -985,7 +1090,15 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     };
     // ---- the choice ----
     const LK={PROMPT:11.6};
+    const grab=()=>{S.held=true;S.ht=S.t;S.can.visible=false;o.tone(900,0.05,'triangle',0.08);o.noise(0.08,0.12,2500,1)};
+    // a squirt at the glass before it gives: a jet, then splats and runs on the pane. Nothing in the room minds.
+    const spray=(fx,fy,fz)=>{
+      S.spc=S.t+0.9;S.spj=S.t+0.55;o.noise(0.6,0.3,4500,0.5);o.tone(260,0.35,'sawtooth',0.04,0,-120);
+      const s=fz<-0.05?(WZ-0.04-0.1)/fz:6,hx=fx*s,hy=1.6+fy*s;S.spt=[hx,hy,0.1+fz*s];
+      if(fz<-0.05&&Math.abs(hx)<PW-0.08&&hy>PY0+0.08&&hy<PY1-0.08){const sp=[hx+(Math.random()-0.5)*0.05,hy-(PY0+PY1)/2+(Math.random()-0.5)*0.05,S.t+0.3,Math.random()];if(S.splats.length<10)S.splats.push(sp);else S.splats[S.sn++%10]=sp}
+    };
     const pick=c=>{
+      if(!S.held){S.held=true;S.ht=S.t-1;S.can.visible=false}
       S.ch=c;S.ct=S.t;S.sp0=S.sm;S.mt=0;
       if(c===1){o.tone(140,0.5,'sawtooth',0.25,0.4,160);o.noise(1.3,0.35,4500,0.5)}
       else o.tone(500,0.08,'triangle',0.1);
@@ -995,13 +1108,18 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       const k=i%HP.length;S.hitT[k]=S.t;S.shk=Math.max(S.shk,0.14);
       o.tone(62+Math.random()*10,0.28,'sawtooth',0.3,0,-30);o.noise(0.22,0.55,170,0.7);o.noise(0.35,0.3,3600,2);o.tone(2200+Math.random()*900,0.16,'triangle',0.05,0,-1300);o.rumble(160,0.9,0.5);
     };
-    const shatter=()=>{S.pane.visible=false;S.shards.visible=true;o.noise(1.0,0.9,2800,0.8);o.noise(0.9,0.7,500,0.8);o.tone(1700,0.5,'triangle',0.1,0,-1200);o.tone(60,0.9,'sawtooth',0.4,0,-30);o.rumble(800,1,1);S.shk=0.5};
+    const shatter=()=>{S.pane.visible=false;S.drip.visible=false;S.shards.visible=true;o.noise(1.0,0.9,2800,0.8);o.noise(0.9,0.7,500,0.8);o.tone(1700,0.5,'triangle',0.1,0,-1200);o.tone(60,0.9,'sawtooth',0.4,0,-30);o.rumble(800,1,1);S.shk=0.5};
     // ---- drawing ----
     const hudHtml=()=>{
       if(A.watching)return;
       let h='';const t=S.t,op=(i,tx,tag)=>{const on=S.sel===i;return`<div style="display:block;margin:6px auto 0;padding:6px 14px;max-width:88vw;border:1px solid ${on?'#ffe0a8':'#6b5a48'};border-radius:6px;background:${on?'rgba(255,190,110,.26)':'rgba(0,0,0,.5)'};color:${on?'#fff2d6':'#d9c7ae'}">${S.touch?'<span style="opacity:.65;font-size:12px">['+tag+']</span> ':''}${tx}</div>`};
-      if(S.bt<0&&S.ch===0&&t>=MIR.CHOICE)h=op(0,'Spray the monster','SPRAY')+op(1,'Suck your thumb and hope the bad things go away','THUMB')+`<small style="display:block;margin-top:8px">${o.hint('mirror')}</small>`;
+      const pr=(w,k)=>`<div style="position:fixed;left:0;right:0;top:61%;font-size:15px">${w} <small>[${o.hint(k)}]</small></div>`;
+      S.btn=['USE',false];
+      if(S.bt<0&&S.ch===0&&S.live){S.btn=['SPRAY',true];h=op(0,'Spray the monster','SPRAY')+op(1,'Suck your thumb and hope the bad things go away','THUMB')+`<small style="display:block;margin-top:8px">${o.hint('mirror')}</small>`}
+      else if(S.bt<0&&S.ch===0&&S.held){S.btn=['SPRAY',false];h=pr('Spray','mspray')}
+      else if(S.bt<0&&S.ch===0&&S.aim){S.btn=['PICK UP',false];h=pr('Pick up','mpick')}
       else if(S.ch===2&&S.leaveT<0&&t-S.ct>=LK.PROMPT)h=`<b>It is gone.</b><br><small>${S.touch?'Tap SPRAY or THUMB to leave':'Press Space or E to leave'}</small>`;
+      if(S.ch>0)S.btn=['SPRAY',true];
       o.hud(h);
     };
     const v3=new THREE.Vector3(),M4=new THREE.Matrix4(),Q4=new THREE.Quaternion(),E4=new THREE.Euler(),S3=new THREE.Vector3(),camQ=new THREE.Quaternion();
@@ -1020,39 +1138,8 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       cam.position.set((Math.random()-0.5)*sh,cy+(Math.random()-0.5)*sh,0.1+(Math.random()-0.5)*sh);
       cam.rotation.set(pit,-yaw,Math.sin(t*0.4)*0.008+(Math.random()-0.5)*sh*0.8,'YXZ');cam.updateMatrixWorld();camQ.copy(cam.quaternion);
       // people
-      const pe=(P,x,z,yw,q,y)=>{P.R.position.set(x,y||0,z);P.R.rotation.set(0,yw,0);q.t=t;posePerson(P,q)};
-      const M=[mp.x,mp.z],mOn=t>=MIR.ENTER+0.35;
-      // the man paces, glances at the glass, then freezes
-      {const pz=pace(Math.min(t,MIR.ENTER)),sw=ss(MIR.ENTER+0.35,MIR.ENTER+1.0,t),gl=ss(10.8,11.4,t)*(1-ss(12.1,12.7,t)),yw0=pz.yaw;
-        const toM=ang(M[0]-V1[0],M[1]-V1[1]),yw=t<MIR.ENTER+0.35?yw0:lerp(yw0,toM,sw);
-        const q={w:pz.w*(t<MIR.ENTER?1:0),wa:t<MIR.ENTER?pz.wa:0,lean:0.04,hy:lerp(Math.sin(t*0.5)*0.08,clamp(wrap(ang(0-pz.x,0.1-pz.z)-yw0),-1.2,1.2),gl)*(1-sw),hp:0.02};
-        if(t>=MIR.ENTER+0.35)Object.assign(q,startle,{wa:0});
-        if(t>=MIR.K[0]){const f=fling(M1,t,MIR.K[0],V1,[MA[0],MA[1]],0.95,1.0);posePerson(M1,Object.assign(flop(M1,t,MIR.K[0],f.k),{t}))}
-        else pe(M1,pz.x,pz.z,yw,q)}
-      // the seated woman
-      {const dy=t-0,toM=ang(M[0]-V3[0],M[1]-V3[1]),sw=ss(MIR.ENTER+0.35,MIR.ENTER+1.2,t),sip=Math.max(0,Math.sin(t*0.45))**6,
-        q={sit:1,lean:0.04+0.03*Math.sin(t*0.3),hy:lerp(Math.sin(t*0.37)*0.25,clamp(wrap(toM),-1.3,1.3),sw),hp:0.05+0.05*Math.sin(t*0.9),mo:Math.max(0,Math.sin(t*5.3))>0.6&&t<MIR.ENTER?0.5:0,
-          aL:[1.05,0.12,1.0-sip*0.2],aR:[1.0+sip*0.6,0.1,1.0+sip*1.1]};
-        if(t>=MIR.ENTER+0.35){q.aL=[0.9,0.3,2.0];q.aR=[0.9,0.3,2.0];q.lean=-0.1}
-        if(t>=MIR.K[2]){const f=fling(W1,t,MIR.K[2],[V3[0],V3[1]],[MC[0],MC[1]],0.55,0.9);posePerson(W1,Object.assign(flop(W1,t,MIR.K[2],f.k),{t,sit:1-f.k}));
-          S.chairA.position.set(V3[0]-f.k*0.5,0.0+0.22*Math.sin(f.k*Math.PI)*0.3,V3[1]-f.k*0.5);S.chairA.rotation.set(-1.45*f.k,0,0.2*f.k)}
-        else{pe(W1,V3[0],V3[1],0+0,q,0);S.chairA.position.set(V3[0],0,V3[1]);S.chairA.rotation.set(0,0,0)}}
-      // the woman at the glass
-      {const A0=[-2.9,-3.2],G=[0.12,-2.6],Q=[-2.0,-3.9],tA=4.2,tB=8.0,tC=14.0,tD=16.7;let p,yw,q={t};
-        const wk=(a,b,c,d,t0,t1)=>{const k=ss(t0,t1,t);return[lerp(a[0],b[0],k),lerp(a[1],b[1],k)]};
-        if(t<tA){p=A0;yw=-Math.PI/2;q={w:0,wa:0,lean:0.03,hy:Math.sin(t*0.4)*0.3,aL:[1.0,0.2,1.8],aR:[0.15,0.1,0.2]}}
-        else if(t<tB){p=wk(A0,G,0,0,tA,tB);const fin=ss(tB-1.4,tB-0.3,t);yw=lerp(ang(G[0]-A0[0],G[1]-A0[1]),0,fin);const m=ss(tA,tA+0.5,t)*(1-ss(tB-0.4,tB,t));q={w:t*5.4,wa:m,lean:0.03,hy:0}}
-        else if(t<tC){p=G;yw=0;const u=t-tB,lean=0.12*ss(0.2,1.2,u)+0.1*ss(4.4,5.0,u);
-          // collar, then teeth, then hair
-          const c1=ss(0.9,1.4,u)*(1-ss(3.3,3.7,u)),c2=ss(3.5,4.0,u)*(1-ss(5.2,5.6,u)),c3=ss(5.3,5.8,u);
-          q={lean,hy:Math.sin(u*0.9)*0.05+0.35*c2*Math.sin(u*2)*0.4,hp:-0.1*c2+0.05*c3,hr:0.12*c2,mo:c2,
-            aL:[lerp(0.1,0.65,c1)+c3*1.9,lerp(0.12,0.28,c1)+0.2*c3,lerp(0.2,2.3+Math.sin(u*7)*0.12*c1,c1)+c3*0.2],aR:[lerp(0.1,0.7,c1)+c2*0.1,0.2,lerp(0.2,2.2,c1)]}
-          if(c2>0.1)q.aL=[0.3,0.2,0.3]; if(c3>0.1)q.aL=[1.9+Math.sin(u*5)*0.1,0.3,0.9]}
-        else if(t<tD){p=wk(G,Q,0,0,tC,tD);yw=lerp(0,ang(Q[0]-G[0],Q[1]-G[1]),ss(tC,tC+0.7,t));const m=ss(tC+0.2,tC+0.7,t)*(1-ss(tD-0.5,tD,t));q={w:t*5.4,wa:m,lean:0.03}}
-        else{p=Q;const toM=ang(M[0]-Q[0],M[1]-Q[1]);yw=lerp(Math.PI/2,toM,ss(MIR.ENTER+0.35,MIR.ENTER+1.1,t));
-          q={lean:0.03,hy:Math.sin(t*0.5)*0.2,aL:[0.9,0.3,1.4+Math.sin(t*0.6)*0.2],aR:[0.1,0.1,0.2]};if(t>=MIR.ENTER+0.35){q.aL=startle.aL;q.aR=startle.aR}}
-        if(t>=MIR.K[1]){const f=fling(W2,t,MIR.K[1],Q,[MB[0],MB[1]],0.95,1.0);posePerson(W2,Object.assign(flop(W2,t,MIR.K[1],f.k),{t}))}
-        else pe(W2,p[0],p[1],yw,q)}
+      CM[0]=mp.x;CM[1]=mp.z;const mOn=t>=MIR.ENTER+0.35;
+      for(const e of cast)drawCast(e,t);
       // the thing
       mon.R.visible=mOn;
       if(mOn){
@@ -1095,20 +1182,21 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
         for(let i=0;i<S.sh.length;i++){const s=S.sh[i],g=Math.min(d,2.2);v3.set(s.p[0]+s.v[0]*g,s.p[1]+s.v[1]*g-4.5*g*g,s.p[2]+s.v[2]*g);E4.set(s.r[0]+s.w[0]*g,s.r[1]+s.w[1]*g,s.r[2]+s.w[2]*g);Q4.setFromEuler(E4);S3.setScalar(s.s);M4.compose(v3,Q4,S3);S.shards.setMatrixAt(i,M4)}
         S.shards.instanceMatrix.needsUpdate=true;
       }
-      // the can
-      if(S.ch===0&&t>=MIR.CAN){const u=clamp((t-MIR.CAN)/1.4,0,1),e=1-(1-u)*(1-u);S.can.visible=true;S.canG.material.opacity=0.35*ss(0.6,1,u)*(0.8+0.2*Math.sin(t*3));
-        S.can.position.set(lerp(1.9,0.2,e),0.07,-0.65+Math.sin(u*9)*0.02*(1-u));S.can.children[0].rotation.y=-Math.PI/2-(1-e)*1.7/0.05;S.can.rotation.y=0.3+0.35*(1-e)*Math.sin(u*12);
-        if(S.said<1&&t>=MIR.CAN){S.said=1;for(let i=0;i<5;i++)o.tone(1800-i*160,0.06,'triangle',0.09,i*0.2+0.0);o.noise(0.6,0.3,2600,1.5);o.rumble(150,0.4,0.4)}}
-      else if(S.ch!==0){S.can.visible=false;S.canG.material.opacity=0}
+      // the can sits on its stool until you take it
+      S.can.visible=!S.held;
       // the hand
       let hv=false;
-      if(S.ch>0&&S.bt<0||S.ch===1){const c=t-S.ct,up=ss(0,0.5,c)*(S.ch===2?1-ss(2.6,3.4,c):1);hv=up>0.01;
+      if(S.held&&(S.bt<0||S.ch===1)){const c=t-S.ct,up=ss(0,0.5,t-S.ht)*(S.ch===2?1-ss(2.6,3.4,c):1);hv=up>0.01;
         S.hand.position.copy(cam.position);S.hand.quaternion.copy(camQ);
         const turn=S.ch===2?ss(0.35,0.9,c):0,aimY=S.ch===1?0:0;
         S.hand.children[0].position.set(0.34-turn*0.12,-0.5-(1-up)*0.8,-0.4);
         S.handCan.position.set(0.2-turn*0.14,-0.2-(1-up)*0.8,-0.58+turn*0.18);S.handCan.rotation.set(S.ch===1?-1.45:-1.45+turn*3.0,0,S.ch===1?0.0:0.0);
         S.hand.children[1].position.set(0.2-turn*0.14,-0.22-(1-up)*0.8,-0.58+turn*0.18);for(let i=0;i<3;i++)S.hand.children[3+i].position.set(0.14+i*0.04-turn*0.14,-0.16-(1-up)*0.8,-0.52-i*0.02+turn*0.18)}
       S.hand.visible=hv;
+      if(S.ch===0&&t<S.spj)S.hand.position.y+=Math.sin(t*70)*0.004;
+      if(S.ch===0&&t<S.spj&&t>S.spj-0.5)emit(0,Math.max(1,Math.round(dt*140)),[cam.position.x+0.2,cam.position.y-0.3,cam.position.z-0.8],S.spt);
+      // splats on the glass
+      {const us=S.drip.material.uniforms.uS.value;for(let i=0;i<10;i++){const sp=S.splats[i];if(sp)us[i].set(sp[0],sp[1],sp[2],sp[3]);else us[i].set(0,0,-1,0)}S.drip.material.uniforms.uT.value=t}
       // spray: a jet at the glass, or a cloud in your own face
       let veil=0,burn=0;
       if(S.ch===1){const c=t-S.ct;const noz=[cam.position.x+0.2,cam.position.y-0.3,cam.position.z-0.8];if(c>0.35&&c<9){emit(0,Math.max(1,Math.round(dt*160)),noz,[0.0,1.9,WZ-0.1])}
@@ -1117,7 +1205,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       if(S.ch===2){const c=hold;if(c>0.8&&c<2.6)emit(1,Math.max(1,Math.round(dt*220)),[cam.position.x+0.05,cam.position.y-0.1,cam.position.z-0.5],[cam.position.x,cam.position.y,cam.position.z+0.2]);
         veil=ss(0.85,1.5,c)*(1-0.82*ss(4.4,8.0,c))*(1-0.5*ss(8.0,11.5,c));burn=ss(0.9,1.5,c);
         if(at(S.ct+0.9)){o.hurtFx();o.noise(1.0,0.4,4500,0.5)}
-        if(at(S.ct+1.0))o.say('You spray yourself in the eyes. You cannot see a thing.',4.2);
+        if(at(S.ct+1.0))o.say('You spray yourself in the eyes.',3);
         for(const x of [0.9,1.4,1.9,2.4,2.9,3.3])if(at(S.ct+x)){o.tone(60,0.25,'sawtooth',0.28,0,-30);o.noise(0.3,0.5,170,0.7);o.rumble(150,0.8,0.4)}
         for(let i=0;i<9;i++)if(at(S.ct+5.2+i*0.55)){const dist=1-i/9;o.tone(48,0.15,'sine',0.26*dist+0.03);o.noise(0.14,0.22*dist+0.02,110,0.8)}
         if(at(S.ct+LK.PROMPT-6.6+5.0))o.tone(70,0.4,'sine',0.14);if(at(S.ct+LK.PROMPT-6.6+5.5)){o.noise(0.3,0.4,200,0.7);o.tone(55,0.4,'sine',0.25)}}
@@ -1137,12 +1225,14 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       S.bloom=0.55+0.25*burn;
       if(!W)hudHtml();
     };
-    S.snap=()=>({t:+S.t.toFixed(3),yaw:+S.yaw.toFixed(2),pitch:+S.pitch.toFixed(2),sm:+S.sm.toFixed(3),ch:S.ch,ct:+S.ct.toFixed(2),bt:+S.bt.toFixed(2),sel:S.sel,lv:+S.leaveT.toFixed(2)});
+    S.snap=()=>({t:+S.t.toFixed(3),yaw:+S.yaw.toFixed(2),pitch:+S.pitch.toFixed(2),sm:+S.sm.toFixed(3),ch:S.ch,ct:+S.ct.toFixed(2),bt:+S.bt.toFixed(2),sel:S.sel,lv:+S.leaveT.toFixed(2),sd:S.seed,hd:S.held?1:0,sp:S.splats.map(q=>[+q[0].toFixed(3),+q[1].toFixed(3),+q[2].toFixed(2),+q[3].toFixed(2)])});
     S.apply=q=>{
       if(nf(q.yaw))S.yaw=clamp(q.yaw,-3.3,3.3);if(nf(q.pitch))S.pitch=clamp(q.pitch,-1.25,1);
       if(Number.isInteger(q.sel)&&q.sel>=-1&&q.sel<=1)S.sel=q.sel;
       if((q.ch===1||q.ch===2)&&S.ch===0&&nf(q.ct)&&q.ct>=MIR.CHOICE&&q.ct<400)S.want=[q.ch,q.ct];
       if(nf(q.bt)&&q.bt>=0&&S.bt<0)S.wb=true;
+      if(q.hd&&!S.held){S.held=true;S.ht=S.t;S.can.visible=false}
+      if(Array.isArray(q.sp))for(const v of q.sp.slice(0,10)){if(Array.isArray(v)&&v.length>=4&&v.slice(0,4).every(nf)&&Math.abs(v[0])<2&&Math.abs(v[1])<2&&!S.splats.some(o=>o[2]===v[2])){const c=v.slice(0,4);if(S.splats.length<10)S.splats.push(c);else S.splats[S.sn++%10]=c}}
       if(nf(q.lv)&&q.lv>=0&&S.leaveT<0&&q.lv<400)S.leaveT=q.lv;
       if(!nf(q.t)||q.t<0||q.t>200)return;
       const to=clamp(q.t,0,400),d=to-S.t;
@@ -1150,15 +1240,15 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       if(nf(q.sm)&&S.bt<0)S.sm=clamp(q.sm,0,q.bt>=0?1:0.995);
     };
     S.bloom=0.55;
-    S.look=0;
+    S.look=0;S.aimed=()=>S.aim;
     S.update(0,Z);
     return S;
   }
 
   const KINDS={galaxy,fall,kiln,mirror},FADE_IN={fall:0.18,mirror:1.4};
-  const build=kind=>{
+  const build=(kind,seed)=>{
     setup();A.active=true;A.kind=kind;held=false;
-    cur=(KINDS[kind]||kiln)();
+    cur=(KINDS[kind]||kiln)(seed);
     cur.fade=0;cur.in=0;
   };
   // watching someone else's room: the same scene, driven by their snapshots instead of our input
@@ -1166,15 +1256,18 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     if(A.active)A.abort();
     if(!KINDS[kind])return;
     done=null;A.watching=true;
-    build(kind);
+    build(kind,q&&q.sd);
     A.sync(q);cur.update(0,Z);
   };
-  A.sync=q=>{if(!cur||!A.watching||held||!q||typeof q!=='object'||!cur.apply)return;try{cur.apply(q)}catch(e){}};
+  // a watcher's mirror room is rebuilt from the other player's seed when it is not the one they are looking at
+  A.sync=q=>{if(!cur||!A.watching||held||!q||typeof q!=='object'||!cur.apply)return;
+    try{if(A.kind==='mirror'&&Number.isInteger(q.sd)&&q.sd>=0&&q.sd<4294967296&&q.sd!==cur.seed){const o2=cur;clear();setup();cur=mirror(q.sd);cur.fade=0;cur.in=o2.in}
+      cur.apply(q)}catch(e){}};
   A.snap=()=>cur&&cur.snap&&!A.watching?cur.snap():null;
-  A.start=(kind,cb)=>{
+  A.start=(kind,cb,seed)=>{
     if(A.active)A.abort();
     A.watching=false;setup();done=cb;A.active=true;A.kind=kind;
-    cur=(KINDS[kind]||kiln)();
+    cur=(KINDS[kind]||kiln)(seed!==undefined?seed:(Math.random()*4294967296)>>>0);
     cur.fade=0;cur.in=0;
     cur.update(0,Z);
   };
