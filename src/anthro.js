@@ -6,7 +6,9 @@ const r = mm => mm / HEAD_MM;
 export const ANTHRO_MM = {
   stature: 1756, headLength: 197, headBreadth: 153, bizygomatic: 143, mentonSellion: 122, interpupillary: 64, intercanthal: 33,
   earLength: 63, earBreadth: 35, earProtrusion: 20, noseLength: 52, noseWidth: 35, mouthWidth: 50, eyeball: 24,
-  eyeOpeningWidth: 30, eyeOpeningHeight: 10, iris: 11.7, biacromial: 397, bideltoid: 465, handLength: 190
+  eyeOpeningWidth: 30, eyeOpeningHeight: 10, iris: 11.7, biacromial: 397, bideltoid: 465, handLength: 190,
+  chestBreadth: 320, chestDepth: 245, waistBreadth: 330, waistDepth: 250, hipBreadth: 360, upperArmLength: 342, forearmLength: 265,
+  upperArmRadius: 44, elbowRadius: 36, wristRadius: 26, neckRadius: 58
 };
 export const ANTHRO = Object.fromEntries(Object.entries(ANTHRO_MM).map(([k, v]) => [k, r(v)]));
 // derived rules of thumb

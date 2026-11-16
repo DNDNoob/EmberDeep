@@ -16,12 +16,13 @@
 import * as K from './npc_kit.js';
 
 /* ---------- The Keeper: old robed shopkeeper, white beard, lantern staff ---------- */
+// Arm joint centres in U coords (waist origin): shoulder, elbow, wrist, and radii of the bare arm [deltoid, elbow, wrist].
 const ARMS = [
-  {S: [0, 0.32, 0.1], E: [0.07, 0.15, 0.14], W: [0.2, 0.15, 0.15], r: [0.04, 0.042, 0.055], back: 0.034},  // staff arm (+Z)
-  {S: [0, 0.32, -0.1], E: [0.02, 0.16, -0.13], W: [0.086, 0.06, -0.064], r: [0.04, 0.042, 0.052], back: 0.024} // hand resting on the sash
+  {S: [0, 0.325, 0.1], E: [0.07, 0.125, 0.15], W: [0.2, 0.15, 0.16], r: [0.034, 0.026, 0.018], back: 0.034},   // staff arm (+Z)
+  {S: [0, 0.325, -0.1], E: [0.02, 0.13, -0.145], W: [0.086, 0.06, -0.07], r: [0.034, 0.026, 0.018], back: 0.024} // hand resting on the sash
 ];
 export const KEEPER = {
-  id: 'keeper-v5', seed: 4242,
+  id: 'keeper-v6', seed: 4242,
   // Human proportions (see docs/npc-kit.md): the head is built at its natural size and drawn at headScale; the torso is
   // stretched (len) and the skirt (legs) raised so the figure is ~7.25 heads tall with shoulders about 2.7 head widths wide.
   proportions: {headScale: 0.6, frames: ['H', 'J'], height: 0.93},   // height: uniform scale of the whole figure and its props (crown 1.03 m * 0.93 = 0.96 m)
@@ -37,6 +38,8 @@ export const KEEPER = {
     {part: 'skirt', frame: 'B', mat: 'cloth', col: 'robe', col2: 'robeDeep'},
     {part: 'hem', frame: 'B', mat: 'trim', col: 'gold', col2: 'goldDeep'},
     {part: 'torso', frame: 'U', mat: 'cloth', col: 'robe', col2: 'robeDeep'},
+    {part: 'sleeve0', frame: 'U', mat: 'cloth', col: 'robe', col2: 'robeDeep'},
+    {part: 'sleeve1', frame: 'U', mat: 'cloth', col: 'robe', col2: 'robeDeep'},
     {part: 'sash', frame: 'U', mat: 'trim', col: 'gold', col2: 'goldDeep'},
     {part: 'cuff0', frame: 'U', mat: 'trim', col: 'gold', col2: 'goldDeep'},
     {part: 'cuff1', frame: 'U', mat: 'trim', col: 'gold', col2: 'goldDeep'},
@@ -49,25 +52,33 @@ export const KEEPER = {
     {part: 'gripHand', frame: 'grip', mat: 'skin', col: 'skin', col2: 'skinDeep'},
     {part: 'restHand', frame: 'rest', mat: 'skin', col: 'skin', col2: 'skinDeep'}
   ],
+  // Body first, clothes over it (docs/npc-kit.md): the body is only an SDF; the garments are the meshes.
+  body: {stoop: 0.05, belly: 0.7, narrow: 0.93, arms: ARMS},
+  garments: [
+    {type: 'robe', ease: 0.012, hang: 0.03, collar: {r: 0.037}},
+    {type: 'sleeve', arm: 0, ease: 0.011, bell: 0.034, cuff: {len: 0.028}},
+    {type: 'sleeve', arm: 1, ease: 0.011, bell: 0.032, cuff: {len: 0.028}},
+    {type: 'sash', y: 0.017, h: 0.027, thick: 0.006}
+  ],
   eyes: {frame: 'H', sclera: 'sclera', iris: 'iris', pupil: 'pupil', lid: 'skin', lid2: 'skinDeep'},
   build() {
     const U = {off: this.rig.waist, R: K.rotZ(this.rig.lean)};
     const H = K.head({age: 0.9, brow: 1.25, jaw: 1.0, ears: 1.05, nose: {len: 1.1, width: 1.05, droop: 0.9, bulb: 1.15}, tris: [1000, 380]});
-    const skirt = K.robeSkirt({height: 0.57});
-    const torso = K.robeTorso({arms: ARMS, waist: 0.095, len: 1.35, chest: [0.075, 0.145 * 1.35, 0.1]});
+    const skirt = K.robeSkirt({height: 0.57, aspect: 1.12});
+    const B = K.body(this.body), D = K.dress(B, this.garments), torso = D.parts.torso;
     const skirtBody = (x, y, z) => skirt.sdf(x, y, z) / 0.8;
     const hem = K.trimBand(skirtBody, (x, y, z) => y - 0.042, {thick: 0.007, bounds: [-0.25, -0.01, -0.25, 0.25, 0.06, 0.25], cell: 0.0048, tris: [200, 70], cull: (x, y) => y < 0.0035});
     // hide what the other parts cover: the skirt top inside the torso, the torso bottom inside the skirt
-    const torsoInB = K.inChild(torso.body, U.off, U.R), skirtInU = K.inParent(skirt.sdf, U.off, U.R);
+    const torsoInB = K.inChild(D.torsoBase, U.off, U.R), skirtInU = K.inParent(skirt.sdf, U.off, U.R);
     const skirtCull = skirt.cull, torsoCull = torso.cull;
     skirt.cull = (x, y, z) => skirtCull(x, y, z) || hem.covers(x, y, z) || (y > 0.48 && torsoInB(x, y, z) < -0.004);
     torso.cull = (x, y, z) => torsoCull(x, y, z) || (y < 0.0 && skirtInU(x, y, z) < -0.004);
     const grip = K.hand({pose: 'grip', side: -1, gripR: 0.0135, age: 1.2});
     const rest = K.hand({pose: 'rest', side: 1, age: 1.2, curl: 1.15});
     const sleeveCull = sp => { const c = sp.cull; sp.cull = (x, y, z) => (c && c(x, y, z)) || x < -0.032; return sp; };
-    const [e0, e1] = torso.ends;
+    const [e0, e1] = D.ends;
     return {
-      parts: {skirt, hem, torso, sash: torso.trims.sash, cuff0: torso.trims.cuffs[0], cuff1: torso.trims.cuffs[1],
+      parts: {skirt, hem, ...D.parts,
         head: H, ears: K.ears(H), hair: K.hairCap(H, {crown: 0.128}), brows: K.brows(H, {size: 1.15, droop: 1.1}), moustache: K.moustache(H, {size: 1.1}),
         beard: K.beard(H, {length: 0.27, fork: 1, tris: [480, 180]}), gripHand: sleeveCull(grip), restHand: sleeveCull(rest)},
       eyes: {r: H.eye.r, iris: 0.5, open: 12, low: -24, arch: 9, lidT: 0.0021},

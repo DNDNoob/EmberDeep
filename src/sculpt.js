@@ -282,7 +282,7 @@ export function simplify(mesh, target, opts = {}) {
 // ambient occlusion 0..1 marched along the normal through the field (opts.ao = reach in metres, 0 = off).
 // opts.project: pull each vertex back onto the surface first (undoes the smoothing error of simplification).
 export function flatten(mesh, sdf, opts = {}) {
-  const {P, T} = mesh, nv = P.length / 3, nf = opts.normalSdf || sdf, eps = opts.eps || 0.0008, stride = opts.paint ? 9 : 6, aoR = opts.ao || 0;
+  const {P, T} = mesh, nv = P.length / 3, nf = opts.normalSdf || sdf, af = opts.aoSdf || sdf, eps = opts.eps || 0.0008, stride = opts.paint ? 9 : 6, aoR = opts.ao || 0;
   const V = new Float32Array(nv * stride), pp = [0, 0];
   for (let v = 0; v < nv; v++) {
     let x = P[v * 3], y = P[v * 3 + 1], z = P[v * 3 + 2];
@@ -298,7 +298,7 @@ export function flatten(mesh, sdf, opts = {}) {
     if (stride === 9) {
       pp[0] = 0; pp[1] = 0; opts.paint(x, y, z, pp); V[o + 6] = pp[0]; V[o + 7] = pp[1];
       let occ = 0, w = 1;
-      if (aoR > 0) for (let i = 1; i <= 5; i++) { const h = aoR * i / 5, q = sdf(x + V[o + 3] * h, y + V[o + 4] * h, z + V[o + 5] * h); occ += w * Math.max(0, h - q) / aoR; w *= 0.7; }
+      if (aoR > 0) for (let i = 1; i <= 5; i++) { const h = aoR * i / 5, q = af(x + V[o + 3] * h, y + V[o + 4] * h, z + V[o + 5] * h); occ += w * Math.max(0, h - q) / aoR; w *= 0.7; }
       V[o + 8] = Math.max(0.25, 1 - 0.9 * occ);
     }
   }
