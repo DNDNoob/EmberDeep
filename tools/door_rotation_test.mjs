@@ -9,22 +9,22 @@ pg.on('pageerror',e=>errs.push(String(e)));pg.on('console',m=>{if(m.type()==='er
 await pg.addInitScript(()=>{window.__norender=true});
 await pg.goto(pathToFileURL(root+'/index.html').href);await pg.waitForFunction(()=>window.__game&&window.__game.genFloor);
 let fails=0;const bad=m=>{fails++;console.log('FAIL',m)};
-// 1. real registry
+// 1. real registry (fewer than DOOR_ROTATE_MIN types): ONE kind per floor, next kind next floor, doorCountFor(depth) doors
 const r1=await pg.evaluate(()=>{
-  const G=window.__game,ord=G.doorOrder(),out={bad:[],few:0,floors:0,hist:{},diff:0,order:ord};
+  const G=window.__game,ord=G.doorOrder(),out={bad:[],few:0,floors:0,hist:{},short:0,perDepth:{},diff:0,order:ord};
   for(let s=0;s<30;s++){const seed='seed'+s;let prev=null;
     for(let d=1;d<=20;d++){
       const f=G.genFloor(seed,d),f2=G.genFloor(seed,d);out.floors++;
       const ks=f.sdoors.map(q=>q.kind);
       if(JSON.stringify(f.sdoors.map(q=>[q.tx,q.ty,q.kind,q.look]))!==JSON.stringify(f2.sdoors.map(q=>[q.tx,q.ty,q.kind,q.look])))out.diff++;
-      out.hist[ks.length]=(out.hist[ks.length]||0)+1;if(ks.length<2)out.few++;
+      out.hist[ks.length]=(out.hist[ks.length]||0)+1;const want=G.doorCountFor(d);out.perDepth[d]=ks.length;if(ks.length<want)out.short++;if(ks.length>want)out.bad.push(seed+' d'+d+' too many '+ks.length+'>'+want);
       if(new Set(ks).size>1)out.bad.push(seed+' d'+d+' mixed '+ks);
       if(ks.length&&prev!==null&&ord[(ord.indexOf(prev)+1)%ord.length]!==ks[0])out.bad.push(seed+' d'+d+' seq '+prev+'->'+ks[0]);
       if(ks.length)prev=ks[0];else prev=null;
     }}
   return out});
-console.log('T1 floors',r1.floors,'door-count histogram',JSON.stringify(r1.hist),'floors with <2 doors',r1.few,'nondeterministic',r1.diff);
-if(r1.bad.length)bad('T1 '+r1.bad.slice(0,5).join('; '));if(r1.diff)bad('T1 nondeterministic');
+console.log('T1 floors',r1.floors,'door-count histogram',JSON.stringify(r1.hist),'floors placing fewer than doorCountFor(depth)',r1.short,'nondeterministic',r1.diff);
+if(r1.bad.length)bad('T1 '+r1.bad.slice(0,5).join('; '));if(r1.diff)bad('T1 nondeterministic');if(r1.short)bad('T1 '+r1.short+' floors placed fewer doors than doorCountFor');
 // 2. synthetic registries
 for(const N of [5,6,10,13]){
   const r=await pg.evaluate(N=>{const G=window.__game,ord=Array.from({length:N},(_,i)=>'t'+(i+1)),o={bad:[],pat:[]};
