@@ -23,6 +23,9 @@
   #roomHud{position:fixed;left:0;right:0;top:calc(14px + env(safe-area-inset-top));text-align:center;font-size:17px;line-height:1.5;letter-spacing:.05em;color:#ffd9a0;pointer-events:none;text-shadow:0 2px 6px #000,0 0 12px #000;z-index:6}
   #roomHud small{font-size:13px;color:#cdbfae}
   body.inroom #hud,body.inroom #map,body.inroom #prompt,body.inroom #vig,body.inroom #tMap,body.inroom #tPause,body.inroom #chill,body.inroom .ptag{display:none!important}
+  #roomCross{position:fixed;left:50%;top:50%;width:12px;height:12px;margin:-6px 0 0 -6px;border:2px solid rgba(255,235,200,.75);border-radius:50%;box-shadow:0 0 4px #000,inset 0 0 3px #000;pointer-events:none;display:none;z-index:6;transition:transform .08s,border-color .08s,background .08s}
+  #roomCross.on{transform:scale(1.7);border-color:#ffb050;background:rgba(255,150,50,.45)}
+  body.kilnroom #roomCross{display:block}
   body.rwatch #hud,body.rwatch #map,body.rwatch #prompt,body.rwatch #vig,body.rwatch #chill,body.rwatch .ptag{display:none!important}
   #hud{position:fixed;inset:0;pointer-events:none;text-shadow:0 1px 3px #000,0 0 8px #000}
   #tl{position:absolute;left:22px;top:18px;font-size:15px;line-height:1.5;letter-spacing:.04em}
@@ -113,6 +116,8 @@
   .tbtn.on{background:rgba(255,190,110,.4)}
   #tJump{right:calc(24px + env(safe-area-inset-right));bottom:calc(30px + env(safe-area-inset-bottom));width:86px;height:86px}
   #tFlash{right:calc(124px + env(safe-area-inset-right));bottom:calc(22px + env(safe-area-inset-bottom));width:66px;height:66px}
+  #tPick{right:calc(124px + env(safe-area-inset-right));bottom:calc(96px + env(safe-area-inset-bottom));width:52px;height:52px;font-size:11px}
+  body:not(.haspick) #tPick{display:none}
   #tPause{right:calc(150px + env(safe-area-inset-right));top:calc(12px + env(safe-area-inset-top));width:42px;height:42px;font-size:14px}
   #tMap{right:calc(10px + env(safe-area-inset-right));top:calc(10px + env(safe-area-inset-top));width:130px;height:130px;border-radius:10px;border:0;background:none}
   #stickBase,#stickKnob{position:absolute;border-radius:50%;pointer-events:none;display:none;transform:translate(-50%,-50%)}
@@ -176,13 +181,14 @@
   <div id="tPause" class="tbtn">II</div>
   <div id="tFlash" class="tbtn">FLASH</div>
   <div id="tJump" class="tbtn">JUMP</div>
+  <div id="tPick" class="tbtn">PICK</div>
   <div id="tTalk" class="tbtn">TALK</div>
   <div id="tChat" class="tbtn">CHAT</div>
 </div>
 <div id="toast"></div>
 <div id="chat" hidden><div id="chatLog"></div><input id="chatIn" class="plain" type="text" maxlength="200" placeholder="Say something, Enter to send, Esc to close" autocomplete="off"></div>
 <div id="prompt"></div>
-<div id="roomHud"></div>
+<div id="roomHud"></div><div id="roomCross"></div>
 <div id="talk" class="hidden"><div id="talkPurse"></div><div id="talkName"></div><div id="talkText"></div><div id="talkOpts"></div><div id="talkHint"></div></div>
 <div id="fade" class="fx"></div>
 

@@ -11,6 +11,7 @@ import {makeSurfaces} from './textures.js';
 import {openRoom,newRoomCode,cleanCode} from './net.js';
 import {createVoice} from './voice.js';
 import {createRooms,kilnGame,KILN} from './rooms.js';
+import {createBabyFace,createFallVoid} from './babyface.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('gl');
@@ -1311,8 +1312,8 @@ const DUST=[];{const dr=mulberry32(99);for(let i=0;i<(Q>=2?90:Q>=1?45:0);i++)DUS
 /* ---------- game state ---------- */
 let state='title';           // title | play | pause | trans | dead
 let F=null;                  // current floor
-const P={y:0,vy:0,vx:0,vz:0,airSpeed:2.7,jumpQ:0,keys:0,x:0,z:0,yaw:0,pitch:0,hp:3,fuel:100,stam:100,winded:false,flash:1,ward:0,shards:0,inv:0,bob:0,tx:-1,ty:-1,stepPh:0};
-const R={seed:'',depth:1,score:0,time:0,gems:0,wind:false};
+const P={pick:0,y:0,vy:0,vx:0,vz:0,airSpeed:2.7,jumpQ:0,keys:0,x:0,z:0,yaw:0,pitch:0,hp:3,fuel:100,stam:100,winded:false,flash:1,ward:0,shards:0,inv:0,bob:0,tx:-1,ty:-1,stepPh:0};
+const R={seed:'',depth:1,score:0,time:0,gems:0,wind:false,pk:{}};
 /* ---------- lasting upgrades, bought from the Keeper with gems ---------- */
 const UPG=[
   {k:'heart',name:'Vitality',desc:'One more heart',cost:[15,30,50]},
@@ -1407,11 +1408,11 @@ const ROOMS=createRooms(renderer,{post:POST,low:Q===0,
   say:(t,s)=>say(t,s),tone:(...a)=>tone(...a),noise:(...a)=>noise(...a),rumble:(...a)=>rumble(...a),
   hud:h=>{const el=$('roomHud');if(el.innerHTML!==h)el.innerHTML=h},
   hurtFx:()=>{const h=$('hurt');h.style.transition='none';h.style.opacity=1;requestAnimationFrame(()=>{h.style.transition='opacity .9s';h.style.opacity=0})},
-  hint:k=>k==='mirror'?(touch.on?'Drag to look · SPRAY or THUMB picks':pad.id?'Right stick looks · Left stick or D-pad chooses · A picks':'Mouse looks · A D chooses · Space or W picks'):
-    touch.on?'Stick: move, pull down to drop faster · JUMP turns the stone · DROP slams it down':pad.id?'Stick or D-pad: move · A turn · X slam down':'A D move · W turn · S faster · Space slam down'});
+  hint:k=>k==='mirror'?(touch.on?'Drag to look · SPRAY or THUMB picks':pad.id?'Right stick looks · Left stick or D-pad chooses · A picks':'Mouse or arrows look · A D chooses · Space or E picks'):
+    touch.on?'Left stick walk · drag to look · aim at a button and tap PRESS, or tap a button':pad.id?'Left stick walk · right stick look · aim at a button and press A or X':'WASD walk · mouse look · aim at a button and click, E or Space'});
 const ROOM_NAME={galaxy:'a door full of stars',kiln:'the glass kiln',fall:'a door with no floor behind it',mirror:'a room behind a mirror'};
 // a fallen player rides along with the friend they follow, into that friend's strange door too
-let RW=null,rvT=0;const NOIN={l:0,r:0,d:0,rot:0,drop:0,lx:0,ly:0};
+let RW=null,rvT=0;const NOIN={mx:0,my:0,press:0,lx:0,ly:0};let mouseL=false;
 function roomWatch(){
   const f=MP.on&&P.down&&(state==='play'||state==='pause')?MP.peers.get(MP.follow):null,rv=f&&f.away&&f.d===R.depth&&f.rv&&f.rv.d===R.depth&&performance.now()-f.rv.at<2000?f.rv:null;
   if(rv){
@@ -1430,7 +1431,8 @@ function sdoorOpen(D){
   mpSend({k:'sd',d:R.depth,i:F.sdoors.indexOf(D),w:D.kind});
   sfx('door');
   state='room';P.away=true;P.vx=P.vz=0;mapBig=false;
-  document.body.classList.add('inroom');$('tFlash').textContent=D.kind==='kiln'?'DROP':D.kind==='mirror'?'SPRAY':'FLASH';$('tJump').textContent=D.kind==='kiln'?'TURN':D.kind==='mirror'?'THUMB':'JUMP';
+  document.body.classList.add('inroom');const kl=D.kind==='kiln';$('tFlash').textContent=kl?'PRESS':D.kind==='mirror'?'SPRAY':'FLASH';$('tJump').textContent=D.kind==='mirror'?'THUMB':'JUMP';$('tJump').style.display=kl?'none':'';
+  if(kl)document.body.classList.add('kilnroom');
   $('fade').style.transition='none';$('fade').style.opacity=1;
   ROOMS.start(D.kind,roomEnd);
 }
@@ -1440,8 +1442,8 @@ function roomLeave(){
   ROOMS.abort();roomClose();
 }
 function roomClose(){
-  P.away=false;state='play';document.body.classList.remove('inroom');
-  $('tFlash').textContent='FLASH';$('tJump').textContent='JUMP';
+  P.away=false;state='play';document.body.classList.remove('inroom','kilnroom');mouseL=false;ROOMS.untap();
+  $('tFlash').textContent='FLASH';$('tJump').style.display='';
   $('fade').style.transition='opacity .4s';$('fade').style.opacity=0;
 }
 function roomEnd(res){
@@ -1461,9 +1463,8 @@ function roomEnd(res){
     return;
   }
   if(res.k==='win'){
-    const g=4+R.depth;wallet+=g;R.gems+=g;R.score+=80*R.depth;store.set('wallet',wallet);
-    if(P.hp<maxHp())P.hp++;P.fuel=Math.min(100,P.fuel+30);P.inv=2;
-    say('The kiln lets you go. '+g+' gems, and your wounds close a little.',4.5);sfx('shard');
+    R.score+=80*R.depth;P.pick++;P.inv=2;
+    say('The kiln lets you go. It leaves you a pickaxe: one swing, one wall.',5);sfx('shard');
     mpSend({k:'sdr',r:'esc'});mpSys(myName()+' beat the glass kiln');
     return;
   }
@@ -1475,10 +1476,13 @@ function roomEnd(res){
   if(MP.on)say(mir?'The glass gave way. Your friends can still bring you back on the next floor.':fall?'There was no floor. Your friends can still bring you back on the next floor.':'The kiln filled up. Your friends can still bring you back on the next floor.',5);
 }
 function roomInput(){
-  const mir=ROOMS.kind==='mirror';
-  return {touch:touch.on,l:keys.KeyA||(!mir&&keys.ArrowLeft)||pad.mx<-0.5||touch.mx<-0.5||pad.dl,r:keys.KeyD||(!mir&&keys.ArrowRight)||pad.mx>0.5||touch.mx>0.5||pad.dr,
-    d:keys.KeyS||keys.ArrowDown||pad.my>0.5||touch.my>0.5||pad.dd,rot:keys.KeyW||(!mir&&keys.ArrowUp)||keys.KeyE||pad.b0||pad.du||touch.jump,
-    drop:keys.Space||pad.b2||touch.act,lx:pad.lx*1.35+(ROOMS.kind==='galaxy'||mir?(keys.ArrowRight?1:0)-(keys.ArrowLeft?1:0):0),ly:pad.ly+(mir?(keys.ArrowDown?1:0)-(keys.ArrowUp?1:0):0)};
+  const kb=ROOMS.kind==='kiln',mir=ROOMS.kind==='mirror',ax=(a,b)=>(a?1:0)-(b?1:0);
+  // walking (the kiln hall) and looking; pressing is one thing for every device. The mirror also reads which touch button was hit (spray / thumb)
+  return {mx:clamp(ax(keys.KeyD||(kb&&keys.ArrowRight),keys.KeyA||(kb&&keys.ArrowLeft))+pad.mx+touch.mx+ax(pad.dr,pad.dl),-1,1),
+    my:clamp(ax(keys.KeyS||(kb&&keys.ArrowDown),keys.KeyW||(kb&&keys.ArrowUp))+pad.my+touch.my+ax(pad.dd,pad.du),-1,1),
+    press:!!(mouseL||keys.KeyE||keys.Space||(keys.Enter&&!MP.on)||pad.b0||pad.b2||touch.act),
+    touch:touch.on,spray:!!touch.act,thumb:!!touch.jump,
+    lx:pad.lx*1.35+(ROOMS.kind==='galaxy'||mir?ax(keys.ArrowRight,keys.ArrowLeft):0),ly:pad.ly+(mir?ax(keys.ArrowDown,keys.ArrowUp):0)};
 }
 let doorMsgT=0, tipTimers=[];
 let mapBig=false, usingLock=false, pausedAt=0, flashT=0, sealMsgT=0, lowFuelSaid=false, pingT=0, beatT=0, titleYaw=0;
@@ -1512,6 +1516,8 @@ function loadFloor(depth){
   P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;P.inSafe=false;nearNpc=null;
   sealMsgT=0;doorMsgT=0;
   onTileChange();
+  pkReapply();
+  if(MP.guest&&MP.hostId)mpSend({k:'pkq',d:depth},MP.hostId);
   glReset();
 }
 function onTileChange(){
@@ -1540,7 +1546,7 @@ function startRun(seed,depth,force){
   if(MP.guest&&!force){mpJoinClick();return}
   const sd=force?depth:clamp(depth||+$('startSel').value||1,1,deepest);
   P.down=false;
-  R.seed=(seed||randSeed()).toUpperCase();R.score=0;R.time=0;R.gems=0;R.startDepth=sd;
+  R.seed=(seed||randSeed()).toUpperCase();R.pk={};P.pick=0;R.score=0;R.time=0;R.gems=0;R.startDepth=sd;
   P.hp=maxHp();P.fuel=100;P.stam=100;P.winded=false;P.flash=1+Math.floor((sd-1)/3)+(up.band|0);P.ward=0;R.wind=false;P.inv=0;P.chill=0;lowFuelSaid=false;
   loadFloor(sd);
   state='play';
@@ -1559,7 +1565,7 @@ function showTips(){
   t.forEach((msg,i)=>tipTimers.push(setTimeout(()=>{if(state==='play'&&R.depth===d)say(msg,4)},4200+i*4600)));
 }
 function toTitle(){
-  roomLeave();
+  roomLeave();glFallEnd();
   if(MP.on)mpLeave(false);
   state='title';
   ['pause','dead','hud','map','talk'].forEach(id=>$(id).classList.add('hidden'));talk=null;clearPrompt();
@@ -1643,8 +1649,96 @@ function flashStun(x,z,lv){
 }
 function openDoor(quiet){
   if(!F.door)return;
-  P.keys=Math.max(0,P.keys-1);F.doorOpen=true;F.g[F.door.ty*F.W+F.door.tx]=0;F.frames.push(F.door);F.door=null;buildMesh(F);buildSdf(F);onTileChange();
+  P.keys=Math.max(0,P.keys-1);F.doorOpen=true;F.g[F.door.ty*F.W+F.door.tx]=0;F.frames.push(F.door);F.door=null;buildMesh(F);buildSdf(F);onTileChange();F.pkMemo=null;pkReapply();
   if(!quiet){sfx('door');say('The gate grinds open',2.5)}
+}
+/* ---------- the kiln pickaxe: one swing, one wall, for good ---------- */
+let pkShake=0;const pkFx=[];
+// why a wall tile may not be broken: '' when it may. The outer border, the gate (and its stone frame), strange doors, the sanctuary,
+// noclip pockets and anyone standing in a nook stay as they are, and while the gate is shut nothing may join its two sides.
+function pkWhy(tx,ty){
+  if(!F||!Number.isInteger(tx)||!Number.isInteger(ty))return 'bad';
+  const W=F.W,H=F.H;
+  if(tx<1||ty<1||tx>W-2||ty>H-2)return 'border';
+  if(F.g[ty*W+tx]!==1)return 'notwall';
+  const near=(x,y,r)=>Math.abs(x-tx)<=r&&Math.abs(y-ty)<=r;
+  for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){const i=(ty+dy)*W+tx+dx;if(F.safeMask[i]||F.pocketMask[i])return 'kept'}
+  if(F.door&&near(F.door.tx,F.door.ty,1))return 'gate';
+  for(const D of F.frames)if(near(D.tx,D.ty,1))return 'gate';
+  for(const D of F.sdoors)if(near(D.tx+D.dx,D.ty+D.dz,1))return 'door';
+  for(const n of F.npcs)if(near(Math.floor(n.x),Math.floor(n.z),1))return 'kept';
+  if(!DIRS.some(d=>F.g[(ty+d[1])*W+tx+d[0]]===0))return 'sealed';
+  if(F.door){
+    const k=tx+','+ty;F.pkMemo=F.pkMemo||new Map();
+    if(!F.pkMemo.has(k)){
+      const a=bfs(F.g,W,H,F.start.tx,F.start.ty);F.g[ty*W+tx]=0;const b=bfs(F.g,W,H,F.start.tx,F.start.ty);F.g[ty*W+tx]=1;
+      let join=false;for(let i=0;i<W*H;i++)if(a[i]<0&&b[i]>=0&&i!==ty*W+tx){join=true;break}
+      F.pkMemo.set(k,join);
+    }
+    if(F.pkMemo.get(k))return 'gate';
+  }
+  return '';
+}
+// the wall tile you are looking at, from the player along the view direction (pitch is ignored)
+function pkAim(){
+  const cx=Math.cos(P.yaw),cz=Math.sin(P.yaw);
+  for(let t=0.1;t<=1.6;t+=0.05){
+    const x=P.x+cx*t,z=P.z+cz*t;
+    if(!solidAt(x,z))continue;
+    const tx=Math.floor(x),ty=Math.floor(z);
+    return {tx,ty,ok:pkWhy(tx,ty)===''};
+  }
+  return null;
+}
+// open the tile for good: floor and ceiling come back with the mesh, and everything that walks the maze sees the new way
+function pkOpen(tx,ty){
+  const i=ty*F.W+tx;F.g[i]=0;
+  const cxm=tx+0.5,czm=ty+0.5;
+  F.sconces=F.sconces.filter(q=>!(Math.floor(q.lx)+q.dx===tx&&Math.floor(q.lz)+q.dz===ty));
+  F.props=F.props.filter(q=>Math.max(Math.abs(q.x-cxm),Math.abs(q.z-czm))>0.66);
+  const r=mulberry32(hashStr(R.seed+'#pick'+R.depth+','+tx+','+ty));
+  for(let k=0;k<7;k++)F.rubble.push({x:tx+0.15+r()*0.7,z:ty+0.15+r()*0.7,s:0.05+r()*0.08,r:r()*6.28,sy:0.5+r()*0.6});
+  F.pkMemo=null;F.md=null;F.mdKey='';MIM.vdKey='';
+  buildMesh(F);buildStatic(F);buildSdf(F);
+  F.seen[i]=1;onTileChange();F.seen[i]=1;
+}
+function pkRecord(tx,ty){const a=R.pk[R.depth]||(R.pk[R.depth]=[]);if(!a.some(q=>q[0]===tx&&q[1]===ty)&&a.length<64)a.push([tx,ty])}
+// a break from a friend, the host's list, or the record of this floor. Everything is checked first.
+function pkApply(x,y,quiet){
+  if(!Number.isInteger(x)||!Number.isInteger(y)||pkWhy(x,y))return false;
+  pkOpen(x,y);pkRecord(x,y);pkFx.push(...pkDebris(x,y));
+  if(!quiet){const d=Math.hypot(x+0.5-P.x,y+0.5-P.z);if(d<12){const v=clamp(1-d/12,0.2,1);noise(0.3,0.45*v,500,0.8);tone(90,0.25,'sawtooth',0.18*v,0,-50);pkShake=Math.max(pkShake,0.5*v)}}
+  return true;
+}
+// after a floor is rebuilt (or its gate opens) the holes already made for this floor come back
+function pkReapply(){for(const q of (R.pk[R.depth]||[]).slice())if(Number.isInteger(q[0])&&Number.isInteger(q[1])&&!pkWhy(q[0],q[1])){pkOpen(q[0],q[1])}}
+function pkDebris(tx,ty){
+  const o=[],t0=performance.now(),r=Math.random;
+  for(let k=0;k<26;k++){const a=r()*6.283,v=0.4+r()*1.3;o.push({x:tx+0.5,y:0.3+r()*0.9,z:ty+0.5,vx:Math.cos(a)*v,vy:r()*1.4,vz:Math.sin(a)*v,s:0.03+r()*0.09,dust:k>=10,t0,life:0.7+r()*0.9})}
+  return o;
+}
+function pkFxDraw(){
+  const now=performance.now();
+  for(let i=pkFx.length-1;i>=0;i--){
+    const q=pkFx[i],t=(now-q.t0)/1000;
+    if(t>q.life){pkFx.splice(i,1);continue}
+    const f=t/q.life,x=q.x+q.vx*t*(1-f*0.5),z=q.z+q.vz*t*(1-f*0.5),y=Math.max(0.02,q.y+q.vy*t-2.6*t*t);
+    if(q.dust)spr(x,y+0.1*f,z,q.s*(2+f*5),q.s*(2+f*5),7,0.55,0.5,0.44,0.5*(1-f),0);
+    else spr(x,y,z,q.s,q.s,7,0.32,0.28,0.25,1-f*0.4,0);
+  }
+}
+function usePick(){
+  if(state!=='play'||P.pick<=0||P.down||P.away||P.grab)return;
+  const a=pkAim();
+  if(!a)return;
+  if(!a.ok){say('This wall will not break',1.6);sfx('step');return}
+  pkApply(a.tx,a.ty,true);
+  P.pick--;P.inv=Math.max(P.inv,0.4);
+  mpSend({k:'pk',d:R.depth,x:a.tx,y:a.ty});
+  noise(0.5,0.7,380,0.7);noise(0.25,0.5,1800,1);tone(70,0.4,'sawtooth',0.3,0,-40);tone(180,0.08,'square',0.25,0.03,-100);tone(1400,0.12,'triangle',0.12,0.01,-800);
+  pkShake=1;rumble(260,0.9,0.6);
+  say('The wall gives way. The pick crumbles in your hands.',3.5);
+  mpSys(myName()+' broke through a wall');
 }
 function setBlk(v){
   if(v===1){F.blk=1;F.boT=1.7;sfx('powerdown')}
@@ -1744,7 +1838,7 @@ function mpJoinClick(){
 function mpSendRun(to){
   if(!MP.host||!F)return;
   const got=[];F.items.forEach((it,i)=>{if(it.got)got.push(i)});
-  mpSend({k:'run',seed:R.seed,d:R.depth,sd:R.startDepth,t:r2(R.time),got,door:F.doorOpen?1:0,sdo:F.sdoors.map(q=>q.used?1:0),sh:P.shards,ke:P.keys,blk:F.blk|0},to);
+  mpSend({k:'run',seed:R.seed,d:R.depth,sd:R.startDepth,t:r2(R.time),got,door:F.doorOpen?1:0,sdo:F.sdoors.map(q=>q.used?1:0),pk:(R.pk[R.depth]||[]).slice(0,64),sh:P.shards,ke:P.keys,blk:F.blk|0},to);
 }
 function mpApplyRun(r){
   startRun(r.seed,r.d,true);
@@ -1752,6 +1846,7 @@ function mpApplyRun(r){
   for(const i of r.got||[]){const it=F.items[i];if(it)it.got=true}
   if(r.door&&F.door)openDoor(true);
   if(Array.isArray(r.sdo)){r.sdo.forEach((u,i)=>{if(u&&F.sdoors[i])F.sdoors[i].used=true});buildStatic(F)}
+  if(Array.isArray(r.pk))for(const q of r.pk.slice(0,64))if(Array.isArray(q))pkApply(q[0],q[1],true);
   P.shards=r.sh|0;P.keys=r.ke|0;
   if(F.back&&r.blk)F.blk=r.blk;
   say(`You joined ${hostName()}'s game`,3);
@@ -1829,6 +1924,15 @@ function mpRecv(m,from){
       if(inRun&&state!=='trans'&&n>=1&&n<=3)mpDescend(n,p.name+' woke a black hole. It throws you all '+n+(n>1?' floors':' floor')+' down');
       break;}
     case 'down':if(inRun&&state!=='trans'&&m.d===R.depth+1){say(p.name+' found the way down',2);mpDescend()}break;
+    case 'pk':
+      if(!inRun||!here||p.down||state==='trans')return;
+      if(pkApply(m.x,m.y,false)){say(p.name+' broke through a wall',2.5);mpSys(p.name+' broke through a wall')}
+      break;
+    case 'pks':
+      if(!fromHost||!inRun||!here||!Array.isArray(m.t))return;
+      for(const q of m.t.slice(0,64))if(Array.isArray(q))pkApply(q[0],q[1],true);
+      break;
+    case 'pkq':if(MP.host&&inRun&&here&&m.d===R.depth&&(R.pk[R.depth]||[]).length)mpSend({k:'pks',d:R.depth,t:R.pk[R.depth].slice(0,64)},from);break;
     case 'fl':if(MP.host&&inRun&&here)flashStun(+m.x,+m.z,+m.p);break;
     case 'hit':
       if(!fromHost||!inRun||P.down||P.away||state==='trans')return;
@@ -2339,6 +2443,7 @@ addEventListener('keydown',e=>{
   else if(state==='play'){
     if(e.code==='Space')P.jumpQ=0.15;
     if(e.code==='KeyE')act();
+    if(e.code==='KeyQ')usePick();
     if(e.code==='KeyM'||e.code==='Tab')mapBig=!mapBig;
     if(e.code==='Escape'||e.code==='KeyP')pause();
     if((e.code==='Enter'||e.code==='NumpadEnter'||e.code==='KeyT')&&MP.on){e.preventDefault();chatOpenBox()}
@@ -2360,13 +2465,14 @@ addEventListener('keydown',e=>{
   }
 });
 addEventListener('keyup',e=>{keys[e.code]=false});
-addEventListener('blur',()=>{for(const k in keys)keys[k]=false;pause()});
+addEventListener('blur',()=>{for(const k in keys)keys[k]=false;mouseL=false;pause()});
 document.addEventListener('visibilitychange',()=>{if(document.hidden)pause()});
 document.addEventListener('mousemove',e=>{
   if((state!=='play'&&state!=='room')||document.pointerLockElement!==canvas)return;
   const mx=e.movementX,my=e.movementY;
   if(!isFinite(mx)||!isFinite(my)||Math.abs(mx)>600||Math.abs(my)>600)return;
   if(state==='room'){ROOMS.look(mx*0.0022*sens,my*0.0022*sens);return}
+  if(glLook(mx*0.0022*sens,-my*0.0022*sens))return;
   P.yaw+=mx*0.0022*sens;
   P.pitch=clamp(P.pitch-my*0.0022*sens,-0.9,0.9);
 });
@@ -2375,13 +2481,14 @@ document.addEventListener('pointerlockchange',()=>{
   else if(usingLock){usingLock=false;pause()}
 });
 canvas.addEventListener('click',()=>{if((state==='play'||state==='room')&&!document.pointerLockElement)lock()});
-canvas.addEventListener('mousedown',e=>{if(state!=='play'||document.pointerLockElement!==canvas)return;if(e.button===0)act();else if(e.button===2)P.jumpQ=0.15});
+canvas.addEventListener('mousedown',e=>{if(state==='room'&&e.button===0)mouseL=true;if(state!=='play'||document.pointerLockElement!==canvas)return;if(e.button===0)act();else if(e.button===2)P.jumpQ=0.15});
+addEventListener('mouseup',e=>{if(e.button===0)mouseL=false});
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 $('startBtn').addEventListener('click',()=>{startRun($('seedIn').value.trim());lock()});
 $('resumeBtn').addEventListener('click',()=>resume(true));
 $('againBtn').addEventListener('click',()=>{startRun();lock()});
 // touch controls
-const touch={on:false,mx:0,my:0,jump:false,stickId:null,lookId:null,sx:0,sy:0,lx:0,ly:0};
+const touch={on:false,mx:0,my:0,jump:false,stickId:null,lookId:null,tapId:null,sx:0,sy:0,lx:0,ly:0};
 function enableTouch(){
   if(touch.on)return;touch.on=true;document.body.classList.add('touch');
   const upd=()=>{$('rotHint').textContent=innerHeight>innerWidth?'Turn your phone sideways for a wider view':''};
@@ -2402,6 +2509,8 @@ addEventListener('touchstart',()=>{enableTouch();initAudio()},{passive:true});
   layer.addEventListener('touchstart',e=>{
     e.preventDefault();
     for(const t of e.changedTouches){
+      // in the kiln hall a tap right on a button within reach presses it
+      if(state==='room'&&touch.tapId===null&&ROOMS.tap(t.clientX/innerWidth*2-1,1-t.clientY/innerHeight*2)){touch.tapId=t.identifier;continue}
       if(touch.stickId===null&&t.clientX<innerWidth*0.45){
         touch.stickId=t.identifier;touch.sx=t.clientX;touch.sy=t.clientY;
         base.style.left=knob.style.left=t.clientX+'px';base.style.top=knob.style.top=t.clientY+'px';
@@ -2415,12 +2524,12 @@ addEventListener('touchstart',()=>{enableTouch();initAudio()},{passive:true});
       if(t.identifier===touch.stickId)setStick(t.clientX,t.clientY);
       else if(t.identifier===touch.lookId){
         if(state==='room')ROOMS.look((t.clientX-touch.lx)*0.0062*sens,(t.clientY-touch.ly)*0.005*sens);
-        if(state==='play'){P.yaw+=(t.clientX-touch.lx)*0.0062*sens;P.pitch=clamp(P.pitch-(t.clientY-touch.ly)*0.005*sens,-0.9,0.9)}
+        if(state==='play'&&!glLook((t.clientX-touch.lx)*0.0062*sens,-(t.clientY-touch.ly)*0.005*sens)){P.yaw+=(t.clientX-touch.lx)*0.0062*sens;P.pitch=clamp(P.pitch-(t.clientY-touch.ly)*0.005*sens,-0.9,0.9)}
         touch.lx=t.clientX;touch.ly=t.clientY;
       }
     }
   },{passive:false});
-  const end=e=>{for(const t of e.changedTouches){if(t.identifier===touch.stickId)endStick();else if(t.identifier===touch.lookId)touch.lookId=null}};
+  const end=e=>{for(const t of e.changedTouches){if(t.identifier===touch.stickId)endStick();else if(t.identifier===touch.lookId)touch.lookId=null;else if(t.identifier===touch.tapId){touch.tapId=null;ROOMS.untap()}}};
   layer.addEventListener('touchend',end);layer.addEventListener('touchcancel',end);
   const btn=(id,down,up)=>{const el=$(id);
     el.addEventListener('touchstart',e=>{e.preventDefault();e.stopPropagation();el.classList.add('on');down()},{passive:false});
@@ -2429,8 +2538,9 @@ addEventListener('touchstart',()=>{enableTouch();initAudio()},{passive:true});
     el.addEventListener('touchmove',e=>{e.preventDefault();e.stopPropagation()},{passive:false});};
   btn('tJump',()=>{touch.jump=true;P.jumpQ=0.15},()=>{touch.jump=false});
   btn('tFlash',()=>{touch.act=true;if(state==='play')act()},()=>{touch.act=false});
-  btn('tPause',()=>{touch.jump=false;endStick();touch.lookId=null;pause()});
+  btn('tPause',()=>{touch.jump=false;endStick();touch.lookId=null;touch.tapId=null;ROOMS.untap();pause()});
   btn('tMap',()=>{mapBig=!mapBig});
+  btn('tPick',()=>{usePick()});
   btn('tTalk',()=>{touch.talk=true},()=>{touch.talk=false});
   btn('tChat',()=>{chatOpenBox()});
   $('quitBtn').addEventListener('click',toTitle);
@@ -2454,7 +2564,7 @@ function pollPad(){
   const gp=pickPad();pad.gp=gp;
   if(!gp){if(pad.id){pad.id='';$('padLine').textContent='';pad.prev=[]}return}
   if(pad.id!==gp.id){pad.id=gp.id;initAudio();
-    $('padLine').innerHTML='Controller connected. <b>Left stick</b> move · <b>Right stick</b> look · <b>A</b> jump · <b>X</b> or <b>RT</b> flash · <b>LT</b> or click left stick to sprint · <b>Y</b> map · <b>Start</b> pause';
+    $('padLine').innerHTML='Controller connected. <b>Left stick</b> move · <b>Right stick</b> look · <b>A</b> jump · <b>X</b> or <b>RT</b> flash · <b>LT</b> or click left stick to sprint · <b>Y</b> map · <b>RB</b> pickaxe · <b>Start</b> pause';
     if(state==='play')say('Controller connected',2)}
   const B=i=>{const b=gp.buttons[i];return !!b&&(b.pressed||b.value>0.4)};
   pad.b0=B(0);pad.b2=B(2);pad.du=B(12);pad.dd=B(13);pad.dl=B(14);pad.dr=B(15);
@@ -2470,6 +2580,7 @@ function pollPad(){
     if(Math.hypot(pad.mx,pad.my)<0.3)pad.sprintLatch=false;
     if(pad.sprintLatch)pad.sprint=true;
     if(hit(2)||hit(1)||hit(7))act();
+    if(hit(5))usePick();
     if(hit(3))mapBig=!mapBig;
     if(hit(9))pause();
     if(hit(14))setBright(bright-0.15);
@@ -2665,7 +2776,8 @@ function update(dt){
     let nd=null;
     if(!best&&ctl){let dd=0.72;for(const D of F.sdoors){if(D.used)continue;const d=Math.hypot(D.x-P.x,D.z-P.z);if(d<dd&&(D.x-P.x)*Math.cos(P.yaw)+(D.z-P.z)*Math.sin(P.yaw)>d*0.45){dd=d;nd=D}}}
     if(best!==nearNpc||nd!==nearDoor){nearNpc=best;nearDoor=nd;if(state!=='room')$('tFlash').textContent=best?'TALK':nd?'OPEN':'FLASH'}
-    if(state!=='room')setText('prompt',best?(touch.on?'TALK':pad.id?'X':'E')+': speak with '+NPC[best.type].name:nd?(touch.on?'OPEN':pad.id?'X':'E')+': open the strange door':'');}
+    const pt=!best&&!nd&&state==='play'?pkAim():null;
+    if(state!=='room')setText('prompt',best?(touch.on?'TALK':pad.id?'X':'E')+': speak with '+NPC[best.type].name:nd?(touch.on?'OPEN':pad.id?'X':'E')+': open the strange door':pt?pt.ok?(touch.on?'PICK':pad.id?'RB':'Q')+': break through this wall':'This wall will not break':'');}
   if(P.fuel<20&&!lowFuelSaid){lowFuelSaid=true;say(P.fuel<=0?'Your torch is out':'Your torch is guttering. Find oil.',3)}
   if(P.inv>0)P.inv-=dt;
   if(P.chill>0){P.chill-=dt;$('chill').style.opacity=clamp(P.chill/1.2,0,1)}else if(P.chill<0||P.chill===0&&$('chill').style.opacity!=='0'){P.chill=0;$('chill').style.opacity='0'}
@@ -2828,9 +2940,10 @@ function update(dt){
 const GL={cd:60,used:{},frz:0,frzAfter:null,buzz:null,hist:[],histT:0,rb:null,rbN:0,figs:[],hole:null,fall:null,loop:null,
   ghosts:[],walked:null,peerH:new Map(),hudOv:{},hudSeq:null,chatT:0,dip:0,netEl:null,netT:0};
 function glReset(){
+  glFallEnd();
   GL.cd=F.back?28+Math.random()*30:55+Math.random()*60;GL.used={};GL.frz=0;GL.frzAfter=null;GL.hist=[];GL.rb=null;
   GL.figs=[];GL.ghosts=[];GL.fall=null;GL.loop=null;GL.hudOv={};GL.hudSeq=null;GL.dip=0;GL.walked=new Uint8Array(F.W*F.H);
-  glHoleOff();if(GL.grid){scene.remove(GL.grid);GL.grid=null}
+  glHoleOff();
   for(const p of MP.peers.values())p.glRep=null;
 }
 const glOpen=(x,y)=>x>0&&y>0&&x<F.W-1&&y<F.H-1&&F.g[y*F.W+x]===0&&!F.safeMask[y*F.W+x]&&!F.pocketMask[y*F.W+x];
@@ -2848,6 +2961,7 @@ function glTick(dt,chasing){
   if(!F||state==='title')return;
   if(GL.netT>0){GL.netT-=dt;if(GL.netT<=0)glNet('')}
   if(GL.chatT>0)GL.chatT-=dt;
+  if(!BABY&&!GL.prep&&R.depth>=3){GL.prep=1;window.requestIdleCallback?requestIdleCallback(glFallBuild,{timeout:9000}):setTimeout(glFallBuild,3000)}   // build the face while nobody is looking
   // a short memory of where you have been, for the rubber band and the fall
   GL.histT-=dt;
   if(GL.histT<=0){GL.histT=0.1;GL.hist.push([P.x,P.z,P.yaw]);if(GL.hist.length>40)GL.hist.shift();
@@ -3132,31 +3246,82 @@ function glHoleTick(dt){
   if(h.t>45)glHoleOff();
 }
 
-/* 6. falling through the floor, under the maze, into a dark grid, and waking at the start */
+/* 6. falling through the floor, out of the underside of the maze, down a black void to a giant baby, and into its mouth */
+// Sink through the stone, hang a beat, then fall (gently, to a terminal speed) while the camera eases to look down
+// at the face. The mouth opens as you near it; you drop in, the screen goes dark, and you wake at the start.
+const FALL={hang:1.6,tFall:5.2,vt:19,tau:1.4,wake:8.4,pitch:-1.35,gridY:-5,far:420};
+FALL.dist=FALL.vt*(FALL.tFall-FALL.tau*(1-Math.exp(-FALL.tFall/FALL.tau)));   // metres from where you hang to the lips
+let BABY=null,VOID=null;
+function glFallBuild(){   // built once, kept for every later fall
+  if(BABY)return true;
+  try{BABY=createBabyFace(THREE,{quality:Q});VOID=createFallVoid(THREE,{quality:Q})}catch(e){BABY=VOID=null;return false}
+  return true;
+}
+// mouse and touch look during the fall only nudge the view
+function glLook(dyaw,dpitch){const L=GL.fall;if(!L)return false;P.yaw+=dyaw*0.3;L.li=clamp(L.li+dpitch*0.3,-0.25,0.25);return true}
 function glFall(){
-  if(glTrapAt(P.tx,P.ty)||Math.hypot(F.exit.x-P.x,F.exit.z-P.z)<2)return false;
-  GL.fall={t:0,vy:0};P.vx=P.vz=0;P.inv=99;
-  if(!GL.grid){GL.grid=new THREE.GridHelper(400,200,0x3a3a40,0x26262c);GL.grid.position.set(P.x,-34,P.z);scene.add(GL.grid)}
+  if(glTrapAt(P.tx,P.ty)||Math.hypot(F.exit.x-P.x,F.exit.z-P.z)<2||!glFallBuild())return false;
+  const fx=Math.cos(P.yaw),fz=Math.sin(P.yaw),g=BABY.group;
+  GL.fall={t:0,li:0,fx,fz,x0:P.x,z0:P.z,far:camera.far,ao:gtaoPass&&gtaoPass.enabled,sy:0,coo:0,wind:0};
+  P.vx=P.vz=0;P.inv=99;
+  // the head lies face-up: its forehead points the way you were looking, so it is the right way up on screen
+  g.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(-fz,0,fx),new THREE.Vector3(fx,0,fz),new THREE.Vector3(0,1,0)));
+  GL.fall.lipY=EYE-0.95-FALL.dist;                                          // camera height as it crosses the lips
+  scene.add(g,VOID.group);camera.far=FALL.far;camera.updateProjectionMatrix();if(gtaoPass)gtaoPass.enabled=false;
+  BABY.update(0,{camPos:camera.position,open:0,t:0,fade:0});VOID.update(0,{camPos:camera.position,t:0,fade:0,gridY:FALL.gridY});
+  renderer.compile(scene,camera);
   tone(70,2.6,'sine',0.12,0.3,-40);noise(0.25,0.08,2400,3);
   return true;
 }
+// tear everything down; safe to call at any time, whatever stage the fall is in
+function glFallEnd(waking){
+  const L=GL.fall;GL.fall=null;
+  if(BABY&&BABY.group.parent)scene.remove(BABY.group);
+  if(VOID&&VOID.group.parent)scene.remove(VOID.group);
+  if(!L)return;
+  camera.far=L.far;camera.updateProjectionMatrix();if(gtaoPass)gtaoPass.enabled=L.ao;
+  const f=$('fade').style;f.transition='';if(!waking)f.opacity=0;
+  P.y=0;P.vy=0;P.pitch=0;if(P.inv>50)P.inv=0;
+}
 function glFallTick(dt){
   const L=GL.fall;if(!L)return;
-  L.t+=dt;
-  if(L.t<0.9)P.y=-0.85*(L.t/0.9)**2;          // sink slowly through the stone
-  else if(L.t<1.6)P.y=-0.85-0.05*(L.t-0.9);    // hang for a moment just under it, looking at the underside
-  else{L.vy+=9*dt;P.y-=L.vy*dt}
-  if(L.t>1.6&&!L.wind){L.wind=1;noise(2.6,0.12,180,0.6)}
-  if(L.t>3.6&&!L.dark){L.dark=1;$('fade').style.opacity=1}
-  if(L.t>4.6){
+  L.t+=dt;const t=L.t,sm=(a,b,x)=>{x=clamp((x-a)/(b-a),0,1);return x*x*(3-2*x)};
+  const tf=Math.max(0,t-FALL.hang),k=FALL.tau;
+  if(t<0.9)P.y=-0.85*(t/0.9)**2;                 // sink slowly through the stone
+  else if(t<FALL.hang)P.y=-0.85-0.05*(t-0.9);    // hang for a moment just under it, looking at the underside
+  else P.y=-0.95-FALL.vt*(tf-k*(1-Math.exp(-tf/k)));   // then drop, up to a terminal speed
+  const vy=tf>0?FALL.vt*(1-Math.exp(-tf/k)):0;
+  // look down at the face: ease the pitch, with a slow sway, and let the player's own input push a little
+  if(t>1.45)P.pitch+=(FALL.pitch-0.17*sm(3.5,6.4,t)+L.li+0.035*Math.sin(t*1.7)-P.pitch)*(1-Math.exp(-dt*1.8));
+  const cam=glFallCam||(glFallCam=new THREE.Vector3());cam.set(P.x,EYE+P.y,P.z);
+  // where the face is: under you at first, sliding so that its mouth is directly beneath you when you reach it
+  const e=sm(0,FALL.tFall,tf),mouthD=(-BABY.mouth[1])*BABY.scale,lipD=BABY.lipZ*BABY.scale;
+  BABY.group.position.set(L.x0+L.fx*mouthD*e,L.lipY-lipD,L.z0+L.fz*mouthD*e);
+  const toLip=cam.y-L.lipY;                                    // metres still to fall to the lips
+  const open=0.10+0.90*sm(55,6,toLip)+(tf>0?0.05*Math.sin(t*5)*sm(60,30,toLip):0);
+  const fade=sm(1.5,3.2,t);
+  BABY.update(dt,{camPos:cam,open:t>FALL.hang+FALL.tFall+0.6?Math.max(0,1-(t-FALL.hang-FALL.tFall-0.6)*2):open,t,fade});
+  VOID.update(dt,{camPos:cam,t,fade:sm(0.9,1.6,t),gridY:FALL.gridY,px:renderer.getPixelRatio()});
+  // sound: wind that rises with speed, a coo as the face wakes, a giggle as the mouth opens, a rising coo at the gape
+  if(vy>0&&t>L.wind){L.wind=t+0.45;noise(0.9,0.06+0.07*vy/FALL.vt,200+vy*22,0.6)}
+  if(tf>1.2&&L.coo<1){L.coo=1;tone(392,0.5,'sine',0.05,0,+90,-0.2);tone(588,0.5,'sine',0.02,0,+130,-0.2)}
+  if(tf>2.6&&L.coo<2){L.coo=2;[440,523,587,523,659,740].forEach((f,i)=>tone(f,0.11,'sine',0.06,i*0.12,f*0.08,(i%2?0.3:-0.3)))}
+  if(tf>FALL.tFall-0.9&&L.coo<3){L.coo=3;tone(330,0.9,'sine',0.07,0,+330);tone(660,0.9,'sine',0.025,0.02,+500)}
+  const tl=FALL.hang+FALL.tFall;                              // the moment you pass the lips
+  if(t>tl-0.3&&!L.dark){L.dark=1;const f=$('fade').style;f.transition='opacity .5s ease-in';f.opacity=1}
+  if(t>tl+0.6&&!L.gulp){L.gulp=1;tone(95,0.3,'sine',0.28,0,-45);noise(0.2,0.2,300,1.4);tone(70,0.4,'sine',0.2,0.32,-30)}
+  if(t>FALL.wake){
     // wake at the start of the floor. The map remembers only the path you walked
-    GL.fall=null;if(GL.grid){scene.remove(GL.grid);GL.grid=null}
+    glFallEnd(true);
     P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.y=0;P.vy=0;P.inv=2;
     if(GL.walked)for(let i=0;i<F.seen.length;i++)F.seen[i]=GL.walked[i];
+    $('fade').style.opacity=1;
     onTileChange();tone(48,0.4,'sine',0.3);noise(0.2,0.2,200,1);
+    say('Something enormous giggles, far beneath the floor.',4);
     setTimeout(()=>{$('fade').style.opacity=0},400);
   }
 }
+let glFallCam=null;
 
 /* 7. the humming rooms: a long hall that quietly puts you back at its start */
 function glLoopTry(forced){
@@ -3276,6 +3441,7 @@ function render(t){
   const yaw=title?titleYaw:P.yaw, pitch=title?0:P.pitch;
   const ex=P.x, ez=P.z, ey=EYE+(title?0:P.y+Math.sin(P.bob*2)*0.018);
   {const cp=Math.cos(pitch);camera.position.set(ex,ey,ez);camera.lookAt(ex+cp*Math.cos(yaw),ey+Math.sin(pitch),ez+cp*Math.sin(yaw))}
+  if(pkShake>0){const k=0.05*pkShake;camera.position.x+=(Math.random()-0.5)*k;camera.position.y+=(Math.random()-0.5)*k;camera.position.z+=(Math.random()-0.5)*k;pkShake=Math.max(0,pkShake-0.03)}
   if(P.grab){const k=0.012+0.02*Math.min(1,P.grab.t);camera.position.x+=(Math.random()-0.5)*k;camera.position.y+=(Math.random()-0.5)*k;camera.position.z+=(Math.random()-0.5)*k}
   const B=F.biome;
   const fwx=Math.cos(yaw),fwz=Math.sin(yaw),rx=-fwz,rz=fwx;
@@ -3426,6 +3592,7 @@ function render(t){
   }
   if(flashT>0){const k=1-flashT,rr=0.4+k*5.5;
     for(let i=0;i<18;i++){const a=i/18*6.283+k;spr(ex+Math.cos(a)*rr,0.25+((i*7)%5)*0.16,ez+Math.sin(a)*rr,0.25,0.25,7,0.8,0.9,1.0,flashT*0.8,1)}}
+  pkFxDraw();
   for(const m of DUST){
     const px=ex+((m[0]+Math.sin(t*0.21+m[3])*0.4-ex)%8+12)%8-4,pz=ez+((m[2]+Math.cos(t*0.17+m[3])*0.4-ez)%8+12)%8-4;
     const py=0.05+((m[1]+t*0.012+Math.sin(t*0.3+m[3])*0.05)%1.15);
@@ -3484,7 +3651,8 @@ function drawHUD(){
   setHTML('hearts','♥'.repeat(Math.max(0,P.hp))+'<i>'+'♥'.repeat(Math.max(0,maxHp()-Math.max(0,P.hp)))+'</i>');
   setW('fuelFill',P.fuel);setW('stamFill',P.stam);
   setText('shards',GL.hudOv.shards||'◆ '+P.shards+' / 3 shards');
-  setText('flashes','✦ '+P.flash+' flash'+(P.flash===1?'':'es'));
+  setText('flashes','✦ '+P.flash+' flash'+(P.flash===1?'':'es')+(P.pick>0?'   ⛏ '+P.pick:''));
+  document.body.classList.toggle('haspick',P.pick>0&&state==='play');
   setText('keysLine',(P.keys?'⚷ gate key':'')+(P.ward?(P.keys?' · ':'')+'◈ ward stone':''));
   setText('embers','● '+wallet+(wallet===1?' gem':' gems')+' · Level '+plLevel());
   setText('mpLine',mpHudLine());
@@ -3540,9 +3708,9 @@ function step(now){
   const raw=Math.max(0,(now-last)/1000);last=now;
   const dt=Math.min(raw,0.05);
   pollPad();
-  if((state==='play')!==wasPlaying){wasPlaying=state==='play';document.body.classList.toggle('playing',wasPlaying)}
+  if((state==='play'||state==='room')!==wasPlaying){wasPlaying=state==='play'||state==='room';document.body.classList.toggle('playing',wasPlaying)}
   roomWatch();
-  if(state==='room'){ROOMS.update(dt,roomInput());if(state==='room')$('fade').style.opacity=ROOMS.fade()}
+  if(state==='room'){ROOMS.update(dt,roomInput());if(state==='room'){$('fade').style.opacity=ROOMS.fade();$('roomCross').classList.toggle('on',ROOMS.aimed())}}
   else if(ROOMS.watching){ROOMS.update(dt,NOIN);$('fade').style.opacity=ROOMS.fade()}
   const live=()=>state==='play'||(MP.on&&(state==='pause'||state==='talk'||state==='room'));
   // a fake hang: nothing moves for you, though the room carries on
@@ -3572,5 +3740,5 @@ setInterval(()=>{if(MP.host&&document.hidden&&performance.now()-last>200)step(pe
 // a backdrop maze behind the title screen
 R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
 {const rc=cleanCode(new URLSearchParams(location.search).get('room'));if(rc)mpPrepareJoin(rc)}
-window.__game={doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={update,render,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);
