@@ -1392,10 +1392,10 @@ const ROOMS=createRooms(renderer,{post:POST,low:Q===0,
   say:(t,s)=>say(t,s),tone:(...a)=>tone(...a),noise:(...a)=>noise(...a),rumble:(...a)=>rumble(...a),
   hud:h=>{const el=$('roomHud');if(el.innerHTML!==h)el.innerHTML=h},
   hurtFx:()=>{const h=$('hurt');h.style.transition='none';h.style.opacity=1;requestAnimationFrame(()=>{h.style.transition='opacity .9s';h.style.opacity=0})},
-  hint:()=>touch.on?'Stick: move, pull down to drop faster · JUMP turns the stone · DROP slams it down':pad.id?'Stick or D-pad: move · A turn · X slam down':'A D move · W turn · S faster · Space slam down'});
+  hint:()=>touch.on?'Left stick walk · drag to look · aim at a button and tap PRESS, or tap a button':pad.id?'Left stick walk · right stick look · aim at a button and press A or X':'WASD walk · mouse look · aim at a button and click, E or Space'});
 const ROOM_NAME={galaxy:'a door full of stars',kiln:'the glass kiln',fall:'a door with no floor behind it'};
 // a fallen player rides along with the friend they follow, into that friend's strange door too
-let RW=null,rvT=0;const NOIN={l:0,r:0,d:0,rot:0,drop:0,lx:0,ly:0};
+let RW=null,rvT=0;const NOIN={mx:0,my:0,press:0,lx:0,ly:0};let mouseL=false;
 function roomWatch(){
   const f=MP.on&&P.down&&(state==='play'||state==='pause')?MP.peers.get(MP.follow):null,rv=f&&f.away&&f.d===R.depth&&f.rv&&f.rv.d===R.depth&&performance.now()-f.rv.at<2000?f.rv:null;
   if(rv){
@@ -1414,7 +1414,7 @@ function sdoorOpen(D){
   mpSend({k:'sd',d:R.depth,i:F.sdoors.indexOf(D),w:D.kind});
   sfx('door');
   state='room';P.away=true;P.vx=P.vz=0;mapBig=false;
-  document.body.classList.add('inroom');$('tFlash').textContent=D.kind==='kiln'?'DROP':'FLASH';$('tJump').textContent=D.kind==='kiln'?'TURN':'JUMP';
+  document.body.classList.add('inroom');if(D.kind==='kiln'){document.body.classList.add('kilnroom');$('tFlash').textContent='PRESS';$('tJump').style.display='none'}
   $('fade').style.transition='none';$('fade').style.opacity=1;
   ROOMS.start(D.kind,roomEnd);
 }
@@ -1424,8 +1424,8 @@ function roomLeave(){
   ROOMS.abort();roomClose();
 }
 function roomClose(){
-  P.away=false;state='play';document.body.classList.remove('inroom');
-  $('tFlash').textContent='FLASH';$('tJump').textContent='JUMP';
+  P.away=false;state='play';document.body.classList.remove('inroom','kilnroom');mouseL=false;ROOMS.untap();
+  $('tFlash').textContent='FLASH';$('tJump').style.display='';
   $('fade').style.transition='opacity .4s';$('fade').style.opacity=0;
 }
 function roomEnd(res){
@@ -1452,9 +1452,12 @@ function roomEnd(res){
   if(MP.on)say(fall?'There was no floor. Your friends can still bring you back on the next floor.':'The kiln filled up. Your friends can still bring you back on the next floor.',5);
 }
 function roomInput(){
-  return {l:keys.KeyA||keys.ArrowLeft||pad.mx<-0.5||touch.mx<-0.5||pad.dl,r:keys.KeyD||keys.ArrowRight||pad.mx>0.5||touch.mx>0.5||pad.dr,
-    d:keys.KeyS||keys.ArrowDown||pad.my>0.5||touch.my>0.5||pad.dd,rot:keys.KeyW||keys.ArrowUp||keys.KeyE||pad.b0||pad.du||touch.jump,
-    drop:keys.Space||pad.b2||touch.act,lx:pad.lx*1.35+(ROOMS.kind==='galaxy'?(keys.ArrowRight?1:0)-(keys.ArrowLeft?1:0):0),ly:pad.ly};
+  const kb=ROOMS.kind==='kiln',ax=(a,b)=>(a?1:0)-(b?1:0);
+  // walking (the kiln hall) and looking; pressing is one thing for every device
+  return {mx:clamp(ax(keys.KeyD||(kb&&keys.ArrowRight),keys.KeyA||(kb&&keys.ArrowLeft))+pad.mx+touch.mx+ax(pad.dr,pad.dl),-1,1),
+    my:clamp(ax(keys.KeyS||(kb&&keys.ArrowDown),keys.KeyW||(kb&&keys.ArrowUp))+pad.my+touch.my+ax(pad.dd,pad.du),-1,1),
+    press:!!(mouseL||keys.KeyE||keys.Space||(keys.Enter&&!MP.on)||pad.b0||pad.b2||touch.act),
+    lx:pad.lx*1.35+(ROOMS.kind==='galaxy'?(keys.ArrowRight?1:0)-(keys.ArrowLeft?1:0):0),ly:pad.ly};
 }
 let doorMsgT=0, tipTimers=[];
 let mapBig=false, usingLock=false, pausedAt=0, flashT=0, sealMsgT=0, lowFuelSaid=false, pingT=0, beatT=0, titleYaw=0;
@@ -2336,7 +2339,7 @@ addEventListener('keydown',e=>{
   }
 });
 addEventListener('keyup',e=>{keys[e.code]=false});
-addEventListener('blur',()=>{for(const k in keys)keys[k]=false;pause()});
+addEventListener('blur',()=>{for(const k in keys)keys[k]=false;mouseL=false;pause()});
 document.addEventListener('visibilitychange',()=>{if(document.hidden)pause()});
 document.addEventListener('mousemove',e=>{
   if((state!=='play'&&state!=='room')||document.pointerLockElement!==canvas)return;
@@ -2351,13 +2354,14 @@ document.addEventListener('pointerlockchange',()=>{
   else if(usingLock){usingLock=false;pause()}
 });
 canvas.addEventListener('click',()=>{if((state==='play'||state==='room')&&!document.pointerLockElement)lock()});
-canvas.addEventListener('mousedown',e=>{if(state!=='play'||document.pointerLockElement!==canvas)return;if(e.button===0)act();else if(e.button===2)P.jumpQ=0.15});
+canvas.addEventListener('mousedown',e=>{if(state==='room'&&e.button===0)mouseL=true;if(state!=='play'||document.pointerLockElement!==canvas)return;if(e.button===0)act();else if(e.button===2)P.jumpQ=0.15});
+addEventListener('mouseup',e=>{if(e.button===0)mouseL=false});
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 $('startBtn').addEventListener('click',()=>{startRun($('seedIn').value.trim());lock()});
 $('resumeBtn').addEventListener('click',()=>resume(true));
 $('againBtn').addEventListener('click',()=>{startRun();lock()});
 // touch controls
-const touch={on:false,mx:0,my:0,jump:false,stickId:null,lookId:null,sx:0,sy:0,lx:0,ly:0};
+const touch={on:false,mx:0,my:0,jump:false,stickId:null,lookId:null,tapId:null,sx:0,sy:0,lx:0,ly:0};
 function enableTouch(){
   if(touch.on)return;touch.on=true;document.body.classList.add('touch');
   const upd=()=>{$('rotHint').textContent=innerHeight>innerWidth?'Turn your phone sideways for a wider view':''};
@@ -2378,6 +2382,8 @@ addEventListener('touchstart',()=>{enableTouch();initAudio()},{passive:true});
   layer.addEventListener('touchstart',e=>{
     e.preventDefault();
     for(const t of e.changedTouches){
+      // in the kiln hall a tap right on a button within reach presses it
+      if(state==='room'&&touch.tapId===null&&ROOMS.tap(t.clientX/innerWidth*2-1,1-t.clientY/innerHeight*2)){touch.tapId=t.identifier;continue}
       if(touch.stickId===null&&t.clientX<innerWidth*0.45){
         touch.stickId=t.identifier;touch.sx=t.clientX;touch.sy=t.clientY;
         base.style.left=knob.style.left=t.clientX+'px';base.style.top=knob.style.top=t.clientY+'px';
@@ -2396,7 +2402,7 @@ addEventListener('touchstart',()=>{enableTouch();initAudio()},{passive:true});
       }
     }
   },{passive:false});
-  const end=e=>{for(const t of e.changedTouches){if(t.identifier===touch.stickId)endStick();else if(t.identifier===touch.lookId)touch.lookId=null}};
+  const end=e=>{for(const t of e.changedTouches){if(t.identifier===touch.stickId)endStick();else if(t.identifier===touch.lookId)touch.lookId=null;else if(t.identifier===touch.tapId){touch.tapId=null;ROOMS.untap()}}};
   layer.addEventListener('touchend',end);layer.addEventListener('touchcancel',end);
   const btn=(id,down,up)=>{const el=$(id);
     el.addEventListener('touchstart',e=>{e.preventDefault();e.stopPropagation();el.classList.add('on');down()},{passive:false});
@@ -2405,7 +2411,7 @@ addEventListener('touchstart',()=>{enableTouch();initAudio()},{passive:true});
     el.addEventListener('touchmove',e=>{e.preventDefault();e.stopPropagation()},{passive:false});};
   btn('tJump',()=>{touch.jump=true;P.jumpQ=0.15},()=>{touch.jump=false});
   btn('tFlash',()=>{touch.act=true;if(state==='play')act()},()=>{touch.act=false});
-  btn('tPause',()=>{touch.jump=false;endStick();touch.lookId=null;pause()});
+  btn('tPause',()=>{touch.jump=false;endStick();touch.lookId=null;touch.tapId=null;ROOMS.untap();pause()});
   btn('tMap',()=>{mapBig=!mapBig});
   btn('tTalk',()=>{touch.talk=true},()=>{touch.talk=false});
   btn('tChat',()=>{chatOpenBox()});
@@ -3516,9 +3522,9 @@ function step(now){
   const raw=Math.max(0,(now-last)/1000);last=now;
   const dt=Math.min(raw,0.05);
   pollPad();
-  if((state==='play')!==wasPlaying){wasPlaying=state==='play';document.body.classList.toggle('playing',wasPlaying)}
+  if((state==='play'||state==='room')!==wasPlaying){wasPlaying=state==='play'||state==='room';document.body.classList.toggle('playing',wasPlaying)}
   roomWatch();
-  if(state==='room'){ROOMS.update(dt,roomInput());if(state==='room')$('fade').style.opacity=ROOMS.fade()}
+  if(state==='room'){ROOMS.update(dt,roomInput());if(state==='room'){$('fade').style.opacity=ROOMS.fade();$('roomCross').classList.toggle('on',ROOMS.aimed())}}
   else if(ROOMS.watching){ROOMS.update(dt,NOIN);$('fade').style.opacity=ROOMS.fade()}
   const live=()=>state==='play'||(MP.on&&(state==='pause'||state==='talk'||state==='room'));
   // a fake hang: nothing moves for you, though the room carries on
