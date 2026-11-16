@@ -11,6 +11,7 @@ import {makeSurfaces} from './textures.js';
 import {openRoom,newRoomCode,cleanCode} from './net.js';
 import {createVoice} from './voice.js';
 import {createRooms,kilnGame,KILN} from './rooms.js';
+import {getKeeperSculpt,keeperStats,KEEPER_TRIM_GLSL} from './keeper_sculpt.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('gl');
@@ -532,16 +533,45 @@ function paintedMaterial(glowBase){
     sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nattribute vec4 aLoc;varying vec4 vLoc;')
       .replace('#include <begin_vertex>','#include <begin_vertex>\nvLoc=aLoc;');
     sh.fragmentShader=sh.fragmentShader
-      .replace('#include <common>','#include <common>\nvarying vec4 vLoc;uniform float uGlowBase;float mRough=0.7;float mMetal=0.0;float mGlow=0.0;float mRim=0.0;'+MAT_GLSL)
+      .replace('#include <common>','#include <common>\nvarying vec4 vLoc;uniform float uGlowBase;float mRough=0.7;float mMetal=0.0;float mGlow=0.0;float mRim=0.0;float mSss=0.0;float mRimK=0.0;float mBump=0.0;'+KEEPER_TRIM_GLSL+MAT_GLSL)
+      .replace('#include <lights_physical_pars_fragment>',()=>THREE.ShaderChunk.lights_physical_pars_fragment.replace('vec3 irradiance = dotNL * directLight.color;',
+        // cheap subsurface look: wrapped diffuse that lets light bleed past the terminator, tinted red where it fades
+        `float nlS=dot(geometryNormal,directLight.direction);
+	vec3 irradiance=directLight.color*(mSss>0.001?pow(saturate((nlS+mSss)/(1.0+mSss)),2.0)*mix(vec3(1.0),vec3(1.0,0.5,0.34),mSss*(1.0-saturate(nlS*3.0))):vec3(dotNL));`))
       .replace('#include <color_fragment>',`
   {vec3 alb=vColor.rgb,q=vLoc.xyz;int m=int(vLoc.w+0.5);
     float fine=clamp(1.6+vViewPosition.z*0.45,0.0,1.0);
     float mott=fbm3(q*34.0);
-    if(m==1){alb*=0.92+0.16*mott;mRough=0.55;}
+    if(m==1){alb*=0.92+0.16*mott;mRough=0.55;mSss=0.2;mRimK=0.02;}
+    else if(m==12){ // sculpted skin (the Keeper): ruddy nose and cheeks, shadowed sockets, strong subsurface
+      alb*=0.9+0.2*mott;
+      float nose=smoothstep(0.022,0.0,length(q-vec3(0.102,0.054,0.0)));
+      float chk=smoothstep(0.03,0.0,length(vec3(q.x-0.062,q.y-0.058,abs(q.z)-0.046)));
+      alb=mix(alb,alb*vec3(1.12,0.78,0.72),clamp(nose*0.9+chk*0.5,0.0,1.0));
+      alb*=1.0-0.35*smoothstep(0.026,0.0,length(vec3(q.x-0.08,q.y-0.086,abs(q.z)-0.034)));
+      mRough=0.5;mSss=0.28;mRimK=0.015;mBump=1.0;
+    }else if(m==13){ // sculpted cloth: folds are in the geometry, so the shader only adds weave, nap and sheen
+      float folds=n3(vec3(q.x*55.0,q.y*5.0,q.z*55.0));
+      float weave=sin(q.y*1500.0)*sin((q.x+q.z)*1500.0);
+      alb*=(0.88+0.2*folds)*(0.93+0.14*mott)*(1.0+0.06*weave*fine);mRough=0.9;mRimK=0.04;mBump=1.0;
+      float gh=1.0-smoothstep(0.040,0.044,q.y+0.0015*mott); // gold hem roll
+      alb=mix(alb,vec3(0.8,0.58,0.18),gh);mRough=mix(mRough,0.55,gh);
+    }else if(m==15){ // sculpted torso: same cloth, gold sash and cuffs
+      float folds=n3(vec3(q.x*55.0,q.y*5.0,q.z*55.0));
+      float weave=sin(q.y*1500.0)*sin((q.x+q.z)*1500.0);
+      alb*=(0.88+0.2*folds)*(0.93+0.14*mott)*(1.0+0.06*weave*fine);mRough=0.9;mRimK=0.04;mBump=1.0;
+      float sa=(1.0-smoothstep(0.046,0.05,q.y))*smoothstep(-0.034,-0.026,q.y)*smoothstep(0.125,0.108,length(q.xz*vec2(1.0,0.94)))*smoothstep(0.062,0.075,length(q-cE2));
+      vec3 d1=q-cE1,d2=q-cE2;float t1=dot(d1,cF1),t2=dot(d2,cF2);
+      float cu=smoothstep(-0.032,-0.028,t1)*(1.0-smoothstep(0.012,0.016,t1))*(1.0-smoothstep(0.075,0.085,length(d1-cF1*t1)));
+      cu=max(cu,smoothstep(-0.032,-0.028,t2)*(1.0-smoothstep(0.012,0.016,t2))*(1.0-smoothstep(0.075,0.085,length(d2-cF2*t2))));
+      float gg=clamp(sa+cu,0.0,1.0);alb=mix(alb,vec3(0.8,0.58,0.18)*(0.85+0.3*mott),gg);mRough=mix(mRough,0.5,gg);
+    }else if(m==14){ // sculpted hair and beard
+      float st=n3(vec3(q.x*150.0,q.y*8.0,q.z*150.0));alb*=0.72+0.5*st;mRough=0.45;mRimK=0.015;mBump=1.0;
+    }
     else if(m==2){
       float folds=n3(vec3(q.x*55.0,q.y*5.0,q.z*55.0));
       float weave=sin(q.y*1500.0)*sin((q.x+q.z)*1500.0);
-      alb*=(0.8+0.26*folds)*(0.93+0.14*mott)*(1.0+0.07*weave*fine);mRough=0.95;
+      alb*=(0.8+0.26*folds)*(0.93+0.14*mott)*(1.0+0.07*weave*fine);mRough=0.95;mRimK=0.03;
     }else if(m==3){
       float bl=fbm3(q*50.0),scr=smoothstep(0.78,0.84,n3(vec3(q.x*260.0,q.y*22.0,q.z*260.0)));
       alb*=0.72+0.45*bl;alb=mix(alb,alb*1.5+0.03,scr*0.5*fine);mRough=0.5;
@@ -564,11 +594,23 @@ function paintedMaterial(glowBase){
     diffuseColor.rgb=pow(max(alb,vec3(0.0)),vec3(2.2));
     if(m==7)diffuseColor.rgb*=0.1;
   }`)
+      .replace('#include <normal_fragment_maps>',`#include <normal_fragment_maps>
+  if(mBump>0.5){ // real bump from a procedural height (metres), so pores, weave and strands catch the light without any triangles
+    vec3 q=vLoc.xyz;int m=int(vLoc.w+0.5);float fn=clamp(1.6+vViewPosition.z*0.45,0.0,1.0);float hh=0.0;
+    if(m==12){hh=0.0004*n3(q*380.0)+0.0006*smoothstep(0.125,0.14,q.y)*smoothstep(0.02,0.05,q.x)*smoothstep(0.075,0.04,abs(q.z))*sin(q.y*300.0+4.0*n3(q*30.0));}
+    else if(m==13||m==15){hh=0.0006*(n3(q*160.0)-0.5)+0.0003*fn*sin(q.y*1500.0)*sin((q.x+q.z)*1500.0);}
+    else if(m==14){hh=0.0009*n3(vec3(q.x*700.0,q.y*24.0,q.z*700.0));}
+    vec2 dh=vec2(dFdx(hh),dFdy(hh))*fn;
+    vec3 sX=dFdx(-vViewPosition),sY=dFdy(-vViewPosition),R1=cross(sY,normal),R2=cross(normal,sX);
+    float fDet=dot(sX,R1)*faceDirection;
+    normal=normalize(abs(fDet)*normal-sign(fDet)*(dh.x*R1+dh.y*R2));
+  }`)
       .replace('#include <roughnessmap_fragment>','float roughnessFactor=mRough;')
       .replace('#include <metalnessmap_fragment>','float metalnessFactor=mMetal;')
       .replace('#include <emissivemap_fragment>',`#include <emissivemap_fragment>
   {vec3 ec=pow(max(vColor.rgb,vec3(0.0)),vec3(2.2));
     totalEmissiveRadiance+=ec*(mGlow*1.6+uGlowBase);
+    if(mRimK>0.0){float fr=pow(1.0-abs(dot(normalize(normal),normalize(vViewPosition))),3.0);totalEmissiveRadiance+=ec*fr*mRimK;} // soft fresnel rim / cloth sheen
     if(mRim>0.5){float rim=pow(1.0-abs(dot(normalize(normal),normalize(vViewPosition))),3.0);totalEmissiveRadiance+=ec*rim*rim*1.6;}}`);
   };
   m.customProgramCacheKey=()=>'painted';
@@ -837,6 +879,41 @@ function face(H,o){
   ball(H,[0.089,ey-0.027,0],o.nose||[0.015,0.017,0.013],[sk[0]*0.93,sk[1]*0.88,sk[2]*0.86,1],true);
   if(o.mouth)slab(H,[0.08,0.034,0],[0.008,0.006+(o.talk||0),o.mouthW||0.03],o.mouth);
 }
+// ?npc=classic keeps the old primitive Keeper for comparison
+const NPC_CLASSIC=new URLSearchParams(location.search).get('npc')==='classic',ONE3=[1,1,1];
+// The Keeper from sculpted parts (src/keeper_sculpt.js), posed with the same frames and animation as the classic build.
+function buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,lod){
+  const K=getKeeperSculpt(lod);
+  const robe=[0.36,0.1,0.07,13],skin=[0.8,0.6,0.47,12],white=[0.9,0.9,0.86,14],wood=[0.3,0.2,0.12,6];
+  emit(K.skirt,B,ZERO3,ONE3,robe);
+  const U=subF(B,[0,0.48,0],rZ(-0.15)),bo=[0,breath,0];
+  emit(K.torso,U,bo,ONE3,[robe[0],robe[1],robe[2],15]);
+  ball(U,[0.1,0.02,0],0.02,[2.2,0.9,0.25,7],true);
+  // staff arm: the hand follows a slow sway and the staff hangs from it
+  const W1=K.gripAt,hw=fpt(U,[W1[0],W1[1]+br*0.01,W1[2]]);
+  emit(K.grip,{p:hw,R:B.R},ZERO3,ONE3,skin);
+  const SB={p:[hw[0],0,hw[2]],R:B.R};
+  seg(SB,[0,0,0],[0.003,0.34,-0.002],0.0135,0.0125,wood);seg(SB,[0.003,0.34,-0.002],[-0.002,0.68,0.003],0.0125,0.0115,wood);seg(SB,[-0.002,0.68,0.003],[0,1.0,0],0.0115,0.011,wood);
+  ball(SB,[0.003,0.34,-0.002],[0.0155,0.02,0.0155],wood,true);ball(SB,[-0.002,0.68,0.003],[0.014,0.018,0.014],wood,true);
+  seg(SB,[0,1.0,0],[0.07,1.06,0],0.011,0.009,wood);
+  seg(SB,[0.07,1.06,0],[0.07,1.0,0],0.004,0.004,[0.15,0.14,0.13,4]);
+  slab(SB,[0.07,0.955,0],[0.05,0.012,0.05],[0.16,0.15,0.14,4]);slab(SB,[0.07,0.885,0],[0.05,0.012,0.05],[0.16,0.15,0.14,4]);
+  for(const q of[[-1,-1],[1,-1],[-1,1],[1,1]])slab(SB,[0.07+q[0]*0.021,0.92,q[1]*0.021],[0.006,0.07,0.006],[0.16,0.15,0.14,4]);
+  ball(SB,[0.07,0.918,0],0.018,[3.0,1.5,0.4,7],true);
+  out.lantern=fpt(SB,[0.07,0.918,0]);
+  // resting hand on the sash
+  emit(K.rest,subF(U,K.restAt,K.restR),ZERO3,ONE3,skin);
+  // head, hair and the jaw-driven beard
+  const H=subF(U,[0.005,0.295+breath,0],m3(m3(rYaw(n.hy),rZ(n.hp+0.12+nod)),rX(Math.sin(t*0.5+ph)*0.03)));
+  emit(K.head,H,ZERO3,ONE3,skin);emit(K.hair,H,ZERO3,ONE3,white);emit(K.beard,H,[0,-jaw,0],ONE3,white);
+  const ey=0.085,iris=[0.55,0.3,0.1];
+  for(const z of[-0.034,0.034]){ // small hooded eyes sitting deep in the sockets
+    ball(H,[0.076,ey,z],[0.0105,0.0105*blink,0.0125],[0.96,0.95,0.92,8],true);
+    ball(H,[0.0825,ey-0.0005,z*0.98],[0.0058,0.0078*blink,0.0078],[iris[0],iris[1],iris[2],8],true);
+    ball(H,[0.0865,ey-0.0005,z*0.98],[0.0035,0.0045*blink,0.0045],[0.03,0.02,0.02,8],true);
+  }
+  out.top=1.0;
+}
 function buildNpc(n,t,ex,ey,ez,dtR){
   const dxp=ex-n.x,dzp=ez-n.z,dist=Math.hypot(dxp,dzp),toP=Math.atan2(dzp,dxp);
   const seated=n.type==='delver';
@@ -858,7 +935,8 @@ function buildNpc(n,t,ex,ey,ez,dtR){
   const nod=talking?Math.sin(t*5.5)*0.05:0,jaw=talking?Math.max(0,Math.sin(t*9))*0.006:0;
   const B={p:[n.x+(n.ox||0),0,n.z+(n.oz||0)],R:rYaw(n.yaw)};
   const out={top:1,lantern:null};
-  if(n.type==='keeper'){
+  if(n.type==='keeper'&&!NPC_CLASSIC&&dist<14)buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,dist<6&&Q>=1?0:1);
+  else if(n.type==='keeper'){
     const robe=[0.36,0.1,0.07,2],robeD=[0.24,0.07,0.06,2],gold=[0.8,0.58,0.18,2],skin=[0.8,0.6,0.47,1],white=[0.9,0.9,0.86,5],wood=[0.3,0.2,0.12,6];
     seg(B,[0,0,0],[0,0.05,0],0.178,0.172,gold);
     seg(B,[0,0.05,0],[0,0.5,0],0.172,0.092,robe);
@@ -3549,5 +3627,7 @@ setInterval(()=>{if(MP.host&&document.hidden&&performance.now()-last>200)step(pe
 // a backdrop maze behind the title screen
 R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
 {const rc=cleanCode(new URLSearchParams(location.search).get('room'));if(rc)mpPrepareJoin(rc)}
-window.__game={doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+// build the sculpted Keeper once, shortly after load, so the first sanctuary does not hitch
+if(!NPC_CLASSIC)setTimeout(()=>{try{getKeeperSculpt(Q>=1?0:1);getKeeperSculpt(1)}catch(e){console.error(e)}},1500);
+window.__game={keeperStats,getKeeperSculpt,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);
