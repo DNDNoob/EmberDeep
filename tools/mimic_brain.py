@@ -2,7 +2,9 @@
 
 Run it on the computer that hosts the game, next to Ollama:
 
-    uv run --with faster-whisper python tools/mimic_brain.py
+    uv run --with faster-whisper --with av==18.0.0 python tools/mimic_brain.py
+
+(av is pinned to 18 because av 19 breaks faster-whisper's audio decoding.)
 
 Then, in the game's pause menu (host only), tick "Local AI picks the mimic's lines".
 The contract is in docs/mimic-brain.md. Clips are kept in memory only for the length of one
@@ -37,6 +39,9 @@ MAX_JSON = 20_000
 
 _whisper = None
 _whisper_lock = threading.Lock()
+_pending = 0   # transcribe requests waiting for the lock or running
+_pending_lock = threading.Lock()
+MAX_PENDING = 2
 
 
 def transcribe(audio: bytes) -> str:
@@ -76,6 +81,9 @@ def pick(q: dict) -> str:
     clips = [c for c in q.get("clips", []) if isinstance(c, dict) and c.get("key") and c.get("text")][:12]
     if not clips:
         return ""
+    last = str(q.get("last") or "")
+    if len(clips) >= 2:   # never repeat the previous line when there is any other choice
+        clips = [c for c in clips if str(c["key"]) != last] or clips
     keys = [str(c["key"]) for c in clips]
     lines = "\n".join(f'{c["key"]} | "{str(c["text"])[:120]}"' for c in clips)
     prompt = (
@@ -86,7 +94,7 @@ def pick(q: dict) -> str:
         "Choose the ONE recording most likely to make the victim trust it and walk toward it: calls for help, "
         '"come here", "over here", "I found it", "wait for me", or their name. Avoid lines that mention the mimic, '
         "that sound like a warning, or that are just noise. "
-        f'Do not choose {q.get("last") or "(none)"} again unless nothing else fits.\n\n'
+        "\n\n"
         f"Recordings (key | what is said):\n{lines}\n\n"
         'Answer with JSON only: {"key": "<one of the keys>"}'
     )
@@ -141,9 +149,21 @@ class Handler(BaseHTTPRequestHandler):
             n = -1
         try:
             if path == "/emberdeep/transcribe":
+                global _pending
                 if not 0 < n <= MAX_CLIP:
                     return self._json(413, {"error": "clip too large"})
-                return self._json(200, {"text": transcribe(self.rfile.read(n))})
+                with _pending_lock:
+                    busy = _pending >= MAX_PENDING
+                    if not busy:
+                        _pending += 1
+                if busy:   # shed load: the game treats a non-200 as "no text"
+                    self.rfile.read(n)
+                    return self._json(503, {"error": "busy"})
+                try:
+                    return self._json(200, {"text": transcribe(self.rfile.read(n))})
+                finally:
+                    with _pending_lock:
+                        _pending -= 1
             if path == "/emberdeep/pick":
                 if not 0 < n <= MAX_JSON:
                     return self._json(413, {"error": "request too large"})

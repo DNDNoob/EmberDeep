@@ -9,10 +9,12 @@ Default address: `http://127.0.0.1:7794/emberdeep`. It can be changed in the pau
 `tools/mimic_brain.py` is a ready-made service (Python standard library plus faster-whisper):
 
 ```
-uv run --with faster-whisper python tools/mimic_brain.py
+uv run --with faster-whisper --with av==18.0.0 python tools/mimic_brain.py
 ```
 
-It transcribes with faster-whisper `small.en` on the CPU, so the graphics card stays free for the game, and picks lines with Ollama (`qwen3:4b-instruct-2507`, through AI-Router's queue at `127.0.0.1:7790/ollama`, or straight to `127.0.0.1:11434` if the queue is not running). `GET /emberdeep/health` shows it is up. Settings are environment variables listed at the top of the file.
+av is pinned to 18 because av 19 breaks faster-whisper's audio decoding.
+
+It transcribes with faster-whisper `small.en` on the CPU, so the graphics card stays free for the game, and picks lines with Ollama (`qwen3:4b-instruct-2507`, through AI-Router's queue at `127.0.0.1:7790/ollama`, or straight to `127.0.0.1:11434` if the queue is not running). `GET /emberdeep/health` shows it is up. Settings are environment variables listed at the top of the file. On a laptop CPU, `large-v3` takes about 12 s per clip; `small.en` or `distil-large-v3` are much faster, and transcription is background work, so slow only means fewer clips get text.
 
 ## Endpoints
 
