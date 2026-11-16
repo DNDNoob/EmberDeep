@@ -13,6 +13,7 @@
 // character's side. Mesh layout is stride 9: position xyz, normal xyz, paint (0 = colour, 1 = second colour),
 // detail mask (0..1, drives wrinkles / fine bump in the shader), baked ambient occlusion (1 = open).
 // game.js poses these with emitS().
+import {ANTHRO, HEAD_H} from './anthro.js';
 import {sculptIndexed, simplify, flatten, smin, smax, ssub, smoothstep, sdSphere, sdEllipsoid, sdRoundCone, sdCapsule, sdBox, fbm, noise, worley, setSeed} from './sculpt.js';
 
 const D2R = Math.PI / 180, cl = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -53,12 +54,12 @@ export function chain(x, y, z, pts, r0, r1, k) {
 export function head(p = {}) {
   const age = p.age ?? 0.8, jaw = p.jaw ?? 1, brow = p.brow ?? 1, ears = p.ears ?? 1, chin = p.chin ?? 1;
   const nose = {len: 1, width: 1, droop: 0.5, bulb: 1, ...(p.nose || {})}, cheek = {bone: 1, sag: age, ...(p.cheek || {})};
-  const E = {x: 0.072, y: 0.088, z: 0.031, r: 0.0115, ...(p.eye || {})};
+  const E = {x: 0.0735, y: 0.088, z: ANTHRO.interpupillary / 2 * HEAD_H, r: ANTHRO.eyeball / 2 * HEAD_H, ...(p.eye || {})};   // eyeball 24 mm, IPD 64 mm (ANTHRO)
   const sk = p.skull || [0.083, 0.09, 0.075], neck = p.neck ?? 1;
   const nb = [E.x + 0.013, E.y + 0.008];                                         // nose root, between the eyes
   const nt = [E.x + 0.012 + 0.022 * nose.len, E.y - 0.037 * nose.len - 0.004 * nose.droop]; // nose tip
   const ex = E.x, ey = E.y, ez = E.z, er = E.r;
-  const mouthY = nt[1] - 0.025, mouthX = nt[0] - 0.016;
+  const mouthY = nt[1] - 0.029, mouthX = nt[0] - 0.016;
   // the bony mass: cranium, face block, jaw; exported for parts that wrap the head (hair, beard)
   const skull = (x, y, z) => smin(sdEllipsoid(x + 0.004, y - 0.1, z, sk[0], sk[1], sk[2]), sdEllipsoid(x - 0.034, y - 0.058, z, 0.055, 0.062, 0.058 * jaw), 0.04);
   // skull plus jaw, no ears or nose: what a beard or a hood wraps
@@ -86,7 +87,7 @@ export function head(p = {}) {
     // carve: eye sockets (the eyeball fills them), orbital hollow, temples, nasolabial folds, under-eye bags
     d = ssub(d, sdSphere(x - ex, y - ey, zs - ez, er * 1.04), 0.003);
     d = smin(d, sdEllipsoid(x - (ex + 0.002), y - (ey - er * 1.02), zs - ez, er * 0.9, er * 0.32, er * 1.15), 0.003); // lower orbital rim closes the socket under the lid
-    d = ssub(d, sdEllipsoid(x - (ex + 0.009), y - (ey + 0.001), zs - (ez - 0.001), 0.006, 0.0105, 0.017), 0.009);
+    d = ssub(d, sdEllipsoid(x - (ex + 0.013), y - (ey + 0.002), zs - (ez - 0.001), 0.004, 0.007, 0.0145), 0.008);   // shallow hollow round the lids (was a deep 6 mm pit: the dark ring)
     d = ssub(d, sdSphere(x - 0.04, y - (ey + 0.01), zs - 0.082, 0.014), 0.012 * (0.5 + age));
     if (age > 0) {
       // fold from the nose wing down past the mouth corner
@@ -100,7 +101,7 @@ export function head(p = {}) {
   const paint = (x, y, z, o) => {
     const zs = Math.abs(z);
     o[0] = cl(0.8 * gauss(x, y, zs, [nt[0], nt[1], 0], 0.016) + 0.45 * gauss(x, y, zs, [ex + 0.006, ey - 0.03, ez + 0.012], 0.017) +
-      0.55 * gauss(x, y, zs, [ex + 0.006, ey, ez], 0.013) + 0.5 * gauss(x, y, zs, [mouthX, mouthY, 0], 0.01) + 0.35 * gauss(x, y, zs, [0.006, ey + 0.012, 0.085], 0.012), 0, 1);
+      0.2 * gauss(x, y, zs, [ex + 0.006, ey, ez], 0.011) + 0.5 * gauss(x, y, zs, [ex + 0.004, ey - 0.002, ez - 0.0135], 0.0035) + 0.5 * gauss(x, y, zs, [mouthX, mouthY, 0], 0.01) + 0.35 * gauss(x, y, zs, [0.006, ey + 0.012, 0.085], 0.012), 0, 1);
     // detail mask: forehead lines, crow's feet, under the eyes
     o[1] = cl(age * (smoothstep(ey + 0.022, ey + 0.035, y) * smoothstep(0.05, 0.075, x) * smoothstep(0.06, 0.03, zs) +
       gauss(x, y, zs, [ex - 0.002, ey, ez + 0.018], 0.01) + 0.7 * gauss(x, y, zs, [ex + 0.008, ey - 0.016, ez], 0.009)), 0, 1);
@@ -112,26 +113,49 @@ export function head(p = {}) {
   };
 }
 
-/* ---------- ears: a separate small SDF part (both ears), stuck on the side of the head ---------- */
-// A thin plate (concha floor) inside a raised helix ring, an antihelix ridge, a lobe, a tragus, and a short root that sinks
-// into the skull. Parts are joined with tiny smooth-min radii (1.5 to 3 mm), so the rim, bowl and lobe stay distinct. The ear
-// is tilted so its rear edge stands off the skull. p: {size, x, y, z (plate centre on the side of the head), flare (rad)}
+/* ---------- ears: a separate small SDF part (both ears), anatomically placed ---------- */
+// Sizes come from ANTHRO (ratios of head height): length 0.27, breadth 0.55 of length, ~20 mm protrusion at the rim.
+// Ear space: pivot = the front edge of the ear on the skull at ear mid-height. `a` runs backwards along the ear plate, `v`
+// up along the (back-tilted) long axis, `w` out of the plate. The plate is swung out about the pivot by `flare`, so the front
+// stays on the skull and the rear rim stands off it. Pieces: helix (a rolled C-shaped rim, thicker over the top and back),
+// scapha/fossa plate, concha bowl (recessed, leading to the canal), antihelix Y ridge (stem plus two crura), tragus, antitragus,
+// soft lobe, and a wall (root) joining the concha to the skull.  p: {size, x (front edge), y (centre height), flare, tilt}
 export function ears(H, p = {}) {
-  const es = (p.size ?? 1) * (1 + 0.12 * H.age), cx = p.x ?? -0.006, cy = p.y ?? 0.076, cz = p.z ?? 0.079, fl = p.flare ?? 0.35, ca = Math.cos(fl), sa = Math.sin(fl);
+  const es = (p.size ?? 1) * (1 + 0.1 * H.age) * ANTHRO.earLength * HEAD_H / 0.066;   // 1 = 66 mm in kit units
+  const px = p.x ?? 0.01, cy = p.y ?? 0.075, fl = p.flare ?? ANTHRO.earFlare, tl = p.tilt ?? ANTHRO.earTilt;
+  const ct = Math.cos(tl), st = Math.sin(tl), cp = Math.cos(fl), sp = Math.sin(fl);
+  let lo = 0.04, hi = 0.12; for (let i = 0; i < 24; i++) { const m = (lo + hi) / 2; if (H.skull(px, cy, m) < 0) lo = m; else hi = m; }
+  const pz = lo - 0.002;   // sink the front edge into the skull a little
+  const HW = 0.018, HL = 0.0335;   // half breadth (a) and half length (v) of the outline, kit metres at es = 1
   function sdf(x, y, z) {
-    const ux = x - cx, uz = Math.abs(z) - cz;
-    const u = (ux * ca - uz * sa) / es, w = (ux * sa + uz * ca) / es, v = (y - cy) / es;   // u forward, v up, w out of the head
-    const aa = 0.0165 * (1 + 0.18 * v / 0.03), q = (Math.hypot(u / aa, v / 0.031) - 1) * 0.02;   // egg outline, wider at the top
-    let d = Math.hypot(q, w - 0.0034) - 0.0033;                                            // helix: the raised rim
-    d = smin(d, smax(q + 0.0025, Math.abs(w + 0.0004) - 0.0019, 0.0015), 0.0015);           // concha floor
-    d = smin(d, sdCapsule(u, v, w, -0.0075, 0.016, 0.0028, 0.002, -0.004, 0.0028, 0.0026), 0.002);   // antihelix
-    d = smin(d, sdEllipsoid(u + 0.0005, v + 0.0265, w - 0.0008, 0.0085, 0.0085, 0.0042), 0.0025);    // lobe
-    d = smin(d, sdSphere(u - 0.0115, v + 0.003, w - 0.0004, 0.0046), 0.0018);                // tragus
-    d = smin(d, sdEllipsoid(u - 0.004, v + 0.001, w + 0.0075, 0.009, 0.019, 0.0085), 0.003); // root, sinks into the skull
+    const dx = x - px, dy = y - cy, dz = Math.abs(z) - pz;
+    const v0 = -dx * st + dy * ct, f = dx * ct + dy * st;
+    const a = (-f * cp + dz * sp) / es, w = (f * sp + dz * cp) / es, v = v0 / es;
+    if (Math.abs(v) > 0.05 || a < -0.02 || a > 0.05 || Math.abs(w) > 0.05) return 0.02 * es;   // bounding box
+    const ea = a - HW, aw = HW * (1 + 0.2 * v / HL * (v > 0 ? 1 : 0.6)), r0 = Math.hypot(ea / aw, v / HL);   // egg outline, wider at the top
+    const q = (r0 - 1) * 0.018;                                                                              // signed-ish distance to the outline
+    const curl = 0.0038 + 0.0012 * smoothstep(-0.005, 0.02, v) + 0.0008 * smoothstep(0.0, 0.03, a);          // rim thicker at the top and back
+    let d = Math.hypot(q, w - 0.0046 - 0.0010 * smoothstep(0, 0.03, v)) - curl;                                // helix: the rolled rim, a C round the plate
+    const bowl = 0.0058 * Math.exp(-(((a - 0.0115) / 0.0078) ** 2 + ((v + 0.006) / 0.0125) ** 2));            // concha dips below the scapha
+    const plate = smax(q + 0.002, Math.abs(w - 0.0028 + bowl) - 0.0017, 0.0012);
+    d = smin(d, plate, 0.0016);
+    // antihelix Y: stem from the lower concha rim up, forking into superior and inferior crura
+    const ah = Math.min(sdCapsule(a, v, w, 0.022, -0.011, 0.0065, 0.0155, 0.004, 0.0075, 0.0033),
+      Math.min(sdCapsule(a, v, w, 0.0155, 0.004, 0.0075, 0.0135, 0.021, 0.0065, 0.0028), sdCapsule(a, v, w, 0.0155, 0.004, 0.0075, 0.006, 0.0125, 0.0066, 0.0026)));
+    d = smin(d, ah, 0.0018);
+    d = smin(d, sdEllipsoid(a - 0.0025, v + 0.001, w - 0.0045, 0.0055, 0.0072, 0.0042), 0.0016);               // tragus, a flap over the canal
+    d = smin(d, sdEllipsoid(a - 0.0135, v + 0.0185, w - 0.0043, 0.0045, 0.0045, 0.003), 0.0015);              // antitragus
+    const lobe = sdEllipsoid(a - 0.0135, v + 0.0285, w - 0.0012, 0.0078, 0.0092, 0.0036);                      // soft earlobe
+    d = smin(d, lobe, 0.003);
+    d = smin(d, sdCapsule(a, v, w, 0.004, -0.001, -0.016, 0.0125, 0.0015, -0.0006, 0.0085), 0.004);            // wall: concha to skull
+    d = smin(d, sdCapsule(a, v, w, 0.004, -0.024, -0.012, 0.012, -0.027, -0.0015, 0.0055), 0.003);            // lobe attaches to the cheek at the front
     return d * es;
   }
-  return {sdf, bounds: [-0.05, 0.02, -0.115, 0.04, 0.135, 0.115], cell: p.cell || 0.0023, tris: p.tris || [520, 190],
-    cull: (x, y, z) => H.sdf(x, y, z) < -0.0008, project: 0.0015, paint: (x, y, z, o) => { o[0] = 0.32; o[1] = 0; }};
+  return {sdf, bounds: [-0.06, 0.02, -0.12, 0.04, 0.135, 0.12], cell: p.cell || 0.0021, tris: p.tris || [560, 200],
+    cull: (x, y, z) => H.sdf(x, y, z) < -0.0008, project: 0.0012, ao: 0.006,
+    paint: (x, y, z, o) => {   // pinker rim and lobe, darker bowl
+      const dx = x - px, dy = y - cy, dz = Math.abs(z) - pz, f = dx * ct + dy * st, a = (-f * cp + dz * sp) / es, v = (-dx * st + dy * ct) / es;
+      o[0] = 0.3 + 0.5 * Math.exp(-(((a - 0.0115) / 0.008) ** 2 + ((v + 0.006) / 0.012) ** 2)) + 0.2 * smoothstep(-0.02, -0.03, v); o[1] = 0; }};
 }
 
 /* ---------- hair on the head: a fringe round the back and sides, bald crown (horseshoe) ---------- */
@@ -174,15 +198,15 @@ export function brows(H, p = {}) {
 /* ---------- moustache: grows from the upper lip, droops past the mouth corners into the beard ---------- */
 export function moustache(H, p = {}) {
   const nt = H.noseTip, m = H.mouth, s = p.size ?? 1, droop = p.droop ?? 1;
-  const pts = [[nt[0] - 0.009, nt[1] - 0.012, 0.003], [m[0] + 0.004, m[1] + 0.003, 0.016], [m[0] - 0.003, m[1] - 0.006 * droop, 0.028], [m[0] - 0.012, m[1] - 0.026 * droop, 0.035]];
+  // starts ~4 mm below the nose base (a philtrum gap), rides on the upper lip, droops over the mouth corners; the mouth slit and lower lip stay free
+  const pts = [[m[0] + 0.005, m[1] + 0.0085, 0.0035], [m[0] + 0.004, m[1] + 0.0055, 0.015], [m[0] - 0.002, m[1] - 0.003 * droop, 0.027], [m[0] - 0.01, m[1] - 0.019 * droop, 0.034]];
   function sdf(x, y, z) {
     const zs = Math.abs(z);
-    let d = chain(x, y, zs, pts, 0.0095 * s, 0.004 * s, 0.008);
-    d = smin(d, sdEllipsoid(x - (nt[0] - 0.012), y - (nt[1] - 0.014), z, 0.008, 0.007, 0.012 * s), 0.008);
-    if (d < 0.01) d += 0.0012 * Math.sin((zs * 0.8 - y * 0.6) * 1400 + 5 * fbm(x * 80, y * 80, z * 80, 1)) + 0.0012 * fbm(x * 200, y * 200, zs * 100, 1);
+    let d = chain(x, y, zs, pts, 0.0066 * s, 0.0032 * s, 0.004);
+    if (d < 0.01) d += 0.0011 * Math.sin((zs * 0.8 - y * 0.6) * 1400 + 5 * fbm(x * 80, y * 80, z * 80, 1)) + 0.001 * fbm(x * 200, y * 200, zs * 100, 1);
     return d;
   }
-  return {sdf, bounds: [m[0] - 0.035, m[1] - 0.045, -0.055, nt[0] + 0.01, nt[1], 0.055], cell: p.cell || 0.0024, tris: p.tris || [300, 110],
+  return {sdf, bounds: [m[0] - 0.035, m[1] - 0.04, -0.055, nt[0] + 0.01, nt[1] - 0.008, 0.055], cell: p.cell || 0.0022, tris: p.tris || [300, 110],
     cull: (x, y, z) => H.sdf(x, y, z) < -0.002, project: 0.002};
 }
 
@@ -194,19 +218,22 @@ export function beard(H, p = {}) {
   function sdf(x, y, z) {
     const zs = Math.abs(z);
     // shell over the lower face: offset of the head surface, kept below the cheek line and in front of the ears
-    let d = H.jawSdf(x, y, z) - th;
+    // thickness fades to nothing towards the cheek line (the shell sinks into the skin: sparse, soft edge); full thickness under the chin
+    const yTop = cheekY - 0.02 * smoothstep(0.03, 0.0, x) + 0.006 * smoothstep(0.015, 0.03, zs) - 0.012 * smoothstep(0.012, 0.0, zs);
+    const thE = (th + 0.0012) * smoothstep(0, 0.035, yTop - y) * (0.6 + 0.4 * smoothstep(m[1], m[1] - 0.05, y)) - 0.0012;
+    let d = H.jawSdf(x, y, z) - thE;
     d = smax(d, zs - 0.06, 0.01);
-    d = smax(d, y - (cheekY - 0.02 * smoothstep(0.03, 0.0, x) + 0.006 * smoothstep(0.015, 0.03, zs) - 0.012 * smoothstep(0.012, 0.0, zs)), 0.006);
+    d = smax(d, y - yTop - 0.004, 0.004);
     d = smax(d, -(x - 0.002), 0.01);
-    d = smax(d, y - (m[1] - 0.004) + (zs < 0.02 ? 1 : 0) * 0 - 0.04 * smoothstep(0.024, 0.04, zs), 0.004) ; // under the lip in front, up to the cheek at the sides
+    d = smax(d, y - (m[1] - 0.0135) - 0.05 * smoothstep(0.02, 0.036, zs), 0.003); // under the lip in front, up to the cheek at the sides
     // the hanging mass: a tapered, slightly wavy cone below the chin
     const t = cl(-(y - 0.0) / L, 0, 1), tt = Math.pow(t, 1.25);
     const cx = m[0] - 0.024 + 0.035 * tt + 0.004 * Math.sin(t * 9), wx = (0.034 * Math.pow(1 - t, 0.9) + 0.008), wz = W * (0.05 * Math.pow(1 - t, 1.1) + 0.009);
     const ux = (x - cx) / wx, uz = (z + 0.005 * Math.sin(t * 7)) / wz;
     let h = (Math.hypot(ux, uz) - 1) * Math.min(wx, wz) * 0.9;
-    h = smax(h, y - (m[1] - 0.012), 0.025);
+    h = smax(h, y - (m[1] - 0.0185), 0.008);
     h = smax(h, -(y + L + 0.005), 0.02);
-    d = smin(d, h, 0.02);
+    d = smin(d, h, 0.012);
     if (fork > 0 && t > 0.55) d = ssub(d, Math.max(Math.abs(z) - 0.0035 * fork, Math.abs(y + L * 0.93) - L * 0.25, Math.abs(x - cx) - 0.05), 0.006);
     if (d < 0.015) {
       const a = Math.atan2(uz, ux);

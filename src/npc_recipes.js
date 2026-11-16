@@ -21,7 +21,7 @@ const ARMS = [
   {S: [0, 0.32, -0.1], E: [0.02, 0.16, -0.13], W: [0.086, 0.06, -0.064], r: [0.04, 0.042, 0.052], back: 0.024} // hand resting on the sash
 ];
 export const KEEPER = {
-  id: 'keeper-v4', seed: 4242,
+  id: 'keeper-v5', seed: 4242,
   // Human proportions (see docs/npc-kit.md): the head is built at its natural size and drawn at headScale; the torso is
   // stretched (len) and the skirt (legs) raised so the figure is ~7.25 heads tall with shoulders about 2.7 head widths wide.
   proportions: {headScale: 0.6, frames: ['H', 'J'], height: 0.93},   // height: uniform scale of the whole figure and its props (crown 1.03 m * 0.93 = 0.96 m)
@@ -52,7 +52,7 @@ export const KEEPER = {
   eyes: {frame: 'H', sclera: 'sclera', iris: 'iris', pupil: 'pupil', lid: 'skin', lid2: 'skinDeep'},
   build() {
     const U = {off: this.rig.waist, R: K.rotZ(this.rig.lean)};
-    const H = K.head({age: 0.9, brow: 1.25, jaw: 1.0, ears: 1.05, nose: {len: 1.1, width: 1.05, droop: 0.9, bulb: 1.15}, eye: {x: 0.071, y: 0.088, z: 0.031, r: 0.0112}, tris: [1000, 380]});
+    const H = K.head({age: 0.9, brow: 1.25, jaw: 1.0, ears: 1.05, nose: {len: 1.1, width: 1.05, droop: 0.9, bulb: 1.15}, tris: [1000, 380]});
     const skirt = K.robeSkirt({height: 0.57});
     const torso = K.robeTorso({arms: ARMS, waist: 0.095, len: 1.35, chest: [0.075, 0.145 * 1.35, 0.1]});
     const skirtBody = (x, y, z) => skirt.sdf(x, y, z) / 0.8;
@@ -70,7 +70,7 @@ export const KEEPER = {
       parts: {skirt, hem, torso, sash: torso.trims.sash, cuff0: torso.trims.cuffs[0], cuff1: torso.trims.cuffs[1],
         head: H, ears: K.ears(H), hair: K.hairCap(H, {crown: 0.128}), brows: K.brows(H, {size: 1.15, droop: 1.1}), moustache: K.moustache(H, {size: 1.1}),
         beard: K.beard(H, {length: 0.27, fork: 1, tris: [480, 180]}), gripHand: sleeveCull(grip), restHand: sleeveCull(rest)},
-      eyes: {r: H.eye.r, iris: 0.5, open: 9, low: -21, arch: 9},
+      eyes: {r: H.eye.r, iris: 0.5, open: 12, low: -24, arch: 9, lidT: 0.0021},
       anchors: {
         eye: [H.eye.x, H.eye.y, H.eye.z],
         // staff hand: thumb up, palm facing the body, held axis vertical (hand Z -> down)
