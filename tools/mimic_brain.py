@@ -9,7 +9,7 @@ The contract is in docs/mimic-brain.md. Clips are kept in memory only for the le
 request; nothing is written to disk or sent anywhere except the local Ollama.
 
 Settings (environment variables):
-    MIMIC_PORT      port to listen on (default 7792)
+    MIMIC_PORT      port to listen on (default 7794)
     MIMIC_OLLAMA    Ollama base URL (default http://127.0.0.1:7790/ollama, AI-Router's queue;
                     falls back to http://127.0.0.1:11434 if that does not answer)
     MIMIC_MODEL     chat model (default qwen3:4b-instruct-2507)
@@ -25,7 +25,7 @@ import threading
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-PORT = int(os.environ.get("MIMIC_PORT", "7792"))
+PORT = int(os.environ.get("MIMIC_PORT", "7794"))
 OLLAMA = [u.rstrip("/") for u in os.environ.get(
     "MIMIC_OLLAMA", "http://127.0.0.1:7790/ollama,http://127.0.0.1:11434").split(",") if u.strip()]
 MODEL = os.environ.get("MIMIC_MODEL", "qwen3:4b-instruct-2507")

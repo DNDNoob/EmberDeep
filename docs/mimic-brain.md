@@ -2,7 +2,7 @@
 
 Optional. When the host turns on **Local AI picks the mimic's lines** (pause menu, host only), the host's browser talks to a small HTTP service on the host's own computer. If the service is missing or slow, the mimic falls back to its built-in choice (longer, louder clips, never the same one twice in a row).
 
-Default address: `http://127.0.0.1:7792/emberdeep`. It can be changed in the pause menu.
+Default address: `http://127.0.0.1:7794/emberdeep`. It can be changed in the pause menu.
 
 ## Running it
 
