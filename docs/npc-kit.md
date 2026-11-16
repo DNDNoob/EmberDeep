@@ -58,12 +58,12 @@ All are in `src/npc_kit.js`. Units are metres, in the part's frame: +X is forwar
 
 | Builder | Parameters | Notes |
 |---|---|---|
-| `ears(H,p)` | `size`, `x,y,z` (plate centre on the side of the head), `flare` (rad, how far the rear edge stands off) | Separate small SDF part for both ears (helix rim, concha floor, antihelix, lobe, tragus, root; 1.5 to 3 mm smooth-min), cell 2.3 mm. Add `{part:'ears', frame:'H', mat:'skin'}`. `head()` has no ears of its own any more |
+| `ears(H,p)` | `size`, `x` (front edge of the ear), `y` (mid-height), `flare` (rad, default 30 deg: how far the plate swings out about its front edge), `tilt` (default 17 deg back) | Separate SDF part for both ears, sized from `ANTHRO` (0.27 of head height, total extent incl. rim). Ear space is pivoted on the front edge, which is sunk into the skull, so the rear rim stands ~20 mm off it. Helix (rolled C rim, thicker at top and back), scapha plate, recessed concha bowl, antihelix Y ridge, tragus, antitragus, lobe, wall to the skull. Cell 2.1 mm, ao radius 6 mm so the bowl darkens. Add `{part:'ears', frame:'H', mat:'skin'}`. `head()` has no ears of its own |
 | `head(p)` | `age` 0..1 (sag, nasolabial fold, eye bags, wrinkle mask), `jaw` (width), `chin`, `brow` (ridge weight, 1.2+ for deep-set eyes), `nose:{len,width,droop,bulb}`, `cheek:{bone,sag}`, `ears`, `eye:{x,y,z,r}` (centre, half spacing, radius), `skull:[rx,ry,rz]`, `neck` | Returns `.eye`, `.noseTip`, `.mouth`, plus `.skull`/`.jawSdf` for parts that wrap the head |
 | `hairCap(H,p)` | `thick`, `crown` (bald line height; raise above 0.2 for a full head), `front`, `hang` | Horseshoe fringe; culls itself inside the head |
 | `brows(H,p)` | `size`, `droop`, `lift` | Sits on the brow ridge, so it is always attached |
-| `moustache(H,p)` | `size`, `droop` | Grows from the upper lip |
-| `beard(H,p)` | `length`, `width`, `thick`, `fork` 0..1, `cheekLine` | A shell over the jaw plus a hanging mass; draw it in frame `J` |
+| `moustache(H,p)` | `size`, `droop` | Rides on the upper lip: its top is ~4 mm below the nose base (philtrum gap, never merges with the nostrils), droops over the mouth corners, mouth slit and lower lip stay free. Small smooth-min (4 mm) |
+| `beard(H,p)` | `length`, `width`, `thick`, `fork` 0..1, `cheekLine` | A shell over the jaw plus a hanging mass; draw it in frame `J`. Shell thickness fades to zero towards the cheek line (it sinks into the skin: sparse, soft edge, clumps from the strand noise) and is full below the chin. It starts below the lower lip, so the lip shows |
 | `hand(p)` | `pose:'rest'|'grip'|'point'`, `side` ±1 (the Z the thumb is on), `size`, `age` (knuckles), `gripR` (radius of the held thing), `curl`, `spread` | Wrist at the origin, fingers along +X, back of the hand +Y. `grip` returns `.grip` = held axis [x,y] (along hand Z) |
 | `robeSkirt(p)` | `height`, `hem`, `waist`, `folds`, `depth` | `.base` is the smooth silhouette |
 | `robeTorso(p)` | `arms:[{S,E,W,r:[shoulder,elbow,mouth],back}]`, `chest`, `waist`, `sash:{y,h}` | Returns `.trims.sash`, `.trims.cuffs[]`, `.ends[]` (sleeve mouths for hands), `.body` |
@@ -143,7 +143,17 @@ node tools/npc_shot.mjs --file old.html --prefix before --views face            
 
 `__game.studio()` moves the NPC into a straight corridor far from braziers and sconces, freezes gameplay, and fixes the camera. The light is the player's torch plus ambient: what players see in most of the maze, and the same for every build. Every view takes 30 to 50 s (software GL). Use `face` and `hands` while iterating, and look at every PNG.
 
+## Human proportions: read `docs/anthropometry.md`
+
+`src/anthro.js` exports `ANTHRO` (ratios of head height from ANSUR II / Farkas) and `HEAD_H`. Defaults of `head()` (`eye.r`, `eye.z`) and `ears()` come from it, so a new NPC gets anatomical eyes (24 mm ball, 64 mm IPD, 11.7 mm iris) and ears (0.27 head height, 30 deg flare, 17 deg tilt) for free. `node tools/npc_measure.mjs NAME` prints the recipe's ratios against the reference with a tolerance column. Lessons from the Keeper v5:
+
+- **Eyes**: a deep orbital carve in front of the eyeball (the old 6 mm pit) read as a dark ring and sunken eyes. Keep only a shallow hollow, put the eyeball front level with the brow and cheek, keep paint around the socket light (0.2) and use a small pink spot at the inner corner as the tear duct. Lids: `open` 12, `low` -24, `lidT` 2.1 mm for an old man.
+- **Ears**: build them pivoted on the front edge and flare the plate out; a plate centred on the skull lies flat and reads as an oval stuck on the cheek. Check front view: the rims must be visible beside the head.
+- **Moustache and beard**: put the moustache top below the nose base, not on the nose tip; end the beard shell with a thickness fade (negative thickness inside the skin), not a hard `smax` plane; keep the mass below the lower lip.
+
 ## Pitfalls we hit
+
+- **Trim region slabs cut through other cloth** (the "air gap" band across the Keeper's chest): `trimBand`'s `region` for a sleeve cuff was only a slab perpendicular to the forearm (`-0.028 < t < 0.016` along the arm axis), and `covers` (used to cull cloth hidden under the band) is region AND near the body surface. The slab extends infinitely sideways, so it also culled the torso surface wherever the plane crossed the chest, leaving a jagged hole where you saw the inside. Always bound a band's region radially too (`rad - (sleeveRadius + 0.025)`). If a hole appears in cloth, test `part.cull` for the culling band first.
 
 - **Parts buried in other parts**: brows centred on the brow ridge ended up mostly inside it, and only fragments showed. Put a part's centreline *outside* the surface it grows from, then cull with `H.sdf(...) < -0.0015`.
 - **Beards that float or flare**: build the cheek part as an offset of `H.jawSdf` (no ears or nose) and clamp `|z|`. An offset of the full head wraps the ears into wings.

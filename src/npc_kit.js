@@ -121,7 +121,7 @@ export function head(p = {}) {
 // scapha/fossa plate, concha bowl (recessed, leading to the canal), antihelix Y ridge (stem plus two crura), tragus, antitragus,
 // soft lobe, and a wall (root) joining the concha to the skull.  p: {size, x (front edge), y (centre height), flare, tilt}
 export function ears(H, p = {}) {
-  const es = (p.size ?? 1) * (1 + 0.1 * H.age) * ANTHRO.earLength * HEAD_H / 0.066;   // 1 = 66 mm in kit units
+  const es = (p.size ?? 1) * (1 + 0.1 * H.age) * ANTHRO.earLength * HEAD_H / 0.066 * 0.78;   // 0.78: the helix rim and lobe add to the nominal outline, so total extent = ANTHRO.earLength
   const px = p.x ?? 0.01, cy = p.y ?? 0.075, fl = p.flare ?? ANTHRO.earFlare, tl = p.tilt ?? ANTHRO.earTilt;
   const ct = Math.cos(tl), st = Math.sin(tl), cp = Math.cos(fl), sp = Math.sin(fl);
   let lo = 0.04, hi = 0.12; for (let i = 0; i < 24; i++) { const m = (lo + hi) / 2; if (H.skull(px, cy, m) < 0) lo = m; else hi = m; }

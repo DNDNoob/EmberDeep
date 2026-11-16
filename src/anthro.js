@@ -12,6 +12,6 @@ export const ANTHRO = Object.fromEntries(Object.entries(ANTHRO_MM).map(([k, v]) 
 // derived rules of thumb
 ANTHRO.earWidthOverLength = 0.55;       // ear breadth / ear length
 ANTHRO.earTilt = 17 * Math.PI / 180;    // ear long axis leans back from vertical
-ANTHRO.earFlare = 25 * Math.PI / 180;   // rim stands off the skull by this angle
+ANTHRO.earFlare = 30 * Math.PI / 180;   // rim stands off the skull by this angle
 ANTHRO.eyeVisible = 1 / 3;              // fraction of the eyeball visible between the lids (vertical)
 ANTHRO.elderlyStature = 0.96;           // old men are a few percent shorter and stooped

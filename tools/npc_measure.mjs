@@ -17,3 +17,21 @@ const headH = (top - chin) * sc, total = wy(Math.max(top, hairTop), 0.0);
 console.log(`${rec.id}: head scale ${sc} (height ${Sh})`);
 console.log(`head chin-to-crown ${headH.toFixed(4)}  head width ${(2 * wid * sc).toFixed(4)}`);
 console.log(`crown height ${total.toFixed(4)}  (neck top ${ny.toFixed(3)})  => ${(total / headH).toFixed(2)} heads tall`);
+
+// ---- compare with the human reference (src/anthro.js). Ratios are to head height (chin to crown of the skull), in head-local units.
+import {ANTHRO} from '../src/anthro.js';
+const Hh0 = top - chin, bbox = M => { const b = [9, 9, 9, -9, -9, -9]; for (let i = 0; i < M.length; i += 9) for (let k = 0; k < 3; k++) { b[k] = Math.min(b[k], M[i + k]); b[k + 3] = Math.max(b[k + 3], M[i + k]); } return b; };
+const rows = [];
+const add = (name, v, ref, tol) => rows.push([name, v, ref, tol]);
+if (E) {
+  const eb = bbox(E), ez = [], hz = Math.max(...Array.from({length: H.length / 9}, (_, i) => Math.abs(H[i * 9 + 2])).filter((_, i) => H[i * 9 + 1] > 0.05 && H[i * 9 + 1] < 0.12 && Math.abs(H[i * 9]) < 0.05));
+  add('ear length', (eb[4] - eb[1]) / Hh0, ANTHRO.earLength, 0.04);
+  add('ear breadth / length', (Math.max(...Array.from({length: E.length / 9}, (_, i) => E[i * 9])) - Math.min(...Array.from({length: E.length / 9}, (_, i) => E[i * 9]))) / (eb[4] - eb[1]) * 0.8, 0.55, 0.1);
+  add('ear protrusion from skull', (eb[5] - hz) / Hh0, ANTHRO.earProtrusion, 0.03);
+}
+const er = b.anchors.eye;
+add('interpupillary', 2 * er[2] / Hh0, ANTHRO.interpupillary, 0.02);
+if (b.eyes) { add('eyeball diameter', 2 * b.eyes.r / Hh0, ANTHRO.eyeball, 0.012); add('iris diameter', 2 * b.eyes.r * (rec.build().eyes.iris ?? 0.5) / Hh0, ANTHRO.iris, 0.012); }
+add('head breadth (skull, no ears)', 2 * Math.max(...Array.from({length: H.length / 9}, (_, i) => Math.abs(H[i * 9 + 2])).filter((_, i) => H[i * 9 + 1] > 0.05 && H[i * 9 + 1] < 0.12 && Math.abs(H[i * 9]) < 0.05)) / Hh0, ANTHRO.headBreadth, 0.06);
+console.log('\nmeasure'.padEnd(32), 'actual'.padStart(7), 'ref'.padStart(7), 'tol'.padStart(6), ' ok');
+for (const [n, v, r, t] of rows) console.log(n.padEnd(31), v.toFixed(3).padStart(7), r.toFixed(3).padStart(7), ('+-' + t).padStart(6), Math.abs(v - r) <= t ? ' ok' : ' OFF');
