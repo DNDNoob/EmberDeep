@@ -222,7 +222,7 @@ export function createTheater(env){
       add(T.head,new THREE.SphereGeometry(0.13,14,8,0,6.283,0,1.5),mHair,0,0.13,0.01).scale.set(1,1,1.05);
       if(T.hood)add(T.head,new THREE.SphereGeometry(0.15,12,10,0,6.283,0,2.2),mH,0,0.09,0.05).scale.set(1,1,1.1);
       T.eyes=[];for(const s of [-1,1]){const e=add(T.head,new THREE.SphereGeometry(0.02,8,6),eyeMat,s*0.047,0.135,-0.118);T.eyes.push(e);add(T.head,bx(0.05,0.008,0.01),mHair,s*0.047,0.17,-0.12,0,0,-s*0.12)}
-      T.eg=glow(0x66aaff,0.5,0);T.eg.position.set(0,0.135,-0.16);T.head.add(T.eg);eyeGlows.push(T.eg);
+      T.eg=glow(0x5599ff,0.26,0);T.eg.position.set(0,0.135,-0.16);T.head.add(T.eg);eyeGlows.push(T.eg);
       add(T.head,new THREE.SphereGeometry(0.015,6,5),mS,0,0.095,-0.135);   // nose
       T.mouth=add(T.head,new THREE.SphereGeometry(0.03,10,8),new THREE.MeshBasicMaterial({color:0x1a0508}),0,0.045,-0.12);T.mouth.scale.set(1,0.8,0.4);
       // the drool: a strand that stretches from the lip, and a drop that falls from its end
@@ -666,10 +666,10 @@ export function createTheater(env){
     S.test.api=q=>{
       if(!q||typeof q!=='object')return;
       if('level' in q)S.test.level=q.level===null?null:+q.level;
-      if(typeof q.heard==='string')heard(q.heard);
-      if(q.reel)toReel('test');
       if('noSR' in q)S.test.noSR=!!q.noSR;
       if(q.force)S.test.force=true;
+      if(typeof q.heard==='string')heard(q.heard);
+      if(q.reel)toReel('test');
     };
     S.frame=()=>{
       const asp=cam.aspect||1;cam.fov=asp<1?Math.min(100,2*Math.atan(Math.tan(37.5*Math.PI/180)/asp)*180/Math.PI):70;cam.updateProjectionMatrix();
