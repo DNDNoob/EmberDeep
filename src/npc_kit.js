@@ -566,8 +566,8 @@ export function dress(B, list) {
       return d;
     };
     const mouth = (x, y, z, d) => ssub(d, sdSphere(x - (a.end[0] + 0.03 * a.F[0]), y - (a.end[1] + 0.03 * a.F[1]), z - (a.end[2] + 0.03 * a.F[2]), rw * 0.76), 0.004);
-    const sdf = (x, y, z) => mouth(x, y, z, fold(x, y, z, sb(x, y, z)));
-    return {sg, a, sb, sdf, rw};
+    const cloth = (x, y, z) => fold(x, y, z, sb(x, y, z)), sdf = (x, y, z) => mouth(x, y, z, cloth(x, y, z));
+    return {sg, a, sb, sdf, cloth, rw};
   });
   const sleeveMin = (x, y, z) => { let d = 9; for (const s of sl) d = Math.min(d, s.sb(x, y, z)); return d; };
   const torsoFold = (x, y, z) => {
@@ -592,18 +592,18 @@ export function dress(B, list) {
   const trims = {};
   if (sash) {
     const sy = sash.y, sh = sash.h;
-    trims.sash = trimBand(base, (x, y, z) => Math.abs(y - sy) - sh, {thick: sash.thick ?? 0.006, bounds: [-0.14, sy - sh - 0.01, -0.14, 0.14, sy + sh + 0.01, 0.14], tris: [130, 50], cell: 0.0042});
+    trims.sash = trimBand(torsoFold, (x, y, z) => Math.abs(y - sy) - sh, {thick: sash.thick ?? 0.006, coverTol: 0.011, bounds: [-0.14, sy - sh - 0.01, -0.14, 0.14, sy + sh + 0.01, 0.14], tris: [130, 50], cell: 0.0042});
     parts.sash = trims.sash;
   }
   sl.forEach((s, i) => {
-    const {a, sb, sdf, sg} = s, cf = sg.cuff;
+    const {a, sb, sdf, sg, cloth} = s, cf = sg.cuff;
     parts['sleeve' + i] = {sdf, bounds: [Math.min(a.S[0], a.E[0], a.W[0]) - 0.09, Math.min(a.S[1], a.E[1], a.W[1]) - 0.09, Math.min(a.S[2], a.E[2], a.W[2]) - 0.09,
       Math.max(a.S[0], a.E[0], a.W[0]) + 0.09, Math.max(a.S[1], a.E[1], a.W[1]) + 0.09, Math.max(a.S[2], a.E[2], a.W[2]) + 0.09], cell: sg.cell || 0.0075, tris: sg.tris || [380, 150], project: 0.004,
       aoSdf: (x, y, z) => Math.min(sdf(x, y, z), base(x, y, z) + 0.002), paint: (x, y, z, o) => { o[0] = 0.85 * crease(x, y, z, base); },
       cull: (x, y, z) => base(x, y, z) < -0.004};
     if (cf) {
-      const cuff = trimBand(sb, (x, y, z) => { const t = (x - a.end[0]) * a.F[0] + (y - a.end[1]) * a.F[1] + (z - a.end[2]) * a.F[2], vx = x - a.end[0], vy = y - a.end[1], vz = z - a.end[2], rad = Math.sqrt(Math.max(0, vx * vx + vy * vy + vz * vz - t * t)); return Math.max(-(cf.len ?? 0.028) - t, t - 0.016, rad - (s.rw + 0.025)); },   // radial cap: a bare slab would cut through the chest cloth
-        {thick: cf.thick ?? 0.005, bounds: [a.end[0] - 0.08, a.end[1] - 0.08, a.end[2] - 0.08, a.end[0] + 0.08, a.end[1] + 0.08, a.end[2] + 0.08], tris: [80, 30], cell: 0.0042});
+      const cuff = trimBand(cloth, (x, y, z) => { const t = (x - a.end[0]) * a.F[0] + (y - a.end[1]) * a.F[1] + (z - a.end[2]) * a.F[2], vx = x - a.end[0], vy = y - a.end[1], vz = z - a.end[2], rad = Math.sqrt(Math.max(0, vx * vx + vy * vy + vz * vz - t * t)); return Math.max(-(cf.len ?? 0.028) - t, t - 0.016, rad - (s.rw + 0.025)); },   // radial cap: a bare slab would cut through the chest cloth
+        {thick: cf.thick ?? 0.005, coverTol: 0.011, bounds: [a.end[0] - 0.08, a.end[1] - 0.08, a.end[2] - 0.08, a.end[0] + 0.08, a.end[1] + 0.08, a.end[2] + 0.08], tris: [80, 30], cell: 0.0042});
       parts['cuff' + i] = cuff; const c0 = parts['sleeve' + i].cull; parts['sleeve' + i].cull = (x, y, z) => c0(x, y, z) || cuff.covers(x, y, z);
     }
     ends[i] = {at: a.W, end: a.end, dir: a.F, r: s.rw};
