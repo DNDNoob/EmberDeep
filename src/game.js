@@ -551,7 +551,7 @@ function paintedMaterial(glowBase){
     else if(m==12){ // sculpted skin (npc_kit): colour variation comes painted per vertex, mAux marks wrinkle areas
       alb*=0.9+0.2*mott;
       alb=mix(alb,alb*vec3(1.06,0.9,0.86),smoothstep(0.45,0.75,fbm3(q*90.0))*0.5); // blotches and age spots
-      mRough=0.52;mSss=0.28;mRimK=0.015;mBump=1.0;
+      mRough=0.66;mSss=0.28;mRimK=0.015;mBump=1.0;
     }else if(m==13){ // sculpted cloth: folds are in the geometry, so the shader only adds weave, nap and sheen
       float folds=n3(vec3(q.x*55.0,q.y*5.0,q.z*55.0));
       float weave=sin(q.y*1500.0)*sin((q.x+q.z)*1500.0);
@@ -585,7 +585,7 @@ function paintedMaterial(glowBase){
     }else if(m==10){
       float wv=n3(vec3(q.x*40.0,q.y*9.0,q.z*40.0));alb*=0.7+0.5*wv;mRough=1.0;mRim=1.0;
     }else if(m==11){mRough=0.1;mGlow=0.55;}
-    mCh=(m>=12&&m<=15)?1.0:(m==8?0.5:0.0);
+    mCh=m==12?0.9:(m>=13&&m<=15)?1.0:(m==8?0.5:0.0);
     diffuseColor.rgb=pow(max(alb,vec3(0.0)),vec3(2.2));
     if(m==7)diffuseColor.rgb*=0.1;
   }`)
@@ -609,7 +609,7 @@ function paintedMaterial(glowBase){
     totalEmissiveRadiance+=ec*(mGlow*1.6+uGlowBase+(mCh>0.75?0.2:0.0)); // 0.2: faint fill so a hand's torch shadow on the robe is dark red, not black holes
     if(mRimK>0.0){float fr=pow(saturate(1.0-abs(dot(normalize(normal),normalize(vViewPosition)))),3.0);totalEmissiveRadiance+=ec*fr*mRimK;} // soft fresnel rim / cloth sheen
     if(mRim>0.5){float rim=pow(saturate(1.0-abs(dot(normalize(normal),normalize(vViewPosition)))),3.0);totalEmissiveRadiance+=ec*rim*rim*1.6;}}`);
-    sh.fragmentShader=sh.fragmentShader.replace('#include <dithering_fragment>','#include <dithering_fragment>\n  {uvec3 nb3=floatBitsToUint(gl_FragColor.rgb);bvec3 bad=equal(nb3&uvec3(0x7f800000u),uvec3(0x7f800000u));gl_FragColor.rgb=any(bad)?vec3(0.0):clamp(gl_FragColor.rgb,vec3(0.0),vec3(mCh>0.75?3.0:mCh>0.25?5.0:12.0));} // isnan() can be optimised away on ANGLE/D3D; test the exponent bits (NaN and Inf) instead. // firefly clamp: specular spikes on slivers and silhouettes bloom into squares (see docs/npc-kit.md); sculpted characters (12-15) are held to 3.0, eyes 5.0');
+    sh.fragmentShader=sh.fragmentShader.replace('#include <dithering_fragment>','#include <dithering_fragment>\n  {uvec3 nb3=floatBitsToUint(gl_FragColor.rgb);bvec3 bad=equal(nb3&uvec3(0x7f800000u),uvec3(0x7f800000u));gl_FragColor.rgb=any(bad)?vec3(0.0):clamp(gl_FragColor.rgb,vec3(0.0),vec3(mCh>0.95?3.0:mCh>0.75?2.0:mCh>0.25?5.0:12.0));} // isnan() can be optimised away on ANGLE/D3D; test the exponent bits (NaN and Inf) instead. // firefly clamp: specular spikes on slivers and silhouettes bloom into squares (see docs/npc-kit.md); sculpted characters (12-15) are held to 3.0, eyes 5.0');
   };
   m.customProgramCacheKey=()=>'painted';
   return m;

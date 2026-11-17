@@ -417,7 +417,7 @@ export function hand(p = {}) {
       for (let j = 0; j < 3; j++) dt = smin(dt, seg(x, y, z, th.pts[j], th.pts[j + 1], th.r[j], th.r[j + 1]), 0.002);
       for (let j = 1; j < 3; j++) dt = smin(dt, sdSphere(x - th.pts[j][0], y - th.pts[j][1] - th.r[j] * 0.15, z - th.pts[j][2], th.r[j] * (0.95 + 0.1 * age)), 0.003);
       d = smin(d, dt, 0.006); }
-    if (d < 0.006 && x > 0.06) d = smin(d, nailPlate(x, y, z), 0.0007);
+    // (no raised nail plate: its sub-millimetre ridge made normals sweep through every orientation inside a pixel, which sparkled)
     if (d < 0.005 && y > 0) { // back of the hand: metacarpal ridges fanning to the knuckles with sunken valleys between, veins on top
       let v = 0; for (const l of V) v = Math.max(v, ridge(x, z, l, 2.1 * MM)); let tn = 0, tw = 0; for (const l of T) { tn = Math.max(tn, ridge(x, z, l, 3.6 * MM)); tw = Math.max(tw, ridge(x, z, l, 8 * MM)); }
       const m = age * smoothstep(0, 0.004, y) * smoothstep(0.1, 0.07, x) * smoothstep(0.02, 0.05, x);
@@ -446,7 +446,7 @@ export function hand(p = {}) {
     for (const f of fingers) { k = Math.max(k, 0.5 * gauss(q[0], q[1], q[2], f.pts[0], 0.006)); for (let j = 0; j < 3; j++) m = Math.max(m, gauss(q[0], q[1], q[2], f.pts[j], 0.0055)); }
     for (let j = 1; j < 3; j++) m = Math.max(m, gauss(q[0], q[1], q[2], th.pts[j], 0.0055));
     let v = 0; if (y > 0) for (const l of V) v = Math.max(v, ridge(q[0], q[2], l, 2.4 * MM));
-    const nm = x / S > 0.06 ? smoothstep(0.0013, 0.0002, nailPlate(q[0], q[1], q[2])) : 0;   // nails: lighter than the skin (paint below 0 extrapolates away from col2)
+    const nm = x / S > 0.06 ? smoothstep(0.0019, 0.0006, nailPlate(q[0], q[1], q[2])) : 0;   // nails: lighter than the skin (paint below 0 extrapolates away from col2)
     let cr = 0; if (y < 0) for (const l of CREASE) cr = Math.max(cr, ridge(q[0], q[2], l, 1.5 * MM));   // palm creases: thenar arc, proximal and distal transverse
     o[0] = nm > 0.05 ? -0.55 * nm : Math.min(1, k * 0.7 + v * 0.3 + cr * 0.45); o[1] = Math.min(1, age * (0.9 * m + 0.45 * smoothstep(0.0, 0.004, y) * smoothstep(0.09, 0.03, x)) + cr * 0.9);
   };
