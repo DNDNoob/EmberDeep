@@ -5073,7 +5073,7 @@ vec3 tone(vec3 c,float k){return c*k;}
   alb=mix(ice,vec3(.86,.92,.96)*(.85+.15*rimeH),rime);
   rough=mix(mix(.6,.14,face),.8,rime);rough=mix(rough,.5,crk);em=0.;
 #if VAR==1
-  alb=mix(alb,alb*vec3(.7,.9,1.2),1.-rime);rough=mix(rough,.08,face*(1.-rime));
+  alb=mix(alb,alb*vec3(.78,.93,1.1),1.-rime);rough=mix(rough,.08,face*(1.-rime));
 #elif VAR==3
   alb=mix(alb,alb*vec3(.18,.22,.3),(1.-rime)*.9);alb=mix(alb,vec3(.8,.9,.97),crk*.8);rough=mix(rough,.06,face*(1.-rime));
 #endif
@@ -5091,7 +5091,7 @@ vec3 tone(vec3 c,float k){return c*k;}
   alb=mix(sl,vec3(.84,.9,.95)*(.85+.15*fh),frost*.9);
   rough=mix(mix(.7,.2,face),.85,frost);em=0.;
 #if VAR==1
-  alb=mix(alb,alb*vec3(.7,.9,1.2),1.-frost);rough=mix(rough,.1,face*(1.-frost));
+  alb=mix(alb,alb*vec3(.78,.93,1.1),1.-frost);rough=mix(rough,.1,face*(1.-frost));
 #elif VAR==3
   vec4 vc=voro(uv+r,5.,.9);float fr=(1.-smoothstep(.0,.008,vc.y))*smoothstep(.4,.6,fbm(uv+.5,3.));
   alb=mix(alb*vec3(.2,.24,.32),vec3(.8,.9,.97),fr*.7);alb=mix(alb,vec3(.84,.9,.95),frost*.5);rough=mix(rough,.05,face*(1.-frost));
@@ -5104,7 +5104,7 @@ vec3 tone(vec3 c,float k){return c*k;}
   alb=mix(alb,vec3(.8,.87,.93)*(.85+.15*fh),frost);h+=frost*fh*.05;
   rough=mix(.45,.85,frost);em=0.;
 #if VAR==1
-  alb=mix(alb,alb*vec3(.7,.9,1.2),1.-frost);
+  alb=mix(alb,alb*vec3(.78,.93,1.1),1.-frost);
 #elif VAR==3
   alb=mix(alb,alb*vec3(.25,.3,.4),(1.-frost)*.8);rough=mix(rough,.2,1.-frost);
 #endif
@@ -5407,7 +5407,7 @@ vec3 tone(vec3 c,float k){return c*k;}
   float oil=smoothstep(.45,.75,fbm(uv+.9,6.)+stk*.5);
   alb*=mix(.8,.45,oil);rough=mix(rough,.18,oil);
 #elif VAR==3
-  float pn=smoothstep(.44,.5,fbm(uv+.7,8.)+fbm(uv,45.)*.25);
+  float pn=smoothstep(.62,.68,fbm(uv+.7,8.)+fbm(uv,45.)*.25);
   vec3 paint=mix(vec3(.2,.36,.32),vec3(.26,.44,.38),rh)*(.8+.3*fbm(uv,30.));
   alb=mix(alb,paint,pn*(1.-groove)*(1.-.5*riv));h+=pn*.05;rough=mix(rough,.55,pn);
 #endif
@@ -5452,7 +5452,7 @@ vec3 tone(vec3 c,float k){return c*k;}
   float oil=smoothstep(.45,.7,fbm(uv+.9,5.));
   alb*=mix(.85,.4,oil);rough=mix(rough,.12,oil);
 #elif VAR==3
-  float pn=smoothstep(.45,.52,fbm(uv+.7,7.)+fbm(uv,40.)*.2);
+  float pn=smoothstep(.6,.67,fbm(uv+.7,7.)+fbm(uv,40.)*.2);
   alb=mix(alb,mix(vec3(.5,.48,.2),vec3(.6,.55,.24),vn(uv*90.,vec2(90.)))*(.8+.3*fbm(uv,30.)),pn*(1.-gm)*.9*(1.-seam));h+=pn*.04*(1.-gm);rough=mix(rough,.6,pn);
 #endif
 }`,`void surf(vec2 uv,out float h,out vec3 alb,out float rough,out float em){
@@ -5481,7 +5481,7 @@ vec3 tone(vec3 c,float k){return c*k;}
 #elif VAR==2
   float oil=smoothstep(.45,.75,fbm(uv+.9,5.)+stk*.4);alb*=mix(.85,.45,oil);rough=mix(rough,.18,oil);
 #elif VAR==3
-  float pn=smoothstep(.44,.5,fbm(uv+.7,7.)+fbm(uv,40.)*.2);
+  float pn=smoothstep(.6,.66,fbm(uv+.7,7.)+fbm(uv,40.)*.2);
   alb=mix(alb,mix(vec3(.2,.36,.32),vec3(.26,.44,.38),vn(uv*90.,vec2(90.)))*(.8+.3*fbm(uv,30.)),pn*(1.-seam)*(1.-.5*riv));h+=pn*.04;rough=mix(rough,.55,pn);
 #endif
 }`,`void surf(vec2 uv,out float h,out vec3 alb,out float rough,out float em){
@@ -5512,7 +5512,7 @@ vec3 tone(vec3 c,float k){return c*k;}
   vec3 rock=mix(vec3(.15,.16,.2),vec3(.09,.1,.13),strata)*(.7+.6*fbm(uv+vr,14.));
   rock*=1.-crk*.5;rock*=mix(.8,1.,smoothstep(.0,.05,v.y));
   float gl=max(g,cm);
-  alb=mix(rock,col*(.1+.3*gl)*(.55+.9*facet*cm+.45*(1.-cm)),sat(gl*2.));
+  alb=mix(rock,col*(.12+.38*gl)*(.55+.9*facet*cm+.45*(1.-cm)),sat(gl*2.));
   alb=mix(alb,alb+col*.02,vline*.5);
   rough=mix(.82-.15*strata,.25,sat(gl*2.));
   em=gl>.06?.5+.5*sat(gl)*vs(.7,.7,.7,.5):0.;
@@ -5536,7 +5536,7 @@ vec3 tone(vec3 c,float k){return c*k;}
   vec3 sl=mix(vec3(.17,.18,.22),vec3(.11,.12,.15),r)*(.72+.5*fbm(uv+r2,10.));
   sl=mix(sl,sl*1.25,smoothstep(.5,.8,lay)*.5);sl*=mix(.45,1.,smoothstep(-.003,.025,de));
   float gl=max(cg,cm);
-  alb=mix(sl,col*(.1+.3*gl)*(.55+.9*facet*cm+.45*(1.-cm)),sat(gl*2.));
+  alb=mix(sl,col*(.12+.38*gl)*(.55+.9*facet*cm+.45*(1.-cm)),sat(gl*2.));
   rough=mix(mix(.85,.55,face*lay),.25,sat(gl*2.));
   em=gl>.06?.5+.5*sat(gl)*vs(.6,.6,.6,.45):0.;
 }`,`void surf(vec2 uv,out float h,out vec3 alb,out float rough,out float em){
