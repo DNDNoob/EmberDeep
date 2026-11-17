@@ -278,59 +278,121 @@ export function beard(H, p = {}) {
 /* =====================================================================================
    HANDS  (frame: wrist at the origin, fingers along +X, back of the hand +Y, thumb on side*Z)
    ===================================================================================== */
-// p: {pose:'rest'|'grip'|'point', side:+1|-1 (which Z the thumb is on), size, age (knuckles), gripR (radius of what it holds),
-//     curl (extra curl for 'rest'), spread}
-// Returns the spec plus .grip = [x,y] of the held axis (along Z) for 'grip'.
-const FING = [ // z of the knuckle (thumb side positive), phalanx lengths, radius
-  {z: 0.0128, L: [0.023, 0.0145, 0.0115], r: 0.0049}, {z: 0.0043, L: [0.025, 0.016, 0.0125], r: 0.0051},
-  {z: -0.0043, L: [0.0235, 0.0155, 0.012], r: 0.0048}, {z: -0.0123, L: [0.0185, 0.0115, 0.0105], r: 0.0042}];
-export function hand(p = {}) {
-  const pose = p.pose || 'rest', side = p.side ?? 1, S = p.size ?? 1, age = p.age ?? 1, gR = p.gripR ?? 0.013, spread = p.spread ?? 1;
-  const kx = 0.05, ky = 0.0015;
-  const fingers = FING.map((f, i) => {
-    const K = [kx - Math.abs(f.z - 0.004) * 0.25, ky, f.z * side], pts = [K];
-    if (pose === 'grip' || (pose === 'point' && i > 0)) {
-      // wrap round an axis along Z under the knuckles: every joint sits on a circle of radius gR + finger radius
-      const Rf = (pose === 'grip' ? gR : 0.004) + f.r, C = [kx, ky - Rf];
-      let th = Math.PI / 2;
-      for (const L of f.L) { th -= 2 * Math.asin(Math.min(1, L / (2 * Rf))) * 0.97; pts.push([C[0] + Rf * Math.cos(th) - (K[0] - kx) * 0, C[1] + Rf * Math.sin(th), K[2] * (1 + 0.04 * pts.length)]); }
-    } else {
-      const base = pose === 'point' ? [0.05, 0.05, 0.02] : [0.3 + 0.06 * i, 0.42 + 0.07 * i, 0.3 + 0.05 * i].map(c => c * (p.curl ?? 1));
-      let phi = pose === 'point' ? 0.05 : -0.05, P0 = K;
-      f.L.forEach((L, j) => { phi -= base[j]; P0 = [P0[0] + L * Math.cos(phi), P0[1] + L * Math.sin(phi), P0[2] + side * (f.z * side) * 0.08 * spread]; pts.push(P0); });
-    }
-    return {pts, r: f.r};
-  });
-  // thumb: from the heel of the palm, forward and across
-  let thumb;
+// Anatomical hand (ANSUR II hand length 195 mm / breadth 90 mm for older men, scaled to the figure: 1 real mm = MM figure metres).
+// Frame: wrist at the origin, fingers along +X, back of the hand +Y, the thumb on side*Z.
+// Rig: four fingers with three phalanges (knuckle position, phalanx lengths and tapering radii from ANSUR / hand-anatomy data),
+// a thumb from the side of the palm (CMC joint, metacarpal + two phalanges, own thenar pad), nails, veins and tendons on the back.
+// Pose = JOINT ANGLES, so any NPC can pose a hand:
+//   handAngles(pose, opts) -> {f: [[mcp, pip, dip, spreadDeg] x4 (index..little)], t: [[yaw, pitch] x3 (metacarpal, proximal, distal)]}
+//   flexion angles are in radians, positive = curling towards the palm (-Y); thumb yaw is cumulative (positive = away from the index
+//   finger), pitch negative = towards the palm. hand({angles}) takes any such object; 'rest' | 'grip' | 'point' come from handAngles.
+//   hand() returns the part spec plus .nails (a second spec: draw it in a lighter, pinker colour), .joints (joint positions in
+//   hand coordinates, for pose code) and .grip = [x,y] of the held axis (along hand Z) for 'grip'.
+// p: {pose, side:+1|-1 (which Z the thumb is on), size, age (knuckles, veins), gripR (radius of what it holds, figure metres), curl, spread, angles}
+const MM = 0.000608;   // figure metres per real mm (head height 233.5 mm real = 0.142 m figure)
+const FING = [ // MCP centre (x, z mm), phalanx lengths mm, radius at base / middle / distal mm, natural spread (deg, + towards the thumb)
+  {x: 98, z: 33, L: [40, 23, 18], r: [10, 8.6, 7.4], sp: 6}, {x: 100, z: 11, L: [44, 27, 20], r: [10.5, 9, 7.6], sp: 1},
+  {x: 95, z: -11, L: [41, 26, 19], r: [9.6, 8.3, 7.2], sp: -3}, {x: 86, z: -31, L: [33, 19, 17], r: [8.6, 7.4, 6.6], sp: -9}];
+const THUMB = {c: [12, -9, 29], L: [46, 32, 26], r: [10, 8.8, 7.6, 6.6]};   // CMC joint (x, y, z mm); metacarpal, proximal, distal; radii at the joints
+const KY = 1.8 * MM;   // height of the finger axis above the palm mid-plane
+const GRIP_BETA = 50 * D2R;
+export function handAngles(pose = 'rest', o = {}) {
+  const curl = o.curl ?? 1, spread = o.spread ?? 1, gR = o.gripR ?? 0.0105;
+  const rest = () => ({f: FING.map((f, i) => [(0.3 + 0.06 * i) * curl, (0.42 + 0.07 * i) * curl, (0.3 + 0.05 * i) * curl, f.sp * spread * 0.7]), t: [[0.62, -0.3], [-0.12, -0.35 * curl], [-0.08, -0.3 * curl]]});
+  if (pose === 'rest') return rest();
+  // wrap a fist round a rod along hand Z under the knuckles: every finger joint sits on a circle of radius gR + finger radius; the
+  // circle is placed so the knuckle is at 50 deg from its centre (the rod lies diagonally across the palm). The thumb closes over
+  // the index finger.
   if (pose === 'grip') {
-    const Rt = gR + 0.0058, C = [kx, ky - gR - 0.005];
-    thumb = [[0.014, -0.004, side * 0.016], [0.03, -0.012, side * 0.024]];
-    for (const a of [-150, -105, -62]) thumb.push([C[0] + Rt * Math.cos(a * D2R), C[1] + Rt * Math.sin(a * D2R), side * 0.0215]);
-  } else if (pose === 'point') thumb = [[0.014, -0.004, side * 0.016], [0.032, -0.012, side * 0.02], [0.046, -0.014, side * 0.012], [0.056, -0.011, side * 0.006]];
-  else thumb = [[0.012, -0.003, side * 0.017], [0.03, -0.008, side * 0.027], [0.044, -0.012, side * 0.031], [0.055, -0.016, side * 0.03]];
+    const f = FING.map((F, i) => {
+      const r = (F.r[0] + F.r[1] + F.r[2]) / 3 * MM, Rf = gR + r * 0.95, bet = GRIP_BETA, c = [-Rf * Math.cos(bet), KY - Rf * Math.sin(bet)];
+      let th = bet, K = [0, KY]; const dirs = [];
+      for (const L of F.L) {
+        const dth = 2 * Math.asin(Math.min(1, L * MM / (2 * Rf))), P = [c[0] + Rf * Math.cos(th - dth), c[1] + Rf * Math.sin(th - dth)];
+        dirs.push(Math.atan2(P[1] - K[1], P[0] - K[0])); K = P; th -= dth;
+      }
+      return [-dirs[0], dirs[0] - dirs[1], dirs[1] - dirs[2], -1.5 * i * spread];
+    });
+    return {f, t: o.thumb || [[0.1, -0.9], [-0.1, -0.5], [-0.3, -0.3]]};
+  }
+  if (pose === 'point') { const g = rest(); g.f[0] = [0.06, 0.05, 0.03, 4]; for (let i = 1; i < 4; i++) g.f[i] = [1.35, 1.7, 1.0, 0]; g.t = [[0.35, -0.4], [-0.1, -0.2], [-0.05, -0.1]]; return g; }
+  throw new Error('handAngles: unknown pose ' + pose);
+}
+export function hand(p = {}) {
+  const pose = p.pose || 'rest', side = p.side ?? 1, S = p.size ?? 1, age = p.age ?? 1, gR = p.gripR ?? 0.0105;
+  const A = p.angles || handAngles(pose, {curl: p.curl, spread: p.spread, gripR: gR, thumb: p.thumb});
+  // forward kinematics: finger joints and thumb joints in hand coordinates (figure metres at size 1)
+  const fingers = FING.map((F, i) => {
+    const [mcp, pip, dip, sp] = A.f[i], psi = sp * D2R, K = [F.x * MM, KY, side * F.z * MM], pts = [K], rs = F.r.map(r => r * MM), ang = [mcp, pip, dip];
+    let phi = 0;
+    F.L.forEach((L, j) => { phi -= ang[j]; const P = pts[j]; pts.push([P[0] + L * MM * Math.cos(phi) * Math.cos(psi), P[1] + L * MM * Math.sin(phi), P[2] + side * L * MM * Math.cos(phi) * Math.sin(psi)]); });
+    return {pts, r: [rs[0], rs[1], rs[2], rs[2] * 0.82]};
+  });
+  const th = {pts: [THUMB.c.map((v, k) => v * MM * (k === 2 ? side : 1))], r: THUMB.r.map(v => v * MM)};
+  { let Y = 0, T = 0; THUMB.L.forEach((L, j) => { Y += A.t[j][0]; T += A.t[j][1]; const P = th.pts[j]; th.pts.push([P[0] + L * MM * Math.cos(T) * Math.cos(Y), P[1] + L * MM * Math.sin(T), P[2] + side * L * MM * Math.cos(T) * Math.sin(Y)]); }); }
+  const seg = (x, y, z, a, b, r1, r2) => sdRoundCone(x, y, z, a[0], a[1], a[2], b[0], b[1], b[2], r1, r2);
+  // veins and tendons on the back of the hand: polylines in the (x, z) plane (mm -> m), raised ridges
+  const V = [[[94, 24], [70, 20], [48, 15], [26, 11], [0, 8]], [[96, 4], [72, 2], [50, 4], [28, 1], [0, 2]], [[90, -22], [64, -17], [42, -11], [20, -6], [0, -2]], [[66, 30], [44, 24], [26, 17], [8, 12]]]
+    .map(l => l.map(q => [q[0] * MM, q[1] * MM * side]));
+  const T = [[98, 33], [100, 11], [95, -11], [86, -31]].map(q => [[q[0] * MM, q[1] * MM * side], [28 * MM, (q[1] * 0.5 - 2) * MM * side]]);
+  const ridge = (x, z, L, w) => { let m = 9; for (let i = 0; i < L.length - 1; i++) { const a = L[i], b = L[i + 1], dx = b[0] - a[0], dz = b[1] - a[1], t = cl(((x - a[0]) * dx + (z - a[1]) * dz) / (dx * dx + dz * dz), 0, 1); m = Math.min(m, Math.hypot(x - a[0] - dx * t, z - a[1] - dz * t)); } return Math.exp(-(m * m) / (w * w)); };
   function sdf(X, Y, Z) {
     const x = X / S, y = Y / S, z = Z / S;
-    // palm: a rounded slab, wider at the knuckles, with the back of the hand slightly domed
-    const w = 0.0155 + 0.006 * cl(x / kx, 0, 1);
-    let d = sdBox(x - 0.027, y + 0.0005 + 0.0015 * Math.abs(z) / 0.02, z, 0.024, 0.0068, w, 0.0055);
-    d = smin(d, sdRoundCone(x, y, z, -0.06, 0, 0, 0.004, 0, 0, 0.0155, 0.0148), 0.012);                         // wrist into the sleeve
-    d = smin(d, sdEllipsoid(x - 0.016, y + 0.006, z - side * 0.011, 0.016, 0.0075, 0.011), 0.008);             // thumb muscle
+    // palm: a tapered, slightly domed slab (60 mm wide at the wrist, 90 mm at the knuckles)
+    const t = cl(x / (100 * MM), 0, 1), hw = (31 + 14 * t) * MM, az = Math.abs(z), wz = z * (45 * MM / hw);
+    let d = sdBox(x - 52 * MM, y - 1.2 * MM * (1 - (az / hw) ** 2) + 0.5 * MM, wz, 50 * MM, 11.5 * MM, 45 * MM * 0.97, 7 * MM);
+    d = smin(d, sdRoundCone(x, y, z, -0.06, 0, 0, 0.004, 0, 0, 0.0158, 0.0156), 0.012);                       // wrist into the sleeve
+    // thenar pad (ball of the thumb) and the hypothenar edge
+    d = smin(d, sdEllipsoid(x - 30 * MM, y + 7 * MM, z - side * 20 * MM, 30 * MM, 11 * MM, 17 * MM), 0.009);
+    d = smin(d, sdEllipsoid(x - 36 * MM, y + 3 * MM, z + side * 29 * MM, 26 * MM, 9 * MM, 11 * MM), 0.008);
+    // fingers: tapering segments, knuckle bumps at every joint (bigger with age)
     for (const f of fingers) {
-      d = smin(d, chain(x, y, z, f.pts, f.r, f.r * 0.8, 0.002), 0.004);
-      for (let j = 0; j < 3; j++) d = smin(d, sdSphere(x - f.pts[j][0], y - f.pts[j][1] - 0.0008, z - f.pts[j][2], f.r * (1.02 + 0.08 * age)), 0.003); // knuckles
+      let df = 9;
+      for (let j = 0; j < 3; j++) df = smin(df, seg(x, y, z, f.pts[j], f.pts[j + 1], f.r[j], f.r[j + 1]), 0.0012);
+      for (let j = 0; j < 3; j++) {
+        const P = f.pts[j]; let ux = 0, uy = 1;
+        if (j > 0) { const q = f.pts[j - 1], dx = P[0] - q[0], dy = P[1] - q[1], l = Math.hypot(dx, dy) || 1; ux = -dy / l; uy = dx / l; }
+        df = smin(df, sdSphere(x - P[0] - ux * f.r[j] * 0.25, y - P[1] - uy * f.r[j] * 0.25, z - P[2], f.r[j] * (j === 0 ? 0.95 : 0.9) * (1 + 0.1 * age)), 0.003);
+      }
+      d = smin(d, df, 0.005);
     }
-    d = smin(d, chain(x, y, z, thumb, 0.0068, 0.0048, 0.003), 0.006);
-    return (d + 0.0004 * fbm(x * 260, y * 260, z * 260, 1)) * S;
+    { let dt = 9; // thumb: metacarpal, two phalanges, knuckles at the MCP and IP joints
+      for (let j = 0; j < 3; j++) dt = smin(dt, seg(x, y, z, th.pts[j], th.pts[j + 1], th.r[j], th.r[j + 1]), 0.002);
+      for (let j = 1; j < 3; j++) dt = smin(dt, sdSphere(x - th.pts[j][0], y - th.pts[j][1] - th.r[j] * 0.15, z - th.pts[j][2], th.r[j] * (0.95 + 0.1 * age)), 0.003);
+      d = smin(d, dt, 0.006); }
+    if (d < 0.004 && y > 0) { // veins and tendons on the back of the hand (raised 0.4 to 0.9 mm)
+      let v = 0; for (const l of V) v = Math.max(v, ridge(x, z, l, 2.1 * MM)); let tn = 0; for (const l of T) tn = Math.max(tn, ridge(x, z, l, 2.6 * MM));
+      d -= (0.0009 * v + 0.0004 * tn) * age * smoothstep(0, 0.004, y) * smoothstep(0.1, 0.07, x);
+    }
+    return (d + 0.00035 * fbm(x * 260, y * 260, z * 260, 1)) * S;
   }
-  const tips = fingers.map(f => f.pts[3]).concat([thumb[thumb.length - 1]]);
-  const paint = (x, y, z, o) => { // knuckles and fingertips a little redder, like old hands
-    let k = 0; for (const t of tips) k = Math.max(k, gauss(x / S, y / S, z / S, t, 0.007));
-    for (const f of fingers) k = Math.max(k, 0.5 * gauss(x / S, y / S, z / S, f.pts[0], 0.006));
-    o[0] = k * 0.7;
+  // nails: flat slabs on the back of each distal phalanx
+  const nails = fingers.map(f => ({a: f.pts[2], b: f.pts[3], r: f.r[2], w: f.r[3] * 0.62})).concat([{a: th.pts[2], b: th.pts[3], r: th.r[2], w: th.r[3] * 0.66}]);
+  function nailSdf(X, Y, Z) {
+    const x = X / S, y = Y / S, z = Z / S; let d = 9;
+    for (const n of nails) {
+      const ax = n.b[0] - n.a[0], ay = n.b[1] - n.a[1], az = n.b[2] - n.a[2], L = Math.hypot(ax, ay, az), ux = ax / L, uy = ay / L, uz = az / L;
+      let vx = -uy, vy = ux; if (vy < 0) { vx = -vx; vy = -vy; }   // v: the back of the finger (up)
+      const wx = uy * 0 - uz * vy, wy = uz * vx - ux * 0, wz = ux * vy - uy * vx;
+      const px = x - n.a[0] - ux * L * 0.58, py = y - n.a[1] - uy * L * 0.58, pz = z - n.a[2] - uz * L * 0.58;
+      d = Math.min(d, sdEllipsoid(px * ux + py * uy + pz * uz, px * vx + py * vy - n.r * 0.86, px * wx + py * wy + pz * wz, L * 0.5, 0.0009, n.w));
+    }
+    return d * S;
+  }
+  const tips = fingers.map(f => f.pts[3]).concat([th.pts[3]]);
+  const paint = (x, y, z, o) => { // knuckles and fingertips ruddier, veins a touch darker; wrinkle mask on every joint and the back of the hand
+    let k = 0, m = 0; const q = [x / S, y / S, z / S];
+    for (const t of tips) k = Math.max(k, gauss(q[0], q[1], q[2], t, 0.007));
+    for (const f of fingers) { k = Math.max(k, 0.5 * gauss(q[0], q[1], q[2], f.pts[0], 0.006)); for (let j = 0; j < 3; j++) m = Math.max(m, gauss(q[0], q[1], q[2], f.pts[j], 0.0055)); }
+    for (let j = 1; j < 3; j++) m = Math.max(m, gauss(q[0], q[1], q[2], th.pts[j], 0.0055));
+    let v = 0; if (y > 0) for (const l of V) v = Math.max(v, ridge(q[0], q[2], l, 2.4 * MM));
+    o[0] = Math.min(1, k * 0.7 + v * 0.3); o[1] = Math.min(1, age * (0.9 * m + 0.45 * smoothstep(0.0, 0.004, y) * smoothstep(0.09, 0.03, x)));
   };
-  const b = [-0.07, -0.05, -0.05, 0.11, 0.035, 0.05].map(v => v * S);
-  return {sdf, paint, bounds: b, cell: p.cell || 0.0026 * S, tris: p.tris || [380, 130], project: 0.0015, grip: pose === 'grip' ? [kx * S, (ky - gR - 0.0049) * S] : null};
+  const b = [-0.07, -0.07, -0.06, 0.145, 0.045, 0.065].map(v => v * S);
+  const nailSpec = {sdf: nailSdf, bounds: b, cell: p.nailCell || 0.0016 * S, tris: [90, 40], project: 0.0006, cull: (x, y, z) => sdf(x, y, z) < -0.0004};
+  const Rf = gR + (FING[1].r[0] + FING[1].r[1] + FING[1].r[2]) / 3 * MM * 0.95;
+  return {sdf, paint, nails: nailSpec, joints: {fingers: fingers.map(f => f.pts), thumb: th.pts}, bounds: b, cell: p.cell || 0.0024 * S, tris: p.tris || [520, 190], project: 0.0015,
+    grip: pose === 'grip' ? [(FING[1].x * MM - Rf * Math.cos(GRIP_BETA)) * S, (KY - Rf * Math.sin(GRIP_BETA)) * S] : null};
 }
 
 /* =====================================================================================
@@ -360,7 +422,7 @@ export function robeSkirt(p = {}) {
     const pinch = dep * 0.006 * smoothstep(0.78, 0.9, t) * Math.sin(26 * a + 5 * fbm(ca * 4, sa * 4, y * 9, 1));   // radial pinch folds under the sash
     R *= 1 + amp * ridge + small + pinch + dep * 0.012 * (worley(ca * 2.4, y * 6, sa * 2.4) - 0.5);
     // the hem rests on the floor: it flares and breaks in a few folds on the ground, never the same height twice
-    R += dep * smoothstep(0.06, 0, y) * (0.008 + 0.022 * Math.max(0, fbm(ca * 3.2, sa * 3.2, 7.3, 2)));
+    R += dep * smoothstep(0.06, 0, y) * (0.006 + 0.012 * Math.max(0, fbm(ca * 2.2, sa * 2.2, 7.3, 2)));
     // front opening: the left panel overlaps the right, a step and a groove from the waist to the floor
     { const w = smoothstep(0, 0.06, x), sd = z - 0.034 * (0.6 + 0.4 * t), step = smoothstep(-0.004, 0.004, sd); R += w * dep * (0.0035 * step - 0.0022 * Math.exp(-(sd * sd) / 0.000006) * smoothstep(0.0, 0.1, y)); }
     let d = (rho - R) * 0.8;
@@ -383,7 +445,7 @@ export function trimBand(base, region, p = {}) {
   // the inner face of the band is buried in the cloth: never mesh it
   const cull = (x, y, z) => base(x, y, z) < 0.0006 || (p.cull && p.cull(x, y, z));
   return {sdf, bounds: p.bounds, cell: p.cell || 0.0042, tris: p.tris || [160, 60], cull, project: 0.002,
-    covers: (x, y, z) => region(x, y, z) < -0.0015 && Math.abs(base(x, y, z)) < 0.006};
+    covers: (x, y, z) => region(x, y, z) < -0.0015 && Math.abs(base(x, y, z)) < (p.coverTol ?? 0.006)};
 }
 
 // Upper body (frame U): chest, shoulders, bell sleeves, collar and cowl in one surface, soft folds.
@@ -484,7 +546,7 @@ export function dress(B, list) {
   };
   const sl = sleeves.map(sg => {
     const a = B.arms[sg.arm], e = sg.ease ?? 0.011, bell = sg.bell ?? 0.034, re = a.r[1] + e * 1.3, rw = a.r[2] + bell, nf = sg.folds ?? 1;
-    const LF = Math.hypot(a.W[0] - a.E[0], a.W[1] - a.E[1], a.W[2] - a.E[2]), sag = sg.sag ?? 0.014;
+    const LF = Math.hypot(a.W[0] - a.E[0], a.W[1] - a.E[1], a.W[2] - a.E[2]), sag = sg.sag ?? 0.006;
     // gravity: the forearm part of the sleeve hangs lower than the arm (the cloth sags below it, most at the bell)
     const sb = (x, y, z) => {
       const tt = cl(((x - a.E[0]) * a.F[0] + (y - a.E[1]) * a.F[1] + (z - a.E[2]) * a.F[2]) / LF, 0, 1.2), yy = y + sag * tt * tt * (1 - 0.5 * Math.min(1, Math.abs(a.F[1])));
@@ -500,7 +562,7 @@ export function dress(B, list) {
       const ang = Math.atan2(z - a.E[2] - 0.5 * (y - a.E[1]) * a.F[2], y - a.E[1]);
       const wv = 3 * fbm(x * 9, y * 9, z * 9, 2);
       d += nf * (0.0022 + 0.11 * (rw - re)) * (Math.pow(0.5 + 0.5 * Math.cos(6 * ang + wv + 10 * t), 0.8) * 2 - 1) * smoothstep(0.02, 0.5, tn) * (0.4 + 0.6 * tn);  // hanging folds, deeper towards the bell
-      d -= 0.003 * smoothstep(0.03, 0, (a.end[0] - x) * a.F[0] + (a.end[1] - y) * a.F[1] + (a.end[2] - z) * a.F[2] + 0.01) * smoothstep(0.0, 0.015, (a.end[0] - x) * a.F[0] + (a.end[1] - y) * a.F[1] + (a.end[2] - z) * a.F[2] + 0.03);  // sleeve mouth rim: a little thickness
+      d -= 0.0 * smoothstep(0.03, 0, (a.end[0] - x) * a.F[0] + (a.end[1] - y) * a.F[1] + (a.end[2] - z) * a.F[2] + 0.01) * smoothstep(0.0, 0.015, (a.end[0] - x) * a.F[0] + (a.end[1] - y) * a.F[1] + (a.end[2] - z) * a.F[2] + 0.03);  // sleeve mouth rim: a little thickness
       return d;
     };
     const mouth = (x, y, z, d) => ssub(d, sdSphere(x - (a.end[0] + 0.03 * a.F[0]), y - (a.end[1] + 0.03 * a.F[1]), z - (a.end[2] + 0.03 * a.F[2]), rw * 0.76), 0.004);
@@ -547,7 +609,8 @@ export function dress(B, list) {
     ends[i] = {at: a.W, end: a.end, dir: a.F, r: s.rw};
   });
   const tc = parts.torso.cull; parts.torso.cull = (x, y, z) => tc(x, y, z) || (trims.sash && trims.sash.covers(x, y, z));
-  return {parts, ends, torsoBase: base, sleeveBase: sl.map(s => s.sb)};
+  const torsoSolid = (x, y, z) => B.torsoCloth(x, Math.max(y, hang), z) - ease;   // the cloth without the neckline scoop (what a beard rests on)
+  return {parts, ends, torsoBase: base, torsoSolid, sleeveBase: sl.map(s => s.sb)};
 }
 
 /* =====================================================================================

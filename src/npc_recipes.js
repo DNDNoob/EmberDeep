@@ -31,7 +31,7 @@ export const KEEPER = {
     robe: [0.36, 0.1, 0.07], robeDeep: [0.24, 0.06, 0.05],
     gold: [0.8, 0.58, 0.18], goldDeep: [0.55, 0.36, 0.1],
     white: [0.9, 0.9, 0.86], whiteDeep: [0.66, 0.64, 0.6],
-    sclera: [0.86, 0.82, 0.74], iris: [0.42, 0.26, 0.12], pupil: [0.02, 0.015, 0.012]
+    nail: [0.84, 0.66, 0.58], nailDeep: [0.74, 0.52, 0.46], sclera: [0.86, 0.82, 0.74], iris: [0.42, 0.26, 0.12], pupil: [0.02, 0.015, 0.012]
   },
   rig: {waist: [0, 0.52, 0], lean: -0.15, neck: [0.005, 0.418, 0], jaw: 0.003, drape: {follow: 0.3, push: 0.012}},
   parts: [
@@ -51,14 +51,16 @@ export const KEEPER = {
     {part: 'moustache', frame: 'H', mat: 'hair', col: 'white', col2: 'whiteDeep'},
     {part: 'beard', frame: 'J', mat: 'hair', col: 'white', col2: 'whiteDeep', drape: [-0.015, -0.13]},
     {part: 'gripHand', frame: 'grip', mat: 'skin', col: 'skin', col2: 'skinDeep'},
-    {part: 'restHand', frame: 'rest', mat: 'skin', col: 'skin', col2: 'skinDeep'}
+    {part: 'restHand', frame: 'rest', mat: 'skin', col: 'skin', col2: 'skinDeep'},
+    {part: 'gripNails', frame: 'grip', mat: 'skin', col: 'nail', col2: 'nailDeep'},
+    {part: 'restNails', frame: 'rest', mat: 'skin', col: 'nail', col2: 'nailDeep'}
   ],
   // Body first, clothes over it (docs/npc-kit.md): the body is only an SDF; the garments are the meshes.
   body: {y: {neck: 0.418}, stoop: 0.05, belly: 0.5, narrow: 1.0, waistNarrow: 0.86, arms: ARMS},
   garments: [
     {type: 'robe', ease: 0.012, hang: 0.03, collar: {r: 0.037}},
-    {type: 'sleeve', arm: 0, tris: [470, 170], cell: 0.0062, ease: 0.011, bell: 0.07, folds: 1.2, cuff: {len: 0.028}},
-    {type: 'sleeve', arm: 1, tris: [470, 170], cell: 0.0062, ease: 0.011, bell: 0.064, folds: 1.2, cuff: {len: 0.028}},
+    {type: 'sleeve', arm: 0, tris: [470, 170], cell: 0.0062, ease: 0.011, bell: 0.056, folds: 1.2, cuff: {len: 0.028}},
+    {type: 'sleeve', arm: 1, tris: [470, 170], cell: 0.0062, ease: 0.011, bell: 0.044, folds: 1.2, cuff: {len: 0.028}},
     {type: 'sash', y: 0.017, h: 0.027, thick: 0.006}
   ],
   eyes: {frame: 'H', sclera: 'sclera', iris: 'iris', pupil: 'pupil', lid: 'skin', lid2: 'skinDeep'},
@@ -68,7 +70,7 @@ export const KEEPER = {
     const skirt = K.robeSkirt({height: 0.57, waist: 0.097, aspect: 1.12, cell: 0.0075, tris: [760, 260]});
     const B = K.body(this.body), D = K.dress(B, this.garments.map(g => g.type === 'robe' ? {...g, tris: [680, 250], cell: 0.0075} : g)), torso = D.parts.torso;
     const skirtBody = (x, y, z) => skirt.sdf(x, y, z) / 0.8;
-    const hem = K.trimBand(skirtBody, (x, y, z) => y - 0.042, {thick: 0.007, bounds: [-0.25, -0.01, -0.25, 0.25, 0.06, 0.25], cell: 0.0048, tris: [200, 70], cull: (x, y) => y < 0.0035});
+    const hem = K.trimBand(skirtBody, (x, y, z) => y - 0.042, {thick: 0.007, coverTol: 0.011, bounds: [-0.25, -0.01, -0.25, 0.25, 0.06, 0.25], cell: 0.0048, tris: [200, 70], cull: (x, y) => y < 0.0035});
     // hide what the other parts cover: the skirt top inside the torso, the torso bottom inside the skirt
     const torsoInB = K.inChild(D.torsoBase, U.off, U.R), skirtInU = K.inParent(skirt.sdf, U.off, U.R);
     const skirtCull = skirt.cull, torsoCull = torso.cull;
@@ -78,15 +80,15 @@ export const KEEPER = {
     // express the robe in beard coordinates so the beard can rest on the cloth
     const hs = this.proportions.headScale, dk = this.rig.drape.follow * (this.rig.headTilt ?? 0.12), cD = Math.cos(dk), sD = Math.sin(dk);
     const nxy = [this.rig.neck[0] + this.rig.drape.push, this.rig.neck[1], this.rig.neck[2]];
-    const robeInBeard = (x, y, z) => D.torsoBase(nxy[0] + hs * (cD * x - sD * y), nxy[1] + hs * (sD * x + cD * y), nxy[2] + hs * z) / hs;
-    const grip = K.hand({pose: 'grip', side: -1, gripR: 0.0135, age: 1.2});
+    const robeInBeard = (x, y, z) => D.torsoSolid(nxy[0] + hs * (cD * x - sD * y), nxy[1] + hs * (sD * x + cD * y), nxy[2] + hs * z) / hs;
+    const grip = K.hand({pose: 'grip', side: -1, gripR: 0.0105, age: 1.2});
     const rest = K.hand({pose: 'rest', side: 1, age: 1.2, curl: 1.15});
     const sleeveCull = sp => { const c = sp.cull; sp.cull = (x, y, z) => (c && c(x, y, z)) || x < -0.032; return sp; };
     const [e0, e1] = D.ends;
     return {
       parts: {skirt, hem, ...D.parts,
         head: H, ears: K.ears(H), hair: K.hairCap(H, {crown: 0.128}), brows: K.brows(H, {size: 1.15, droop: 1.1}), moustache: K.moustache(H, {size: 1.1}),
-        neck: K.neck(H), beard: K.beard(H, {length: 0.3, width: 1.25, thick: 0.009, fork: 1, tris: [520, 190], chest: robeInBeard}), gripHand: sleeveCull(grip), restHand: sleeveCull(rest)},
+        neck: K.neck(H), beard: K.beard(H, {length: 0.3, width: 1.25, thick: 0.009, fork: 1, tris: [520, 190], chest: robeInBeard}), gripHand: sleeveCull(grip), restHand: sleeveCull(rest), gripNails: grip.nails, restNails: rest.nails},
       eyes: {r: H.eye.r, iris: 0.5, open: 12, low: -24, arch: 9, lidT: 0.0021},
       anchors: {
         eye: [H.eye.x, H.eye.y, H.eye.z],
