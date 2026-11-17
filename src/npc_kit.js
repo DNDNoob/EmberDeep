@@ -597,13 +597,13 @@ export function dress(B, list) {
   }
   sl.forEach((s, i) => {
     const {a, sb, sdf, sg, cloth} = s, cf = sg.cuff;
-    parts['sleeve' + i] = {sdf, bounds: [Math.min(a.S[0], a.E[0], a.W[0]) - 0.09, Math.min(a.S[1], a.E[1], a.W[1]) - 0.09, Math.min(a.S[2], a.E[2], a.W[2]) - 0.09,
-      Math.max(a.S[0], a.E[0], a.W[0]) + 0.09, Math.max(a.S[1], a.E[1], a.W[1]) + 0.09, Math.max(a.S[2], a.E[2], a.W[2]) + 0.09], cell: sg.cell || 0.0075, tris: sg.tris || [380, 150], project: 0.004,
+    parts['sleeve' + i] = {sdf, bounds: [Math.min(a.S[0], a.E[0], a.W[0]) - 0.11, Math.min(a.S[1], a.E[1], a.W[1]) - 0.11, Math.min(a.S[2], a.E[2], a.W[2]) - 0.11,
+      Math.max(a.S[0], a.E[0], a.W[0]) + 0.11, Math.max(a.S[1], a.E[1], a.W[1]) + 0.11, Math.max(a.S[2], a.E[2], a.W[2]) + 0.11], cell: sg.cell || 0.0075, tris: sg.tris || [380, 150], project: 0.004,
       aoSdf: (x, y, z) => Math.min(sdf(x, y, z), base(x, y, z) + 0.002), paint: (x, y, z, o) => { o[0] = 0.85 * crease(x, y, z, base); },
       cull: (x, y, z) => base(x, y, z) < -0.004};
     if (cf) {
       const cuff = trimBand(cloth, (x, y, z) => { const t = (x - a.end[0]) * a.F[0] + (y - a.end[1]) * a.F[1] + (z - a.end[2]) * a.F[2], vx = x - a.end[0], vy = y - a.end[1], vz = z - a.end[2], rad = Math.sqrt(Math.max(0, vx * vx + vy * vy + vz * vz - t * t)); return Math.max(-(cf.len ?? 0.028) - t, t - 0.016, rad - (s.rw + 0.025)); },   // radial cap: a bare slab would cut through the chest cloth
-        {thick: cf.thick ?? 0.005, coverTol: 0.011, bounds: [a.end[0] - 0.08, a.end[1] - 0.08, a.end[2] - 0.08, a.end[0] + 0.08, a.end[1] + 0.08, a.end[2] + 0.08], tris: [80, 30], cell: 0.0042});
+        {thick: cf.thick ?? 0.005, coverTol: 0.011, bounds: [a.end[0] - 0.115, a.end[1] - 0.115, a.end[2] - 0.115, a.end[0] + 0.115, a.end[1] + 0.115, a.end[2] + 0.115], tris: [80, 30], cell: 0.0042});
       parts['cuff' + i] = cuff; const c0 = parts['sleeve' + i].cull; parts['sleeve' + i].cull = (x, y, z) => c0(x, y, z) || cuff.covers(x, y, z);
     }
     ends[i] = {at: a.W, end: a.end, dir: a.F, r: s.rw};
