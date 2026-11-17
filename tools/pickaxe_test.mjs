@@ -46,6 +46,16 @@ await ev(()=>{T.G.P.pick=0;T.G.usePick()});
 ok(s0===await ev(()=>T.sum()),'use key does nothing without a pick');
 await ev(()=>{T.G.P.pick=1;T.G.P.down=true;T.G.usePick();T.G.P.down=false});
 ok(s0===await ev(()=>T.sum())&&await ev(()=>T.G.P.pick===1),'a fallen player cannot swing');
+// ---- the wall prompt only shows while holding a usable pickaxe (real DOM text, setText caches)
+const promptAt=async pick=>ev(pick=>{const G=T.G,t=T.find();T.face(t.x,t.y);G.P.pick=pick;G.update(0.016);return {st:G.state,txt:document.getElementById('prompt').textContent}},pick);
+let pr=await promptAt(0);
+ok(pr.st==='play','state is play for the prompt checks ('+pr.st+')');
+ok(pr.txt==='','no wall prompt without a pickaxe (got "'+pr.txt+'")');
+pr=await promptAt(1);
+ok(pr.txt.includes('break through this wall'),'prompt offers to break the wall with a pickaxe (got "'+pr.txt+'")');
+pr=await promptAt(0);
+ok(pr.txt==='','prompt gone again once the pick is used up, still facing a wall (got "'+pr.txt+'")');
+await ev(()=>{T.G.P.pick=1});
 // ---- refusals keep the pick
 const refuse=async(name,tile)=>{
   const r=await pg.evaluate(([tx,ty])=>{const G=T.G;const f=T.face(tx,ty);if(!f)return {skip:1};const before=T.sum(),p=G.P.pick,why=G.pkWhy(tx,ty);G.usePick();return {why,same:before===T.sum(),keep:G.P.pick===p}},tile);
