@@ -1409,9 +1409,8 @@ const ROOMS=createRooms(renderer,{post:POST,low:Q===0,
   hud:h=>{const el=$('roomHud');if(el.innerHTML!==h)el.innerHTML=h},
   hurtFx:()=>{const h=$('hurt');h.style.transition='none';h.style.opacity=1;requestAnimationFrame(()=>{h.style.transition='opacity .9s';h.style.opacity=0})},
   gems:n=>{wallet+=n;R.gems+=n;store.set('wallet',wallet)},sfx:n=>sfx(n),
-  hint:k=>k==='mpick'||k==='mspray'?(touch.on?'tap '+(k==='mpick'?'PICK UP':'SPRAY'):pad.id?'A':'Space, E or click'):k==='muse'?(touch.on?'tap USE':pad.id?'A':'Space, E or click'):
-    k==='mwalk'?(touch.on?'Left stick walks · drag looks · USE acts':pad.id?'Left stick walks · right stick looks · A acts':'WASD walk · mouse or arrows look · Space, E or click acts'):
-    k==='mirror'?(touch.on?'Left stick walks · drag to look · tap SPRAY or THUMB':pad.id?'Left stick walks · right stick looks · D-pad left or right chooses · A confirms':'WASD walk · mouse or arrows look · 1 / 2, Tab or wheel picks · Space or E confirms'):
+  hint:k=>k==='mpick'||k==='mspray'?(touch.on?'tap '+(k==='mpick'?'PICK UP':'SPRAY'):pad.id?'X':'E or click'):k==='muse'?(touch.on?'tap USE':pad.id?'X':'E or click'):
+    k==='mirror'?(touch.on?'Left stick walks · drag to look · tap SPRAY or THUMB':pad.id?'Left stick walks · right stick looks · A jumps · D-pad left or right chooses · X confirms':'WASD walk · Space jumps · mouse or arrows look · 1 / 2, Tab or wheel picks · E or click confirms'):
     touch.on?'Left stick walk · drag to look · aim at a button and tap PRESS, or tap a button':pad.id?'Left stick walk · right stick look · aim at a button and press A or X':'WASD walk · mouse look · aim at a button and click, E or Space'});
 const ROOM_NAME={galaxy:'a door full of stars',kiln:'the glass kiln',fall:'a door with no floor behind it',mirror:'a room behind a mirror'};
 // a fallen player rides along with the friend they follow, into that friend's strange door too
@@ -1434,7 +1433,7 @@ function sdoorOpen(D){
   mpSend({k:'sd',d:R.depth,i:F.sdoors.indexOf(D),w:D.kind});
   sfx('door');
   state='room';P.away=true;P.vx=P.vz=0;mapBig=false;
-  document.body.classList.add('inroom');const kl=D.kind==='kiln';$('tFlash').textContent=kl?'PRESS':D.kind==='mirror'?'USE':'FLASH';$('tJump').textContent=D.kind==='mirror'?'THUMB':'JUMP';$('tJump').style.display=kl||D.kind==='mirror'?'none':'';
+  document.body.classList.add('inroom');const kl=D.kind==='kiln';$('tFlash').textContent=kl?'PRESS':D.kind==='mirror'?'USE':'FLASH';$('tJump').textContent='JUMP';$('tJump').style.display=kl?'none':'';
   if(kl)document.body.classList.add('kilnroom');if(D.kind==='mirror')document.body.classList.add('mirroom');
   $('fade').style.transition='none';$('fade').style.opacity=1;
   ROOMS.start(D.kind,roomEnd);
@@ -1517,7 +1516,7 @@ function roomEnd(res){
   if(MP.on)say(mir?'The glass gave way. Your friends can still bring you back on the next floor.':fall?'There was no floor. Your friends can still bring you back on the next floor.':'The kiln filled up. Your friends can still bring you back on the next floor.',5);
 }
 // the mirror room's touch buttons say nothing about the can until you are looking at it or holding it
-function mirrorBtns(){const S=ROOMS.kind==='mirror'&&ROOMS.state(),b=S&&S.btn;if(!b)return;const a=$('tFlash'),j=$('tJump'),d=b[1]?'':'none';if(a.textContent!==b[0])a.textContent=b[0];if(j.style.display!==d)j.style.display=d}
+function mirrorBtns(){const S=ROOMS.kind==='mirror'&&ROOMS.state(),b=S&&S.btn;if(!b)return;const a=$('tFlash'),j=$('tJump'),t=b[1]?'THUMB':'JUMP';if(a.textContent!==b[0])a.textContent=b[0];if(j.textContent!==t)j.textContent=t;if(j.style.display)j.style.display=''}
 function roomInput(){
   const kb=ROOMS.kind==='kiln',mir=ROOMS.kind==='mirror',ax=(a,b)=>(a?1:0)-(b?1:0);
   // walking (the kiln hall) and looking; pressing is one thing for every device. The mirror also reads which touch button was hit (spray / thumb)
@@ -1525,7 +1524,7 @@ function roomInput(){
   return {mx:clamp(ax(keys.KeyD||(kb&&keys.ArrowRight),keys.KeyA||(kb&&keys.ArrowLeft))+pad.mx+touch.mx+(mir?0:ax(pad.dr,pad.dl)),-1,1),
     my:clamp(ax(keys.KeyS||(kb&&keys.ArrowDown),keys.KeyW||(kb&&keys.ArrowUp))+pad.my+touch.my+(mir?0:ax(pad.dd,pad.du)),-1,1),
     sl:!!pad.dl,sr:!!pad.dr,k1:!!(keys.Digit1||keys.Numpad1),k2:!!(keys.Digit2||keys.Numpad2),tab:!!keys.Tab,wh,
-    press:!!(mouseL||keys.KeyE||keys.Space||(keys.Enter&&!MP.on)||pad.b0||pad.b2||touch.act),
+    press:!!(mouseL||keys.KeyE||(!mir&&keys.Space)||(keys.Enter&&!MP.on)||(!mir&&pad.b0)||pad.b2||touch.act),jump:mir&&!!(keys.Space||pad.b0||touch.jump),
     touch:touch.on,spray:!!touch.act,thumb:!!touch.jump,
     lx:pad.lx*1.35+(ROOMS.kind==='galaxy'||mir?ax(keys.ArrowRight,keys.ArrowLeft):0),ly:pad.ly+(mir?ax(keys.ArrowDown,keys.ArrowUp):0)};
 }
@@ -3786,5 +3785,5 @@ setInterval(()=>{if(MP.host&&document.hidden&&performance.now()-last>200)step(pe
 // a backdrop maze behind the title screen
 R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
 {const rc=cleanCode(new URLSearchParams(location.search).get('room'));if(rc)mpPrepareJoin(rc)}
-window.__game={XR,xrayTick,wallsBetween,update,render,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={roomInput,XR,xrayTick,wallsBetween,update,render,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);

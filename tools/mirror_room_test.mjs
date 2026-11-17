@@ -12,9 +12,12 @@ let fails=0;const bad=m=>{fails++;console.log('FAIL',m)};
 const setup=`window.__open=seed=>{const G=window.__game;if(G.state==='room')G.roomLeave();if(G.state!=='play')G.startRun('mirror'+Math.random(),2,true);
   const D=G.F.sdoors[0];D.kind='mirror';D.look='mirror';D.used=false;document.getElementById('toast').textContent='';G.sdoorOpen(D);if(seed!==undefined)G.ROOMS.start('mirror',G.roomEnd,seed);return G.state};
  window.__I=o=>Object.assign({mx:0,my:0,press:0,lx:0,ly:0},o||{});
- window.__run=(t,cb)=>{const G=window.__game,S=G.ROOMS.state(),I=window.__I();let n=0;while(S.t<t&&n++<20000&&G.state==='room'){if(cb)cb(S,I);G.ROOMS.update(1/60,I)}return S.t};
- window.__tap=(o)=>{const R=window.__game.ROOMS;R.update(1/60,window.__I(o));R.update(1/60,window.__I())};
- window.__walk=(n,o)=>{const R=window.__game.ROOMS;for(let i=0;i<n&&window.__game.state==='room';i++)R.update(1/60,window.__I(o))};
+ window.__seen=new Set();window.__U=I=>{window.__game.ROOMS.update(1/60,I);window.__seen.add(document.getElementById('roomHud').textContent+'|'+document.getElementById('toast').textContent)};
+ window.__run=(t,cb)=>{const G=window.__game,S=G.ROOMS.state(),I=window.__I();let n=0;while(S.t<t&&n++<20000&&G.state==='room'){if(cb)cb(S,I);window.__U(I)}return S.t};
+ window.__tap=(o)=>{window.__U(window.__I(o));window.__U(window.__I())};
+ window.__walk=(n,o)=>{for(let i=0;i<n&&window.__game.state==='room';i++)window.__U(window.__I(o))};
+ window.__hop=(o,n)=>{const R=window.__game.ROOMS,S=R.state();let lo=9,hi=0;window.__U(window.__I(Object.assign({jump:1},o)));for(let i=0;i<n;i++){window.__U(window.__I(o));lo=Math.min(lo,R.cam.position.y);hi=Math.max(hi,R.cam.position.y)}return{lo,hi,x:S.px,z:S.pz}};
+ window.__enter=S=>{window.__at(0,-1.4,0,0);return window.__hop({my:-1},80)}
  window.__at=(x,z,yaw,pitch)=>{const S=window.__game.ROOMS.state();S.px=x;S.pz=z;S.ux=S.uz=0;window.__look(yaw,pitch)};
  window.__look=(yaw,pitch)=>{const S=window.__game.ROOMS.state();S.yaw=yaw;S.pitch=pitch};
  window.__grab=()=>{const S=window.__game.ROOMS.state();window.__look(S.canAim.yaw,S.canAim.pitch);window.__tap({press:1});return S.held}`;
@@ -40,7 +43,7 @@ const info=()=>pg.evaluate(()=>{const G=window.__game;return{state:G.state,hp:G.
 // (d) the thumb: nothing ends by itself any more; you are free in the room
 {await pg.evaluate(()=>window.__open());
  const r=await pg.evaluate(()=>{const G=window.__game,S=G.ROOMS.state();window.__grab();window.__run(S.mir.CHOICE+0.3);S.pick(2);window.__run(S.ct+12.5);window.__look(1.5,0);window.__run(S.t+0.1);const o={fr:S.fr,hud:document.getElementById('roomHud').textContent};window.__run(S.t+90);o.state=G.state;o.toast=document.getElementById('toast').textContent;o.gb=S.gb;return o});
- console.log('d thumb',JSON.stringify(r));if(!r.fr)bad('d not free');if(r.state!=='room')bad('d auto finished '+r.state);if(!/glass/.test(r.hud)||!/door/.test(r.hud))bad('d hint '+r.hud);if(r.gb>=0)bad('d glass broke by itself')}
+ console.log('d thumb',JSON.stringify(r));if(!r.fr)bad('d not free');if(r.state!=='room')bad('d auto finished '+r.state);if(/glass|break/i.test(r.hud))bad('d hint tells about the glass '+r.hud);if(r.gb>=0)bad('d glass broke by itself')}
 // (e) spraying the monster still kills you
 {await pg.evaluate(()=>window.__open());await pg.evaluate(()=>{const S=window.__game.ROOMS.state();window.__grab();window.__run(S.mir.CHOICE+0.3);window.__game.ROOMS.state().pick(1);window.__run(S.t+120)});
  const r=await info();console.log('e spray',JSON.stringify(r));if(r.state!=='dead'||r.hp>0)bad('e not dead');if(r.xray)bad('e xray after death')}
@@ -80,33 +83,70 @@ await pg.evaluate(free);
    const S4=window.__free(31);window.__at(0,-0.6,0,0.05);window.__run(S4.t+0.1);o.glassHud=H.textContent;o.tg=S4.tg;
    window.__tap({press:1});o.b1=S4.fb;window.__run(S4.t+0.3);window.__tap({press:1});o.b2=S4.fb;o.brokeEarly=S4.gb>=0;window.__run(S4.t+0.3);window.__tap({press:1});o.b3=S4.fb;o.gb=S4.gb>=0;o.state=G.state;
    window.__run(S4.t+0.3);o.shards=S4.shards.visible;
-   window.__at(0,-1.0,0,0);window.__walk(150,{my:-1});o.z=S4.pz;o.st=S4.st;window.__walk(200,{my:-1});o.far=S4.pz;window.__walk(200,{mx:1});o.wallX=S4.px;
+   // the sill: walking into the frame only blocks; a jump while moving forward carries you into the parlor, and a jump back returns you
+   window.__at(0,-1.0,0,0);window.__walk(200,{my:-1});o.blockZ=S4.pz;o.blockSt=S4.st;
+   window.__walk(60,{my:0});
+   window.__at(0,-1.4,0,0);const h=window.__hop({my:-1},80);o.hop=h;o.z=S4.pz;o.st=S4.st;o.eyeAfter=R.cam.position.y;o.apex=h.hi-h.lo;
+   window.__walk(200,{my:-1});o.far=S4.pz;window.__walk(200,{mx:1});o.wallX=S4.px;
+   window.__at(0,-3.0,Math.PI,0);window.__walk(200,{my:-1});o.backBlock=S4.pz;const h2=window.__hop({my:-1},80);o.back=S4.pz;o.hop2=h2;
+   window.__at(0,-1.4,0,0);let mx=0;window.__hop({my:-1},12);for(let i=0;i<90;i++){window.__U(window.__I({jump:1}));mx=Math.max(mx,R.cam.position.y)}o.maxEye=mx;
    o.state2=G.state;return o});
  console.log('m break',JSON.stringify(r));
- if(!(r.blind[0]<r.blind[1]*0.8&&r.blind[0]>0))bad('m blind not slower '+r.blind);if(r.tg!=='glass'||!/Break the glass/.test(r.glassHud))bad('m prompt '+r.glassHud);if(r.b1!==1||r.b2!==2||r.brokeEarly)bad('m blows '+[r.b1,r.b2]);if(r.b3!==3||!r.gb||!r.shards)bad('m third blow');if(r.state!=='room'||r.state2!=='room')bad('m ended');
- if(!(r.z<-2.3)||!r.st)bad('m not through '+r.z);if(r.far<-6.6)bad('m parlor wall '+r.far);if(r.wallX>3.5)bad('m side wall '+r.wallX)}
+ if(!(r.blind[0]<r.blind[1]*0.8&&r.blind[0]>0))bad('m blind not slower '+r.blind);if(r.tg!=='glass'||/break|glass/i.test(r.glassHud))bad('m aim/prompt '+r.tg+' '+r.glassHud);if(r.b1!==1||r.b2!==2||r.brokeEarly)bad('m blows '+[r.b1,r.b2]);if(r.b3!==3||!r.gb||!r.shards)bad('m third blow');if(r.state!=='room'||r.state2!=='room')bad('m ended');
+ if(!(r.blockZ>-1.72)||r.blockSt)bad('m walked over the sill '+r.blockZ+' '+r.blockSt);if(!(r.z<-2.4)||!r.st)bad('m jump did not carry through '+r.z);if(!(r.apex>0.45&&r.apex<0.65)||Math.abs(r.eyeAfter-1.6)>0.08)bad('m jump arc '+r.apex+' '+r.eyeAfter);
+ if(!(r.backBlock<-2.3))bad('m walked back over the sill '+r.backBlock);if(!(r.back>-1.75))bad('m jump back '+r.back);if(!(r.maxEye<2.55))bad('m head through the lintel '+r.maxEye);
+ if((await pg.evaluate(()=>[...window.__seen])).some(t=>/break/i.test(t)))bad('m text about breaking');if(r.far<-6.6)bad('m parlor wall '+r.far);if(r.wallX>3.5)bad('m side wall '+r.wallX)}
 // (n) leaving by the door after walking back from the parlor wins
 {const g0=(await info()).gems;const r=await pg.evaluate(()=>{const G=window.__game,R=G.ROOMS,S=window.__free(32),H=document.getElementById('roomHud'),o={};
-   window.__at(0,-0.6,0,0.05);for(let i=0;i<3;i++){window.__tap({press:1});window.__run(S.t+0.3)}window.__at(0,-1.0,0,0);window.__walk(100,{my:-1});o.in=S.st;
+   window.__at(0,-0.6,0,0.05);for(let i=0;i<3;i++){window.__tap({press:1});window.__run(S.t+0.3)}window.__enter(S);o.in=S.st;
    window.__at(-0.4,1.0,Math.PI,0);window.__run(S.t+0.1);o.hud=H.textContent;o.tg=S.tg;window.__tap({press:1});window.__run(S.t+1.5);o.state=G.state;o.toast=document.getElementById('toast').textContent;return o});
  const i2=await info();console.log('n leave',JSON.stringify(r),i2.gems-g0);if(!r.in)bad('n did not step in');if(r.tg!=='door'||!/Leave/.test(r.hud))bad('n leave prompt '+r.hud);if(r.state!=='play'||r.toast!=='You got lucky son.')bad('n not won '+r.state+' '+r.toast);if(!(i2.xray>0))bad('n xray');if(i2.gems-g0<=0)bad('n gems')}
-// (o) the eggs: the little mirror runs once; the book pays 5 gems once; leaving after both still wins
+// (o) the eggs: the lamp reveals the watcher (once-only knock, no prompt on the little mirror); the monster's door is locked; the book pays 5 gems once; leaving after all still wins
 {const g0=(await info()).gems;const r=await pg.evaluate(()=>{const G=window.__game,R=G.ROOMS,S=window.__free(33),H=document.getElementById('roomHud'),T=document.getElementById('toast'),o={};
-   window.__at(0,-0.6,0,0.05);for(let i=0;i<3;i++){window.__tap({press:1});window.__run(S.t+0.3)}window.__at(0,-1.0,0,0);window.__walk(100,{my:-1});o.in=S.st;
+   window.__at(0,-0.6,0,0.05);for(let i=0;i<3;i++){window.__tap({press:1});window.__run(S.t+0.3)}window.__enter(S);o.in=S.st;
    const m=S.mini,n=m[0]<-3?[1,0]:m[0]>3?[-1,0]:[0,1],yw=Math.atan2(-n[0],n[1]);
-   window.__at(m[0]+n[0]*3,m[1]+n[1]*3,yw,-0.02);window.__run(S.t+0.1);o.farTg=S.tg;
-   window.__at(m[0]+n[0]*1.2,m[1]+n[1]*1.2,yw,-0.05);window.__run(S.t+0.1);o.mTg=S.tg;o.mHud=H.textContent;
-   window.__tap({press:1});const seen=[];for(let i=0;i<600;i++){R.update(1/60,window.__I());seen.push(R.snap().em)}
-   o.phases=[...new Set(seen)];o.after=R.snap().em;
-   window.__look(yw,-0.05);window.__run(S.t+0.1);o.again=S.tg;
+   // the little mirror itself says nothing, lit or dark
+   window.__at(m[0]+n[0]*1.2,m[1]+n[1]*1.2,yw,-0.05);window.__run(S.t+0.5);o.mTg=S.tg;o.mHud=H.textContent;o.rv0=S.reveal();
+   // the lamp: aim from a metre away
+   const L=S.lampAt,sx=L[0]<0?1:-1,lyaw=Math.atan2(-sx,0);
+   window.__at(L[0]+sx*1.0,L[1],lyaw,-0.1);window.__run(S.t+0.2);o.lTg=S.tg;o.lHud=H.textContent;
+   window.__at(L[0]+sx*2.5,L[1],lyaw,-0.1);window.__run(S.t+0.2);o.lFar=S.tg;
+   window.__at(L[0]+sx*1.0,L[1],lyaw,-0.1);window.__run(S.t+0.2);window.__tap({press:1});window.__run(S.t+1.0);o.off=S.lamp;o.rvOff=S.reveal();o.lHud2=H.textContent;
+   // up close in the dark it knocks, once
+   window.__at(m[0]+n[0]*1.2,m[1]+n[1]*1.2,yw,-0.05);window.__run(S.t+2.0);o.knock1=S.knocks||0;
+   window.__at(m[0]+n[0]*3,m[1]+n[1]*3,yw,-0.05);window.__run(S.t+0.5);window.__at(m[0]+n[0]*1.0,m[1]+n[1]*1.0,yw,-0.05);window.__run(S.t+1.5);o.knock2=S.knocks||0;
+   // lamp back on: opaque again
+   window.__at(L[0]+sx*1.0,L[1],lyaw,-0.1);window.__run(S.t+0.2);window.__tap({press:1});window.__run(S.t+1.0);o.on=S.lamp;o.rvOn=S.reveal();
+   window.__tap({press:1});window.__run(S.t+1.0);o.rvOff2=S.reveal();window.__tap({press:1});window.__run(S.t+1.0);o.knock3=S.knocks||0;
+   // the monster's door: "Open" when aimed, and it is locked
+   const DX=S.layout.DX;window.__at(DX,-6.2,0,0);window.__run(S.t+0.2);o.dTg=S.tg;o.dHud=H.textContent;const rot0=S.door.rotation.y;
+   T.textContent='';window.__tap({press:1});o.say=T.textContent;window.__run(S.t+0.3);window.__tap({press:1});o.locks1=S.locks;window.__run(S.t+1.5);window.__tap({press:1});o.locks2=S.locks;window.__run(S.t+1.5);o.rot=[rot0,S.door.rotation.y];
+   window.__at(DX,-4.8,0,0);window.__run(S.t+0.2);o.dFar=S.tg;
    const b=S.book;window.__at(b[0],b[1]+1.0,0,0);window.__look(0,-Math.atan2(0.8,1.0));window.__run(S.t+0.1);o.bTg=S.tg;o.bHud=H.textContent;
    const g2=G.R.gems,w2=G.wallet;window.__tap({press:1});o.read=H.textContent;o.gained=G.R.gems-g2;o.walletGain=G.wallet-w2;o.toast=T.textContent;
    window.__tap({press:1});o.closed=H.textContent;window.__tap({press:1});window.__tap({press:1});o.gained2=G.R.gems-g2;
-   window.__at(-0.4,1.0,Math.PI,0);window.__run(S.t+0.1);window.__tap({press:1});window.__run(S.t+1.5);o.state=G.state;return o});
- const i2=await info();console.log('o eggs',JSON.stringify(Object.assign({},r,{read:r.read.slice(0,40)})),i2.gems-g0);
- if(!r.in)bad('o not in');if(r.farTg==='tiny')bad('o prompt too far');if(r.mTg!=='tiny'||!/Look closer/.test(r.mHud))bad('o mirror prompt '+r.mTg+' '+r.mHud);if(!r.phases.includes(1)||!r.phases.includes(2)||r.after!==3)bad('o mirror phases '+r.phases+' '+r.after);if(r.again==='tiny')bad('o mirror twice');
+   window.__at(-0.4,1.0,Math.PI,0);window.__run(S.t+0.1);window.__tap({press:1});window.__run(S.t+1.5);o.state=G.state;o.seen=[...window.__seen];return o});
+ const i2=await info();console.log('o eggs',JSON.stringify(Object.assign({},r,{read:r.read.slice(0,40),seen:r.seen.length})),i2.gems-g0);
+ if(!r.in)bad('o not in');if(r.mTg==='tiny'||r.mHud!==''||r.rv0>0.02)bad('o mirror prompt/reveal while lit '+r.mTg+' '+r.mHud+' '+r.rv0);
+ if(r.lTg!=='lamp'||!/Turn off/.test(r.lHud)||!/E or click/.test(r.lHud))bad('o lamp prompt '+r.lTg+' '+r.lHud);if(r.lFar==='lamp')bad('o lamp prompt too far');
+ if(r.off!==0||!(r.rvOff>0.95)||!/Turn on/.test(r.lHud2))bad('o lamp off '+r.off+' '+r.rvOff+' '+r.lHud2);if(r.knock1!==1||r.knock2!==1||r.knock3!==1)bad('o knock '+[r.knock1,r.knock2,r.knock3]);
+ if(r.on!==1||!(r.rvOn<0.05)||!(r.rvOff2>0.95))bad('o lamp back on '+r.on+' '+r.rvOn+' '+r.rvOff2);
+ if(r.dTg!=='mdoor'||!/Open/.test(r.dHud))bad('o door prompt '+r.dTg+' '+r.dHud);if(r.say!=="It's locked.")bad('o locked text '+r.say);if(r.locks1!==1||r.locks2!==2)bad('o door cooldown '+[r.locks1,r.locks2]);if(Math.abs(r.rot[1]-r.rot[0])>1e-6)bad('o door moved '+r.rot);if(r.dFar==='mdoor')bad('o door prompt too far');
  if(r.bTg!=='book'||!/Read/.test(r.bHud))bad('o book prompt '+r.bTg+r.bHud);if(r.gained!==5||r.walletGain!==5)bad('o book gems '+r.gained);if(!/Thank you for not looking/.test(r.read))bad('o note text');if(r.closed.includes('Thank you'))bad('o not closed');if(r.gained2!==5)bad('o book paid twice '+r.gained2);if(r.toast!=='+5 gems tucked in the book.')bad('o toast '+r.toast);
- if(r.state!=='play')bad('o not won after eggs');if(i2.gems-g0!==5+2+i2.depth)bad('o gems total '+(i2.gems-g0))}
+ if(r.seen.some(t=>/break/i.test(t)))bad('o text about breaking');if(r.state!=='play')bad('o not won after eggs');if(i2.gems-g0!==5+2+i2.depth)bad('o gems total '+(i2.gems-g0))}
+// (q) controls: Space jumps and no longer interacts (E does), the jump has the maze's arc, a snapshot carries the lamp and the jump
+{const r=await pg.evaluate(()=>{const G=window.__game,R=G.ROOMS,o={};window.__open(41);const S=R.state();
+   G.keys.Space=true;const a=G.roomInput();G.keys.Space=false;G.keys.KeyE=true;const b=G.roomInput();G.keys.KeyE=false;o.space=[a.press,a.jump];o.e=[b.press,b.jump];
+   window.__look(S.canAim.yaw,S.canAim.pitch);window.__run(S.t+0.2);window.__tap({jump:1});o.heldBySpace=S.held;window.__walk(60,{});
+   const e0=R.cam.position.y;let hi=0,air=0;window.__U(window.__I({jump:1}));for(let i=0;i<60;i++){window.__U(window.__I());hi=Math.max(hi,R.cam.position.y-e0);if(S.jy>0.01)air++}o.apex=hi;o.air=air;o.land=R.cam.position.y-e0;
+   window.__grab();o.heldByE=S.held;
+   const S2=window.__free(42);window.__at(0,-0.6,0,0.05);for(let i=0;i<3;i++){window.__tap({press:1});window.__run(S2.t+0.3)}window.__enter(S2);const L=S2.lampAt,sx=L[0]<0?1:-1;window.__at(L[0]+sx,L[1],Math.atan2(-sx,0),-0.1);window.__run(S2.t+0.2);window.__tap({press:1});window.__run(S2.t+0.5);
+   window.__U(window.__I({jump:1}));window.__walk(8,{});const q=R.snap();o.snap=[q.lo,q.jy,q.kn];
+   G.roomLeave();R.abort();R.watch('mirror',q);const W=R.state();for(let i=0;i<40;i++)R.update(1/60,window.__I());o.w=[W.lamp,W.reveal()>0.9,W.jy>0.05];
+   for(const g of [{lo:7,jy:'x',kn:'z'},{lo:'a',jy:1e9},{jy:-4,lo:null},{jy:NaN}]){R.sync(g)}for(let i=0;i<60;i++)R.update(1/60,window.__I());o.ok=isFinite(W.jy)&&W.jy>=0&&W.jy<=1.2;R.abort();return o});
+ console.log('q controls',JSON.stringify(r));
+ if(r.space[0]||!r.space[1])bad('q Space should jump, not press '+r.space);if(!r.e[0])bad('q E should press '+r.e);if(r.heldBySpace)bad('q Space picked up the can');if(!r.heldByE)bad('q E did not pick up');
+ if(!(r.apex>0.5&&r.apex<0.6)||!(r.air>=30&&r.air<=45)||Math.abs(r.land)>0.08)bad('q jump arc '+r.apex+' '+r.air+' '+r.land);if(r.snap[0]!==0||!(r.snap[1]>0))bad('q snap '+r.snap);if(r.w[0]!==0||!r.w[1])bad('q watcher lamp '+r.w);if(!r.ok)bad('q garbage jump')}
 // (p) every seed places the little mirror on a wall and builds without throwing
 {const r=await pg.evaluate(()=>{const G=window.__game,out=new Set();let bad=0;for(let sd=1;sd<=40;sd++){window.__open(sd);const S=G.ROOMS.state(),m=S.mini;if(!m||!(Math.abs(m[0])===3.7||m[1]===-6.8))bad++;else out.add(Math.abs(m[0])===3.7?(m[0]<0?'L':'R'):'F')}G.ROOMS.abort();return{bad,sides:[...out].sort()}});
  console.log('p mini',JSON.stringify(r));if(r.bad)bad('p placement');if(r.sides.length<2)bad('p sides '+r.sides)}
