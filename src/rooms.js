@@ -1,4 +1,4 @@
-// Strange doors: three rooms that are somewhere else entirely.
+// Strange doors (the picture house is in src/theater.js): three rooms that are somewhere else entirely.
 //   galaxy  you float among stars until the sun collapses and spits you back out, floors deeper
 //   kiln    a stone hall with an arcade console: walk up, press its buttons to steer the falling stones in the glass, burn enough rows and the door lets you go
 //   fall    there is no floor behind the door
@@ -8,6 +8,7 @@ import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
 import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
 import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
 import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
+import {createTheater} from './theater.js';
 
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
 const ss=(a,b,x)=>{const t=clamp((x-a)/(b-a),0,1);return t*t*(3-2*t)};
@@ -98,7 +99,8 @@ export function createRooms(renderer,o0){
   const scene=new THREE.Scene(),cam=new THREE.PerspectiveCamera(72,1,0.05,2000);
   scene.background=new THREE.Color(0x000000);
   let composer=null,bloom=null,viewKey='',cur=null,group=null,done=null,held=false;
-  const A={active:false,kind:'',watching:false,label:'',mute:0};
+  const A={active:false,kind:'',watching:false,label:'',mute:0,theaterOpts:{}};
+  const clearHooks=[];
   const glowTex=canvasTex(128,128,(c,w)=>{const g=c.createRadialGradient(w/2,w/2,0,w/2,w/2,w/2);
     g.addColorStop(0,'rgba(255,255,255,1)');g.addColorStop(0.25,'rgba(255,255,255,0.45)');g.addColorStop(0.6,'rgba(255,255,255,0.08)');g.addColorStop(1,'rgba(255,255,255,0)');
     c.fillStyle=g;c.fillRect(0,0,w,w)});
@@ -113,6 +115,7 @@ export function createRooms(renderer,o0){
     group=new THREE.Group();scene.add(group);
   }
   function clear(){
+    while(clearHooks.length){try{clearHooks.pop()()}catch(e){}}
     if(!group)return;
     group.traverse(m=>{if(m.geometry)m.geometry.dispose();if(m.material){const L=Array.isArray(m.material)?m.material:[m.material];for(const q of L){if(q.map&&q.map!==glowTex)q.map.dispose();q.dispose()}}});
     scene.remove(group);group=null;scene.fog=null;
@@ -578,25 +581,27 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     return S;
   }
 
-  const build=kind=>{
+  const theater=createTheater({renderer,scene,cam,o,A,canvasTex,glow,clamp,ss,lerp,nf,rnd,getGroup:()=>group,onClear:fn=>clearHooks.push(fn),finish:r=>finish(r)});
+  const KINDS={galaxy,fall,kiln,theater};
+  const build=(kind,seed)=>{
     setup();A.active=true;A.kind=kind;held=false;
-    cur=kind==='galaxy'?galaxy():kind==='fall'?fall():kiln();
+    cur=(KINDS[kind]||kiln)(seed);
     cur.fade=0;cur.in=0;
   };
   // watching someone else's room: the same scene, driven by their snapshots instead of our input
   A.watch=(kind,q)=>{
     if(A.active)A.abort();
-    if(kind!=='galaxy'&&kind!=='fall'&&kind!=='kiln')return;
+    if(!KINDS[kind])return;
     done=null;A.watching=true;
     build(kind);
     A.sync(q);cur.update(0,Z);
   };
   A.sync=q=>{if(!cur||!A.watching||held||!q||typeof q!=='object'||!cur.apply)return;try{cur.apply(q)}catch(e){}};
   A.snap=()=>cur&&cur.snap&&!A.watching?cur.snap():null;
-  A.start=(kind,cb)=>{
+  A.start=(kind,cb,seed)=>{
     if(A.active)A.abort();
     A.watching=false;setup();done=cb;A.active=true;A.kind=kind;
-    cur=kind==='galaxy'?galaxy():kind==='fall'?fall():kiln();
+    cur=(KINDS[kind]||kiln)(seed!==undefined?seed:(Math.random()*4294967296)>>>0);
     cur.fade=0;cur.in=0;
     cur.update(0,Z);
   };
@@ -606,6 +611,8 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
   A.untap=()=>{if(cur&&cur.untap)cur.untap()};
   A.aimed=()=>!!(cur&&cur.aimed&&cur.aimed());
   A.cam=cam;
+  // test hooks for the picture house: inject a mic level or recognised words, force the house reel
+  A.theaterTest=q=>cur&&cur.test&&cur.test.api?cur.test.api(q):null;
   A.look=(dx,dy)=>{if(cur&&!A.watching&&cur.yaw!==undefined){cur.yaw+=dx;cur.pitch=clamp(cur.pitch-dy,-1.2,1.2)}};
   // how black the screen overlay should be: fades in at the start, out at the end
   A.fade=()=>cur?Math.max(cur.fade||0,1-ss(0,A.kind==='fall'?0.18:0.7,cur.in)):0;
