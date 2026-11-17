@@ -564,7 +564,9 @@ export function body(p = {}) {
     d = smin(d, sdEllipsoid(xs - 0.012 * belly, y - Y.belly, z, wd + 0.03 * belly, 0.075, ww * 1.02), 0.04);
     d = smin(d, sdEllipsoid(x, y - Y.pelvis, z, wd * 1.05, 0.07, hw), 0.04);
     if (!noNeck) d = smin(d, sdRoundCone(xs, y, az, nx, Y.neck - 0.1, 0, nx, Y.neck, 0, nr * 1.05, nr), 0.03);
-    d = smin(d, sdRoundCone(xs, y, az, nx, noNeck ? Y.neck - 0.088 : Y.neck - 0.015, 0, 0, Y.shoulder, sw - 0.03, noNeck ? 0.03 : 0.026, 0.032), 0.03);
+    // trapezius: a slope from the neck (high, near the ear line) down to the acromion (ANSUR cervicale is ~5 cm above the shoulder joint), not a flat shelf
+    d = smin(d, sdRoundCone(xs, y, az, nx + 0.004, noNeck ? Y.neck - 0.062 : Y.neck - 0.03, 0.026, 0, Y.shoulder - 0.014, sw - 0.012, noNeck ? 0.034 : 0.026, 0.03), 0.03);
+    d = smin(d, sdCapsule(xs, y, az, 0.026, Y.shoulder + 0.022, 0.014, 0.004, Y.shoulder - 0.004, sw - 0.02, 0.0075), 0.014);   // clavicle: from the notch to the acromion
     return d;
   };
   const arms = p.arms.map(a => {
@@ -601,29 +603,38 @@ export function dress(B, list) {
     return smax(d, -(y + 0.012), 0.004);
   };
   const sl = sleeves.map(sg => {
-    const a = B.arms[sg.arm], e = sg.ease ?? 0.011, bell = sg.bell ?? 0.034, re = a.r[1] + e * 1.3, rw = a.r[2] + bell, nf = sg.folds ?? 1;
-    const LF = Math.hypot(a.W[0] - a.E[0], a.W[1] - a.E[1], a.W[2] - a.E[2]), sag = sg.sag ?? 0.006;
-    // gravity: the forearm part of the sleeve hangs lower than the arm (the cloth sags below it, most at the bell)
-    const sb = (x, y, z) => {
-      const tt = cl(((x - a.E[0]) * a.F[0] + (y - a.E[1]) * a.F[1] + (z - a.E[2]) * a.F[2]) / LF, 0, 1.2), yy = y + sag * tt * tt * (1 - 0.5 * Math.min(1, Math.abs(a.F[1])));
-      return smin(sdRoundCone(x, yy, z, a.S[0], a.S[1], a.S[2], a.E[0], a.E[1], a.E[2], a.r[0] + e * 1.6, re), sdRoundCone(x, yy, z, a.E[0], a.E[1], a.E[2], a.end[0], a.end[1], a.end[2], re, rw), 0.03);
-    };
-    const fold = (x, y, z, d) => { // folds: soft noise, an accordion at the elbow crook, sag under the arm, hanging folds that open into the bell, a thick rim
+    // Loose fabric hanging from the shoulder seam under gravity: the sleeve's top follows the arm line with a small ease, the cloth
+    // below the arm hangs down (the centre line of the tube drops by `hang(t)` along world up, the radius grows by the same amount), most
+    // at the bell mouth. So the underside is much lower than the top, instead of a tube concentric with the arm.
+    const a = B.arms[sg.arm], e = sg.ease ?? 0.006, bell = sg.bell ?? 0.034, nf = sg.folds ?? 1, up = norm3(sg.up || [0, 1, 0]);
+    const rw = a.r[2] + bell, LF = Math.hypot(a.W[0] - a.E[0], a.W[1] - a.E[1], a.W[2] - a.E[2]);
+    const dE = sg.hangElbow ?? 0.013, dEnd = (rw - a.r[2] - e) * (sg.hang ?? 0.8), dM = dE + (dEnd - dE) * 0.35;
+    const lp = (p, q, t) => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t], drop = (p, d) => [p[0] - up[0] * d, p[1] - up[1] * d, p[2] - up[2] * d];
+    const Mp = lp(a.E, a.end, 0.55), nS = a.S, nE = drop(a.E, dE), nM = drop(Mp, dM), nEnd = drop(a.end, dEnd), dS = 0.004;
+    const rS = a.r[0] + e * 1.6, rE = a.r[1] + e * 1.3 + dE, rM = lp([a.r[1]], [a.r[2]], 0.55)[0] + e * 1.3 + dM + bell * 0.25, rEnd = rw;
+    const nS2 = drop(nS, dS);
+    const sb = (x, y, z) => smin(smin(sdRoundCone(x, y, z, nS2[0], nS2[1], nS2[2], nE[0], nE[1], nE[2], rS + dS, rE), sdRoundCone(x, y, z, nE[0], nE[1], nE[2], nM[0], nM[1], nM[2], rE, rM), 0.03),
+      sdRoundCone(x, y, z, nM[0], nM[1], nM[2], nEnd[0], nEnd[1], nEnd[2], rM, rEnd), 0.03);
+    const bis = norm3([(a.S[0] - a.E[0]) / Math.hypot(a.S[0] - a.E[0], a.S[1] - a.E[1], a.S[2] - a.E[2]) + a.F[0], (a.S[1] - a.E[1]) / Math.hypot(a.S[0] - a.E[0], a.S[1] - a.E[1], a.S[2] - a.E[2]) + a.F[1], (a.S[2] - a.E[2]) / Math.hypot(a.S[0] - a.E[0], a.S[1] - a.E[1], a.S[2] - a.E[2]) + a.F[2]]);   // into the bend of the elbow
+    const fold = (x, y, z, d) => { // folds: soft noise, compression creases on the inner elbow, cloth gathered under it, hanging folds along the underside that open into the bell
       if (d > 0.03) return d;
       const ex = x - a.E[0], ey = y - a.E[1], ez = z - a.E[2], de = Math.hypot(ex, ey, ez);
       const t = ex * a.F[0] + ey * a.F[1] + ez * a.F[2], tn = cl(t / LF, 0, 1);
+      let rx = ex - t * a.F[0], ry = ey - t * a.F[1], rz = ez - t * a.F[2]; const rl = Math.hypot(rx, ry, rz) || 1; rx /= rl; ry /= rl; rz /= rl;
+      const under = cl(-(rx * up[0] + ry * up[1] + rz * up[2]), -1, 1), inner = smoothstep(-0.3, 0.8, rx * bis[0] + ry * bis[1] + rz * bis[2]);
       d += nf * 0.0035 * (fbm(x * 26, y * 26, z * 26, 2) - 0.5) * 2;
-      d += nf * 0.0034 * Math.sin(60 * t + 5 * fbm(x * 12, y * 12, z * 12, 2)) * Math.exp(-(de * de) / 0.0016);   // crook of the elbow: accordion creases
-      d -= nf * 0.006 * Math.exp(-((x - a.E[0] + 0.01) ** 2 + (y - a.E[1] + 0.03) ** 2 + (z - a.E[2]) ** 2) / 0.0012);   // cloth sagging under the elbow
-      const ang = Math.atan2(z - a.E[2] - 0.5 * (y - a.E[1]) * a.F[2], y - a.E[1]);
-      const wv = 3 * fbm(x * 9, y * 9, z * 9, 2);
-      d += nf * (0.0022 + 0.11 * (rw - re)) * smoothstep(0.03, 0.05, (a.end[0] - x) * a.F[0] + (a.end[1] - y) * a.F[1] + (a.end[2] - z) * a.F[2]) * (Math.pow(0.5 + 0.5 * Math.cos(6 * ang + wv + 10 * t), 0.8) * 2 - 1) * smoothstep(0.02, 0.5, tn) * (0.4 + 0.6 * tn);  // hanging folds, deeper towards the bell
-      d -= 0.0 * smoothstep(0.03, 0, (a.end[0] - x) * a.F[0] + (a.end[1] - y) * a.F[1] + (a.end[2] - z) * a.F[2] + 0.01) * smoothstep(0.0, 0.015, (a.end[0] - x) * a.F[0] + (a.end[1] - y) * a.F[1] + (a.end[2] - z) * a.F[2] + 0.03);  // sleeve mouth rim: a little thickness
+      const crook = Math.exp(-(de * de) / 0.0022);
+      d += nf * 0.0046 * Math.sin(70 * t + 5 * fbm(x * 12, y * 12, z * 12, 2)) * crook * (0.3 + 0.7 * inner);   // compression folds at the inner elbow
+      d -= nf * 0.005 * crook * inner;                                                                       // the gathered cloth bulges out there
+      d -= nf * 0.011 * Math.exp(-((x - a.E[0] + 0.01) ** 2 + (y - a.E[1] + 0.03) ** 2 + (z - a.E[2]) ** 2) / 0.0012);   // cloth sagging under the elbow
+      const ang = Math.atan2(rz - 0.3 * ry * a.F[2], -ry), wv = 3 * fbm(x * 9, y * 9, z * 9, 2);   // angle round the arm measured from straight down
+      const toEnd = (a.end[0] - x) * a.F[0] + (a.end[1] - y) * a.F[1] + (a.end[2] - z) * a.F[2];
+      d += nf * (0.0022 + 0.09 * (rw - a.r[2] - e)) * smoothstep(0.03, 0.05, toEnd) * (Math.pow(0.5 + 0.5 * Math.cos(5 * ang + wv + 10 * t), 0.8) * 2 - 1) * smoothstep(0.02, 0.5, tn) * (0.3 + 0.7 * tn) * (0.3 + 0.7 * smoothstep(-0.3, 0.9, under));
       return d;
     };
-    const mouth = (x, y, z, d) => ssub(d, sdSphere(x - (a.end[0] + 0.03 * a.F[0]), y - (a.end[1] + 0.03 * a.F[1]), z - (a.end[2] + 0.03 * a.F[2]), rw * 0.76), 0.004);
+    const cEnd = nEnd, mouth = (x, y, z, d) => ssub(d, sdSphere(x - (cEnd[0] + 0.03 * a.F[0]), y - (cEnd[1] + 0.03 * a.F[1]), z - (cEnd[2] + 0.03 * a.F[2]), rw * 0.76), 0.004);
     const cloth = (x, y, z) => fold(x, y, z, sb(x, y, z)), sdf = (x, y, z) => mouth(x, y, z, cloth(x, y, z));
-    return {sg, a, sb, sdf, cloth, rw};
+    return {sg, a, sb, sdf, cloth, rw, cEnd};
   });
   const sleeveMin = (x, y, z) => { let d = 9; for (const s of sl) d = Math.min(d, s.sb(x, y, z)); return d; };
   const torsoFold = (x, y, z) => {
@@ -637,6 +648,8 @@ export function dress(B, list) {
       { const dy = y - sy; d += f * 0.0055 * (smoothstep(sh + 0.004, sh + 0.022, dy) * smoothstep(sh + 0.09, sh + 0.05, dy) + smoothstep(-sh - 0.004, -sh - 0.02, dy) * smoothstep(-sh - 0.08, -sh - 0.05, dy)) * Math.sin(28 * a + 6 * fbm(x * 20, y * 20, z * 20, 1)); }  // cinch pinch above and below the sash
       { const w = smoothstep(nxp, nxp + 0.05, x), sd = z - 0.03 * smoothstep(B.Y.neck - 0.07, sy + 0.05, y) * 1.0 - 0.004, st = smoothstep(-0.004, 0.004, sd); d -= w * (0.0032 * st - 0.0022 * Math.exp(-(sd * sd) / 0.000006) * smoothstep(sy - 0.03, sy + 0.04, y)); }
       d -= f * 0.0035 * Math.exp(-((x - nxp - 0.03) ** 2 + (y - (B.Y.shoulder - 0.02)) ** 2) / 0.003) * (Math.abs(z) > 0.04 ? Math.sin(40 * (y + 0.5 * z)) : 0);
+      { const sz = B.arms[0] ? Math.abs(B.arms[0].S[2]) : 0.11, az2 = Math.abs(z), t = cl(((az2 - sz) * -0.075 + (y - B.Y.shoulder) * -0.12) / (0.075 * 0.075 + 0.12 * 0.12), 0, 1), px = az2 - sz + 0.075 * t, py = y - B.Y.shoulder + 0.12 * t;
+        d += f * 0.0032 * Math.exp(-(px * px + py * py) / 0.00018) * smoothstep(0.0, 0.03, x - nxp + 0.06); }   // soft fold from the shoulder point down towards the chest
     }
     return d;
   };
@@ -652,14 +665,16 @@ export function dress(B, list) {
     parts.sash = trims.sash;
   }
   sl.forEach((s, i) => {
-    const {a, sb, sdf, sg, cloth} = s, cf = sg.cuff;
+    const {a, sb, sg, cloth, cEnd} = s, cf = sg.cuff, sdf0 = s.sdf;
+    // armhole seam: a thin welt where the sleeve meets the robe (raised, and darkened below)
+    const seam = (x, y, z) => Math.exp(-(((base(x, y, z) - 0.003) / 0.0026) ** 2)), sdf = (x, y, z) => { const d = sdf0(x, y, z); return d < 0.012 ? d - 0.0015 * seam(x, y, z) : d; };
     parts['sleeve' + i] = {sdf, bounds: [Math.min(a.S[0], a.E[0], a.W[0]) - 0.11, Math.min(a.S[1], a.E[1], a.W[1]) - 0.11, Math.min(a.S[2], a.E[2], a.W[2]) - 0.11,
       Math.max(a.S[0], a.E[0], a.W[0]) + 0.11, Math.max(a.S[1], a.E[1], a.W[1]) + 0.11, Math.max(a.S[2], a.E[2], a.W[2]) + 0.11], cell: sg.cell || 0.0075, tris: sg.tris || [380, 150], project: 0.004,
-      aoSdf: (x, y, z) => Math.min(sdf(x, y, z), base(x, y, z) + 0.002), paint: (x, y, z, o) => { o[0] = 0.85 * crease(x, y, z, base); },
+      aoSdf: (x, y, z) => Math.min(sdf(x, y, z), base(x, y, z) + 0.002), paint: (x, y, z, o) => { o[0] = Math.max(0.85 * crease(x, y, z, base), 0.95 * seam(x, y, z)); },
       cull: (x, y, z) => base(x, y, z) < -0.004};
     if (cf) {
-      const cuff = trimBand(cloth, (x, y, z) => { const t = (x - a.end[0]) * a.F[0] + (y - a.end[1]) * a.F[1] + (z - a.end[2]) * a.F[2], vx = x - a.end[0], vy = y - a.end[1], vz = z - a.end[2], rad = Math.sqrt(Math.max(0, vx * vx + vy * vy + vz * vz - t * t)); return Math.max(-(cf.len ?? 0.028) - t, t - 0.016, rad - (s.rw + 0.025)); },   // radial cap: a bare slab would cut through the chest cloth
-        {thick: cf.thick ?? 0.005, coverTol: 0.011, bounds: [a.end[0] - 0.115, a.end[1] - 0.115, a.end[2] - 0.115, a.end[0] + 0.115, a.end[1] + 0.115, a.end[2] + 0.115], tris: [80, 30], cell: 0.0042});
+      const cuff = trimBand(cloth, (x, y, z) => { const t = (x - cEnd[0]) * a.F[0] + (y - cEnd[1]) * a.F[1] + (z - cEnd[2]) * a.F[2], vx = x - cEnd[0], vy = y - cEnd[1], vz = z - cEnd[2], rad = Math.sqrt(Math.max(0, vx * vx + vy * vy + vz * vz - t * t)); return Math.max(-(cf.len ?? 0.028) - t, t - 0.016, rad - (s.rw + 0.025)); },   // radial cap: a bare slab would cut through the chest cloth
+        {thick: cf.thick ?? 0.005, coverTol: 0.011, bounds: [cEnd[0] - 0.115, cEnd[1] - 0.115, cEnd[2] - 0.115, cEnd[0] + 0.115, cEnd[1] + 0.115, cEnd[2] + 0.115], tris: [80, 30], cell: 0.0042});
       parts['cuff' + i] = cuff; const c0 = parts['sleeve' + i].cull; parts['sleeve' + i].cull = (x, y, z) => c0(x, y, z) || cuff.covers(x, y, z);
     }
     ends[i] = {at: a.W, end: a.end, dir: a.F, r: s.rw};

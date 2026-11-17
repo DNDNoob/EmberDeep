@@ -18,8 +18,8 @@ import * as K from './npc_kit.js';
 /* ---------- The Keeper: old robed shopkeeper, white beard, lantern staff ---------- */
 // Arm joint centres in U coords (waist origin): shoulder, elbow, wrist, and radii of the bare arm [deltoid, elbow, wrist].
 const ARMS = [
-  {S: [0, 0.325, 0.105], E: [0.07, 0.115, 0.17], W: [0.225, 0.15, 0.18], r: [0.03, 0.026, 0.018], back: 0.034},   // staff arm (+Z)
-  {S: [0, 0.325, -0.105], E: [0.0, 0.12, -0.165], W: [0.105, 0.04, -0.075], r: [0.03, 0.026, 0.018], back: 0.024} // hand resting on the sash
+  {S: [0, 0.318, 0.115], E: [0.07, 0.115, 0.17], W: [0.225, 0.15, 0.18], r: [0.036, 0.026, 0.018], back: 0.034},   // staff arm (+Z)
+  {S: [0, 0.318, -0.115], E: [0.0, 0.12, -0.165], W: [0.105, 0.04, -0.075], r: [0.036, 0.026, 0.018], back: 0.024} // hand resting on the sash
 ];
 export const KEEPER = {
   id: 'keeper-v8', seed: 4242,
@@ -57,8 +57,8 @@ export const KEEPER = {
   body: {y: {neck: 0.418}, stoop: 0.05, belly: 0.5, narrow: 1.0, waistNarrow: 0.86, arms: ARMS},
   garments: [
     {type: 'robe', ease: 0.012, hang: 0.03, collar: {r: 0.037}},
-    {type: 'sleeve', arm: 0, tris: [400, 150], cell: 0.0062, ease: 0.011, bell: 0.056, folds: 1.2, cuff: {len: 0.028}},
-    {type: 'sleeve', arm: 1, tris: [400, 150], cell: 0.0062, ease: 0.011, bell: 0.044, folds: 1.2, cuff: {len: 0.028}},
+    {type: 'sleeve', arm: 0, tris: [400, 150], cell: 0.0062, ease: 0.006, bell: 0.052, folds: 1.2, cuff: {len: 0.028}},
+    {type: 'sleeve', arm: 1, tris: [400, 150], cell: 0.0062, ease: 0.006, bell: 0.042, folds: 1.2, cuff: {len: 0.028}},
     {type: 'sash', y: 0.017, h: 0.027, thick: 0.006}
   ],
   eyes: {frame: 'H', sclera: 'sclera', iris: 'iris', pupil: 'pupil', lid: 'skin', lid2: 'skinDeep'},
