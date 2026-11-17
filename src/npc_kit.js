@@ -389,7 +389,7 @@ export function hand(p = {}) {
     o[0] = Math.min(1, k * 0.7 + v * 0.3); o[1] = Math.min(1, age * (0.9 * m + 0.45 * smoothstep(0.0, 0.004, y) * smoothstep(0.09, 0.03, x)));
   };
   const b = [-0.07, -0.07, -0.06, 0.145, 0.045, 0.065].map(v => v * S);
-  const nailSpec = {sdf: nailSdf, bounds: b, cell: p.nailCell || 0.0016 * S, tris: [90, 40], project: 0.0006, cull: (x, y, z) => sdf(x, y, z) < -0.0004};
+  const nailSpec = {sdf: nailSdf, bounds: b, cell: p.nailCell || 0.0016 * S, tris: [60, 30], project: 0.0006, cull: (x, y, z) => sdf(x, y, z) < -0.0004};
   const Rf = gR + (FING[1].r[0] + FING[1].r[1] + FING[1].r[2]) / 3 * MM * 0.95;
   return {sdf, paint, nails: nailSpec, joints: {fingers: fingers.map(f => f.pts), thumb: th.pts}, bounds: b, cell: p.cell || 0.0024 * S, tris: p.tris || [520, 190], project: 0.0015,
     grip: pose === 'grip' ? [(FING[1].x * MM - Rf * Math.cos(GRIP_BETA)) * S, (KY - Rf * Math.sin(GRIP_BETA)) * S] : null};
@@ -592,7 +592,7 @@ export function dress(B, list) {
   const trims = {};
   if (sash) {
     const sy = sash.y, sh = sash.h;
-    trims.sash = trimBand(base, (x, y, z) => Math.abs(y - sy) - sh, {thick: sash.thick ?? 0.006, bounds: [-0.14, sy - sh - 0.01, -0.14, 0.14, sy + sh + 0.01, 0.14], tris: [170, 60], cell: 0.0042});
+    trims.sash = trimBand(base, (x, y, z) => Math.abs(y - sy) - sh, {thick: sash.thick ?? 0.006, bounds: [-0.14, sy - sh - 0.01, -0.14, 0.14, sy + sh + 0.01, 0.14], tris: [130, 50], cell: 0.0042});
     parts.sash = trims.sash;
   }
   sl.forEach((s, i) => {
@@ -603,7 +603,7 @@ export function dress(B, list) {
       cull: (x, y, z) => base(x, y, z) < -0.004};
     if (cf) {
       const cuff = trimBand(sb, (x, y, z) => { const t = (x - a.end[0]) * a.F[0] + (y - a.end[1]) * a.F[1] + (z - a.end[2]) * a.F[2], vx = x - a.end[0], vy = y - a.end[1], vz = z - a.end[2], rad = Math.sqrt(Math.max(0, vx * vx + vy * vy + vz * vz - t * t)); return Math.max(-(cf.len ?? 0.028) - t, t - 0.016, rad - (s.rw + 0.025)); },   // radial cap: a bare slab would cut through the chest cloth
-        {thick: cf.thick ?? 0.005, bounds: [a.end[0] - 0.08, a.end[1] - 0.08, a.end[2] - 0.08, a.end[0] + 0.08, a.end[1] + 0.08, a.end[2] + 0.08], tris: [110, 40], cell: 0.0042});
+        {thick: cf.thick ?? 0.005, bounds: [a.end[0] - 0.08, a.end[1] - 0.08, a.end[2] - 0.08, a.end[0] + 0.08, a.end[1] + 0.08, a.end[2] + 0.08], tris: [80, 30], cell: 0.0042});
       parts['cuff' + i] = cuff; const c0 = parts['sleeve' + i].cull; parts['sleeve' + i].cull = (x, y, z) => c0(x, y, z) || cuff.covers(x, y, z);
     }
     ends[i] = {at: a.W, end: a.end, dir: a.F, r: s.rw};

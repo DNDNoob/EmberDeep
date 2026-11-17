@@ -42,7 +42,11 @@ const store={
 };
 
 /* ---------- constants ---------- */
-const WALL_H=1.25, EYE=0.62, PR=0.22;
+// World scale: a 1.75 m man is ~0.956 m tall here (the Keeper), i.e. 0.546 world metres per real metre. A human eye sits at ~0.93 of
+// stature, so the player's eye height is the Keeper's eye height (0.9 m). It used to be 0.62 m: the camera was at the Keeper's
+// chest, which made every NPC look a head taller than the player. Single source for the camera, NPC head tracking and avatars.
+const WALL_H=1.25, EYE=0.9, PR=0.22, CAM_TOP=WALL_H-0.09;   // CAM_TOP: the camera never rises into the ceiling (a jump peaks at 0.56 m)
+const AV=EYE/0.84;   // scale of the humanoid player avatars: the avatar's eyes are at 0.84*scale, so they sit at EYE
 const BIOMES=[
   {name:'The Old Stonework', wall:[1.0,0.92,0.82], floor:[0.9,0.85,0.8],  ceil:[0.7,0.65,0.6],   torch:[1.0,0.72,0.42], amb:[0.012,0.012,0.02], stone:[0.44,0.4,0.34], spec:[0.12,0.2,0.05], wet:0.5},
   {name:'Mossgrown Halls',   wall:[0.7,0.95,0.7],  floor:[0.65,0.85,0.6], ceil:[0.5,0.65,0.5],   torch:[1.0,0.8,0.5],   amb:[0.008,0.02,0.012], stone:[0.3,0.36,0.27], spec:[0.08,0.16,0.05], wet:0.9},
@@ -2029,7 +2033,7 @@ function buildPlayer(p,t,rev,et){
   rev=rev||0;et=et||0;
   const c=p.col,cloak=[c[0]*0.72,c[1]*0.72,c[2]*0.72,2],cloakD=[c[0]*0.42,c[1]*0.42,c[2]*0.42,2];
   const leg=[0.22,0.17,0.13,2],boot=[0.3,0.19,0.1,3],belt=[0.3,0.17,0.08,3],skin=[0.86,0.65,0.5,1],wood=[0.36,0.23,0.12,6],rag=[0.13,0.1,0.08,2];
-  const S=0.94,v=(x,y,z)=>[x*S,y*S,z*S],ph=hashStr(p.id)%100;
+  const S=AV,v=(x,y,z)=>[x*S,y*S,z*S],ph=hashStr(p.id)%100;
   const mv=Math.min(1,p.spd/2.7),w=p.walk,sw=Math.sin(w)*mv,bob=Math.abs(Math.cos(w))*0.018*mv,breath=Math.sin(t*1.7+ph)*0.004;
   const B={p:[p.rx,Math.max(0,p.ry),p.rz],R:rYaw(p.ryaw)};
   for(const z of[-1,1]){
@@ -2110,7 +2114,7 @@ function mpTags(){
   {let el=tagEls.get('~m');if(!el){el=document.createElement('div');el.className='ptag';document.body.appendChild(el);tagEls.set('~m',el)}
     const nm=MP.on&&state==='play'?mimicTagName():null;let vis=!!nm;
     if(vis){const dd=Math.hypot(MIM.rx-P.x,MIM.rz-P.z);if(dd>14||(dd>1.2&&!los(P.x,P.z,MIM.rx,MIM.rz)))vis=false}
-    if(vis){tagV.set(MIM.rx,1.08,MIM.rz).project(camera);if(tagV.z>1||Math.abs(tagV.x)>1.1||Math.abs(tagV.y)>1.1)vis=false}
+    if(vis){tagV.set(MIM.rx,1.08*AV/0.94,MIM.rz).project(camera);if(tagV.z>1||Math.abs(tagV.x)>1.1||Math.abs(tagV.y)>1.1)vis=false}
     if(!vis)el.style.display='none';
     else{el.style.display='';const lb=(MIM.voice&&!MIM.voice.done?'🔊 ':'')+nm;if(el.textContent!==lb)el.textContent=lb;
       const as=MP.peers.get(MIM.as);el.style.color=as?as.hex:toHex(MP_COLS[hashStr(MIM.as||'')%MP_COLS.length]);
@@ -2121,7 +2125,7 @@ function mpTags(){
     if(!el){el=document.createElement('div');el.className='ptag';document.body.appendChild(el);tagEls.set(p.id,el)}
     let vis=show&&mpDrawn(p);
     if(vis){const dd=Math.hypot(p.rx-P.x,p.rz-P.z);if(dd>14||(dd>1.2&&!los(P.x,P.z,p.rx,p.rz)))vis=false}
-    if(vis){tagV.set(p.rx,1.08+p.ry,p.rz).project(camera);if(tagV.z>1||Math.abs(tagV.x)>1.1||Math.abs(tagV.y)>1.1)vis=false}
+    if(vis){tagV.set(p.rx,1.08*AV/0.94+p.ry,p.rz).project(camera);if(tagV.z>1||Math.abs(tagV.x)>1.1||Math.abs(tagV.y)>1.1)vis=false}
     if(!vis){if(el.style.display!=='none')el.style.display='none';continue}
     el.style.display='';
     const label=(VOX.speaking(p.id)?'🔊 ':'')+p.name;
@@ -3142,7 +3146,7 @@ function buildTpose(f,t){
   // drawn 'fullbright', evenly lit from nowhere, like a model whose lighting never loaded
   const c=f.col,k=f.kind==='pale'?0.32:0.4,FB=11,cloak=[c[0]*k,c[1]*k,c[2]*k,FB],cloakD=[c[0]*k*0.6,c[1]*k*0.6,c[2]*k*0.6,FB];
   const pale=f.kind==='pale',leg=pale?cloakD:[0.13,0.1,0.08,FB],boot=pale?cloakD:[0.16,0.1,0.05,FB],skin=pale?[0.36,0.35,0.33,FB]:[0.42,0.32,0.25,FB];
-  const S=0.94,v=(x,y,z)=>[x*S,y*S,z*S];
+  const S=AV,v=(x,y,z)=>[x*S,y*S,z*S];
   const B={p:[f.x,0,f.z],R:rYaw(f.yaw)};
   for(const z of[-1,1]){
     const hip=v(0,0.45,z*0.052),knee=v(0.012,0.25,z*0.058),ank=v(0,0.05,z*0.062);
@@ -3370,7 +3374,7 @@ function render(t){
   const title=state==='title';
   const SC=STUDIO&&STUDIO.cam;
   const yaw=SC?SC.yaw:title?titleYaw:P.yaw, pitch=SC?SC.pitch:title?0:P.pitch;
-  const ex=SC?SC.x:P.x, ez=SC?SC.z:P.z, ey=SC?SC.y:EYE+(title?0:P.y+Math.sin(P.bob*2)*0.018);
+  const ex=SC?SC.x:P.x, ez=SC?SC.z:P.z, ey=SC?SC.y:Math.min(CAM_TOP,EYE+(title?0:P.y+Math.sin(P.bob*2)*0.018));
   {const cp=Math.cos(pitch);camera.position.set(ex,ey,ez);camera.lookAt(ex+cp*Math.cos(yaw),ey+Math.sin(pitch),ez+cp*Math.sin(yaw))}
   if(P.grab){const k=0.012+0.02*Math.min(1,P.grab.t);camera.position.x+=(Math.random()-0.5)*k;camera.position.y+=(Math.random()-0.5)*k;camera.position.z+=(Math.random()-0.5)*k}
   const B=F.biome;
