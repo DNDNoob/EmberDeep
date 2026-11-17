@@ -637,9 +637,15 @@ export function dress(B, list) {
       d += nf * (0.0022 + 0.09 * (rw - a.r[2] - e)) * smoothstep(0.03, 0.05, toEnd) * (Math.pow(0.5 + 0.5 * Math.cos(5 * ang + wv + 10 * t), 0.8) * 2 - 1) * smoothstep(0.02, 0.5, tn) * (0.3 + 0.7 * tn) * (0.3 + 0.7 * smoothstep(-0.3, 0.9, under));
       return d;
     };
-    const cEnd = nEnd, mouth = (x, y, z, d) => ssub(d, sdSphere(x - (cEnd[0] + 0.03 * a.F[0]), y - (cEnd[1] + 0.03 * a.F[1]), z - (cEnd[2] + 0.03 * a.F[2]), rw * 0.76), 0.004);
+    // the mouth: a clean flat cut across the tube (along the last segment's axis Fm, which tilts down with the hang) and a hollow with a
+    // ~6 mm wall; the gold cuff band sits over the cut edge. (A sphere carve left ragged shards that showed as black marks.)
+    const cEnd = nEnd, Fm = norm3([nEnd[0] - nM[0], nEnd[1] - nM[1], nEnd[2] - nM[2]]);
+    const mouth = (x, y, z, d) => {
+      const vx = x - cEnd[0], vy = y - cEnd[1], vz = z - cEnd[2], t = vx * Fm[0] + vy * Fm[1] + vz * Fm[2], rad = Math.sqrt(Math.max(0, vx * vx + vy * vy + vz * vz - t * t));
+      return smax(smax(d, t - 0.012, 0.002), -Math.max(rad - (rw - 0.006), -(t + 0.07)), 0.003);
+    };
     const cloth = (x, y, z) => fold(x, y, z, sb(x, y, z)), sdf = (x, y, z) => mouth(x, y, z, cloth(x, y, z));
-    return {sg, a, sb, sdf, cloth, rw, cEnd};
+    return {sg, a, sb, sdf, cloth, rw, cEnd, Fm};
   });
   const sleeveMin = (x, y, z) => { let d = 9; for (const s of sl) d = Math.min(d, s.sb(x, y, z)); return d; };
   const torsoFold = (x, y, z) => {
@@ -670,7 +676,7 @@ export function dress(B, list) {
     parts.sash = trims.sash;
   }
   sl.forEach((s, i) => {
-    const {a, sb, sg, cloth, cEnd} = s, cf = sg.cuff, sdf0 = s.sdf;
+    const {a, sb, sg, cloth, cEnd, Fm} = s, cf = sg.cuff, sdf0 = s.sdf;
     // armhole seam: a thin welt where the sleeve meets the robe (raised, and darkened below)
     const seam = (x, y, z) => Math.exp(-(((base(x, y, z) - 0.003) / 0.0026) ** 2)), sdf = (x, y, z) => { const d = sdf0(x, y, z); return d < 0.012 ? d - 0.0015 * seam(x, y, z) : d; };
     parts['sleeve' + i] = {sdf, bounds: [Math.min(a.S[0], a.E[0], a.W[0]) - 0.11, Math.min(a.S[1], a.E[1], a.W[1]) - 0.11, Math.min(a.S[2], a.E[2], a.W[2]) - 0.11,
@@ -678,7 +684,7 @@ export function dress(B, list) {
       aoSdf: (x, y, z) => Math.min(sdf(x, y, z), base(x, y, z) + 0.002), paint: (x, y, z, o) => { o[0] = Math.max(0.85 * crease(x, y, z, base), 0.95 * seam(x, y, z)); },
       cull: (x, y, z) => base(x, y, z) < -0.004};
     if (cf) {
-      const cuff = trimBand(cloth, (x, y, z) => { const t = (x - cEnd[0]) * a.F[0] + (y - cEnd[1]) * a.F[1] + (z - cEnd[2]) * a.F[2], vx = x - cEnd[0], vy = y - cEnd[1], vz = z - cEnd[2], rad = Math.sqrt(Math.max(0, vx * vx + vy * vy + vz * vz - t * t)); return Math.max(-(cf.len ?? 0.028) - t, t - 0.016, rad - (s.rw + 0.025)); },   // radial cap: a bare slab would cut through the chest cloth
+      const cuff = trimBand(cloth, (x, y, z) => { const t = (x - cEnd[0]) * Fm[0] + (y - cEnd[1]) * Fm[1] + (z - cEnd[2]) * Fm[2], vx = x - cEnd[0], vy = y - cEnd[1], vz = z - cEnd[2], rad = Math.sqrt(Math.max(0, vx * vx + vy * vy + vz * vz - t * t)); return Math.max(-(cf.len ?? 0.028) - t, t - 0.014, rad - (s.rw + 0.025)); },   // radial cap: a bare slab would cut through the chest cloth
         {thick: cf.thick ?? 0.005, coverTol: 0.011, bounds: [cEnd[0] - 0.115, cEnd[1] - 0.115, cEnd[2] - 0.115, cEnd[0] + 0.115, cEnd[1] + 0.115, cEnd[2] + 0.115], tris: [80, 30], cell: 0.0042});
       parts['cuff' + i] = cuff; const c0 = parts['sleeve' + i].cull; parts['sleeve' + i].cull = (x, y, z) => c0(x, y, z) || cuff.covers(x, y, z);
     }

@@ -601,6 +601,7 @@ function paintedMaterial(glowBase){
     vec3 pb=dh.x*R1+dh.y*R2;float pl=length(pb),pm=0.6*abs(fDet);if(pl>pm)pb*=pm/pl; // bound the tilt: derivatives on sub-pixel triangles and silhouettes are huge
     vec3 nb=abs(fDet)*normal-sign(fDet)*pb;if(dot(nb,nb)>0.1*fDet*fDet&&fDet*fDet>1e-30)normal=normalize(nb); // never normalize a (near) zero vector: NaN would bloom into white squares
   }`)
+      .replace('#include <lights_physical_fragment>','#include <lights_physical_fragment>\nif(mCh>0.75||(mMetal<0.1&&mRough>0.7))material.specularF90=0.1; // sculpted characters: no grazing-angle Fresnel at silhouettes (silver slivers on fingertips and rims that bloom into white glints)')
       .replace('#include <roughnessmap_fragment>','float roughnessFactor=mRough;')
       .replace('#include <metalnessmap_fragment>','float metalnessFactor=mMetal;')
       .replace('#include <emissivemap_fragment>',`#include <emissivemap_fragment>
