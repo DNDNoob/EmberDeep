@@ -348,10 +348,21 @@ export function robeSkirt(p = {}) {
   function sdf(x, y, z) {
     const t = cl(y / (Hh - 0.03), 0, 1), rho = rh(x, z, t);
     if (rho > hem * 1.5) return rho - hem * 1.2;
-    const a = Math.atan2(z, x);
+    const a = Math.atan2(z, x), ca = Math.cos(a), sa = Math.sin(a);
     let R = waist + (hem - waist) * Math.pow(1 - t, 1.35) + 0.012 * smoothstep(0.12, 0, y);
-    const fa = nf * a + 1.4 * Math.sin(3 * a + y * 5) + 2.6 * fbm(Math.cos(a) * 2, Math.sin(a) * 2, y * 3, 2);
-    R *= 1 + dep * ((0.02 + 0.042 * (1 - t)) * Math.sin(fa) + 0.01 * (worley(Math.cos(a) * 2.4, y * 6, Math.sin(a) * 2.4) - 0.5));
+    // gravity folds: round tubular ridges between sharp valleys, widths vary with angle and height, deeper towards the hem,
+    // calm at the waist where the cloth is gathered under the sash
+    const fa = nf * a + 1.4 * Math.sin(3 * a + y * 5) + 2.6 * fbm(ca * 2, sa * 2, y * 3, 2);
+    const ridge = Math.pow(0.5 + 0.5 * Math.cos(fa), 0.7) * 2 - 1;
+    const amp = dep * (0.012 + 0.085 * Math.pow(1 - t, 1.5));
+    const fb = 2.1 * nf * a + 7 * fbm(ca * 3, sa * 3, y * 4 + 3, 2);
+    const small = dep * 0.014 * (1 - t) * smoothstep(0.05, 0.4, t) * Math.sin(fb);                       // narrow folds between the big ones
+    const pinch = dep * 0.006 * smoothstep(0.78, 0.9, t) * Math.sin(26 * a + 5 * fbm(ca * 4, sa * 4, y * 9, 1));   // radial pinch folds under the sash
+    R *= 1 + amp * ridge + small + pinch + dep * 0.012 * (worley(ca * 2.4, y * 6, sa * 2.4) - 0.5);
+    // the hem rests on the floor: it flares and breaks in a few folds on the ground, never the same height twice
+    R += dep * smoothstep(0.06, 0, y) * (0.008 + 0.022 * Math.max(0, fbm(ca * 3.2, sa * 3.2, 7.3, 2)));
+    // front opening: the left panel overlaps the right, a step and a groove from the waist to the floor
+    { const w = smoothstep(0, 0.06, x), sd = z - 0.034 * (0.6 + 0.4 * t), step = smoothstep(-0.004, 0.004, sd); R += w * dep * (0.0035 * step - 0.0022 * Math.exp(-(sd * sd) / 0.000006) * smoothstep(0.0, 0.1, y)); }
     let d = (rho - R) * 0.8;
     d = smax(d, y - Hh, 0.01);
     return smax(d, -y, 0.003);
@@ -435,7 +446,7 @@ export function body(p = {}) {
     d = smin(d, sdEllipsoid(xs - 0.012 * belly, y - Y.belly, z, wd + 0.03 * belly, 0.075, ww * 1.02), 0.04);
     d = smin(d, sdEllipsoid(x, y - Y.pelvis, z, wd * 1.05, 0.07, hw), 0.04);
     if (!noNeck) d = smin(d, sdRoundCone(xs, y, az, nx, Y.neck - 0.1, 0, nx, Y.neck, 0, nr * 1.05, nr), 0.03);
-    d = smin(d, sdRoundCone(xs, y, az, nx, noNeck ? Y.neck - 0.065 : Y.neck - 0.015, 0, 0, Y.shoulder, sw - 0.03, noNeck ? 0.03 : 0.026, 0.032), 0.03);
+    d = smin(d, sdRoundCone(xs, y, az, nx, noNeck ? Y.neck - 0.088 : Y.neck - 0.015, 0, 0, Y.shoulder, sw - 0.03, noNeck ? 0.03 : 0.026, 0.032), 0.03);
     return d;
   };
   const arms = p.arms.map(a => {
@@ -461,7 +472,7 @@ export function dress(B, list) {
   // smooth torso cloth: body offset by ease; below `hang` the cross-section is carried straight down (no clinging to the belly)
   // neckline: the robe stops at the base of the neck (cervicale / collarbones) with an oval scoop, V-ish at the front, and a
   // folded collar band rolled round its edge. The neck itself is skin (recipe part `neck`, K.neck()), not cloth.
-  const nl = {x: nxp + (co.dx ?? 0.022), y: (co.ny ?? B.Y.neck - 0.025), rx: co.rx ?? 0.066, ry: co.ry ?? 0.07, rz: co.rz ?? 0.054};
+  const nl = {x: nxp + (co.dx ?? 0.022), y: (co.ny ?? B.Y.neck - 0.045), rx: co.rx ?? 0.066, ry: co.ry ?? 0.076, rz: co.rz ?? 0.054};
   const bowl = (x, y, z) => sdEllipsoid(x - nl.x, y - nl.y, z, nl.rx, nl.ry, nl.rz);
   const base = (x, y, z) => {
     const d0 = B.torsoCloth(x, Math.max(y, hang), z) - ease;
@@ -473,14 +484,23 @@ export function dress(B, list) {
   };
   const sl = sleeves.map(sg => {
     const a = B.arms[sg.arm], e = sg.ease ?? 0.011, bell = sg.bell ?? 0.034, re = a.r[1] + e * 1.3, rw = a.r[2] + bell, nf = sg.folds ?? 1;
-    const sb = (x, y, z) => smin(sdRoundCone(x, y, z, a.S[0], a.S[1], a.S[2], a.E[0], a.E[1], a.E[2], a.r[0] + e * 1.6, re), sdRoundCone(x, y, z, a.E[0], a.E[1], a.E[2], a.end[0], a.end[1], a.end[2], re, rw), 0.03);
-    const fold = (x, y, z, d) => { // folds: soft noise, an accordion near the elbow crook and a ripple of the mouth
+    const LF = Math.hypot(a.W[0] - a.E[0], a.W[1] - a.E[1], a.W[2] - a.E[2]), sag = sg.sag ?? 0.014;
+    // gravity: the forearm part of the sleeve hangs lower than the arm (the cloth sags below it, most at the bell)
+    const sb = (x, y, z) => {
+      const tt = cl(((x - a.E[0]) * a.F[0] + (y - a.E[1]) * a.F[1] + (z - a.E[2]) * a.F[2]) / LF, 0, 1.2), yy = y + sag * tt * tt * (1 - 0.5 * Math.min(1, Math.abs(a.F[1])));
+      return smin(sdRoundCone(x, yy, z, a.S[0], a.S[1], a.S[2], a.E[0], a.E[1], a.E[2], a.r[0] + e * 1.6, re), sdRoundCone(x, yy, z, a.E[0], a.E[1], a.E[2], a.end[0], a.end[1], a.end[2], re, rw), 0.03);
+    };
+    const fold = (x, y, z, d) => { // folds: soft noise, an accordion at the elbow crook, sag under the arm, hanging folds that open into the bell, a thick rim
       if (d > 0.03) return d;
       const ex = x - a.E[0], ey = y - a.E[1], ez = z - a.E[2], de = Math.hypot(ex, ey, ez);
-      const t = (x - a.E[0]) * a.F[0] + (y - a.E[1]) * a.F[1] + (z - a.E[2]) * a.F[2];
+      const t = ex * a.F[0] + ey * a.F[1] + ez * a.F[2], tn = cl(t / LF, 0, 1);
       d += nf * 0.0035 * (fbm(x * 26, y * 26, z * 26, 2) - 0.5) * 2;
-      d += nf * 0.0022 * Math.sin(60 * t + 5 * fbm(x * 12, y * 12, z * 12, 2)) * Math.exp(-(de * de) / 0.0016);   // crook of the elbow
-      d += nf * 0.003 * Math.sin(Math.atan2(z - a.E[2], y - a.E[1]) * 5 + 14 * t) * smoothstep(0.02, 0.1, t);   // folds along the forearm
+      d += nf * 0.0034 * Math.sin(60 * t + 5 * fbm(x * 12, y * 12, z * 12, 2)) * Math.exp(-(de * de) / 0.0016);   // crook of the elbow: accordion creases
+      d -= nf * 0.006 * Math.exp(-((x - a.E[0] + 0.01) ** 2 + (y - a.E[1] + 0.03) ** 2 + (z - a.E[2]) ** 2) / 0.0012);   // cloth sagging under the elbow
+      const ang = Math.atan2(z - a.E[2] - 0.5 * (y - a.E[1]) * a.F[2], y - a.E[1]);
+      const wv = 3 * fbm(x * 9, y * 9, z * 9, 2);
+      d += nf * (0.0022 + 0.11 * (rw - re)) * (Math.pow(0.5 + 0.5 * Math.cos(6 * ang + wv + 10 * t), 0.8) * 2 - 1) * smoothstep(0.02, 0.5, tn) * (0.4 + 0.6 * tn);  // hanging folds, deeper towards the bell
+      d -= 0.003 * smoothstep(0.03, 0, (a.end[0] - x) * a.F[0] + (a.end[1] - y) * a.F[1] + (a.end[2] - z) * a.F[2] + 0.01) * smoothstep(0.0, 0.015, (a.end[0] - x) * a.F[0] + (a.end[1] - y) * a.F[1] + (a.end[2] - z) * a.F[2] + 0.03);  // sleeve mouth rim: a little thickness
       return d;
     };
     const mouth = (x, y, z, d) => ssub(d, sdSphere(x - (a.end[0] + 0.03 * a.F[0]), y - (a.end[1] + 0.03 * a.F[1]), z - (a.end[2] + 0.03 * a.F[2]), rw * 0.76), 0.004);
@@ -492,7 +512,13 @@ export function dress(B, list) {
     let d = base(x, y, z);
     if (d < 0.03) {
       const m = smoothstep((sash ? sash.y + sash.h : 0.045) + 0.01, (sash ? sash.y + sash.h : 0.045) + 0.07, y) * smoothstep(B.Y.shoulder + 0.01, B.Y.shoulder - 0.07, y), a = Math.atan2(z, x - nxp);
-      d += (robe.folds ?? 1) * 0.0045 * m * (Math.sin(11 * a + 4 * fbm(x * 18, y * 9, z * 18, 2)) + 0.5 * fbm(x * 40, y * 40, z * 40, 2));
+      // gravity folds hanging from the shoulders and chest (tubular, varying width), radial pinch folds around the sash, front overlap
+      const f = robe.folds ?? 1, yn = nxp, wv = 4 * fbm(x * 18, y * 9, z * 18, 2) + 1.2 * Math.sin(5 * y + 2 * a);
+      d += f * 0.0075 * m * (Math.pow(0.5 + 0.5 * Math.cos(9 * a + wv), 0.75) * 2 - 1 + 0.5 * fbm(x * 40, y * 40, z * 40, 2) + 0.4 * Math.sin(17 * a + 3 * wv));
+      const sy = sash ? sash.y : 0.017, sh = sash ? sash.h : 0.027;
+      d += f * 0.0065 * smoothstep(sh + 0.07, sh + 0.01, y - sy) * smoothstep(-sh - 0.05, -sh, y - sy) * Math.sin(28 * a + 6 * fbm(x * 20, y * 20, z * 20, 1));  // cinch pinch above and below the sash
+      { const w = smoothstep(nxp, nxp + 0.05, x), sd = z - 0.03 * smoothstep(B.Y.neck - 0.07, sy + 0.05, y) * 1.0 - 0.004, st = smoothstep(-0.004, 0.004, sd); d -= w * (0.0032 * st - 0.0022 * Math.exp(-(sd * sd) / 0.000006) * smoothstep(sy - 0.03, sy + 0.04, y)); }
+      d -= f * 0.0035 * Math.exp(-((x - nxp - 0.03) ** 2 + (y - (B.Y.shoulder - 0.02)) ** 2) / 0.003) * (Math.abs(z) > 0.04 ? Math.sin(40 * (y + 0.5 * z)) : 0);
     }
     return d;
   };

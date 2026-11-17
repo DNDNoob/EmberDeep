@@ -967,7 +967,7 @@ function buildNpc(n,t,ex,ey,ez,dtR){
   let diff=wrap(toP-n.yaw);
   if(!seated&&!n.lock&&dist<5&&(Math.abs(diff)>0.45||talking)){const st=Math.sign(diff)*Math.min(Math.abs(diff),2.6*dtR);n.yaw+=st;diff-=st}
   const lim=seated?1.25:1.0,wantY=n.lockHead?0:dist<6?clamp(diff,-lim,lim):Math.sin(t*0.4+n.ph)*0.35;
-  const headY0=seated?0.62:n.type==='keeper'?0.95*(KEEPER.proportions.height||1):0.84,wantP=dist<6?clamp(Math.atan2(ey-headY0,Math.max(dist,0.3)),-0.45,0.4):0;
+  const headY0=seated?0.62:n.type==='keeper'?0.968*(KEEPER.proportions.height||1):0.84,wantP=dist<6?clamp(Math.atan2(ey-headY0,Math.max(dist,0.3)),-0.45,0.4):0;
   const k=Math.min(1,dtR*6);n.hy+=(wantY-n.hy)*k;n.hp+=(wantP-n.hp)*k;
   if(n.pose){n.hy=n.pose[0];n.hp=n.pose[1]}
   const ph=n.ph,br=Math.sin(t*1.7+ph),breath=br*0.004;
