@@ -156,16 +156,21 @@ export function ears(H, p = {}) {
     if (Math.abs(v) > 0.05 || a < -0.02 || a > 0.05 || Math.abs(w) > 0.05) return 0.02 * es;   // bounding box
     const ea = a - HW, aw = HW * (1 + 0.2 * v / HL * (v > 0 ? 1 : 0.6)), r0 = Math.hypot(ea / aw, v / HL);   // egg outline, wider at the top
     const q = (r0 - 1) * 0.018;                                                                              // signed-ish distance to the outline
-    const curl = 0.0038 + 0.0012 * smoothstep(-0.005, 0.02, v) + 0.0008 * smoothstep(0.0, 0.03, a);          // rim thicker at the top and back
-    let d = Math.hypot(q, w - 0.0046 - 0.0010 * smoothstep(0, 0.03, v)) - curl;                                // helix: the rolled rim, a C round the plate
+    // the helix is a C that starts at the crus above the tragus (a ridge entering the concha), arcs over the top and down the back to the lobe. It does
+    // NOT run down the front edge: there the ear merges with the head (no rim, no step), so the rim fades out below the crus at the front
+    const fadeF = Math.max(smoothstep(0.003, 0.0125, v), smoothstep(0.004, 0.014, a));
+    const curl = (0.0038 + 0.0012 * smoothstep(-0.005, 0.02, v) + 0.0008 * smoothstep(0.0, 0.03, a)) * (0.15 + 0.85 * fadeF);   // rim thicker at the top and back
+    let d = Math.hypot(q, w - 0.0046 * (0.45 + 0.55 * fadeF) - 0.0010 * smoothstep(0, 0.03, v)) - curl;       // helix: the rolled rim
     const bowl = 0.0058 * Math.exp(-(((a - 0.0115) / 0.0078) ** 2 + ((v + 0.006) / 0.0125) ** 2));            // concha dips below the scapha
-    const plate = smax(q + 0.002, Math.abs(w - 0.0028 + bowl) - 0.0017, 0.0012);
+    const fa = smoothstep(-0.001, 0.012, a);   // the plate grows out of the head: no thickness at the very front
+    const plate = smax(q + 0.002, Math.abs(w - (0.0028 * fa - 0.0004) + bowl * fa) - (0.0006 + 0.0011 * fa), 0.0012);
     d = smin(d, plate, 0.0016);
     // antihelix Y: stem from the lower concha rim up, forking into superior and inferior crura
     const ah = Math.min(sdCapsule(a, v, w, 0.022, -0.011, 0.0065, 0.0155, 0.004, 0.0075, 0.0033),
       Math.min(sdCapsule(a, v, w, 0.0155, 0.004, 0.0075, 0.0135, 0.021, 0.0065, 0.0028), sdCapsule(a, v, w, 0.0155, 0.004, 0.0075, 0.006, 0.0125, 0.0066, 0.0026)));
     d = smin(d, ah, 0.0018);
-    d = smin(d, sdEllipsoid(a - 0.0025, v + 0.001, w - 0.0045, 0.0055, 0.0072, 0.0042), 0.0016);               // tragus, a flap over the canal
+    d = smin(d, sdCapsule(a, v, w, 0.0015, 0.0085, 0.0045, 0.0125, 0.0062, 0.0058, 0.0021), 0.0015);          // crus of the helix: the rim's root, entering the concha above the tragus
+    d = smin(d, sdEllipsoid(a - 0.0055, v + 0.0015, w - 0.0052, 0.0048, 0.0062, 0.0030), 0.0022);              // tragus: a small flap in front of the canal, flush with the head at its front
     d = smin(d, sdEllipsoid(a - 0.0135, v + 0.0185, w - 0.0043, 0.0045, 0.0045, 0.003), 0.0015);              // antitragus
     const lobe = sdEllipsoid(a - 0.0135, v + 0.0285, w - 0.0012, 0.0078, 0.0092, 0.0036);                      // soft earlobe
     d = smin(d, lobe, 0.003);
@@ -661,7 +666,7 @@ export function dress(B, list) {
   const trims = {};
   if (sash) {
     const sy = sash.y, sh = sash.h;
-    trims.sash = trimBand(torsoFold, (x, y, z) => Math.abs(y - sy) - sh, {thick: sash.thick ?? 0.006, coverTol: 0.011, bounds: [-0.14, sy - sh - 0.01, -0.14, 0.14, sy + sh + 0.01, 0.14], tris: [130, 50], cell: 0.0042});
+    trims.sash = trimBand(torsoFold, (x, y, z) => Math.abs(y - sy) - sh, {thick: sash.thick ?? 0.006, coverTol: 0.011, bounds: [-0.14, sy - sh - 0.01, -0.14, 0.14, sy + sh + 0.01, 0.14], tris: sash.tris || [130, 50], cell: 0.0042});
     parts.sash = trims.sash;
   }
   sl.forEach((s, i) => {

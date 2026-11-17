@@ -57,18 +57,18 @@ export const KEEPER = {
   body: {y: {neck: 0.418}, stoop: 0.05, belly: 0.5, narrow: 1.0, waistNarrow: 0.86, arms: ARMS},
   garments: [
     {type: 'robe', ease: 0.012, hang: 0.03, collar: {r: 0.037}},
-    {type: 'sleeve', arm: 0, tris: [400, 150], cell: 0.0062, ease: 0.006, bell: 0.052, folds: 1.2, cuff: {len: 0.028}},
-    {type: 'sleeve', arm: 1, tris: [400, 150], cell: 0.0062, ease: 0.006, bell: 0.042, folds: 1.2, cuff: {len: 0.028}},
-    {type: 'sash', y: 0.017, h: 0.027, thick: 0.006}
+    {type: 'sleeve', arm: 0, tris: [350, 130], cell: 0.0062, ease: 0.006, bell: 0.052, folds: 1.2, cuff: {len: 0.028}},
+    {type: 'sleeve', arm: 1, tris: [350, 130], cell: 0.0062, ease: 0.006, bell: 0.042, folds: 1.2, cuff: {len: 0.028}},
+    {type: 'sash', y: 0.017, h: 0.027, thick: 0.006, tris: [100, 40]}
   ],
   eyes: {frame: 'H', sclera: 'sclera', iris: 'iris', pupil: 'pupil', lid: 'skin', lid2: 'skinDeep'},
   build() {
     const U = {off: this.rig.waist, R: K.rotZ(this.rig.lean)};
     const H = K.head({age: 0.9, brow: 1.25, jaw: 1.0, ears: 1.05, nose: {len: 1.1, width: 1.05, droop: 0.9, bulb: 1.15}, tris: [780, 300]});
-    const skirt = K.robeSkirt({height: 0.57, waist: 0.097, aspect: 1.12, cell: 0.0075, tris: [640, 230]});
-    const B = K.body(this.body), D = K.dress(B, this.garments.map(g => g.type === 'robe' ? {...g, tris: [580, 220], cell: 0.0075} : g)), torso = D.parts.torso;
+    const skirt = K.robeSkirt({height: 0.57, waist: 0.097, aspect: 1.12, cell: 0.0075, tris: [520, 200]});
+    const B = K.body(this.body), D = K.dress(B, this.garments.map(g => g.type === 'robe' ? {...g, tris: [540, 210], cell: 0.0075} : g)), torso = D.parts.torso;
     const skirtBody = (x, y, z) => skirt.sdf(x, y, z) / 0.8;
-    const hem = K.trimBand(skirtBody, (x, y, z) => y - 0.042, {thick: 0.007, coverTol: 0.011, bounds: [-0.25, -0.01, -0.25, 0.25, 0.06, 0.25], cell: 0.0048, tris: [150, 60], cull: (x, y) => y < 0.0035});
+    const hem = K.trimBand(skirtBody, (x, y, z) => y - 0.042, {thick: 0.007, coverTol: 0.011, bounds: [-0.25, -0.01, -0.25, 0.25, 0.06, 0.25], cell: 0.0048, tris: [120, 50], cull: (x, y) => y < 0.0035});
     // hide what the other parts cover: the skirt top inside the torso, the torso bottom inside the skirt
     const torsoInB = K.inChild(D.torsoBase, U.off, U.R), skirtInU = K.inParent(skirt.sdf, U.off, U.R);
     const skirtCull = skirt.cull, torsoCull = torso.cull;
@@ -85,7 +85,7 @@ export const KEEPER = {
     const [e0, e1] = D.ends;
     return {
       parts: {skirt, hem, ...D.parts,
-        head: H, ears: K.ears(H, {tris: [400, 150]}), hair: K.hairCap(H, {crown: 0.128, tris: [260, 100]}), brows: K.brows(H, {size: 1.15, droop: 1.1, tris: [150, 60]}), moustache: K.moustache(H, {size: 1.1, tris: [220, 90]}),
+        head: H, ears: K.ears(H, {tris: [560, 200], cell: 0.0019}), hair: K.hairCap(H, {crown: 0.128, tris: [260, 100]}), brows: K.brows(H, {size: 1.15, droop: 1.1, tris: [150, 60]}), moustache: K.moustache(H, {size: 1.1, tris: [220, 90]}),
         neck: K.neck(H, {tris: [150, 60]}), beard: K.beard(H, {length: 0.3, width: 1.25, thick: 0.009, fork: 1, tris: [430, 160], chest: robeInBeard}), gripHand: sleeveCull(grip), restHand: sleeveCull(rest)},
       eyes: {r: H.eye.r, iris: 0.5, open: 12, low: -24, arch: 9, lidT: 0.0021},
       anchors: {
