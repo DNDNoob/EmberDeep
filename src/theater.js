@@ -33,8 +33,8 @@ export const TH={
   YELL_WINDOW:2.5,      // the words must have been shouted within this many seconds before they were recognised
   YELL_HOLD:1.0,        // fallback without speech recognition: a yell this long counts as the phrase
   HUH_TIME:1.2,         // from "huh?" to the first insults
-  FIRST_INSULT:0.8,     // seconds into the attack before the first insult
-  INSULT_EVERY:2.2,     // seconds between insults (each costs one heart)
+  FIRST_INSULT:1.5,     // seconds into the attack before the first insult
+  INSULT_EVERY:3.5,     // seconds between insults (each costs one heart)
   SCREEN_DUCK:0.7,      // the screen is played this much quieter than it could be, so it cannot drown out your voice
   YT_READY_MS:6000,     // give the video this long to start before the house reel takes over
   KEY_YELL_HOLD:1.0,    // no microphone: hold V this long to yell the phrase
@@ -191,7 +191,7 @@ export function createTheater(env){
     const HAIR=[[0.1,0.07,0.05],[0.55,0.35,0.12],[0.85,0.7,0.3],[0.05,0.05,0.07],[0.4,0.15,0.1],[0.3,0.3,0.34]];
     const stdMat=c=>new THREE.MeshStandardMaterial({color:new THREE.Color().setRGB(c[0],c[1],c[2],THREE.SRGBColorSpace),roughness:0.9});
     const wet=new THREE.MeshBasicMaterial({color:new THREE.Color(0.7,0.85,1.2),transparent:true,opacity:0.8});
-    const dropGeo=new THREE.SphereGeometry(0.014,6,5);
+    const dropGeo=new THREE.SphereGeometry(0.014,6,5),tearGeo=new THREE.SphereGeometry(0.03,8,6);
     const pick=[];{const ok=[];seats.forEach(([x,z])=>{if(Math.hypot(x-SPAWN.x,z-SPAWN.z)>TH.TEEN_RANGE+0.8)ok.push([x,z])});
       for(let n=0;n<6&&ok.length;n++){const i=(rng()*ok.length)|0,s=ok.splice(i,1)[0];pick.push(s);for(let k=ok.length-1;k>=0;k--)if(Math.hypot(ok[k][0]-s[0],ok[k][1]-s[1])<1.55)ok.splice(k,1)}}
     pick.forEach(([x,z],i)=>S.teens.push(makeTeen(i,x,z)));
@@ -232,7 +232,7 @@ export function createTheater(env){
       if(T.phone){T.phoneM=add(T.torso,bx(0.08,0.15,0.01),new THREE.MeshBasicMaterial({color:new THREE.Color(0.5,0.8,1.6)}),0,0.02,-0.24,-0.7,0,0);
         T.phoneG=glow(0x77aaff,0.55,0.55);T.phoneG.position.set(0,0.06,-0.28);T.torso.add(T.phoneG)}
       // tears
-      for(let k=0;k<8;k++){const d=new THREE.Mesh(dropGeo,wet);d.visible=false;group.add(d);T.tears.push({m:d,t:rng(),s:k&1?1:-1})}
+      for(let k=0;k<12;k++){const d=new THREE.Mesh(tearGeo,wet);d.visible=false;group.add(d);T.tears.push({m:d,t:rng(),s:k&1?1:-1})}
       return T;
     }
     // where the head looks: a point in the room, smoothly (k=1 snaps)
@@ -494,7 +494,7 @@ export function createTheater(env){
     /* ---------- bubbles (DOM, so the picture can never cover them) ---------- */
     function bubble(T,text,cls,kind){
       const el=document.createElement('div');el.className='thb'+(cls?' '+cls:'');el.textContent=text;el.style.visibility='hidden';layer.appendChild(el);
-      const b={el,T,kind,t:0,life:kind==='fly'?1.5:kind==='stay'?1.4:1.1,rot:(rng()-0.5)*8,dx:(rng()-0.5)*0.3};S.bubbles.push(b);return b;
+      const b={el,T,kind,t:0,life:kind==='fly'?1.5:kind==='stay'?2.6:1.1,rot:(rng()-0.5)*8,dx:(rng()-0.5)*0.3};S.bubbles.push(b);return b;
     }
     const proj=new THREE.Vector3();
     function bubbleFrame(sz){
@@ -540,7 +540,8 @@ export function createTheater(env){
     }
     function toCrying(){
       if(S.st==='crying'||S.over)return;
-      S.st='crying';S.stT=0;S.unlocked=true;recStop();if(synth)try{synth.cancel()}catch(e){}
+      S.st='crying';S.stT=0;S.unlocked=true;recStop();for(let i=S.bubbles.length-1;i>=0;i--){S.bubbles[i].el.remove();S.bubbles.splice(i,1)}   // the insults stop at once, and so do their bubbles
+      if(synth)try{synth.cancel()}catch(e){}
       S.teens.forEach((T,i)=>{say(T,i%2?'waaah':'wahhh...','cry','stay');
         o.tone(360+i*30,0.9,'sawtooth',0.07,i*0.05,-120);o.tone(420+i*25,0.7,'triangle',0.08,0.5+i*0.06,-100)});
       o.noise(0.8,0.1,1200,1.2);

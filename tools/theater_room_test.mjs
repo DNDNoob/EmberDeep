@@ -60,9 +60,9 @@ ok(r.mid==='huh'&&r.att==='attack','"huh" lasts about 1.2 s, then the attack beg
 r=await ev(()=>{const S=T.S();T.tp(-3.5,7.7);T.run(5,{});return {room:T.G.state,over:S.over}});ok(r.room==='room'&&!r.over,'the slammed entrance does not let you out');
 // 6. insults hurt over time, only the approved lines
 r=await ev(()=>{const S=T.S();T.tp(-3.5,6.5);const hp0=T.G.P.hp,seen=new Set();let n=0;
-  for(let i=0;i<60*8;i++){T.R.update(1/60,T.Z);for(const bb of S.bubbles)seen.add(bb.el.textContent)}
+  for(let i=0;i<60*12;i++){T.R.update(1/60,T.Z);for(const bb of S.bubbles)seen.add(bb.el.textContent)}
   return {hp0,hp:T.G.P.hp,insults:S.insults,seen:[...seen],st:S.st}});
-console.log(JSON.stringify(r));ok(r.hp0-r.hp>=3&&r.hp0-r.hp===r.insults,'insults cost a heart each over time ('+r.hp0+' -> '+r.hp+' after '+r.insults+' insults in 8 s)');
+console.log(JSON.stringify(r));ok(r.hp0-r.hp>=3&&r.hp0-r.hp===r.insults,'insults cost a heart each over time ('+r.hp0+' -> '+r.hp+' after '+r.insults+' insults in 12 s)');
 ok(r.seen.filter(t=>t!=='huh?').every(t=>t==='waaah'||INSULTS.includes(t)),'only approved insults appear '+JSON.stringify(r.seen));
 // 7. right words but too quiet, wrong words loud, then the real thing
 r=await ev(()=>{const S=T.S();T.G.P.hp=9;S.insT=99;T.R.theaterTest({level:0.05});T.run(60*3,{});T.R.theaterTest({heard:'silence peasants'});const o={quiet:S.st,hint:S.hint,jeer:S.bubbles.some(b=>b.el.textContent==="we can't HEAR you")};
@@ -72,7 +72,9 @@ ok(r.quiet==='attack'&&r.hint==='Yell it!'&&r.jeer,'the right words too quietly:
 r=await ev(()=>{const S=T.S();T.R.theaterTest({heard:'Silence, peasants!'});T.run(2,{});const o={st:S.st,sign:[S.signFace.material.color.r,S.signFace.material.color.g],unlocked:S.unlocked,cry:S.bubbles.filter(b=>b.el.className.includes('cry')).length};
   const hp=T.G.P.hp;S.test.level=0;T.run(60*12,{});o.hpSame=T.G.P.hp===hp;o.stillCrying=S.st;return o});
 console.log(JSON.stringify(r));ok(r.st==='crying','the yelled phrase makes them cry');ok(r.sign[1]>1&&r.sign[0]<0.5&&r.unlocked,'the EXIT sign is green and the door is unlocked');
-ok(r.cry>=5,'crying bubbles from every teen');ok(r.hpSame&&r.stillCrying==='crying','damage stops for good');
+ok(r.cry>=5,'crying bubbles from every teen');
+const vis=await ev(()=>{const S=T.S();T.run(30,{});return {tears:S.teens.every(t=>t.tears.filter(q=>q.m.visible).length>=6),mouth:S.teens.every(t=>!t.strand.visible),sign:S.signFace.material.color.g>1&&S.signFace.material.color.r<0.5,light:S.signLight.color.g>S.signLight.color.r}});
+ok(vis.tears&&vis.mouth&&vis.sign&&vis.light,'crying visuals follow the state: tear drops shown, drool gone, EXIT face and light green '+JSON.stringify(vis));ok(r.hpSame&&r.stillCrying==='crying','damage stops for good');
 // 8. other ways to win: no speech recogniser (sustained yell), no microphone at all (hold V)
 r=await ev(()=>{const o={};
   T.open('th2');let S=T.S();T.nearTeen(0);S.test.level=0.2;T.run(60,{});S.test.level=0;T.run(120,{});
