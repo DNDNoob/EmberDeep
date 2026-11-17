@@ -79,7 +79,7 @@ function parts(lod) {
   }
   // staff: primitive in the game (a few segments); here one tapered cylinder plus the lantern, so the figure reads in context
   if (fr.grip && A.gripAxis) {
-    const sp = fpt(fr.grip, [A.gripAxis[0] * S, A.gripAxis[1] * S, 0]), wood = [0.3, 0.2, 0.12], N = 12, pos = [], nrm = [], col = [];
+    const sp = fpt(fr.grip, [A.gripAxis[0] * S, A.gripAxis[1] * S, (A.gripAxis[2] || 0) * S]), wood = [0.3, 0.2, 0.12], N = 12, pos = [], nrm = [], col = [];
     const ring = (y, r) => Array.from({length: N}, (_, i) => { const a = i / N * Math.PI * 2; return [sp[0] + r * Math.cos(a), y, sp[2] + r * Math.sin(a), Math.cos(a), 0, Math.sin(a)]; });
     const r0 = ring(0, 0.0135 * S), r1 = ring(1.0 * S, 0.011 * S);
     for (let i = 0; i < N; i++) { const j = (i + 1) % N; for (const v of [r0[i], r0[j], r1[j], r0[i], r1[j], r1[i]]) { pos.push(v[0], v[1], v[2]); nrm.push(v[3], v[4], v[5]); col.push(...wood); } }

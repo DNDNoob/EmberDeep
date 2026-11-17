@@ -49,13 +49,16 @@ const VIEWS = {
   chestside:{dist: 0.55, turn: 90,  aimY: 0.88, camY: 0.88, headLock: true},
   robe:     {dist: 0.8,  turn: 25,  aimY: 0.5,  camY: 0.5},
   hem:      {dist: 0.6,  turn: 30,  aimY: 0.12, camY: 0.2},
+  gripF:    {dist: 0.3,  turn: 0,   aimY: 0.6,  camY: 0.62, lat: 0.17},
+  gripB:    {dist: 0.3,  turn: 180, aimY: 0.6,  camY: 0.62, lat: -0.17},
+  gripT:    {dist: 0.12, turn: 0,   aimY: 0.6,  camY: 0.9,  lat: 0.17},
   gripclose:{dist: 0.28, turn: 0,   aimY: 0.58, camY: 0.6},
   restclose:{dist: 0.28, turn: 0,   aimY: 0.48, camY: 0.5},
   cam:      {dist: 1.3,  turn: 20,  level: true},   // the player's own camera height (camY defaults to EYE) looking straight ahead
   portrait: {dist: 0.62, turn: 0,   aimY: seated ? 0.62 : 0.94, camY: seated ? 0.62 : 0.94},   // face at face height, for detail
 };
 // the Keeper's recipe height is 0.93: aim and camera heights of standing views follow it
-if (A.npc === 'keeper') for (const o of Object.values(VIEWS)) { o.aimY = +(o.aimY * 0.93).toFixed(3); if (o.camY) o.camY = +(o.camY * 0.93).toFixed(3); }
+if (A.npc === 'keeper') for (const o of Object.values(VIEWS)) { o.aimY = +(o.aimY * 0.93).toFixed(3); if (o.lat) o.lat = +(o.lat * 0.93).toFixed(3); if (o.camY) o.camY = +(o.camY * 0.93).toFixed(3); }
 const [w, h] = A.size.split('x').map(Number);
 mkdirSync(A.out, {recursive: true});
 const b = await chromium.launch();

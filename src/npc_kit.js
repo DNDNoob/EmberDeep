@@ -28,6 +28,8 @@ export {norm3};
 export const inChild = (sdf, off, R) => (x, y, z) => { const a = x - off[0], b = y - off[1], c = z - off[2]; return sdf(R[0] * a + R[3] * b + R[6] * c, R[1] * a + R[4] * b + R[7] * c, R[2] * a + R[5] * b + R[8] * c); };
 export const inParent = (sdf, off, R) => (x, y, z) => sdf(off[0] + R[0] * x + R[1] * y + R[2] * z, off[1] + R[3] * x + R[4] * y + R[5] * z, off[2] + R[6] * x + R[7] * y + R[8] * z);
 export const rotZ = a => { const c = Math.cos(a), s = Math.sin(a); return [c, -s, 0, s, c, 0, 0, 0, 1]; };
+export const rotY = a => { const c = Math.cos(a), s = Math.sin(a); return [c, 0, s, 0, 1, 0, -s, 0, c]; };
+export const mul3 = (a, b) => [a[0] * b[0] + a[1] * b[3] + a[2] * b[6], a[0] * b[1] + a[1] * b[4] + a[2] * b[7], a[0] * b[2] + a[1] * b[5] + a[2] * b[8], a[3] * b[0] + a[4] * b[3] + a[5] * b[6], a[3] * b[1] + a[4] * b[4] + a[5] * b[7], a[3] * b[2] + a[4] * b[5] + a[5] * b[8], a[6] * b[0] + a[7] * b[3] + a[8] * b[6], a[6] * b[1] + a[7] * b[4] + a[8] * b[7], a[6] * b[2] + a[7] * b[5] + a[8] * b[8]];
 export const rotX = a => { const c = Math.cos(a), s = Math.sin(a); return [1, 0, 0, 0, c, -s, 0, s, c]; };
 // Rotation whose X axis is `fwd` and whose Y axis is as close as possible to `up` (columns X, Y, Z).
 export function basis(fwd, up) {
@@ -295,41 +297,81 @@ const FING = [ // MCP centre (x, z mm), phalanx lengths mm, radius at base / mid
   {x: 95, z: -11, L: [41, 26, 19], r: [9.6, 8.3, 7.2], sp: -3}, {x: 86, z: -31, L: [33, 19, 17], r: [8.6, 7.4, 6.6], sp: -9}];
 const THUMB = {c: [12, -9, 29], L: [46, 32, 26], r: [10, 8.8, 7.6, 6.6]};   // CMC joint (x, y, z mm); metacarpal, proximal, distal; radii at the joints
 const KY = 1.8 * MM;   // height of the finger axis above the palm mid-plane
-const GRIP_BETA = 50 * D2R;
+// ---- grip planning: everything is derived from the radius of the held rod (gR, figure metres) ----
+// The rod is a straight line in hand coordinates: it passes below the knuckles at a height such that the first phalanx leaves the knuckle
+// at about 65 deg round the rod, and is slightly diagonal because the knuckle line is (x of index 98 mm, little finger 86 mm). Every finger
+// is a closed loop: its joints lie on the circle (rod centre in the finger's own plane, radius = rod + 0.7 finger radius), the chord of each
+// phalanx on that circle gives the joint flexion (mcp ~ 75, pip ~ 95, dip ~ 55 deg for a 15 mm rod). The thumb comes from the web the other way
+// round and is solved by a small IK so its tip presses on the middle phalanx of the index finger without entering the fingers or the rod.
+const fkFinger = (i, a, side) => {
+  const F = FING[i], [mcp, pip, dip, sp] = a, psi = sp * D2R, K = [F.x * MM, KY, side * F.z * MM], pts = [K], ang = [mcp, pip, dip];
+  let phi = 0;
+  F.L.forEach((L, j) => { phi -= ang[j]; const P = pts[j]; pts.push([P[0] + L * MM * Math.cos(phi) * Math.cos(psi), P[1] + L * MM * Math.sin(phi), P[2] + side * L * MM * Math.cos(phi) * Math.sin(psi)]); });
+  return pts;
+};
+const fkThumb = (t, side) => {
+  const pts = [THUMB.c.map((v, k) => v * MM * (k === 2 ? side : 1))]; let Y = 0, T = 0;
+  THUMB.L.forEach((L, j) => { Y += t[j][0]; T += t[j][1]; const P = pts[j]; pts.push([P[0] + L * MM * Math.cos(T) * Math.cos(Y), P[1] + L * MM * Math.sin(T), P[2] + side * L * MM * Math.cos(T) * Math.sin(Y)]); });
+  return pts;
+};
+const segDist = (p, a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2], t = cl(((p[0] - a[0]) * dx + (p[1] - a[1]) * dy + (p[2] - a[2]) * dz) / (dx * dx + dy * dy + dz * dz || 1), 0, 1); return [Math.hypot(p[0] - a[0] - dx * t, p[1] - a[1] - dy * t, p[2] - a[2] - dz * t), t]; };
+const gripCache = new Map();
+export function gripPlan(gR = 0.0105, side = 1) {
+  const key = gR + '/' + side; if (gripCache.has(key)) return gripCache.get(key);
+  const rm = FING.map(F => (F.r[0] + F.r[1] + F.r[2]) / 3 * MM), Rn = rm.map(r => gR + 0.7 * r), TH0 = 74 * D2R;
+  const cy = KY - Rn.reduce((s, v) => s + v, 0) / 4 * Math.sin(TH0);
+  // rod centre x per finger plane, then a straight line x = a + b z through them (z is the signed finger z)
+  const zs = FING.map(F => side * F.z * MM), cxs = FING.map((F, i) => F.x * MM - Math.sqrt(Math.max(0, Rn[i] ** 2 - (KY - cy) ** 2))), n = 4;
+  const mz = zs.reduce((s, v) => s + v, 0) / n, mx = cxs.reduce((s, v) => s + v, 0) / n;
+  const b = zs.reduce((s, z, i) => s + (z - mz) * (cxs[i] - mx), 0) / zs.reduce((s, z) => s + (z - mz) ** 2, 0), a0 = mx - b * mz;
+  const f = [], R = [];
+  FING.forEach((F, i) => {
+    const Cx = a0 + b * zs[i], dx = F.x * MM - Cx, dy = KY - cy, Rf = Math.hypot(dx, dy); R.push(Rf);
+    let th = Math.atan2(dy, dx); const dirs = [];
+    for (const L of F.L) { const dth = 2 * Math.asin(Math.min(1, L * MM / (2 * Rf))); dirs.push(th - dth / 2 - Math.PI / 2); th -= dth; }
+    f.push([-dirs[0], dirs[0] - dirs[1], dirs[1] - dirs[2], 0]);
+  });
+  const rod = {p: [a0, cy, 0], d: norm3([b, 0, 1]), alpha: Math.atan(b)};
+  // thumb IK: tip on the outside of the index finger's middle phalanx (75 deg below the rod centre), no penetration of fingers or rod
+  const fing = f.map((a, i) => fkFinger(i, a, side)), Ci = [a0 + b * zs[0], cy, zs[0]], rt = THUMB.r.map(v => v * MM);
+  const ang = -75 * D2R, tr = R[0] + rm[0] + 0.55 * rt[3], target = [Ci[0] + tr * Math.cos(ang), Ci[1] + tr * Math.sin(ang), side * (FING[0].z + FING[1].z) / 2 * MM * 0.8 + side * 0.002];
+  const rd = rod.d, dRod = p => { const w = [p[0] - rod.p[0], p[1] - rod.p[1], p[2] - rod.p[2]], u = w[0] * rd[0] + w[1] * rd[1] + w[2] * rd[2]; return Math.hypot(w[0] - u * rd[0], w[1] - u * rd[1], w[2] - u * rd[2]); };
+  const cost = t => {
+    const P = fkThumb(t, side); let c = 0;
+    c += 40 * ((P[3][0] - target[0]) ** 2 + (P[3][1] - target[1]) ** 2 + (P[3][2] - target[2]) ** 2) / (MM * MM * 100);
+    for (let j = 0; j < 3; j++) for (let u = 0; u <= 6; u++) {
+      const q = lerp3(P[j], P[j + 1], u / 6), r = rt[j] + (rt[j + 1] - rt[j]) * u / 6;
+      c += 3 * Math.max(0, gR + r * 0.75 - dRod(q)) ** 2 / (MM * MM);
+      fing.forEach((pts, i) => { if (j === 2 && u > 4 && i === 0) return; for (let k = 0; k < 3; k++) { const [d, tt] = segDist(q, pts[k], pts[k + 1]), rf = FING[i].r[k] * MM; c += 3 * Math.max(0, r * 0.7 + rf * 0.85 - d) ** 2 / (MM * MM); } });
+    }
+    for (let j = 0; j < 3; j++) c += 0.002 * (t[j][0] ** 2 + t[j][1] ** 2);
+    return c;
+  };
+  let best = [[0.1, -0.9], [-0.1, -0.5], [-0.3, -0.3]], bc = cost(best), seed = 7, rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296 - 0.5;
+  for (let it = 0, st = 0.5; it < 2500; it++) {
+    if (it % 400 === 399) st *= 0.5;
+    const cand = best.map(q => [cl(q[0] + rnd() * st, -1.2, 1.2), cl(q[1] + rnd() * st, -1.5, 0.5)]), cc = cost(cand);
+    if (cc < bc) { bc = cc; best = cand; }
+  }
+  const tp = fkThumb(best, side), plan = {f, t: best, rod, R, theta0: TH0, thumbTip: tp[3], thumbErr: Math.hypot(tp[3][0] - target[0], tp[3][1] - target[1], tp[3][2] - target[2]) / MM};
+  gripCache.set(key, plan); return plan;
+}
 export function handAngles(pose = 'rest', o = {}) {
   const curl = o.curl ?? 1, spread = o.spread ?? 1, gR = o.gripR ?? 0.0105;
   const rest = () => ({f: FING.map((f, i) => [(0.3 + 0.06 * i) * curl, (0.42 + 0.07 * i) * curl, (0.3 + 0.05 * i) * curl, f.sp * spread * 0.7]), t: [[0.62, -0.3], [-0.12, -0.35 * curl], [-0.08, -0.3 * curl]]});
   if (pose === 'rest') return rest();
-  // wrap a fist round a rod along hand Z under the knuckles: every finger joint sits on a circle of radius gR + finger radius; the
-  // circle is placed so the knuckle is at 50 deg from its centre (the rod lies diagonally across the palm). The thumb closes over
-  // the index finger.
-  if (pose === 'grip') {
-    const f = FING.map((F, i) => {
-      const r = (F.r[0] + F.r[1] + F.r[2]) / 3 * MM, Rf = gR + r * 0.95, bet = GRIP_BETA, c = [-Rf * Math.cos(bet), KY - Rf * Math.sin(bet)];
-      let th = bet, K = [0, KY]; const dirs = [];
-      for (const L of F.L) {
-        const dth = 2 * Math.asin(Math.min(1, L * MM / (2 * Rf))), P = [c[0] + Rf * Math.cos(th - dth), c[1] + Rf * Math.sin(th - dth)];
-        dirs.push(Math.atan2(P[1] - K[1], P[0] - K[0])); K = P; th -= dth;
-      }
-      return [-dirs[0], dirs[0] - dirs[1], dirs[1] - dirs[2], -1.5 * i * spread];
-    });
-    return {f, t: o.thumb || [[0.1, -0.9], [-0.1, -0.5], [-0.3, -0.3]]};
-  }
+  if (pose === 'grip') { const g = gripPlan(gR, o.side ?? 1); return {f: g.f, t: o.thumb || g.t}; }
   if (pose === 'point') { const g = rest(); g.f[0] = [0.06, 0.05, 0.03, 4]; for (let i = 1; i < 4; i++) g.f[i] = [1.35, 1.7, 1.0, 0]; g.t = [[0.35, -0.4], [-0.1, -0.2], [-0.05, -0.1]]; return g; }
   throw new Error('handAngles: unknown pose ' + pose);
 }
 export function hand(p = {}) {
   const pose = p.pose || 'rest', side = p.side ?? 1, S = p.size ?? 1, age = p.age ?? 1, gR = p.gripR ?? 0.0105;
-  const A = p.angles || handAngles(pose, {curl: p.curl, spread: p.spread, gripR: gR, thumb: p.thumb});
+  const A = p.angles || handAngles(pose, {curl: p.curl, spread: p.spread, gripR: gR, thumb: p.thumb, side});
   // forward kinematics: finger joints and thumb joints in hand coordinates (figure metres at size 1)
-  const fingers = FING.map((F, i) => {
-    const [mcp, pip, dip, sp] = A.f[i], psi = sp * D2R, K = [F.x * MM, KY, side * F.z * MM], pts = [K], rs = F.r.map(r => r * MM), ang = [mcp, pip, dip];
-    let phi = 0;
-    F.L.forEach((L, j) => { phi -= ang[j]; const P = pts[j]; pts.push([P[0] + L * MM * Math.cos(phi) * Math.cos(psi), P[1] + L * MM * Math.sin(phi), P[2] + side * L * MM * Math.cos(phi) * Math.sin(psi)]); });
-    return {pts, r: [rs[0], rs[1], rs[2], rs[2] * 0.82]};
-  });
-  const th = {pts: [THUMB.c.map((v, k) => v * MM * (k === 2 ? side : 1))], r: THUMB.r.map(v => v * MM)};
-  { let Y = 0, T = 0; THUMB.L.forEach((L, j) => { Y += A.t[j][0]; T += A.t[j][1]; const P = th.pts[j]; th.pts.push([P[0] + L * MM * Math.cos(T) * Math.cos(Y), P[1] + L * MM * Math.sin(T), P[2] + side * L * MM * Math.cos(T) * Math.sin(Y)]); }); }
+  const fingers = FING.map((F, i) => ({pts: fkFinger(i, A.f[i], side), r: [...F.r.map(r => r * MM), F.r[2] * MM * 0.82]}));
+  const th = {pts: fkThumb(A.t, side), r: THUMB.r.map(v => v * MM)};
+  const plan = pose === 'grip' ? gripPlan(gR, side) : null, rod = plan && plan.rod;
+  const rodD = rod ? (x, y, z) => { const w0 = x - rod.p[0], w1 = y - rod.p[1], w2 = z - rod.p[2], u = w0 * rod.d[0] + w2 * rod.d[2]; return Math.hypot(w0 - u * rod.d[0], w1, w2 - u * rod.d[2]); } : null;
   const seg = (x, y, z, a, b, r1, r2) => sdRoundCone(x, y, z, a[0], a[1], a[2], b[0], b[1], b[2], r1, r2);
   // veins and tendons on the back of the hand: polylines in the (x, z) plane (mm -> m), raised ridges
   const V = [[[94, 24], [70, 20], [48, 15], [26, 11], [0, 8]], [[96, 4], [72, 2], [50, 4], [28, 1], [0, 2]], [[90, -22], [64, -17], [42, -11], [20, -6], [0, -2]], [[66, 30], [44, 24], [26, 17], [8, 12]]]
@@ -345,6 +387,11 @@ export function hand(p = {}) {
     // thenar pad (ball of the thumb) and the hypothenar edge
     d = smin(d, sdEllipsoid(x - 30 * MM, y + 7 * MM, z - side * 20 * MM, 30 * MM, 11 * MM, 17 * MM), 0.009);
     d = smin(d, sdEllipsoid(x - 36 * MM, y + 3 * MM, z + side * 29 * MM, 26 * MM, 9 * MM, 11 * MM), 0.008);
+    if (rod) { // the rod lies in a channel across the palm, and the palm heel rolls up round its far side
+      const o = gR + 0.0035, ox = rod.p[0] - o * 0.97, oy = rod.p[1] - o * 0.25, L = 0.025;
+      d = smin(d, sdCapsule(x, y, z, ox - rod.d[0] * L, oy, -rod.d[2] * L, ox + rod.d[0] * L, oy, rod.d[2] * L, 0.0042), 0.007);
+      d = smax(d, gR * 1.0 - rodD(x, y, z), 0.004);
+    }
     // fingers: tapering segments, knuckle bumps at every joint (bigger with age)
     for (const f of fingers) {
       let df = 9;
@@ -390,9 +437,9 @@ export function hand(p = {}) {
   };
   const b = [-0.07, -0.07, -0.06, 0.145, 0.045, 0.065].map(v => v * S);
   const nailSpec = {sdf: nailSdf, bounds: b, cell: p.nailCell || 0.0016 * S, tris: [60, 30], project: 0.0006, cull: (x, y, z) => sdf(x, y, z) < -0.0004};
-  const Rf = gR + (FING[1].r[0] + FING[1].r[1] + FING[1].r[2]) / 3 * MM * 0.95;
   return {sdf, paint, nails: nailSpec, joints: {fingers: fingers.map(f => f.pts), thumb: th.pts}, bounds: b, cell: p.cell || 0.0024 * S, tris: p.tris || [520, 190], project: 0.0015,
-    grip: pose === 'grip' ? [(FING[1].x * MM - Rf * Math.cos(GRIP_BETA)) * S, (KY - Rf * Math.sin(GRIP_BETA)) * S] : null};
+    // grip: the held axis in hand coordinates (point on it, unit direction, angle from hand Z about Y) so the pose code can stand it upright
+    grip: rod ? {p: rod.p.map(v => v * S), d: rod.d, alpha: rod.alpha} : null};
 }
 
 /* =====================================================================================

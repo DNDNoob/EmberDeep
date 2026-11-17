@@ -93,7 +93,7 @@ export const KEEPER = {
       anchors: {
         eye: [H.eye.x, H.eye.y, H.eye.z],
         // staff hand: thumb up, palm facing the body, held axis vertical (hand Z -> down)
-        gripAt: e0.at, gripR: K.rotX(Math.PI / 2), gripAxis: grip.grip,
+        gripAt: e0.at, gripR: K.mul3(K.rotX(Math.PI / 2), K.rotY(-grip.grip.alpha)), gripAxis: grip.grip.p,   // hand Z -> down, tilted so the (slightly diagonal) rod is vertical
         // resting hand: along the forearm, back of the hand facing forward
         restAt: e1.at, restR: K.basis(e1.dir, [0.9, 0.25, -0.35]),
         gem: [0.1, 0.02, 0]

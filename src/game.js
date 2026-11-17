@@ -945,7 +945,7 @@ function buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,lod){
   fr.rest=subF(fr.U,q3(...A.restAt),A.restR);
   drawRecipe(K,lod,fr,blink);
   ball(fr.U,q3(...A.gem),0.012*S,[0.7,0.28,0.08,7],true); // belt gem: a faint warm glint, no light of its own
-  const sp=fpt(fr.grip,[A.gripAxis[0]*S,A.gripAxis[1]*S,0]),SB={p:[sp[0],0,sp[2]],R:B.R};
+  const sp=fpt(fr.grip,[A.gripAxis[0]*S,A.gripAxis[1]*S,(A.gripAxis[2]||0)*S]),SB={p:[sp[0],0,sp[2]],R:B.R};
   const sg=(a,b,r0,r1,col)=>seg(SB,q3(...a),q3(...b),r0*S,r1*S,col),sb=(c,r,col)=>ball(SB,q3(...c),typeof r==='number'?r*S:r.map(v=>v*S),col,true),sl=(c,z,col)=>slab(SB,q3(...c),q3(...z),col);
   sg([0,0,0],[0.003,0.34,-0.002],0.0105,0.0098,wood);sg([0.003,0.34,-0.002],[-0.002,0.68,0.003],0.0098,0.009,wood);sg([-0.002,0.68,0.003],[0,1.0,0],0.009,0.0086,wood);   // staff radius = KEEPER grip hand gripR
   sb([0.003,0.34,-0.002],[0.0125,0.02,0.0125],wood);sb([-0.002,0.68,0.003],[0.0112,0.018,0.0112],wood);
@@ -3676,7 +3676,7 @@ R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
 // braziers, sconces and glowing items, freezes gameplay, and fixes the camera. Lit only by the player's
 // torch and the floor's ambient light, which is what the player sees in most of the maze.
 // o: {type:'keeper'|'map'|'delver', seed, depth, dist (m, camera to NPC), turn (deg, NPC yaw away from camera),
-//     camY (camera height, default the game's eye height), aimY (height to look at), headLock, open (no blink)}
+//     camY (camera height, default the game's eye height), aimY (height to look at), headLock, open (no blink), lat (sideways shift of the camera, m)}
 function studio(o){
   o=Object.assign({type:'keeper',seed:'STUDIO1',depth:2,dist:1.1,turn:0,camY:EYE,aimY:null,headLock:false,open:true},o||{});
   const key=o.seed+'/'+o.depth;
@@ -3700,7 +3700,7 @@ function studio(o){
   for(const q of F.npcs)if(q!==n){q.x=-50;q.z=-50}
   n.x=S.x;n.z=S.z;n.ox=0;n.oz=0;n.lock=true;n.lockHead=!!o.headLock;n.hy=0;n.hp=0;n.pose=o.pose||null; // pose [yaw,pitch]: fixed head angles for checking extremes
   n.yaw=Math.atan2(S.dz,S.dx)+o.turn*Math.PI/180;
-  const cx=S.x+S.dx*o.dist,cz=S.z+S.dz*o.dist,aim=o.level?o.camY:o.aimY==null?(o.type==='delver'?0.55:0.8):o.aimY;
+  const lat=o.lat||0,cx=S.x+S.dx*o.dist-S.dz*lat,cz=S.z+S.dz*o.dist+S.dx*lat,aim=o.level?o.camY:o.aimY==null?(o.type==='delver'?0.55:0.8):o.aimY;
   STUDIO.cam={x:cx,z:cz,y:o.camY,yaw:Math.atan2(-S.dz,-S.dx),pitch:Math.atan2(aim-o.camY,o.dist)};
   STUDIO.open=o.open;P.x=cx;P.z=cz;
   return {spot:S,cam:STUDIO.cam,Q};
