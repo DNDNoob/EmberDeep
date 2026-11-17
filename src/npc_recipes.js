@@ -79,8 +79,8 @@ export const KEEPER = {
     const hs = this.proportions.headScale, dk = this.rig.drape.follow * (this.rig.headTilt ?? 0.12), cD = Math.cos(dk), sD = Math.sin(dk);
     const nxy = [this.rig.neck[0] + this.rig.drape.push, this.rig.neck[1], this.rig.neck[2]];
     const robeInBeard = (x, y, z) => D.torsoSolid(nxy[0] + hs * (cD * x - sD * y), nxy[1] + hs * (sD * x + cD * y), nxy[2] + hs * z) / hs;
-    const grip = K.hand({pose: 'grip', side: -1, gripR: 0.0105, age: 1.2, tris: [560, 200]});
-    const rest = K.hand({pose: 'rest', side: 1, age: 1.2, curl: 1.15, tris: [560, 200]});
+    const grip = K.hand({pose: 'grip', side: -1, gripR: 0.0105, age: 1.2, tris: [700, 240]});
+    const rest = K.hand({pose: 'rest', side: 1, age: 1.2, curl: 1.15, tris: [700, 240]});
     const sleeveCull = sp => { const c = sp.cull; sp.cull = (x, y, z) => (c && c(x, y, z)) || x < -0.032; return sp; };
     const [e0, e1] = D.ends;
     return {

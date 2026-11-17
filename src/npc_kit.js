@@ -377,6 +377,7 @@ export function hand(p = {}) {
   const V = [[[94, 24], [70, 20], [48, 15], [26, 11], [0, 8]], [[96, 4], [72, 2], [50, 4], [28, 1], [0, 2]], [[90, -22], [64, -17], [42, -11], [20, -6], [0, -2]], [[66, 30], [44, 24], [26, 17], [8, 12]]]
     .map(l => l.map(q => [q[0] * MM, q[1] * MM * side]));
   const T = [[98, 33], [100, 11], [95, -11], [86, -31]].map(q => [[q[0] * MM, q[1] * MM * side], [28 * MM, (q[1] * 0.5 - 2) * MM * side]]);
+  const CREASE = [[[88, 22], [70, 20], [52, 15], [38, 9], [24, 4], [10, 2]], [[96, -28], [82, -22], [66, -12], [52, -6], [40, 3]], [[98, 18], [92, 6], [88, -8], [88, -26]]].map(l => l.map(q => [q[0] * MM, q[1] * MM * side]));
   const ridge = (x, z, L, w) => { let m = 9; for (let i = 0; i < L.length - 1; i++) { const a = L[i], b = L[i + 1], dx = b[0] - a[0], dz = b[1] - a[1], t = cl(((x - a[0]) * dx + (z - a[1]) * dz) / (dx * dx + dz * dz), 0, 1); m = Math.min(m, Math.hypot(x - a[0] - dx * t, z - a[1] - dz * t)); } return Math.exp(-(m * m) / (w * w)); };
   function sdf(X, Y, Z) {
     const x = X / S, y = Y / S, z = Z / S;
@@ -385,8 +386,12 @@ export function hand(p = {}) {
     let d = sdBox(x - 52 * MM, y - 1.2 * MM * (1 - (az / hw) ** 2) + 0.5 * MM, wz, 50 * MM, 11.5 * MM, 45 * MM * 0.97, 7 * MM);
     d = smin(d, sdRoundCone(x, y, z, -0.06, 0, 0, 0.004, 0, 0, 0.0158, 0.0156), 0.012);                       // wrist into the sleeve
     // thenar pad (ball of the thumb) and the hypothenar edge
-    d = smin(d, sdEllipsoid(x - 30 * MM, y + 7 * MM, z - side * 20 * MM, 30 * MM, 11 * MM, 17 * MM), 0.009);
-    d = smin(d, sdEllipsoid(x - 36 * MM, y + 3 * MM, z + side * 29 * MM, 26 * MM, 9 * MM, 11 * MM), 0.008);
+    d = smin(d, sdEllipsoid(x - 31 * MM, y + 7 * MM, z - side * 20 * MM, 32 * MM, 12 * MM, 18 * MM), 0.009);
+    d = smin(d, sdEllipsoid(x - 37 * MM, y + 3.5 * MM, z + side * 29 * MM, 27 * MM, 10 * MM, 12 * MM), 0.008);
+    if (!pose.startsWith('g')) d = smax(d, -sdEllipsoid(x - 62 * MM, y + 15 * MM, z - side * 2 * MM, 24 * MM, 5.5 * MM, 17 * MM), 0.006);   // slight cup of the palm between the pads
+    // wrist: oval, narrower than the palm, with the ulnar styloid (a bump on the little-finger side at the back) and the radial one
+    d = smin(d, sdEllipsoid(x - 2 * MM, y - 5.5 * MM, z + side * 20 * MM, 7 * MM, 5 * MM, 5 * MM), 0.005);
+    d = smin(d, sdEllipsoid(x - 4 * MM, y - 3 * MM, z - side * 20 * MM, 6 * MM, 4 * MM, 4 * MM), 0.005);
     if (rod) { // the rod lies in a channel across the palm, and the palm heel rolls up round its far side
       const o = gR + 0.0035, ox = rod.p[0] - o * 0.97, oy = rod.p[1] - o * 0.25, L = 0.025;
       d = smin(d, sdCapsule(x, y, z, ox - rod.d[0] * L, oy, -rod.d[2] * L, ox + rod.d[0] * L, oy, rod.d[2] * L, 0.0042), 0.007);
@@ -399,7 +404,7 @@ export function hand(p = {}) {
       for (let j = 0; j < 3; j++) {
         const P = f.pts[j]; let ux = 0, uy = 1;
         if (j > 0) { const q = f.pts[j - 1], dx = P[0] - q[0], dy = P[1] - q[1], l = Math.hypot(dx, dy) || 1; ux = -dy / l; uy = dx / l; }
-        df = smin(df, sdSphere(x - P[0] - ux * f.r[j] * 0.25, y - P[1] - uy * f.r[j] * 0.25, z - P[2], f.r[j] * (j === 0 ? 0.95 : 0.9) * (1 + 0.1 * age)), 0.003);
+        df = smin(df, sdSphere(x - P[0] - ux * f.r[j] * 0.32, y - P[1] - uy * f.r[j] * 0.32, z - P[2], f.r[j] * (j === 0 ? 0.98 : 0.9) * (1 + (j === 0 ? 0.2 : 0.12) * age)), 0.003);
       }
       d = smin(d, df, 0.005);
     }
@@ -408,9 +413,10 @@ export function hand(p = {}) {
       for (let j = 1; j < 3; j++) dt = smin(dt, sdSphere(x - th.pts[j][0], y - th.pts[j][1] - th.r[j] * 0.15, z - th.pts[j][2], th.r[j] * (0.95 + 0.1 * age)), 0.003);
       d = smin(d, dt, 0.006); }
     if (d < 0.006 && x > 0.06) d = smin(d, nailPlate(x, y, z), 0.0007);
-    if (d < 0.004 && y > 0) { // veins and tendons on the back of the hand (raised 0.4 to 0.9 mm)
-      let v = 0; for (const l of V) v = Math.max(v, ridge(x, z, l, 2.1 * MM)); let tn = 0; for (const l of T) tn = Math.max(tn, ridge(x, z, l, 2.6 * MM));
-      d -= (0.0009 * v + 0.0004 * tn) * age * smoothstep(0, 0.004, y) * smoothstep(0.1, 0.07, x);
+    if (d < 0.005 && y > 0) { // back of the hand: metacarpal ridges fanning to the knuckles with sunken valleys between, veins on top
+      let v = 0; for (const l of V) v = Math.max(v, ridge(x, z, l, 2.1 * MM)); let tn = 0, tw = 0; for (const l of T) { tn = Math.max(tn, ridge(x, z, l, 3.6 * MM)); tw = Math.max(tw, ridge(x, z, l, 8 * MM)); }
+      const m = age * smoothstep(0, 0.004, y) * smoothstep(0.1, 0.07, x) * smoothstep(0.02, 0.05, x);
+      d -= (0.0011 * v + 0.0011 * tn) * m; d += 0.0009 * (1 - tw) * m;
     }
     return (d + 0.00035 * fbm(x * 260, y * 260, z * 260, 1)) * S;
   }
@@ -436,7 +442,8 @@ export function hand(p = {}) {
     for (let j = 1; j < 3; j++) m = Math.max(m, gauss(q[0], q[1], q[2], th.pts[j], 0.0055));
     let v = 0; if (y > 0) for (const l of V) v = Math.max(v, ridge(q[0], q[2], l, 2.4 * MM));
     const nm = x / S > 0.06 ? smoothstep(0.0013, 0.0002, nailPlate(q[0], q[1], q[2])) : 0;   // nails: lighter than the skin (paint below 0 extrapolates away from col2)
-    o[0] = nm > 0.05 ? -0.55 * nm : Math.min(1, k * 0.7 + v * 0.3); o[1] = Math.min(1, age * (0.9 * m + 0.45 * smoothstep(0.0, 0.004, y) * smoothstep(0.09, 0.03, x)));
+    let cr = 0; if (y < 0) for (const l of CREASE) cr = Math.max(cr, ridge(q[0], q[2], l, 1.5 * MM));   // palm creases: thenar arc, proximal and distal transverse
+    o[0] = nm > 0.05 ? -0.55 * nm : Math.min(1, k * 0.7 + v * 0.3 + cr * 0.45); o[1] = Math.min(1, age * (0.9 * m + 0.45 * smoothstep(0.0, 0.004, y) * smoothstep(0.09, 0.03, x)) + cr * 0.9);
   };
   const b = [-0.07, -0.07, -0.06, 0.145, 0.045, 0.065].map(v => v * S);
   return {sdf, paint, joints: {fingers: fingers.map(f => f.pts), thumb: th.pts}, bounds: b, cell: p.cell || 0.0024 * S, tris: p.tris || [520, 190], project: 0.0015,
