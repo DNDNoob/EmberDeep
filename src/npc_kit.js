@@ -148,7 +148,7 @@ export function ears(H, p = {}) {
   const ct = Math.cos(tl), st = Math.sin(tl), cp = Math.cos(fl), sp = Math.sin(fl);
   let lo = 0.04, hi = 0.12; for (let i = 0; i < 24; i++) { const m = (lo + hi) / 2; if (H.skull(px, cy, m) < 0) lo = m; else hi = m; }
   const pz = lo - 0.002;   // sink the front edge into the skull a little
-  const HW = 0.018, HL = 0.0335;   // half breadth (a) and half length (v) of the outline, kit metres at es = 1
+  const HW = 0.0205, HL = 0.0335;   // half breadth (a) and half length (v) of the outline, kit metres at es = 1
   function sdf(x, y, z) {
     const dx = x - px, dy = y - cy, dz = Math.abs(z) - pz;
     const v0 = -dx * st + dy * ct, f = dx * ct + dy * st;
