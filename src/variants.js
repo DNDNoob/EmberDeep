@@ -36,6 +36,12 @@ export const VARIANTS=[
    V('violet',{tex:1,ambT:[1.12,.82,1.25],stone:[1.1,.9,1.15]}),
    V('amber',{tex:2,ambT:[1.2,1,.7],torch:[1.02,.98,.92],stone:[1.15,1,.8]}),
    V('dim',{tex:3,ambK:.7,fogK:1.1,tint:[.9,.9,.92]})],
+  // The Dark Forest. fo: density of tree/bush/bram(ble)/fern/shroom, dead = share of bare dead trees, glow = mushroom glow, fly = fireflies,
+  // lit/dark = foliage tip and inner colour, bark, bush leaf colour (leaf), thorn stem colour
+  [V('pine',{tex:0,fo:{tree:1,bush:1,bram:.8,fern:1,shroom:.5,dead:.04,glow:.25,fly:0,lit:[.1,.22,.11],dark:[.02,.05,.035],bark:[.17,.1,.065],leaf:[.08,.2,.09],thorn:[.2,.09,.07]}}),
+   V('thicket',{tex:1,tint:[1.02,.98,.96],ambT:[1.08,1,.9],fo:{tree:.5,bush:1.6,bram:2.3,fern:.8,shroom:.3,dead:.1,glow:.2,fly:0,lit:[.14,.2,.08],dark:[.035,.045,.02],bark:[.2,.12,.08],leaf:[.12,.19,.07],thorn:[.27,.1,.08]}}),
+   V('deadwood',{tex:2,tint:[1.05,1.02,.96],ambK:1.1,ambT:[1.08,1,.85],fogK:.92,fo:{tree:1,bush:.5,bram:1,fern:.15,shroom:.1,dead:.78,glow:0,fly:0,lit:[.2,.15,.09],dark:[.04,.03,.02],bark:[.27,.25,.22],leaf:[.17,.13,.08],thorn:[.25,.2,.16]}}),
+   V('mossy',{tex:3,wetK:2.2,tint:[.94,1.04,.97],fogK:1.12,ambT:[.9,1.1,1.12],torch:[.97,1,1],fo:{tree:.9,bush:1.1,bram:.5,fern:1.7,shroom:1.4,dead:.03,glow:1,fly:1,lit:[.1,.26,.13],dark:[.02,.06,.04],bark:[.12,.15,.09],leaf:[.06,.22,.1],thorn:[.15,.16,.1]}})],
 ];
 // four named variants of this biome, plus a small continuous per-floor jitter (colour, light, noise seed) so even the same variant never repeats exactly
 export function pickVariant(rng,bi,force){

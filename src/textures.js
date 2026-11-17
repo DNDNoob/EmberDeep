@@ -717,10 +717,107 @@ const SURF = [
   rough=mix(.85,.3,sat(g*2.));
   em=g>.1?.5+.5*sat(g)*.6:0.;
 }`,
+// 26 forest undergrowth wall: a dense, near-black tangle of needles, leaves and twigs. Needles are one random stroke per grid cell, three layers deep.
+`float strk(vec2 uv,float n,float sd,float wd,float len){
+  vec2 p=uv*n,c=floor(p),f=fract(p)-.5,cm=mod(c,n);
+  float a=hash1(cm+sd)*6.2832;vec2 o=(hash2(cm+sd+7.)-.5)*.3,d=vec2(cos(a),sin(a)),q=f-o;
+  float al=dot(q,d),pr=abs(dot(q,vec2(-d.y,d.x))),L=len*(.6+.4*hash1(cm+sd+3.));
+  float tp=1.-.85*clamp(abs(al)/L,0.,1.);return (1.-smoothstep(wd*.5*tp,wd*tp,pr))*(1.-smoothstep(L*.9,L,abs(al)));}
+float leafm(vec2 uv,float n,float sd,float wd,float len){
+  vec2 p=uv*n,c=floor(p),f=fract(p)-.5,cm=mod(c,n);
+  float a=hash1(cm+sd)*6.2832;vec2 o=(hash2(cm+sd+7.)-.5)*.2,d=vec2(cos(a),sin(a)),q=f-o;
+  float al=dot(q,d)/len,pr=dot(q,vec2(-d.y,d.x))/wd;
+  return 1.-smoothstep(.55,1.,al*al+pr*pr);}
+void surf(vec2 uv,out float h,out vec3 alb,out float rough,out float em){
+  float big=fbm3(uv+.2,6.),lump=fbm(uv,14.);
+  float s1=strk(uv,vs(10.,12.,9.,11.),1.,.2,.42),s2=strk(uv+.13,vs(16.,18.,14.,17.),5.,.17,.4),s3=strk(uv+.41,vs(24.,26.,20.,25.),9.,.15,.38);
+  float r1=hash1(floor(uv*10.)+3.),r2=hash1(floor(uv*16.)+9.),r3=hash1(floor(uv*24.)+13.);
+  float gap=smoothstep(.25,.7,big*.7+lump*.5);
+  h=.12+gap*.2;
+  vec3 nA=mix(vec3(.06,.12,.07),vec3(.12,.22,.11),r1),nB=mix(vec3(.09,.17,.08),vec3(.17,.3,.13),r2),nC=mix(vec3(.12,.23,.1),vec3(.24,.4,.17),r3);
+  alb=vec3(.035,.05,.03)*(.6+.8*lump);
+  alb=mix(alb,nA*(.55+.5*lump),s1);h=max(h,.38+s1*.12);
+  alb=mix(alb,nB*(.65+.5*lump),s2);h=max(h,.52+s2*.14);
+  alb=mix(alb,nC*(.75+.45*fbm3(uv+.7,20.)),s3);h=max(h,.68+s3*.16);
+  float tw=strk(uv+.29,6.,17.,.09,.45)*smoothstep(.3,.6,fbm3(uv+.5,5.));
+  alb=mix(alb,vec3(.13,.08,.05)*(.6+.7*lump),tw);h=max(h,.8*tw+h*(1.-tw));
+  alb*=mix(.4,1.,smoothstep(.2,.7,h));
+  rough=.9;em=0.;
+#if VAR==1
+  float lf=leafm(uv,8.,21.,.2,.34),lf2=leafm(uv+.3,12.,27.,.16,.3);
+  vec3 lc=mix(vec3(.07,.13,.05),vec3(.17,.24,.08),hash1(floor(uv*8.)+5.));
+  alb=mix(alb,lc*(.6+.6*lump),lf*.9);h=max(h,.72+lf*.14);
+  alb=mix(alb,mix(vec3(.12,.06,.04),vec3(.2,.12,.06),hash1(floor(uv*12.)+8.))*(.6+.5*lump),lf2*.55);h=max(h,.8+lf2*.1);
+  float th=strk(uv+.6,5.,31.,.06,.45)*smoothstep(.3,.55,fbm3(uv+.1,4.));
+  alb=mix(alb,vec3(.2,.1,.08),th);h=max(h,.86*th+h*(1.-th));
+#elif VAR==2
+  float dry=smoothstep(.3,.6,fbm3(uv+.9,3.));
+  alb=mix(alb,alb*vec3(2.2,1.7,1.),dry*(s1+s2+s3)*.35);
+  float dt=strk(uv+.2,5.,41.,.08,.45)*smoothstep(.2,.55,fbm3(uv+.4,4.)),dt2=strk(uv+.7,8.,47.,.07,.42);
+  alb=mix(alb,vec3(.2,.17,.13)*(.6+.6*lump),max(dt,dt2*.7));h=max(h,.85*max(dt,dt2*.7)+h*(1.-max(dt,dt2*.7)));
+  alb*=.75+.5*gap;
+#elif VAR==3
+  float mm=smoothstep(.45,.7,fbm(uv+.3,5.)*.7+lump*.3),mh=fbm(uv,70.)*.5+vn(uv*210.,vec2(210.))*.5;
+  alb=mix(alb,mix(vec3(.05,.13,.04),vec3(.14,.28,.1),mh)*(.7+.5*lump),mm*.85);h=mix(h,.78+mh*.14,mm);rough=mix(rough,.72,mm);
+  alb*=.9;
+#endif
+}`,
+// 27 forest floor: packed dark earth under pine needles, fallen cones, leaf litter, moss and roots
+`float strk(vec2 uv,float n,float sd,float wd,float len){
+  vec2 p=uv*n,c=floor(p),f=fract(p)-.5,cm=mod(c,n);
+  float a=hash1(cm+sd)*6.2832;vec2 o=(hash2(cm+sd+7.)-.5)*.3,d=vec2(cos(a),sin(a)),q=f-o;
+  float al=dot(q,d),pr=abs(dot(q,vec2(-d.y,d.x))),L=len*(.6+.4*hash1(cm+sd+3.));
+  float tp=1.-.85*clamp(abs(al)/L,0.,1.);return (1.-smoothstep(wd*.5*tp,wd*tp,pr))*(1.-smoothstep(L*.9,L,abs(al)));}
+float leafm(vec2 uv,float n,float sd,float wd,float len){
+  vec2 p=uv*n,c=floor(p),f=fract(p)-.5,cm=mod(c,n);
+  float a=hash1(cm+sd)*6.2832;vec2 o=(hash2(cm+sd+7.)-.5)*.2,d=vec2(cos(a),sin(a)),q=f-o;
+  float al=dot(q,d)/len,pr=dot(q,vec2(-d.y,d.x))/wd;
+  return 1.-smoothstep(.55,1.,al*al+pr*pr);}
+void surf(vec2 uv,out float h,out vec3 alb,out float rough,out float em){
+  float big=fbm(uv+.4,5.),lump=fbm(uv,22.),grit=vn(uv*160.,vec2(160.));
+  h=.3+lump*.2+grit*.05;
+  alb=mix(vec3(.07,.05,.035),vec3(.13,.09,.06),lump)*(.7+.6*grit);
+  rough=.95;em=0.;
+  // pine needle litter, three scales laid over each other
+  float n1=strk(uv,vs(26.,24.,24.,26.),2.,.14,.5),n2=strk(uv+.21,vs(40.,36.,36.,40.),6.,.12,.46),n3=strk(uv+.57,vs(60.,54.,54.,60.),12.,.1,.42);
+  float nm=smoothstep(.25,.6,fbm3(uv+.3,4.)+.15);
+  vec3 nc1=mix(vec3(.2,.11,.05),vec3(.3,.17,.08),hash1(floor(uv*34.)+4.)),nc2=mix(vec3(.16,.09,.04),vec3(.26,.15,.07),hash1(floor(uv*52.)+8.)),nc3=mix(vec3(.24,.14,.06),vec3(.34,.2,.09),hash1(floor(uv*78.)+14.));
+  alb=mix(alb,nc1*(.5+.5*lump),n1*nm);h=max(h,.45+n1*nm*.1);
+  alb=mix(alb,nc2*(.55+.5*lump),n2*nm);h=max(h,.55+n2*nm*.1);
+  alb=mix(alb,nc3*(.6+.5*lump),n3*nm);h=max(h,.65+n3*nm*.1);
+  // leaf litter
+  float lm=smoothstep(.5,.7,fbm(uv+.8,4.)),lf=leafm(uv,vs(16.,20.,14.,16.),23.,.22,.38)*lm;
+  alb=mix(alb,mix(vec3(.28,.13,.05),vec3(.4,.24,.08),hash1(floor(uv*16.)+6.))*(.5+.5*lump),lf*.9*vs(.5,1.,.5,.4));h=max(h,.7*lf+h*(1.-lf));
+  // roots: winding bands along the contours of a slow noise
+  float rv=fbm3(uv+.15,3.),rt=1.-smoothstep(.0,.022,abs(rv-.52)),rt2=1.-smoothstep(.0,.016,abs(fbm3(uv+.6,4.)-.48));
+  float rr=max(rt*smoothstep(.3,.6,fbm3(uv+.9,5.)),rt2*.7*smoothstep(.45,.7,fbm3(uv+.2,5.)));
+  alb=mix(alb,vec3(.14,.09,.06)*(.6+.8*lump),rr);h=max(h,.6+rr*.3);
+  // cones
+  vec2 cp=uv*6.,cc=floor(cp),cf=fract(cp)-.5;vec2 cmm=mod(cc,6.);
+  float ch=hash1(cmm+31.);vec2 co=(hash2(cmm+5.)-.5)*.4;float ca=hash1(cmm+9.)*3.14;
+  vec2 cq=cf-co;cq=vec2(cos(ca)*cq.x+sin(ca)*cq.y,-sin(ca)*cq.x+cos(ca)*cq.y);
+  float cn=(1.-smoothstep(.55,1.,length(cq/vec2(.15,.075))))*step(vs(.82,.86,.9,.88),ch);
+  float scl=.5+.5*sin(cq.x*70.+sin(cq.y*60.)*2.);
+  alb=mix(alb,vec3(.18,.1,.06)*(.55+.6*scl),cn);h=max(h,.78+cn*.1*scl);
+  rough=mix(rough,.8,cn);
+#if VAR==1
+  float lm2=leafm(uv+.4,24.,35.,.2,.36)*smoothstep(.3,.6,fbm(uv+.1,4.));
+  alb=mix(alb,mix(vec3(.25,.08,.05),vec3(.15,.09,.04),hash1(floor(uv*24.)+2.))*(.6+.5*lump),lm2*.8);h=max(h,.72*lm2+h*(1.-lm2));
+#elif VAR==2
+  vec4 vc=voro(uv+.3,7.,.9);float crk=(1.-smoothstep(.0,.012,vc.y))*smoothstep(.3,.6,fbm(uv+.5,4.));
+  alb=mix(alb,alb*vec3(1.5,1.35,1.1)+vec3(.03,.025,.02),smoothstep(.45,.7,fbm(uv+.6,6.))*.6);alb*=1.-crk*.7;h-=crk*.2;
+  float gr=strk(uv+.1,30.,51.,.04,.5)*smoothstep(.4,.7,fbm3(uv+.7,4.));
+  alb=mix(alb,vec3(.3,.26,.17),gr*.8);h=max(h,.7*gr+h*(1.-gr));
+#elif VAR==3
+  float mm=smoothstep(.55,.72,fbm(uv+.2,4.)*.7+lump*.3),mh=fbm(uv,80.)*.5+vn(uv*190.,vec2(190.))*.5;
+  alb=mix(alb,mix(vec3(.05,.13,.035),vec3(.15,.3,.1),mh)*(.7+.5*lump),mm*.9);h=mix(h,.75+mh*.14,mm);rough=mix(rough,.6,mm);
+  float pd=smoothstep(.6,.72,fbm(uv+.7,3.)*.8+lump*.2);alb=mix(alb,vec3(.025,.04,.035),pd*.7);h=mix(h,.3,pd);rough=mix(rough,.15,pd);
+#endif
+}`,
 ];
 
 // 1 = floors and ceilings (one tile of texture over two metres), 0 = walls and the gate
-const FLAT = [0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1];
+const FLAT = [0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1];
 
 const VS = `varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0.,1.);}`;
 const mainA = `
