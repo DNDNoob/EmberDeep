@@ -33,6 +33,12 @@ Every floor has two or three doors set into its walls. Face one and press E (or 
 - While someone is inside a room their friends cannot see them and creatures ignore them. A used door is boarded up for everyone, including players who join later.
 
 
+## Ambient sound
+
+Every kind of floor has its own faint background sound: dripping water on the moss floors, wind in the frost, embers in the warrens. It goes quiet in the menus, strange-door rooms and the fall.
+
+- Developers: `src/ambience.js` holds the soundscapes. Give a new floor type sound with `registerAmbience('Biome Name', {beds, shots})` (or register under its `F.kind`); the header comment there has an example.
+
 ## Things that look like bugs (they are not)
 
 From depth 2, every minute or two, something goes wrong on purpose. It only happens on your own screen, and never while a creature is hunting you.
