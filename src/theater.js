@@ -144,9 +144,9 @@ export function createTheater(env){
     box(RX*2-1,0.5,1.4,0,0.25,ZF+0.9,M.wood);   // the lip of the stage
     // seats
     const seats=[];for(const z of ROWZ)for(const bl of BLOCKS)for(const x of bl)seats.push([x,z]);
-    const iBase=new THREE.InstancedMesh(new THREE.BoxGeometry(0.58,0.16,0.54),M.seat,seats.length),iBack=new THREE.InstancedMesh(new THREE.BoxGeometry(0.58,0.82,0.12),M.seat,seats.length),iLeg=new THREE.InstancedMesh(new THREE.BoxGeometry(0.46,0.44,0.4),M.seatD,seats.length);
+    const iBase=new THREE.InstancedMesh(new THREE.BoxGeometry(0.58,0.16,0.54),M.seat,seats.length),iBack=new THREE.InstancedMesh(new THREE.BoxGeometry(0.58,0.62,0.12),M.seat,seats.length),iLeg=new THREE.InstancedMesh(new THREE.BoxGeometry(0.46,0.44,0.4),M.seatD,seats.length);
     {const m4=new THREE.Matrix4(),c=new THREE.Color();seats.forEach(([x,z],i)=>{const y=FY(z),k=0.85+((i*37)%7)*0.04;c.setRGB(k,k*0.95,k*0.95);
-      m4.makeTranslation(x,y+0.46,z);iBase.setMatrixAt(i,m4);iBase.setColorAt(i,c);m4.makeTranslation(x,y+0.92,z+0.27);iBack.setMatrixAt(i,m4);iBack.setColorAt(i,c);m4.makeTranslation(x,y+0.22,z+0.04);iLeg.setMatrixAt(i,m4)});
+      m4.makeTranslation(x,y+0.46,z);iBase.setMatrixAt(i,m4);iBase.setColorAt(i,c);m4.makeTranslation(x,y+0.82,z+0.27);iBack.setMatrixAt(i,m4);iBack.setColorAt(i,c);m4.makeTranslation(x,y+0.22,z+0.04);iLeg.setMatrixAt(i,m4)});
       group.add(iBase,iBack,iLeg)}
     // the aisle lights
     for(const x of [-1.7,1.7])for(const z of ROWZ){box(0.06,0.04,0.3,x+(x<0?0.45:-0.45),FY(z)+0.03,z,new THREE.MeshBasicMaterial({color:new THREE.Color(1.6,0.9,0.3)}))}
@@ -189,7 +189,7 @@ export function createTheater(env){
     const HOODS=[[0.9,0.45,0.1],[0.1,0.55,0.55],[0.55,0.2,0.65],[0.35,0.35,0.4],[0.8,0.15,0.2],[0.15,0.35,0.7],[0.75,0.7,0.2]];
     const SKIN=[[0.95,0.75,0.62],[0.75,0.52,0.38],[0.55,0.36,0.26],[0.9,0.68,0.5],[0.42,0.27,0.2],[0.98,0.82,0.7]];
     const HAIR=[[0.1,0.07,0.05],[0.55,0.35,0.12],[0.85,0.7,0.3],[0.05,0.05,0.07],[0.4,0.15,0.1],[0.3,0.3,0.34]];
-    const stdMat=c=>new THREE.MeshStandardMaterial({color:new THREE.Color(c[0],c[1],c[2]),roughness:0.9});
+    const stdMat=c=>new THREE.MeshStandardMaterial({color:new THREE.Color().setRGB(c[0],c[1],c[2],THREE.SRGBColorSpace),roughness:0.9});
     const wet=new THREE.MeshBasicMaterial({color:new THREE.Color(0.7,0.85,1.2),transparent:true,opacity:0.8});
     const dropGeo=new THREE.SphereGeometry(0.014,6,5);
     const pick=[];{const ok=[];seats.forEach(([x,z])=>{if(Math.hypot(x-SPAWN.x,z-SPAWN.z)>TH.TEEN_RANGE+0.8)ok.push([x,z])});
@@ -303,7 +303,7 @@ export function createTheater(env){
       const W=640,H=360,cv=document.createElement('canvas');cv.width=W;cv.height=H;const c=cv.getContext('2d');
       const lay=document.createElement('canvas');lay.width=W;lay.height=H;const lc=lay.getContext('2d');
       const grain=document.createElement('canvas');grain.width=300;grain.height=200;{const g=grain.getContext('2d');g.fillStyle='#d9b27a';g.fillRect(0,0,300,200);for(let i=0;i<5000;i++){const v=rnd();g.fillStyle=v<0.5?'rgba(255,235,190,0.35)':'rgba(120,80,40,0.3)';g.fillRect(rnd()*300,rnd()*200,2,2)}}
-      const small=document.createElement('canvas');small.width=8;small.height=4;const sc=small.getContext('2d');
+      const small=document.createElement('canvas');small.width=8;small.height=4;const sc=small.getContext('2d',{willReadFrequently:true});
       const t0=new THREE.CanvasTexture(cv);t0.colorSpace=THREE.SRGBColorSpace;
       const R={canvas:cv,tex:t0,avg:[0.6,0.7,1],scene:0,brushIdx:-1};
       const bokeh=[...Array(16)].map(()=>({x:rnd()*W,y:rnd()*H,r:14+rnd()*30,h:rnd()<0.5?[255,190,110]:[130,180,255],p:rnd()*6.28}));
@@ -619,16 +619,17 @@ export function createTheater(env){
       for(const T of S.teens)teenPose(T,dt);
       if(live&&!S.over){
         // microphone, or the V key standing in for it
-        let lv=0;
+        let lv=0,keyYell=false;
         if(S.test.level!==null&&S.test.level!==undefined)lv=S.test.level;
         else if(S.mic==='ok')lv=micLevel();
         else{
           const held=!!(inp&&inp.talk);S.keyHold=held?S.keyHold+dt:0;
           lv=held?(S.keyHold>=TH.KEY_YELL_HOLD?0.3:0.06):0;
-          if(S.st==='attack'&&S.keyHold>=TH.KEY_YELL_HOLD&&!S.keyDone){S.keyDone=true;heard('silence peasants')}
+          if(S.st==='attack'&&S.keyHold>=TH.KEY_YELL_HOLD&&!S.keyDone){S.keyDone=true;keyYell=true}
           if(!held)S.keyDone=false;
         }
         S.lvl=lv;hist.push([S.t,lv]);while(hist.length&&hist[0][0]<S.t-TH.YELL_WINDOW)hist.shift();
+        if(keyYell)heard('silence peasants');
         const n=near();S.dist=n;
         if(S.st==='calm'){
           if(lv>TH.SPEAK&&n<=TH.TEEN_RANGE)S.speechT+=dt;else S.speechT=Math.max(0,S.speechT-dt*2);
@@ -640,8 +641,8 @@ export function createTheater(env){
           if(!srOk()||(S.test&&S.test.noSR)){if(lv>=TH.YELL)S.yellT=Math.min(TH.YELL_HOLD+0.5,S.yellT+dt);else S.yellT=Math.max(0,S.yellT-dt*0.5);if(S.yellT>=TH.YELL_HOLD)toCrying()}
         }
         // the doors
-        if(S.rattleT<=0&&S.pz>ZB-0.55&&Math.abs(S.px-ENT.x)<0.9){
-          if(S.entLocked){S.rattleT=1.3;o.noise(0.12,0.3,260,2);o.tone(110,0.1,'square',0.12);o.say('The door will not open.',1.5)}
+        if(S.pz>ZB-0.55&&Math.abs(S.px-ENT.x)<0.9){
+          if(S.entLocked){if(S.rattleT<=0){S.rattleT=1.3;o.noise(0.12,0.3,260,2);o.tone(110,0.1,'square',0.12);o.say('The door will not open.',1.5)}}
           else if(!S.over){S.over='leave';S.overT=0}
         }
         if(S.rattleT<=0&&S.px>RX-0.55&&Math.abs(S.pz-EXIT.z)<0.85){
