@@ -33,6 +33,15 @@ Every floor has two or three doors set into its walls. Face one and press E (or 
 - While someone is inside a room their friends cannot see them and creatures ignore them. A used door is boarded up for everyone, including players who join later.
 
 
+## Floor types and looks
+
+Floors move through seven types, one after another, with a Humming Rooms floor every fourth depth: **The Old Stonework**, **Mossgrown Halls**, **The Frostvault**, **Cinder Warrens**, **The Bone Galleries** (an ossuary of stacked skulls and long bones between stone piers, brick vault overhead), **The Rustworks** (riveted iron plate, pipes, diamond plate and grating) and **The Glimmer Veins** (dark slate shot through with glowing crystal).
+
+Every type also has four looks, picked per floor from the run seed (so friends in a shared game see the same one) and nudged by a little random colour and noise so no two floors match exactly: Stonework is plain, flooded, crumbling or sooty; Moss is plain, overgrown, dripping wet or pale lichen; Frost is plain, deep ice, snow-dusted or black ice; Cinder is plain, ashen, molten or obsidian; Humming Rooms are yellow, faded green, salmon or water-stained; Bone is plain, damp and mossy, chalk white or smoke-blackened; Rust is plain, verdigris, oily wet or flaking paint; Glimmer is teal, violet, amber or dim. The arrival message names the look, for example `Depth 6: The Bone Galleries (chalk white)`.
+
+- **Jump to a floor:** open the game with `?depth=N` (1 to 40) to start new runs at that depth without having reached it. The saved deepest-depth record is not raised by loading.
+- Developers: `src/variants.js` holds the look tables and `pickVariant`. The surface shaders in `src/textures.js` switch on `VAR` (0 to 3), and `SURFS.get(layer, {v, seed, tint})` builds one. In the console, `__game.genFloor(seed, depth, {bi, ix})` or `__game.loadFloor(depth, {bi, ix})` forces a biome and look.
+
 ## Ambient sound
 
 Every kind of floor has its own faint background sound: dripping water on the moss floors, wind in the frost, embers in the warrens. It goes quiet in the menus, strange-door rooms and the fall.
