@@ -38,8 +38,9 @@ export const VARIANTS=[
    V('dim',{tex:3,ambK:.7,fogK:1.1,tint:[.9,.9,.92]})],
 ];
 // four named variants of this biome, plus a small continuous per-floor jitter (colour, light, noise seed) so even the same variant never repeats exactly
-export function pickVariant(rng,bi){
-  const ix=(rng()*4)|0,v=VARIANTS[bi][ix],j=()=>1+(rng()-0.5)*0.07,b=j();
+export function pickVariant(rng,bi,force){
+  let ix=(rng()*4)|0;if(force!=null)ix=force;
+  const v=VARIANTS[bi][ix],j=()=>1+(rng()-0.5)*0.07,b=j();
   const tint=[v.tint[0]*b*j(),v.tint[1]*b*j(),v.tint[2]*b*j()];
   return {...v,ix,bi,tint,fogK:v.fogK*(1+(rng()-0.5)*0.12),ambK:v.ambK*(1+(rng()-0.5)*0.1),seed:Math.floor(rng()*40000)/100};
 }

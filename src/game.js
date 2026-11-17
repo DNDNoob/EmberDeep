@@ -84,7 +84,7 @@ function bfs(g,W,H,sx,sy){
 const ORDER=[0,1,2,3,5,6,7];
 function biomeIx(depth){return ORDER[(depth-1-Math.floor(depth/4))%ORDER.length]}
 function floorKind(depth){if(depth>=4&&depth%4===0)return 'back';if(depth>=3&&depth%4===3)return 'cave';if(depth>=5&&depth%4===1)return 'dark';return 'maze'}
-function genFloor(seedStr,depth){
+function genFloor(seedStr,depth,look){
   const rng=mulberry32(hashStr(seedStr+'#'+depth));
   const ri=n=>(rng()*n)|0;
   let kind=floorKind(depth);
@@ -409,9 +409,9 @@ function genFloor(seedStr,depth){
   // face down an open corridor at the start
   let yaw=0;
   for(const d of DIRS){if(g[idx(stx+d[0],sty+d[1])]===0){yaw=Math.atan2(d[1],d[0]);break}}
-  const bi=kind==='back'?4:biomeIx(depth);
+  const bi=look&&look.bi!=null?look.bi:kind==='back'?4:biomeIx(depth);
   // looks are drawn last, from their own dice, so nothing above ever moves
-  const vr=mulberry32(hashStr(seedStr+'#var#'+depth)),variant=pickVariant(vr,bi),B=BIOMES[bi];
+  const vr=mulberry32(hashStr(seedStr+'#var#'+depth)),variant=pickVariant(vr,bi,look&&look.ix),B=BIOMES[bi];
   const litter=[];
   if(variant.rubbleK>1&&kind!=='back'){
     const spots=[];
@@ -1508,10 +1508,10 @@ function los(x0,z0,x1,z1){
   for(let i=1;i<n;i++){const t=i/n;if(solidAt(x0+dx*t,z0+dz*t))return false}
   return true;
 }
-function loadFloor(depth){
+function loadFloor(depth,look){
   R.depth=depth;
   if(depth>deepest&&!(URL_DEPTH&&depth===R.startDepth)){deepest=depth;store.set('deepest',deepest)}
-  F=genFloor(R.seed,depth);panelLvl=1;P.grab=null;if(typeof MIM!=='undefined')mimicReset();
+  F=genFloor(R.seed,depth,look);panelLvl=1;P.grab=null;if(typeof MIM!=='undefined')mimicReset();
   buildMesh(F);buildStatic(F);buildSdf(F);sweepWorld();
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
   P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;P.inSafe=false;nearNpc=null;
@@ -3747,5 +3747,5 @@ setInterval(()=>{if(MP.host&&document.hidden&&performance.now()-last>200)step(pe
 // a backdrop maze behind the title screen
 R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
 {const rc=cleanCode(new URLSearchParams(location.search).get('room'));if(rc)mpPrepareJoin(rc)}
-window.__game={amb,update,render,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={amb,update,render,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);
