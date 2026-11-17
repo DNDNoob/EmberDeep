@@ -448,7 +448,7 @@ export function hand(p = {}) {
     let v = 0; if (y > 0) for (const l of V) v = Math.max(v, ridge(q[0], q[2], l, 2.4 * MM));
     const nm = x / S > 0.06 ? smoothstep(0.0019, 0.0006, nailPlate(q[0], q[1], q[2])) : 0;   // nails: lighter than the skin (paint below 0 extrapolates away from col2)
     let cr = 0; if (y < 0) for (const l of CREASE) cr = Math.max(cr, ridge(q[0], q[2], l, 1.5 * MM));   // palm creases: thenar arc, proximal and distal transverse
-    o[0] = nm > 0.05 ? -0.55 * nm : Math.min(1, k * 0.7 + v * 0.3 + cr * 0.45); o[1] = Math.min(1, age * (0.9 * m + 0.45 * smoothstep(0.0, 0.004, y) * smoothstep(0.09, 0.03, x)) + cr * 0.9);
+    o[0] = Math.min(1, k * 0.7 + v * 0.3 + cr * 0.45) * (1 - nm); o[1] = Math.min(1, age * (0.9 * m + 0.45 * smoothstep(0.0, 0.004, y) * smoothstep(0.09, 0.03, x)) + cr * 0.9);
   };
   const b = [-0.07, -0.07, -0.06, 0.145, 0.045, 0.065].map(v => v * S);
   return {sdf, paint, joints: {fingers: fingers.map(f => f.pts), thumb: th.pts}, bounds: b, cell: p.cell || 0.0024 * S, tris: p.tris || [520, 190], project: 0.0015,
