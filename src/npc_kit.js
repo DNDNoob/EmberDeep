@@ -113,6 +113,26 @@ export function head(p = {}) {
   };
 }
 
+/* ---------- neck: skin column from under the jaw down into the robe's neckline (frame H, draw it with drape so it stays upright) ---------- */
+// Same cone as the head's own neck stub (top 34 mm radius, 40 mm lower; head units), continued down with a trapezius flare.
+// Meshed only below the head's own stub (they overlap by 1 cm), so the neck joins the head without a gap or a double surface.
+// Use recipe rig drape so the lower end stays on the torso when the head turns or nods. p: {len (head units below the pivot), r (scale), tris}
+export function neck(H, p = {}) {
+  const len = p.len ?? 0.2, r = p.r ?? 1, nk = p.neck ?? 1;
+  const sdf = (x, y, z) => {
+    const az = Math.abs(z);
+    let d = sdRoundCone(x, y, z, -0.004, 0.02, 0, -0.008, -0.07, 0, 0.034 * nk * r, 0.04 * nk * r);
+    d = smin(d, sdRoundCone(x, y, z, -0.008, -0.07, 0, -0.016, -len, 0, 0.04 * nk * r, 0.056 * nk * r), 0.02);
+    // sternocleidomastoid cords from behind the ear to the collarbones, and the Adam's apple
+    d = smin(d, sdCapsule(x, y, az, -0.026, -0.03, 0.03 * nk, 0.016, -0.15, 0.015, 0.012), 0.012);
+    d = smin(d, sdSphere(x - 0.036 * nk, y + 0.07, z, 0.011), 0.014);
+    return d + 0.0004 * fbm(x * 45, y * 45, z * 45, 2);
+  };
+  return {sdf, bounds: [-0.09, -len - 0.02, -0.09, 0.09, -0.03, 0.09], cell: p.cell || 0.0045, tris: p.tris || [220, 90],
+    cull: (x, y, z) => y > -0.035 || H.sdf(x, y, z) < -0.002, project: 0.002,
+    paint: (x, y, z, o) => { o[0] = 0.5 * smoothstep(-0.07, -len, y); o[1] = 0.6; }};
+}
+
 /* ---------- ears: a separate small SDF part (both ears), anatomically placed ---------- */
 // Sizes come from ANTHRO (ratios of head height): length 0.27, breadth 0.55 of length, ~20 mm protrusion at the rim.
 // Ear space: pivot = the front edge of the ear on the skull at ear mid-height. `a` runs backwards along the ear plate, `v`
@@ -215,6 +235,12 @@ export function moustache(H, p = {}) {
 export function beard(H, p = {}) {
   const L = p.length ?? 0.2, W = p.width ?? 1, th = p.thick ?? 0.007, fork = p.fork ?? 1, E = H.eye, m = H.mouth;
   const cheekY = E.y - 0.033 + (p.cheekLine ?? 0);
+  // p.chest(x,y,z): distance to the clothes below the beard, in this part's own coordinates (negative inside). The hanging mass is then
+  // carried out onto the cloth: its centre follows the chest profile (found by marching along +X at z = 0) so the beard rests ON the robe
+  // instead of sinking into it, and whatever still lies inside the cloth is cut away.
+  const chest = p.chest, gap = p.gap ?? 0.004, PY = [], PS = 0.01;
+  if (chest) for (let y = 0.02; y > -L - 0.05; y -= PS) { let x = 0.3; while (x > -0.1 && chest(x, y, 0) > 0) x -= 0.002; PY.push(x); }
+  const chestX = y => { const f = cl((0.02 - y) / PS, 0, PY.length - 1.001), i = Math.floor(f), t = f - i; return PY[i] * (1 - t) + PY[i + 1] * t; };
   function sdf(x, y, z) {
     const zs = Math.abs(z);
     // shell over the lower face: offset of the head surface, kept below the cheek line and in front of the ears
@@ -228,12 +254,15 @@ export function beard(H, p = {}) {
     d = smax(d, y - (m[1] - 0.0135) - 0.05 * smoothstep(0.02, 0.036, zs), 0.003); // under the lip in front, up to the cheek at the sides
     // the hanging mass: a tapered, slightly wavy cone below the chin
     const t = cl(-(y - 0.0) / L, 0, 1), tt = Math.pow(t, 1.25);
-    const cx = m[0] - 0.024 + 0.035 * tt + 0.004 * Math.sin(t * 9), wx = (0.034 * Math.pow(1 - t, 0.9) + 0.008), wz = W * (0.05 * Math.pow(1 - t, 1.1) + 0.009);
+    let cx = m[0] - 0.024 + 0.035 * tt + 0.004 * Math.sin(t * 9);
+    const wx = (0.034 * Math.pow(1 - t, 0.9) + 0.008), wz = W * (0.05 * Math.pow(1 - t, 1.1) + 0.009);
+    if (chest) cx = Math.max(cx, chestX(y) + gap + wx * 0.75);
     const ux = (x - cx) / wx, uz = (z + 0.005 * Math.sin(t * 7)) / wz;
     let h = (Math.hypot(ux, uz) - 1) * Math.min(wx, wz) * 0.9;
     h = smax(h, y - (m[1] - 0.0185), 0.008);
     h = smax(h, -(y + L + 0.005), 0.02);
     d = smin(d, h, 0.012);
+    if (chest) d = smax(d, -(chest(x, y, z) - gap * 0.5), 0.004);
     if (fork > 0 && t > 0.55) d = ssub(d, Math.max(Math.abs(z) - 0.0035 * fork, Math.abs(y + L * 0.93) - L * 0.25, Math.abs(x - cx) - 0.05), 0.006);
     if (d < 0.015) {
       const a = Math.atan2(uz, ux);
@@ -241,7 +270,7 @@ export function beard(H, p = {}) {
     }
     return d;
   }
-  return {sdf, bounds: [-0.02, -L - 0.03, -0.1, 0.14, cheekY + 0.01, 0.1], cell: p.cell || 0.0055, tris: p.tris || [540, 200],
+  return {sdf, bounds: [-0.02, -L - 0.03, -0.1, chest ? 0.24 : 0.14, cheekY + 0.01, 0.1], cell: p.cell || 0.0055, tris: p.tris || [540, 200],
     cull: (x, y, z) => H.sdf(x, y, z) < -0.002, project: 0.003,
     paint: (x, y, z, o) => { o[0] = 0.55 * smoothstep(-0.02, -L, y); }};
 }
@@ -399,14 +428,14 @@ export function body(p = {}) {
   const stoop = p.stoop ?? 0, belly = p.belly ?? 0, nx = 0.005;
   const cw = g('chestBreadth') / 2 * (p.narrow ?? 1), cd = g('chestDepth') / 2, ww = g('waistBreadth') / 2 * (p.waistNarrow ?? p.narrow ?? 1), wd = g('waistDepth') / 2, hw = g('hipBreadth') / 2;
   const sw = Math.max(...p.arms.map(a => Math.abs(a.S[2]))), nr = g('neckRadius') * 0.6;   // neck circumference is taken at the Adam's apple; the neck column is ~0.6 of that radius
-  const torso = (x, y, z) => { // ribcage, belly, pelvis, neck and trapezius slopes; no arms
+  const torso = (x, y, z, noNeck) => { // ribcage, belly, pelvis, neck and trapezius slopes; no arms (noNeck: the clothed torso, trapezius starts at the neck base)
     const xs = x - stoop * Math.max(0, y - 0.03), az = Math.abs(z);
     let d = sdEllipsoid(xs, y - Y.chest, z, cd, 0.095, cw);
     d = smin(d, sdEllipsoid(xs, y - Y.ribs, z, cd * 0.98, 0.1, ww * 1.0), 0.05);
     d = smin(d, sdEllipsoid(xs - 0.012 * belly, y - Y.belly, z, wd + 0.03 * belly, 0.075, ww * 1.02), 0.04);
     d = smin(d, sdEllipsoid(x, y - Y.pelvis, z, wd * 1.05, 0.07, hw), 0.04);
-    d = smin(d, sdRoundCone(xs, y, az, nx, Y.neck - 0.1, 0, nx, Y.neck, 0, nr * 1.05, nr), 0.03);
-    d = smin(d, sdRoundCone(xs, y, az, nx, Y.neck - 0.015, 0, 0, Y.shoulder, sw - 0.03, 0.026, 0.032), 0.03);
+    if (!noNeck) d = smin(d, sdRoundCone(xs, y, az, nx, Y.neck - 0.1, 0, nx, Y.neck, 0, nr * 1.05, nr), 0.03);
+    d = smin(d, sdRoundCone(xs, y, az, nx, noNeck ? Y.neck - 0.065 : Y.neck - 0.015, 0, 0, Y.shoulder, sw - 0.03, noNeck ? 0.03 : 0.026, 0.032), 0.03);
     return d;
   };
   const arms = p.arms.map(a => {
@@ -417,7 +446,8 @@ export function body(p = {}) {
   });
   // the whole body: arms are separate pieces with only a small blend at the shoulder, so there is an armpit gap
   const sdf = (x, y, z) => { let d = torso(x, y, z); for (const a of arms) d = smin(d, a.sdf(x, y, z), 0.01); return d; };
-  return {sdf, torso, arms, Y, stoop, belly, dims: {cw, cd, ww, wd, hw, sw, nr}, unit: u};
+  const torsoCloth = (x, y, z) => torso(x, y, z, true);
+  return {sdf, torso, torsoCloth, arms, Y, stoop, belly, dims: {cw, cd, ww, wd, hw, sw, nr}, unit: u};
 }
 
 // Garments over a body. list: [{type:'robe', ease, hang, folds, collar:{y,r,t}, bounds?, tris?}, {type:'sleeve', arm, ease, bell, folds, cuff:{len,thick}},
@@ -427,14 +457,18 @@ export function body(p = {}) {
 export function dress(B, list) {
   const robe = list.find(g => g.type === 'robe') || {}, sash = list.find(g => g.type === 'sash'), sleeves = list.filter(g => g.type === 'sleeve');
   const ease = robe.ease ?? 0.012, hang = robe.hang ?? B.Y.belly, co = robe.collar || {};
-  const cy = co.y ?? B.Y.neck - 0.04, cr = co.r ?? 0.037, ct = co.t ?? 0.011, nxp = 0.005 + B.stoop * (cy - 0.03);
+  const cy = co.y ?? B.Y.neck - 0.04, ct = co.t ?? 0.011, nxp = 0.005 + B.stoop * (cy - 0.03);
   // smooth torso cloth: body offset by ease; below `hang` the cross-section is carried straight down (no clinging to the belly)
+  // neckline: the robe stops at the base of the neck (cervicale / collarbones) with an oval scoop, V-ish at the front, and a
+  // folded collar band rolled round its edge. The neck itself is skin (recipe part `neck`, K.neck()), not cloth.
+  const nl = {x: nxp + (co.dx ?? 0.022), y: (co.ny ?? B.Y.neck - 0.025), rx: co.rx ?? 0.066, ry: co.ry ?? 0.07, rz: co.rz ?? 0.054};
+  const bowl = (x, y, z) => sdEllipsoid(x - nl.x, y - nl.y, z, nl.rx, nl.ry, nl.rz);
   const base = (x, y, z) => {
-    let d = B.torso(x, Math.max(y, hang), z) - ease;
-    d = smax(d, -(Math.hypot(x - nxp, z) - cr), 0.012);                           // neck opening
-    const ring = Math.hypot(Math.hypot(x - nxp, z) - cr * 1.12, y - cy) - ct;       // collar roll
-    d = smin(d, ring, 0.014);
-    d = smin(d, sdEllipsoid(x + 0.05 - B.stoop * 0.3, y - cy + 0.005, z, 0.05, 0.042, 0.078), 0.04); // cowl bunched at the back
+    const d0 = B.torsoCloth(x, Math.max(y, hang), z) - ease;
+    let d = smax(d0, -bowl(x, y, z), 0.01);                                         // neckline scoop
+    const band = smax(Math.abs(bowl(x, y, z) - 0.002) - ct * 0.62, d0 - 0.004, 0.004);   // collar band: a rolled edge standing ~6 mm off the cloth
+    d = smin(d, band, 0.006);
+    d = smin(d, sdEllipsoid(x + 0.052 - B.stoop * 0.3, y - nl.y + 0.045, z, 0.042, 0.03, 0.07), 0.035); // cowl bunched at the back, below the neck
     return smax(d, -(y + 0.012), 0.004);
   };
   const sl = sleeves.map(sg => {

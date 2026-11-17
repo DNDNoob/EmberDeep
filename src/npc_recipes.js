@@ -22,7 +22,7 @@ const ARMS = [
   {S: [0, 0.325, -0.105], E: [0.0, 0.12, -0.165], W: [0.105, 0.04, -0.075], r: [0.03, 0.026, 0.018], back: 0.024} // hand resting on the sash
 ];
 export const KEEPER = {
-  id: 'keeper-v6', seed: 4242,
+  id: 'keeper-v7', seed: 4242,
   // Human proportions (see docs/npc-kit.md): the head is built at its natural size and drawn at headScale; the torso is
   // stretched (len) and the skirt (legs) raised so the figure is ~7.25 heads tall with shoulders about 2.7 head widths wide.
   proportions: {headScale: 0.6, frames: ['H', 'J'], height: 0.93},   // height: uniform scale of the whole figure and its props (crown 1.03 m * 0.93 = 0.96 m)
@@ -43,6 +43,7 @@ export const KEEPER = {
     {part: 'sash', frame: 'U', mat: 'trim', col: 'gold', col2: 'goldDeep'},
     {part: 'cuff0', frame: 'U', mat: 'trim', col: 'gold', col2: 'goldDeep'},
     {part: 'cuff1', frame: 'U', mat: 'trim', col: 'gold', col2: 'goldDeep'},
+    {part: 'neck', frame: 'H', mat: 'skin', col: 'skin', col2: 'skinDeep', drape: [-0.04, -0.17]},
     {part: 'head', frame: 'H', mat: 'skin', col: 'skin', col2: 'skinDeep'},
     {part: 'ears', frame: 'H', mat: 'skin', col: 'skin', col2: 'skinDeep'},
     {part: 'hair', frame: 'H', mat: 'hair', col: 'white', col2: 'whiteDeep'},
@@ -73,6 +74,11 @@ export const KEEPER = {
     const skirtCull = skirt.cull, torsoCull = torso.cull;
     skirt.cull = (x, y, z) => skirtCull(x, y, z) || hem.covers(x, y, z) || (y > 0.48 && torsoInB(x, y, z) < -0.004);
     torso.cull = (x, y, z) => torsoCull(x, y, z) || (y < 0.0 && skirtInU(x, y, z) < -0.004);
+    // the beard hangs from the jaw frame (head units, scale 0.6) and blends into the drape frame D (neck pivot, follows the head 30%):
+    // express the robe in beard coordinates so the beard can rest on the cloth
+    const hs = this.proportions.headScale, dk = this.rig.drape.follow * (this.rig.headTilt ?? 0.12), cD = Math.cos(dk), sD = Math.sin(dk);
+    const nxy = [this.rig.neck[0] + this.rig.drape.push, this.rig.neck[1], this.rig.neck[2]];
+    const robeInBeard = (x, y, z) => D.torsoBase(nxy[0] + hs * (cD * x - sD * y), nxy[1] + hs * (sD * x + cD * y), nxy[2] + hs * z) / hs;
     const grip = K.hand({pose: 'grip', side: -1, gripR: 0.0135, age: 1.2});
     const rest = K.hand({pose: 'rest', side: 1, age: 1.2, curl: 1.15});
     const sleeveCull = sp => { const c = sp.cull; sp.cull = (x, y, z) => (c && c(x, y, z)) || x < -0.032; return sp; };
@@ -80,7 +86,7 @@ export const KEEPER = {
     return {
       parts: {skirt, hem, ...D.parts,
         head: H, ears: K.ears(H), hair: K.hairCap(H, {crown: 0.128}), brows: K.brows(H, {size: 1.15, droop: 1.1}), moustache: K.moustache(H, {size: 1.1}),
-        beard: K.beard(H, {length: 0.27, fork: 1, tris: [480, 180]}), gripHand: sleeveCull(grip), restHand: sleeveCull(rest)},
+        neck: K.neck(H), beard: K.beard(H, {length: 0.3, fork: 1, tris: [520, 190], chest: robeInBeard}), gripHand: sleeveCull(grip), restHand: sleeveCull(rest)},
       eyes: {r: H.eye.r, iris: 0.5, open: 12, low: -24, arch: 9, lidT: 0.0021},
       anchors: {
         eye: [H.eye.x, H.eye.y, H.eye.z],
