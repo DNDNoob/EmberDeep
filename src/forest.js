@@ -114,7 +114,7 @@ function pineTree(seed,pal,o){
   const R=rngOf(seed),g=new Geo(),H=4,N=o.tiers||7,pts=trunk(g,R,H,.12,pal,{});
   const y0=1.2,at=y=>{let i=0;while(i<pts.length-2&&pts[i+1][1]<y)i++;const f=Math.min(1,Math.max(0,(y-pts[i][1])/(pts[i+1][1]-pts[i][1])));return [pts[i][0]+(pts[i+1][0]-pts[i][0])*f,pts[i][2]+(pts[i+1][2]-pts[i][2])*f]};
   for(let i=0;i<N;i++){
-    const t=i/(N-1),y=y0+t*(H-y0-.55),rad=(.6*Math.pow(1-t,.8)+.1)*(.9+.2*R()),hgt=(.62*(1-t*.4)+.15)*(.9+.2*R());
+    const t=i/(N-1),y=y0+t*(H-y0-.55),rad=(.52*Math.pow(1-t,.8)+.09)*(.9+.2*R()),hgt=(.62*(1-t*.4)+.15)*(.9+.2*R());
     const c=at(y);skirt(g,R,c[0],y,c[1],rad,hgt,pal,{segs:t>.6?7:t>.3?8:9,sw:.6+t*.8});
   }
   const top=at(H);const lt=lin(pal.lit);
@@ -163,7 +163,7 @@ function brambleGeo(seed,pal,o){
       pts.push(low?[x0+span*t,H*(.5+.5*Math.sin(t*5+ph))*.8+.03,z0+ZL*Math.sin(t*3+ph)*.8]:
         [x0+wx*Math.pow(t,1.3)+Math.sin(t*5+ph)*.04,H*Math.sin(Math.min(1,t*1.15)*Math.PI*.58)*(1-.12*t),z0+ZL*Math.pow(t,1.6)+Math.sin(t*4+ph)*.03]);
     }
-    const rings=tube(g,pts,3,i=>.02*(1-i/seg*.85)+.003,(i,j)=>mulc(cane,.7+.5*vn3(i*2.1,j,s,9)),i=>i/seg,null,true);
+    const rings=tube(g,pts,3,i=>.014*(1-i/seg*.85)+.003,(i,j)=>mulc(cane,.45+.4*vn3(i*2.1,j,s,9)),i=>i/seg,null,true);
     for(let i=1;i<seg;i++)if((i+s)%2===0){
       const p=pts[i],a=R()*6.28,tl=.04+R()*.025,c=mulc(cane,1.4);
       g.tri([p[0]+Math.cos(a)*.012,p[1],p[2]+Math.sin(a)*.012,c[0]*.6,c[1]*.6,c[2]*.6,i/seg],[p[0]-Math.cos(a)*.012,p[1]+.012,p[2]-Math.sin(a)*.012,c[0]*.6,c[1]*.6,c[2]*.6,i/seg],[p[0]+Math.cos(a)*tl,p[1]+tl*.4,p[2]+Math.sin(a)*tl,c[0],c[1],c[2],i/seg+.2]);
@@ -236,7 +236,7 @@ export function place(F){
   for(const D of [F.door,...F.frames])if(D)ko.push([D.tx+.5,D.ty+.5,.8]);
   for(const q of F.props)ko.push([q.x,q.z,.28]);
   for(const q of F.pockets)ko.push([q.x,q.z,.9]);
-  ko.push([F.exit.x,F.exit.z,.5]);
+  ko.push([F.exit.x,F.exit.z,.5],[F.start.tx+.5,F.start.ty+.5,.55]);
   const free=(x,z,r)=>{for(const k of ko)if(Math.hypot(k[0]-x,k[1]-z)<k[2]+(r||0))return false;return true};
   const out={trees:[],bushes:[],brambles:[],ferns:[],shrooms:[],logs:[],flies:[],stumps:[]};
   for(const [k,fs] of tiles){
@@ -254,7 +254,7 @@ export function place(F){
     for(const f of fs){
       const rf=tr(k,10+f.dx*3+f.dz*5+7),nb=Math.floor(1.05*fo.bush+rf()),nbr=rf()<Math.min(.9,.34*fo.bram)?1:0;
       for(let i=0;i<nb;i++){
-        const a=((i+.5)/nb-.5)*.9+(rf()-.5)*.2,u=-.04+rf()*.12,x=cx+f.dx*(.5-u)+(f.dz?a:0),z=cz+f.dz*(.5-u)+(f.dx?a:0),s=1+rf()*.7;
+        const a=((i+.5)/nb-.5)*.9+(rf()-.5)*.2,u=-.04+rf()*.12,x=cx+f.dx*(.5-u)+(f.dz?a:0),z=cz+f.dz*(.5-u)+(f.dx?a:0),s=.95+rf()*.45;
         if(!free(x,z,.12))continue;
         out.bushes.push({x,z,y:0,rot:rf()*6.283,sx:s,sy:s*(.75+rf()*.45),v:(rf()*3)|0,tint:.75+rf()*.5});
       }
@@ -295,7 +295,7 @@ export function createForest({UT,Q,shadows}){
     sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nattribute float aSw;uniform float uTime;varying vec3 vOP;')
       .replace('#include <begin_vertex>','#include <begin_vertex>\nvOP=position;\n#ifdef USE_INSTANCING\n{float ph=instanceMatrix[3].x*1.7+instanceMatrix[3].z*2.3;float k=aSw*(sin(uTime*1.3+ph)*.7+sin(uTime*3.1+ph*1.7)*.3)*.016;transformed.x+=k;transformed.z+=k*.6;}\n#endif');
     sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nvarying vec3 vOP;')
-      .replace('#include <color_fragment>','#include <color_fragment>\n{float fd=clamp(1.6-length(vViewPosition)*.5,0.,1.);vec3 q=floor(vOP*72.);float nn=fract(sin(dot(q,vec3(12.9898,78.233,37.719)))*43758.5453);diffuseColor.rgb*=1.+(nn-.5)*.5*fd;}');
+      .replace('#include <color_fragment>','#include <color_fragment>\n{float fd=clamp(1.6-length(vViewPosition)*.5,0.,1.);vec3 q=floor(vOP*160.);float nn=fract(sin(dot(q,vec3(12.9898,78.233,37.719)))*43758.5453);diffuseColor.rgb*=1.+(nn-.5)*.3*fd;}');
   };
   const mk=(o)=>{const m=Q===0?new THREE.MeshLambertMaterial({vertexColors:true,side:o.side,emissive:o.emissive||0x000000}):new THREE.MeshStandardMaterial({vertexColors:true,roughness:o.rough||.85,metalness:0,side:o.side,emissive:o.emissive||0x000000,emissiveIntensity:o.ei||1});
     m.onBeforeCompile=patch;m.customProgramCacheKey=()=>'forest';mats.push(m);return m};
