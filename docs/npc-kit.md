@@ -15,6 +15,17 @@ Files:
 | `tools/npc_mesh_check.mjs` | Scans baked meshes for NaN, zero normals and degenerate triangles (what makes white squares on real GPUs) |
 | `tools/npc_shot.mjs` | Headless screenshots of one NPC at standard angles under the same light |
 
+## Inspect in Blender
+
+```
+node tools/npc_export_glb.mjs                  # KEEPER -> /mnt/project-files/emberdeep/blender/keeper.glb (near LOD) and keeper-far.glb
+node tools/npc_export_glb.mjs ILSE --out DIR   # other recipe / folder
+```
+
+Pure Node (no browser): it bakes the recipe, poses it in the rest pose (head straight, same frame maths as `humanoidFrames`/`emitS`, drape blend included) and writes a binary glTF with one named mesh and node per part (skirt, hem, torso, sleeve0, sash, head, ears, hair, brows, moustache, beard, gripHand, restHand, eyeL_ball ..., staff). Each mesh has normals, `COLOR_0` (palette colour blended by the paint channel) and custom attributes `_MATID` (shader material id), `_DETAIL`, `_AO`. Materials are plain PBR materials named `skin`, `cloth`, `hair`, `trim`, `eye`, `wood`. Metres, y up, the figure faces +Z.
+
+In Blender: File > Import > glTF 2.0. Select a part and hide others with H / Alt+H in the outliner. In Viewport Shading choose Solid with Color = Attribute (Blender 4: Color > Attribute, then pick `Col`/`Color`), or Material Preview for the named materials; the custom attributes show in Object Data properties > Attributes. Check the geometry with Overlays > Statistics and Wireframe. Re-export after every recipe change (the file has no link to the recipe). Verify a file from Node by loading it with `GLTFLoader.parse` and counting meshes.
+
 ## Pipeline
 
 ```
