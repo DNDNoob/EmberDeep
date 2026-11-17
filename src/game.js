@@ -605,7 +605,7 @@ function paintedMaterial(glowBase){
       .replace('#include <metalnessmap_fragment>','float metalnessFactor=mMetal;')
       .replace('#include <emissivemap_fragment>',`#include <emissivemap_fragment>
   {vec3 ec=pow(max(vColor.rgb,vec3(0.0)),vec3(2.2));
-    totalEmissiveRadiance+=ec*(mGlow*1.6+uGlowBase);
+    totalEmissiveRadiance+=ec*(mGlow*1.6+uGlowBase+(mCh>0.75?0.2:0.0)); // 0.2: faint fill so a hand's torch shadow on the robe is dark red, not black holes
     if(mRimK>0.0){float fr=pow(saturate(1.0-abs(dot(normalize(normal),normalize(vViewPosition)))),3.0);totalEmissiveRadiance+=ec*fr*mRimK;} // soft fresnel rim / cloth sheen
     if(mRim>0.5){float rim=pow(saturate(1.0-abs(dot(normalize(normal),normalize(vViewPosition)))),3.0);totalEmissiveRadiance+=ec*rim*rim*1.6;}}`);
     sh.fragmentShader=sh.fragmentShader.replace('#include <dithering_fragment>','#include <dithering_fragment>\n  {uvec3 nb3=floatBitsToUint(gl_FragColor.rgb);bvec3 bad=equal(nb3&uvec3(0x7f800000u),uvec3(0x7f800000u));gl_FragColor.rgb=any(bad)?vec3(0.0):clamp(gl_FragColor.rgb,vec3(0.0),vec3(mCh>0.75?3.0:mCh>0.25?5.0:12.0));} // isnan() can be optimised away on ANGLE/D3D; test the exponent bits (NaN and Inf) instead. // firefly clamp: specular spikes on slivers and silhouettes bloom into squares (see docs/npc-kit.md); sculpted characters (12-15) are held to 3.0, eyes 5.0');

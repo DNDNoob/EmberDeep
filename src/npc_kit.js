@@ -407,25 +407,27 @@ export function hand(p = {}) {
       for (let j = 0; j < 3; j++) dt = smin(dt, seg(x, y, z, th.pts[j], th.pts[j + 1], th.r[j], th.r[j + 1]), 0.002);
       for (let j = 1; j < 3; j++) dt = smin(dt, sdSphere(x - th.pts[j][0], y - th.pts[j][1] - th.r[j] * 0.15, z - th.pts[j][2], th.r[j] * (0.95 + 0.1 * age)), 0.003);
       d = smin(d, dt, 0.006); }
+    if (d < 0.006 && x > 0.06) d = smin(d, nailPlate(x, y, z), 0.0007);
     if (d < 0.004 && y > 0) { // veins and tendons on the back of the hand (raised 0.4 to 0.9 mm)
       let v = 0; for (const l of V) v = Math.max(v, ridge(x, z, l, 2.1 * MM)); let tn = 0; for (const l of T) tn = Math.max(tn, ridge(x, z, l, 2.6 * MM));
       d -= (0.0009 * v + 0.0004 * tn) * age * smoothstep(0, 0.004, y) * smoothstep(0.1, 0.07, x);
     }
     return (d + 0.00035 * fbm(x * 260, y * 260, z * 260, 1)) * S;
   }
-  // nails: flat slabs on the back of each distal phalanx
+  // nails: a slightly raised oval plate on the back of each distal phalanx. It is part of the hand's own surface (smooth-min), so the
+  // normals stay smooth (a separate thin shell gave chrome-looking glints on real GPUs) and the colour comes from the paint channel.
   const nails = fingers.map(f => ({a: f.pts[2], b: f.pts[3], r: f.r[2], w: f.r[3] * 0.62})).concat([{a: th.pts[2], b: th.pts[3], r: th.r[2], w: th.r[3] * 0.66}]);
-  function nailSdf(X, Y, Z) {
-    const x = X / S, y = Y / S, z = Z / S; let d = 9;
+  const nailPlate = (x, y, z) => {
+    let d = 9;
     for (const n of nails) {
       const ax = n.b[0] - n.a[0], ay = n.b[1] - n.a[1], az = n.b[2] - n.a[2], L = Math.hypot(ax, ay, az), ux = ax / L, uy = ay / L, uz = az / L;
       let vx = -uy, vy = ux; if (vy < 0) { vx = -vx; vy = -vy; }   // v: the back of the finger (up)
-      const wx = uy * 0 - uz * vy, wy = uz * vx - ux * 0, wz = ux * vy - uy * vx;
+      const wx = -uz * vy, wy = uz * vx, wz = ux * vy - uy * vx;
       const px = x - n.a[0] - ux * L * 0.58, py = y - n.a[1] - uy * L * 0.58, pz = z - n.a[2] - uz * L * 0.58;
-      d = Math.min(d, sdEllipsoid(px * ux + py * uy + pz * uz, px * vx + py * vy - n.r * 0.86, px * wx + py * wy + pz * wz, L * 0.5, 0.0009, n.w));
+      d = Math.min(d, sdEllipsoid(px * ux + py * uy + pz * uz, px * vx + py * vy - n.r * 0.88, px * wx + py * wy + pz * wz, L * 0.5, 0.0011, n.w));
     }
-    return d * S;
-  }
+    return d;
+  };
   const tips = fingers.map(f => f.pts[3]).concat([th.pts[3]]);
   const paint = (x, y, z, o) => { // knuckles and fingertips ruddier, veins a touch darker; wrinkle mask on every joint and the back of the hand
     let k = 0, m = 0; const q = [x / S, y / S, z / S];
@@ -433,11 +435,11 @@ export function hand(p = {}) {
     for (const f of fingers) { k = Math.max(k, 0.5 * gauss(q[0], q[1], q[2], f.pts[0], 0.006)); for (let j = 0; j < 3; j++) m = Math.max(m, gauss(q[0], q[1], q[2], f.pts[j], 0.0055)); }
     for (let j = 1; j < 3; j++) m = Math.max(m, gauss(q[0], q[1], q[2], th.pts[j], 0.0055));
     let v = 0; if (y > 0) for (const l of V) v = Math.max(v, ridge(q[0], q[2], l, 2.4 * MM));
-    o[0] = Math.min(1, k * 0.7 + v * 0.3); o[1] = Math.min(1, age * (0.9 * m + 0.45 * smoothstep(0.0, 0.004, y) * smoothstep(0.09, 0.03, x)));
+    const nm = x / S > 0.06 ? smoothstep(0.0013, 0.0002, nailPlate(q[0], q[1], q[2])) : 0;   // nails: lighter than the skin (paint below 0 extrapolates away from col2)
+    o[0] = nm > 0.05 ? -0.55 * nm : Math.min(1, k * 0.7 + v * 0.3); o[1] = Math.min(1, age * (0.9 * m + 0.45 * smoothstep(0.0, 0.004, y) * smoothstep(0.09, 0.03, x)));
   };
   const b = [-0.07, -0.07, -0.06, 0.145, 0.045, 0.065].map(v => v * S);
-  const nailSpec = {sdf: nailSdf, bounds: b, cell: p.nailCell || 0.0016 * S, tris: [60, 30], project: 0.0006, cull: (x, y, z) => sdf(x, y, z) < -0.0004};
-  return {sdf, paint, nails: nailSpec, joints: {fingers: fingers.map(f => f.pts), thumb: th.pts}, bounds: b, cell: p.cell || 0.0024 * S, tris: p.tris || [520, 190], project: 0.0015,
+  return {sdf, paint, joints: {fingers: fingers.map(f => f.pts), thumb: th.pts}, bounds: b, cell: p.cell || 0.0024 * S, tris: p.tris || [520, 190], project: 0.0015,
     // grip: the held axis in hand coordinates (point on it, unit direction, angle from hand Z about Y) so the pose code can stand it upright
     grip: rod ? {p: rod.p.map(v => v * S), d: rod.d, alpha: rod.alpha} : null};
 }
