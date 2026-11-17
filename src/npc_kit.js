@@ -561,7 +561,7 @@ export function dress(B, list) {
       d -= nf * 0.006 * Math.exp(-((x - a.E[0] + 0.01) ** 2 + (y - a.E[1] + 0.03) ** 2 + (z - a.E[2]) ** 2) / 0.0012);   // cloth sagging under the elbow
       const ang = Math.atan2(z - a.E[2] - 0.5 * (y - a.E[1]) * a.F[2], y - a.E[1]);
       const wv = 3 * fbm(x * 9, y * 9, z * 9, 2);
-      d += nf * (0.0022 + 0.11 * (rw - re)) * (Math.pow(0.5 + 0.5 * Math.cos(6 * ang + wv + 10 * t), 0.8) * 2 - 1) * smoothstep(0.02, 0.5, tn) * (0.4 + 0.6 * tn);  // hanging folds, deeper towards the bell
+      d += nf * (0.0022 + 0.11 * (rw - re)) * smoothstep(0.03, 0.05, (a.end[0] - x) * a.F[0] + (a.end[1] - y) * a.F[1] + (a.end[2] - z) * a.F[2]) * (Math.pow(0.5 + 0.5 * Math.cos(6 * ang + wv + 10 * t), 0.8) * 2 - 1) * smoothstep(0.02, 0.5, tn) * (0.4 + 0.6 * tn);  // hanging folds, deeper towards the bell
       d -= 0.0 * smoothstep(0.03, 0, (a.end[0] - x) * a.F[0] + (a.end[1] - y) * a.F[1] + (a.end[2] - z) * a.F[2] + 0.01) * smoothstep(0.0, 0.015, (a.end[0] - x) * a.F[0] + (a.end[1] - y) * a.F[1] + (a.end[2] - z) * a.F[2] + 0.03);  // sleeve mouth rim: a little thickness
       return d;
     };
@@ -578,7 +578,7 @@ export function dress(B, list) {
       const f = robe.folds ?? 1, yn = nxp, wv = 4 * fbm(x * 18, y * 9, z * 18, 2) + 1.2 * Math.sin(5 * y + 2 * a);
       d += f * 0.0075 * m * (Math.pow(0.5 + 0.5 * Math.cos(9 * a + wv), 0.75) * 2 - 1 + 0.5 * fbm(x * 40, y * 40, z * 40, 2) + 0.4 * Math.sin(17 * a + 3 * wv));
       const sy = sash ? sash.y : 0.017, sh = sash ? sash.h : 0.027;
-      d += f * 0.0065 * smoothstep(sh + 0.07, sh + 0.01, y - sy) * smoothstep(-sh - 0.05, -sh, y - sy) * Math.sin(28 * a + 6 * fbm(x * 20, y * 20, z * 20, 1));  // cinch pinch above and below the sash
+      { const dy = y - sy; d += f * 0.0055 * (smoothstep(sh + 0.004, sh + 0.022, dy) * smoothstep(sh + 0.09, sh + 0.05, dy) + smoothstep(-sh - 0.004, -sh - 0.02, dy) * smoothstep(-sh - 0.08, -sh - 0.05, dy)) * Math.sin(28 * a + 6 * fbm(x * 20, y * 20, z * 20, 1)); }  // cinch pinch above and below the sash
       { const w = smoothstep(nxp, nxp + 0.05, x), sd = z - 0.03 * smoothstep(B.Y.neck - 0.07, sy + 0.05, y) * 1.0 - 0.004, st = smoothstep(-0.004, 0.004, sd); d -= w * (0.0032 * st - 0.0022 * Math.exp(-(sd * sd) / 0.000006) * smoothstep(sy - 0.03, sy + 0.04, y)); }
       d -= f * 0.0035 * Math.exp(-((x - nxp - 0.03) ** 2 + (y - (B.Y.shoulder - 0.02)) ** 2) / 0.003) * (Math.abs(z) > 0.04 ? Math.sin(40 * (y + 0.5 * z)) : 0);
     }

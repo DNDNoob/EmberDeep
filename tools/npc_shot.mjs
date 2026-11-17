@@ -51,6 +51,7 @@ const VIEWS = {
   hem:      {dist: 0.6,  turn: 30,  aimY: 0.12, camY: 0.2},
   gripclose:{dist: 0.28, turn: 0,   aimY: 0.58, camY: 0.6},
   restclose:{dist: 0.28, turn: 0,   aimY: 0.48, camY: 0.5},
+  cam:      {dist: 1.3,  turn: 20,  level: true},   // the player's own camera height (camY defaults to EYE) looking straight ahead
   portrait: {dist: 0.62, turn: 0,   aimY: seated ? 0.62 : 0.94, camY: seated ? 0.62 : 0.94},   // face at face height, for detail
 };
 // the Keeper's recipe height is 0.93: aim and camera heights of standing views follow it

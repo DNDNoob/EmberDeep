@@ -3696,7 +3696,7 @@ function studio(o){
   for(const q of F.npcs)if(q!==n){q.x=-50;q.z=-50}
   n.x=S.x;n.z=S.z;n.ox=0;n.oz=0;n.lock=true;n.lockHead=!!o.headLock;n.hy=0;n.hp=0;n.pose=o.pose||null; // pose [yaw,pitch]: fixed head angles for checking extremes
   n.yaw=Math.atan2(S.dz,S.dx)+o.turn*Math.PI/180;
-  const cx=S.x+S.dx*o.dist,cz=S.z+S.dz*o.dist,aim=o.aimY==null?(o.type==='delver'?0.55:0.8):o.aimY;
+  const cx=S.x+S.dx*o.dist,cz=S.z+S.dz*o.dist,aim=o.level?o.camY:o.aimY==null?(o.type==='delver'?0.55:0.8):o.aimY;
   STUDIO.cam={x:cx,z:cz,y:o.camY,yaw:Math.atan2(-S.dz,-S.dx),pitch:Math.atan2(aim-o.camY,o.dist)};
   STUDIO.open=o.open;P.x=cx;P.z=cz;
   return {spot:S,cam:STUDIO.cam,Q};
