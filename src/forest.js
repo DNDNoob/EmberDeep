@@ -328,7 +328,7 @@ export function createForest({UT,Q,shadows}){
     if(P.ferns.length)add(inst(G(()=>fernGeo(seed+5,pal,{})),thin(P.ferns),matA,false,1,'fern'));
     if(P.stumps.length)add(inst(G(()=>stumpGeo(seed+9,pal)),P.stumps,matT,shadows,1,'stump'));
     for(let v=0;v<2;v++){const L=thin(P.logs.filter(b=>b.v===v));if(L.length)add(inst(G(()=>logGeo(seed+v*7,pal,fo.glow>.5)),L,matT,shadows,1,'log'))}
-    if(P.shrooms.length&&fo.glow>0){const m=mk({side:THREE.DoubleSide,emissive:0x77ddc8,ei:.02+fo.glow*.12});add(inst(G(()=>shroomGeo(seed+3,pal)),P.shrooms,m,false,1,'shroom'))}
+    if(P.shrooms.length&&fo.glow>0){const m=mk({side:THREE.DoubleSide,emissive:0x558f85,ei:.01+fo.glow*.06});add(inst(G(()=>shroomGeo(seed+3,pal)),P.shrooms,m,false,1,'shroom'))}
     F.fo.n=P;
     let tris=0,calls=0;const by={};for(const c of grp.children){tris+=c.userData.tris;calls++;by[c.name]=(by[c.name]||0)+c.userData.tris}
     grp.userData.geos=geos;grp.userData.stats={tris,calls,trees:P.trees.length,bushes:P.bushes.length,brambles:P.brambles.length,ferns:P.ferns.length,logs:P.logs.length,shrooms:P.shrooms.length,stumps:P.stumps.length,by};

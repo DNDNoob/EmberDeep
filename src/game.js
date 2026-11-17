@@ -3655,7 +3655,7 @@ function render(t){
     for(const q of P2.flies){if((q.x-ex)**2+(q.z-ez)**2>64)continue;
       const fx=q.x+Math.sin(t*q.sp+q.ph)*0.3,fy=q.y+Math.sin(t*q.sp*1.7+q.ph*2)*0.1,fz=q.z+Math.cos(t*q.sp*0.8+q.ph)*0.3,bl=0.5+0.5*Math.sin(t*(1.2+q.sp)+q.ph*3);
       spr(fx,fy,fz,0.045,0.045,7,0.75,1,0.4,0.95*bl,1);spr(fx,fy,fz,0.2,0.2,7,0.5,1,0.3,0.3*bl,1)}
-    if(fv.glow>0)for(const q of P2.shrooms){if((q.x-ex)**2+(q.z-ez)**2<30)spr(q.x,0.07,q.z,0.32*q.sx,0.32*q.sx,7,0.3,0.9,0.8,0.14*fv.glow,1)}
+    if(fv.glow>0)for(const q of P2.shrooms){if((q.x-ex)**2+(q.z-ez)**2<30)spr(q.x,0.07,q.z,0.32*q.sx,0.32*q.sx,7,0.3,0.9,0.8,0.05*fv.glow,1)}
   }
   // a strange door gives itself away at the keyhole: cold starlight, kiln glow, or nothing at all
   for(const D of F.sdoors){
