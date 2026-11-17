@@ -31,6 +31,10 @@ void blocks(vec2 uv,vec2 n,float stag,out vec2 q,out vec2 id,out float d){
   id=vec2(mod(floor(x),n.x),row);q=vec2(fract(x)-.5,fract(uv.y*n.y)-.5);
   d=min((.5-abs(q.x))/n.x,(.5-abs(q.y))/n.y);}
 float sat(float x){return clamp(x,0.,1.);}
+// per-floor look: VAR is 0 (the classic surface) to 3; vs picks one value per look
+float vs(float a,float b,float c,float d){return VAR==1?b:VAR==2?c:VAR==3?d:a;}
+vec3 vs3(vec3 a,vec3 b,vec3 c,vec3 d){return VAR==1?b:VAR==2?c:VAR==3?d:a;}
+const float V1=float(VAR==1),V2=float(VAR==2),V3=float(VAR==3);
 vec3 tone(vec3 c,float k){return c*k;}
 `;
 
@@ -321,10 +325,13 @@ const SURF = [
 }`,
 ];
 
+// 1 = floors and ceilings (one tile of texture over two metres), 0 = walls and the gate
+const FLAT = [0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1];
+
 const VS = `varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0.,1.);}`;
 const mainA = `
 void main(){float h,rough,em;vec3 alb;surf(vUv,h,alb,rough,em);
-  alb=pow(clamp(alb,0.,1.),vec3(2.2));
+  alb=pow(clamp(alb*TINT,0.,1.),vec3(2.2));
   gl_FragColor=vec4(alb,em>.5?.5-.5*sat(em):.5+.5*sat(rough));}`;
 const mainH = `
 void main(){float h,rough,em;vec3 alb;surf(vUv,h,alb,rough,em);gl_FragColor=vec4(sat(h),0.,0.,1.);}`;
@@ -348,11 +355,15 @@ export function makeSurfaces(renderer, size, wantNormals) {
     return rt;
   };
   const run = (mat, rt) => {quad.material = mat; renderer.setRenderTarget(rt); quad.render(renderer); renderer.setRenderTarget(null); mat.dispose()};
-  function get(i) {
-    if (cache.has(i)) return cache.get(i);
+  // p = {v: look 0-3, seed: noise offset, tint: [r,g,b]} (all optional). Surfaces are cached per layer and look; sweep() frees the ones a floor stopped using.
+  const key = p => p ? `${p.v | 0}|${(p.seed || 0).toFixed(2)}|${(p.tint || [1, 1, 1]).map(c => c.toFixed(3)).join(',')}` : '0|0.00|1.000,1.000,1.000';
+  function get(i, p) {
+    const ck = i + ':' + key(p);
+    if (cache.has(ck)) {const c = cache.get(ck); c.used = true; return c}
     const prev = renderer.getRenderTarget(), tm = renderer.toneMapping;
     renderer.toneMapping = THREE.NoToneMapping;
-    const head = `#define SEED ${(i * 17.31 + 3.7).toFixed(2)}\n` + LIB + SURF[i];
+    const tn = (p && p.tint) || [1, 1, 1];
+    const head = `#define SEED ${(i * 17.31 + 3.7 + ((p && p.seed) || 0)).toFixed(2)}\n#define VAR ${(p && p.v) | 0}\n#define TINT vec3(${tn.map(c => c.toFixed(4)).join(',')})\n` + LIB + SURF[i];
     const A = target(true);
     run(new THREE.ShaderMaterial({vertexShader: VS, fragmentShader: head + mainA, depthTest: false, depthWrite: false, toneMapped: false}), A);
     let N = null;
@@ -361,15 +372,16 @@ export function makeSurfaces(renderer, size, wantNormals) {
       run(new THREE.ShaderMaterial({vertexShader: VS, fragmentShader: head + mainH, depthTest: false, depthWrite: false, toneMapped: false}), Hh);
       N = target(false);
       // floors and ceilings stretch one tile of texture over two metres, walls over one
-      const flat = i === 12 ? 0 : [0, 1, 1][i < 12 ? i % 3 : i - 13 > 2 ? 1 : i - 13];
+      const flat = FLAT[i];
       run(new THREE.ShaderMaterial({vertexShader: VS, fragmentShader: FS_N, depthTest: false, depthWrite: false, toneMapped: false,
         uniforms: {tH: {value: Hh.texture}, px: {value: new THREE.Vector2(1 / size, 1 / size)}, bump: {value: flat ? 0.05 : 0.1}}}), N);
       Hh.dispose();
     }
     renderer.toneMapping = tm; renderer.setRenderTarget(prev);
-    const out = {map: A.texture, nrm: N ? N.texture : null, rtA: A, rtN: N};
-    cache.set(i, out);
+    const out = {map: A.texture, nrm: N ? N.texture : null, rtA: A, rtN: N, used: true};
+    cache.set(ck, out);
     return out;
   }
-  return {get, count: SURF.length};
+  const sweep = () => {for (const [k, c] of cache) {if (c.used) c.used = false; else {c.rtA.dispose(); if (c.rtN) c.rtN.dispose(); cache.delete(k)}}};
+  return {get, key, sweep, count: SURF.length, size: () => cache.size};
 }

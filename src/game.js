@@ -12,6 +12,7 @@ import {openRoom,newRoomCode,cleanCode} from './net.js';
 import {createVoice} from './voice.js';
 import {createRooms,kilnGame,KILN} from './rooms.js';
 import {createBabyFace,createFallVoid} from './babyface.js';
+import {pickVariant,VARIANTS} from './variants.js';
 import {initAmbience,updateAmbience,amb} from './ambience.js';
 
 const $ = id => document.getElementById(id);
@@ -44,11 +45,14 @@ const store={
 /* ---------- constants ---------- */
 const WALL_H=1.25, EYE=0.62, PR=0.22;
 const BIOMES=[
-  {name:'The Old Stonework', wall:[1.0,0.92,0.82], floor:[0.9,0.85,0.8],  ceil:[0.7,0.65,0.6],   torch:[1.0,0.72,0.42], amb:[0.012,0.012,0.02], stone:[0.44,0.4,0.34], spec:[0.12,0.2,0.05], wet:0.5},
-  {name:'Mossgrown Halls',   wall:[0.7,0.95,0.7],  floor:[0.65,0.85,0.6], ceil:[0.5,0.65,0.5],   torch:[1.0,0.8,0.5],   amb:[0.008,0.02,0.012], stone:[0.3,0.36,0.27], spec:[0.08,0.16,0.05], wet:0.9},
-  {name:'The Frostvault',    wall:[0.7,0.85,1.1],  floor:[0.75,0.9,1.1],  ceil:[0.55,0.65,0.85], torch:[0.95,0.88,0.8], amb:[0.012,0.018,0.035], stone:[0.5,0.62,0.72], spec:[0.75,0.6,0.3], wet:0.3},
-  {name:'Cinder Warrens',    wall:[1.15,0.65,0.5], floor:[1.0,0.6,0.5],   ceil:[0.8,0.45,0.4],   torch:[1.0,0.6,0.3],   amb:[0.03,0.008,0.004], stone:[0.24,0.2,0.19], spec:[0.3,0.22,0.08], wet:0.0},
-  {name:'The Humming Rooms', wall:[1,1,0.8],     floor:[0.8,0.75,0.5],  ceil:[0.9,0.9,0.8],    torch:[1.0,0.93,0.7],  amb:[0.21,0.19,0.105], stone:[0.6,0.58,0.5], spec:[0.03,0.02,0.05], wet:0.35},
+  {base:0,name:'The Old Stonework', wall:[1.0,0.92,0.82], floor:[0.9,0.85,0.8],  ceil:[0.7,0.65,0.6],   torch:[1.0,0.72,0.42], amb:[0.012,0.012,0.02], stone:[0.44,0.4,0.34], spec:[0.12,0.2,0.05], wet:0.5},
+  {base:3,name:'Mossgrown Halls',   wall:[0.7,0.95,0.7],  floor:[0.65,0.85,0.6], ceil:[0.5,0.65,0.5],   torch:[1.0,0.8,0.5],   amb:[0.008,0.02,0.012], stone:[0.3,0.36,0.27], spec:[0.08,0.16,0.05], wet:0.9},
+  {base:6,name:'The Frostvault',    wall:[0.7,0.85,1.1],  floor:[0.75,0.9,1.1],  ceil:[0.55,0.65,0.85], torch:[0.95,0.88,0.8], amb:[0.012,0.018,0.035], stone:[0.5,0.62,0.72], spec:[0.75,0.6,0.3], wet:0.3},
+  {base:9,name:'Cinder Warrens',    wall:[1.15,0.65,0.5], floor:[1.0,0.6,0.5],   ceil:[0.8,0.45,0.4],   torch:[1.0,0.6,0.3],   amb:[0.03,0.008,0.004], stone:[0.24,0.2,0.19], spec:[0.3,0.22,0.08], wet:0.0},
+  {base:13,name:'The Humming Rooms', wall:[1,1,0.8],     floor:[0.8,0.75,0.5],  ceil:[0.9,0.9,0.8],    torch:[1.0,0.93,0.7],  amb:[0.21,0.19,0.105], stone:[0.6,0.58,0.5], spec:[0.03,0.02,0.05], wet:0.35},
+  {base:17,name:'The Bone Galleries', wall:[1.0,0.95,0.84], floor:[0.9,0.84,0.72], ceil:[0.75,0.68,0.58], torch:[1.0,0.78,0.5],  amb:[0.016,0.014,0.012], stone:[0.55,0.5,0.42], spec:[0.1,0.14,0.04], wet:0.15},
+  {base:20,name:'The Rustworks',      wall:[0.95,0.85,0.78], floor:[0.85,0.8,0.75], ceil:[0.7,0.64,0.6],  torch:[1.0,0.7,0.4],   amb:[0.014,0.011,0.01], stone:[0.34,0.27,0.22], spec:[0.5,0.55,0.35], wet:0.7},
+  {base:23,name:'The Glimmer Veins',  wall:[0.8,0.85,1.05], floor:[0.8,0.85,1.0],  ceil:[0.6,0.65,0.85], torch:[0.98,0.86,0.72], amb:[0.012,0.016,0.03], stone:[0.28,0.3,0.36], spec:[0.4,0.45,0.25], wet:0.35},
 ];
 const ITEM={
   shard:{cell:0,col:[0.35,0.9,1.0], size:0.36},
@@ -77,7 +81,8 @@ function bfs(g,W,H,sx,sy){
   return d;
 }
 // every floor that is not a Humming Rooms floor moves on to the next biome
-function biomeIx(depth){return (depth-1-Math.floor(depth/4))%4}
+const ORDER=[0,1,2,3,5,6,7];
+function biomeIx(depth){return ORDER[(depth-1-Math.floor(depth/4))%ORDER.length]}
 function floorKind(depth){if(depth>=4&&depth%4===0)return 'back';if(depth>=3&&depth%4===3)return 'cave';if(depth>=5&&depth%4===1)return 'dark';return 'maze'}
 function genFloor(seedStr,depth){
   const rng=mulberry32(hashStr(seedStr+'#'+depth));
@@ -344,7 +349,7 @@ function genFloor(seedStr,depth){
     for(const n of npcs)busy.add(idx(Math.floor(n.x),Math.floor(n.z)));
     for(const tr of traps)busy.add(idx(tr.tx,tr.ty));
     busy.add(idx(stx,sty));busy.add(idx(ex,ey));
-    const special=bix===1?'shroom':bix===2?'ice':bix===3?'ember':'urn';
+    const special=['urn','shroom','ice','ember','urn','bones','barrel','ice'][bix];
     const types=kind==='back'?['boxes','boxes','cabinet','cabinet','plant','chair','chair']:kind==='cave'?['bones','bones','sack',special,special,special,'urn']:['barrel','barrel','crate','crate','urn','sack','bones',special,special];
     const RAD={barrel:0.13,crate:0.15,urn:0.09,sack:0.11,ice:0.08,ember:0.11,boxes:0.15,cabinet:0.14,plant:0.08,chair:0.13};
     const cands=[];
@@ -405,8 +410,22 @@ function genFloor(seedStr,depth){
   let yaw=0;
   for(const d of DIRS){if(g[idx(stx+d[0],sty+d[1])]===0){yaw=Math.atan2(d[1],d[0]);break}}
   const bi=kind==='back'?4:biomeIx(depth);
-  return {W,H,g,cw,ch,kind,dark:kind==='dark',back:kind==='back',base:kind==='back'?13:bi*3,panels,panelAt,pocketMask,phantoms,pockets,blk:0,boT:22+rng()*25,props,discs,safe,safeMask,npcs,reveal:false,door,sdoors,traps,pillars,sconces,rubble,frames:[],start:{tx:stx,ty:sty,yaw},exit:{tx:ex,ty:ey,x:ex+0.5,z:ey+0.5},items,shades,
-          seen:new Uint8Array(W*H),dist:d0,bi,biome:BIOMES[bi],
+  // looks are drawn last, from their own dice, so nothing above ever moves
+  const vr=mulberry32(hashStr(seedStr+'#var#'+depth)),variant=pickVariant(vr,bi),B=BIOMES[bi];
+  const litter=[];
+  if(variant.rubbleK>1&&kind!=='back'){
+    const spots=[];
+    for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=idx(x,y);if(g[i]!==0||safeMask[i]||pocketMask[i]||(x===stx&&y===sty)||(x===ex&&y===ey))continue;
+      for(const d of DIRS)if(g[idx(x+d[0],y+d[1])]===1){spots.push([x,y,d]);break}}
+    const n=Math.min(spots.length,Math.round(nCells/10*(variant.rubbleK-1)));
+    for(let k=0;k<n;k++){const j=k+((vr()*(spots.length-k))|0),c=spots[j];spots[j]=spots[k];spots[k]=c;
+      const m=1+((vr()*3)|0),off=0.3+vr()*0.12;
+      for(let q=0;q<m;q++){const along=(vr()-0.5)*0.8;
+        litter.push({x:c[0]+0.5+(c[2][0]?c[2][0]*off:along),z:c[1]+0.5+(c[2][1]?c[2][1]*off:along),s:0.04+vr()*0.08,r:vr()*6.28,sy:0.5+vr()*0.6})}}
+  }
+  const stone=[B.stone[0]*variant.stone[0],B.stone[1]*variant.stone[1],B.stone[2]*variant.stone[2]];
+  return {W,H,g,cw,ch,kind,dark:kind==='dark',back:kind==='back',base:B.base,variant,litter,stone,wet:clamp(B.wet*variant.wetK,0,1),fogK:variant.fogK,ambK:variant.ambK,ambT:variant.ambT,torchT:variant.torch,tex:{v:variant.tex,seed:variant.seed,tint:variant.tint},panels,panelAt,pocketMask,phantoms,pockets,blk:0,boT:22+rng()*25,props,discs,safe,safeMask,npcs,reveal:false,door,sdoors,traps,pillars,sconces,rubble,frames:[],start:{tx:stx,ty:sty,yaw},exit:{tx:ex,ty:ey,x:ex+0.5,z:ey+0.5},items,shades,
+          seen:new Uint8Array(W*H),dist:d0,bi,biome:B,
           name:kind==='cave'?'The Hollow':kind==='dark'?'The Black Hush':BIOMES[bi].name};
 }
 function trapExt(tr,time){const t=(time+tr.ph)%2.8;return t<0.12?t/0.12:t<1.0?1:t<1.2?1-(t-1)/0.2:0}
@@ -448,7 +467,7 @@ float wNoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);
 `;
 // world surfaces: parallax depth from the normal map's alpha, fine grain, puddles, flickering panels
 function worldMaterial(o){
-  const tex=SAFE?null:SURFS.get(o.layer);
+  const tex=SAFE?null:SURFS.get(o.layer,o.tex);
   const emU={value:o.panel?(Q===0?1.3:2.6):(Q===0?1.6:3.4)};
   const mapChunk=THREE.ShaderChunk.map_fragment.replace(/vMapUv/g,'pUv')+'\nfloat wEm=clamp(1.0-2.0*sampledDiffuseColor.a,0.0,1.0);float wRough=clamp(2.0*sampledDiffuseColor.a-1.0,0.0,1.0);diffuseColor.a=1.0;\n';
   const flicker=o.bad?'{float ph=floor(vWPos.x)*1.7+floor(vWPos.z)*2.3;if(sin(uTime*31.0+ph)+sin(uTime*47.7+ph*2.0)<0.4)wEmis*=0.08;}':'';
@@ -506,16 +525,22 @@ function worldMaterial(o){
   return m;
 }
 const worldMats=new Map();
+// after a floor is built, free the surfaces and materials it did not ask for so GPU memory stays flat
+function sweepWorld(){
+  for(const [k,m] of worldMats)if(!m.userData.used){m.dispose();worldMats.delete(k)}else m.userData.used=false;
+  SURFS.sweep();
+}
 function getWorldMat(F,k){
   const office=k>=10,kd=k%10,panel=kd===4||kd===6,B=F.biome;
-  const base=office?13:F.base;
+  const base=office?13:F.base,tex=office||kd===3||panel?null:F.tex;
   const layer=kd===3?12:base+(panel?3:kd===5?0:kd);
   const kind=kd===3?3:panel?2:kd===5?0:kd;
-  const wet=kind===1?(office?0.25:F.kind==='cave'?1:B.wet):0;
+  const wet=kind===1?(office?0.25:F.kind==='cave'?1:F.wet):0;
   const gl2=office?BIOMES[4].spec:B.spec,g=kind===3?0.15:gl2[kind];
-  const key=[layer,kd,wet].join(':');
+  const key=[layer,kd,wet,tex?SURFS.key(tex):''].join(':');
   let m=worldMats.get(key);
-  if(!m){m=worldMaterial({layer,kind,panel,bad:kd===6,phantom:kd===5,wet,depth:layer===13?0.02:layer===14?0.025:layer>=15?0.03:0.06});worldMats.set(key,m)}
+  if(!m){m=worldMaterial({layer,kind,panel,bad:kd===6,phantom:kd===5,wet,tex,depth:layer===13?0.02:layer===14?0.025:layer>=15&&layer<17?0.03:0.06});worldMats.set(key,m)}
+  m.userData.used=true;
   return m;
 }
 // characters, creatures and decor: painted procedural materials on top of physically based shading
@@ -1067,7 +1092,7 @@ function buildHand(t,ex,ey,ez,yaw,pitch){
 /* ---------- static decor: pillars, brazier, rubble, sconces and room dressing ---------- */
 const M6={};function mesh6(k){if(M6[k])return M6[k];const c=MESH_DATA[k],o=new Float32Array(c.length/9*6);for(let i=0,j=0;i<c.length;i+=9)for(let q=0;q<6;q++)o[j++]=c[i+q];return M6[k]=o}
 function buildProp(pr,F){
-  const f={p:[pr.x,0,pr.z],R:rYaw(pr.r),lo:[pr.x*0.37,0,pr.z*0.37]},S=pr.s,st=F.biome.stone;
+  const f={p:[pr.x,0,pr.z],R:rYaw(pr.r),lo:[pr.x*0.37,0,pr.z*0.37]},S=pr.s,st=F.stone;
   const wood=[0.42,0.26,0.13,6],woodD=[0.27,0.17,0.09,6],iron=[0.2,0.2,0.22,4],bone=[0.82,0.78,0.66,9];
   switch(pr.t){
   case 'barrel':{
@@ -1243,11 +1268,11 @@ function doorKnob(f,col){
 }
 function buildStatic(F){
   TB=DEC;DEC.n=0;
-  const st=[...F.biome.stone,9],dk=[st[0]*0.8,st[1]*0.8,st[2]*0.8,9],iron=[0.1,0.09,0.085,4];
+  const st=[...F.stone,9],dk=[st[0]*0.8,st[1]*0.8,st[2]*0.8,9],iron=[0.1,0.09,0.085,4];
   const I=(x,z,yaw)=>({p:[x,0,z],R:rYaw(yaw||0),lo:[x*0.61,0,z*0.61]});
   for(const q of F.pillars)emit(mesh6('pillar'),I(q[0],q[1]),ZERO3,[1,1,1],st);
   if(F.safe){const f=I(F.safe.x,F.safe.z);emit(mesh6('pillar'),f,ZERO3,[1.15,0.3,1.15],st);emit(mesh6('bowl'),f,[0,0.375,0],[1,1,1],iron)}
-  for(const r of F.rubble)emit(mesh6('octa'),I(r.x,r.z,r.r),[0,r.s*r.sy*0.6,0],[r.s*1.4,r.s*r.sy,r.s],dk);
+  for(const r of F.rubble.concat(F.litter||[]))emit(mesh6('octa'),I(r.x,r.z,r.r),[0,r.s*r.sy*0.6,0],[r.s*1.4,r.s*r.sy,r.s],dk);
   for(const q of F.sconces){const f=I(q.x,q.z);slab(f,[0,0.72,0],[0.05,0.2,0.05],iron);slab(f,[-q.dx*0.07,0.82,-q.dz*0.07],[0.12,0.04,0.12],iron)}
   for(const pr of F.props)buildProp(pr,F);
   for(const D of F.sdoors){
@@ -1485,9 +1510,9 @@ function los(x0,z0,x1,z1){
 }
 function loadFloor(depth){
   R.depth=depth;
-  if(depth>deepest){deepest=depth;store.set('deepest',deepest)}
+  if(depth>deepest&&!(URL_DEPTH&&depth===R.startDepth)){deepest=depth;store.set('deepest',deepest)}
   F=genFloor(R.seed,depth);panelLvl=1;P.grab=null;if(typeof MIM!=='undefined')mimicReset();
-  buildMesh(F);buildStatic(F);buildSdf(F);
+  buildMesh(F);buildStatic(F);buildSdf(F);sweepWorld();
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
   P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;P.inSafe=false;nearNpc=null;
   sealMsgT=0;doorMsgT=0;
@@ -1509,6 +1534,8 @@ function onTileChange(){
     if(los(P.x,P.z,x+0.5,y+0.5))F.seen[i]=1;
   }
 }
+// ?depth=N lets a new run begin at any depth from 1 to 40 without touching the saved record
+const URL_DEPTH=(()=>{const d=+new URLSearchParams(location.search).get('depth');return d>=1&&d<=40?Math.floor(d):0})();
 let deepest=Math.max(1,+store.get('deepest',1)||1,+((store.get('best',null)||{}).depth)||1);
 function fillStartSel(){
   const sel=$('startSel'),want=clamp(+store.get('startDepth',1)||1,1,deepest);
@@ -1517,10 +1544,11 @@ function fillStartSel(){
     o.textContent='Depth '+d+(d===deepest&&d>1?' (deepest reached)':'');sel.appendChild(o)}
   sel.value=want;$('depthLbl').hidden=deepest<2;
 }
+const floorTag=()=>F.name+(F.variant.ix?` (${F.variant.name})`:'');
 function startRun(seed,depth,force){
   roomLeave();$('deadTitle').textContent='THE DARK TAKES YOU';
   if(MP.guest&&!force){mpJoinClick();return}
-  const sd=force?depth:clamp(depth||+$('startSel').value||1,1,deepest);
+  const sd=force?depth:clamp(depth||URL_DEPTH||+$('startSel').value||1,1,Math.max(deepest,URL_DEPTH));
   P.down=false;
   R.seed=(seed||randSeed()).toUpperCase();R.pk={};P.pick=0;R.score=0;R.time=0;R.gems=0;R.startDepth=sd;
   P.hp=maxHp();P.fuel=100;P.stam=100;P.winded=false;P.flash=1+Math.floor((sd-1)/3)+(up.band|0);P.ward=0;R.wind=false;P.inv=0;P.chill=0;lowFuelSaid=false;
@@ -1528,7 +1556,7 @@ function startRun(seed,depth,force){
   state='play';
   ['title','pause','dead','talk'].forEach(id=>$(id).classList.add('hidden'));talk=null;
   $('hud').classList.remove('hidden');$('map').classList.remove('hidden');
-  say(sd>1?`Depth ${sd}: ${F.name}`:'Find 3 shards to break the seal',4);showTips();
+  say(sd>1?`Depth ${sd}: ${floorTag()}`:'Find 3 shards to break the seal',4);showTips();
   initAudio();
   if(MP.host)mpSendRun();
 }
@@ -1598,7 +1626,7 @@ function descend(n,why){
     if(P.down){P.down=false;P.hp=maxHp();P.fuel=Math.max(P.fuel,50);P.inv=2;say('You rise again',2)}
     loadFloor(R.depth+n);
     $('fade').style.transition='';$('fade').style.opacity=0;
-    say((why?why+'. ':'')+`Depth ${R.depth}: ${F.name}`,why?5:3.5);showTips();
+    say((why?why+'. ':'')+`Depth ${R.depth}: ${floorTag()}`,why?5:3.5);showTips();
     state='play';
   },550);
 }
@@ -3428,13 +3456,15 @@ function render(t){
   const L={ex,ey,ez,B,torchR,tx:ex+rx*0.2+fwx*0.04,ty:ey-0.14,tz:ez+rz*0.2+fwz*0.04};
   if(solidAt(L.tx,L.tz)){L.tx=ex;L.tz=ez}
   {const pl=F.back?0.05+0.95*panelLvl:1;
-    L.amb=F.dark?AMB_ZERO:F.back?[B.amb[0]*pl,B.amb[1]*pl,B.amb[2]*pl]:B.amb;
-    L.fog=[B.amb[0]*2.2*pl,B.amb[1]*2.2*pl,B.amb[2]*2.2*pl];
+    const aK=F.ambK||1;
+    const aT=F.ambT||[1,1,1],a0=B.amb[0]*aK*aT[0],a1=B.amb[1]*aK*aT[1],a2=B.amb[2]*aK*aT[2];
+    L.amb=F.dark?AMB_ZERO:F.back?[a0*pl,a1*pl,a2*pl]:[a0,a1,a2];
+    L.fog=[a0*2.2*pl,a1*2.2*pl,a2*2.2*pl];scene.fog.density=0.062*(F.fogK||1);
     {const ak=F.back?2.5:LK.amb;ambLight.color.setRGB(L.amb[0]*ak,L.amb[1]*ak,L.amb[2]*ak)}
     scene.fog.color.setRGB(L.fog[0],L.fog[1],L.fog[2]);
     if(scene.environment)scene.environmentIntensity=F.dark?0.01:F.back?0.3*pl:LK.env;}
   torchLight.position.set(L.tx,L.ty,L.tz);
-  torchLight.color.setRGB(B.torch[0],B.torch[1],B.torch[2]);
+  {const tt=F.torchT||[1,1,1];torchLight.color.setRGB(B.torch[0]*tt[0],B.torch[1]*tt[1],B.torch[2]*tt[2])}
   torchLight.distance=torchR*1.2;
   torchLight.intensity=LK.torch*flick*(0.3+0.7*torchR/7.6)*(F.back?0.5:1);
   flashLight.position.set(ex,ey,ez);flashLight.intensity=flashT*LK.flash;
@@ -3717,5 +3747,5 @@ setInterval(()=>{if(MP.host&&document.hidden&&performance.now()-last>200)step(pe
 // a backdrop maze behind the title screen
 R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
 {const rc=cleanCode(new URLSearchParams(location.search).get('room'));if(rc)mpPrepareJoin(rc)}
-window.__game={amb,update,render,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={amb,update,render,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);
