@@ -71,12 +71,12 @@ await pg.close();
 // ---- toast, ?depth=N
 {const m=await open('low','?depth=6');
   const r=await m.pg.evaluate(()=>{const G=window.__game;const before=localStorage.getItem('emberdeep.deepest');G.startRun();
-    const t1=document.getElementById('toast').textContent;const d=G.R.depth,ix=G.F.variant.ix,nm=G.F.name;
-    return {before,d,ix,nm,t1,after:localStorage.getItem('emberdeep.deepest'),url:G.URL_DEPTH,
+    const t1=document.getElementById('toast').textContent;const d=G.R.depth,ix=G.F.variant.ix,nm=G.F.name,vn=G.F.variant.name;
+    return {before,d,ix,nm,vn,t1,after:localStorage.getItem('emberdeep.deepest'),url:G.URL_DEPTH,
       tag:(()=>{for(let s=0;s<30;s++){const f=G.genFloor('T'+s,6);if(f.variant.ix){G.R.seed='T'+s;G.startRun('T'+s,6,true);return {t:document.getElementById('toast').textContent,n:G.F.name,v:G.F.variant.name}}}})()}});
   ok(r.d===6&&r.url===6,'?depth=6 starts a new run at depth 6');
   ok(r.after===r.before,'?depth does not raise the saved deepest record ('+r.before+' -> '+r.after+')');
-  ok(r.t1==='Depth 6: '+r.nm+(r.ix?' ('+(await m.pg.evaluate(()=>window.__game.F.variant.name))+')':''),'arrival toast: '+r.t1);
+  ok(r.t1==='Depth 6: '+r.nm+(r.ix?' ('+r.vn+')':''),'arrival toast: '+r.t1);
   ok(r.tag&&r.tag.t==='Depth 6: '+r.tag.n+' ('+r.tag.v+')','toast names a non-plain variant: '+(r.tag&&r.tag.t));
   ok(!(r.tag&&r.tag.n.includes('(')),'F.name has no variant suffix');
   ok(m.errs.length===0,'no page errors with ?depth'+(m.errs.length?' '+m.errs[0]:''));
