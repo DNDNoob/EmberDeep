@@ -191,7 +191,9 @@ export class Cards {
         for (let k = 0; k < m; k++) {
           const a = P[Math.max(0, k - 1)], b = P[Math.min(m - 1, k + 1)];
           let tx = b[0] - a[0], ty = b[1] - a[1], tz = b[2] - a[2]; const tl = Math.hypot(tx, ty, tz) || 1; tx /= tl; ty /= tl; tz /= tl;
-          const nn = N[k]; let bx = ty * nn[2] - tz * nn[1], by = tz * nn[0] - tx * nn[2], bz = tx * nn[1] - ty * nn[0]; const bl = Math.hypot(bx, by, bz) || 1; bx /= bl; by /= bl; bz /= bl;
+          let nn = N[k]; let bx = ty * nn[2] - tz * nn[1], by = tz * nn[0] - tx * nn[2], bz = tx * nn[1] - ty * nn[0]; const bl = Math.hypot(bx, by, bz) || 1; bx /= bl; by /= bl; bz /= bl;
+          if (c.o.twist) { const an = c.o.twist * s[k] * Math.PI, ca = Math.cos(an), sa = Math.sin(an), nb = [ty * bz - tz * by, tz * bx - tx * bz, tx * by - ty * bx];   // rotate the card about its own tangent: a twisted lock
+            nn = norm(nn[0] * ca + nb[0] * sa, nn[1] * ca + nb[1] * sa, nn[2] * ca + nb[2] * sa); const b2 = [ty * nn[2] - tz * nn[1], tz * nn[0] - tx * nn[2], tx * nn[1] - ty * nn[0]], l2 = Math.hypot(...b2) || 1; bx = b2[0] / l2; by = b2[1] / l2; bz = b2[2] / l2; }
           const sk = s[k], hw = (typeof c.o.w === 'function' ? c.o.w(sk) : (c.o.w ?? 0.004)) * L.wScale, lf = (c.o.lift ?? 0) * sk * sk, p = P[k];
           const q = [p[0] + nn[0] * lf, p[1] + nn[1] * lf, p[2] + nn[2] * lf], rd = c.o.round ?? 0.55;
           let nl = norm(nn[0] - bx * rd, nn[1] - by * rd, nn[2] - bz * rd), nr = norm(nn[0] + bx * rd, nn[1] + by * rd, nn[2] + bz * rd);

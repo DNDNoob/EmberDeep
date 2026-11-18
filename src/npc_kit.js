@@ -344,7 +344,7 @@ export function beard(H, p = {}) {
       const pts = [], nor = tr.nor;
       for (let i = 0; i <= ns; i++) { const s = i / ns, f = o.off * (0.4 + 0.6 * s), q = tr.pts[i]; pts.push([q[0] + nor[i][0] * f, q[1] + nor[i][1] * f, q[2] + nor[i][2] * f]); }
       const wk = o.W ?? 0.0055;
-      cards.ribbon(pts, nor, {w: s => { const y = yAt(s), r = cl(halfW(y) / 0.07, 0, 1); return wk * (0.4 + 0.6 * r) * (1 - 0.6 * Math.pow(smoothstep(0.55, 1, s), 1.2)); }, variant: o.variant ?? 0, lift: o.lift ?? 0.002, root: o.root ?? 0.55, tip: o.tipPaint ?? 0.05, ao: (o.ao ?? 1) * (0.72 + 0.4 * rr()), keep: o.keep ?? 1, round: o.round ?? 0.55});
+      cards.ribbon(pts, nor, {w: s => { const y = yAt(s), r = cl(halfW(y) / 0.07, 0, 1); return wk * (0.4 + 0.6 * r) * (1 - 0.6 * Math.pow(smoothstep(0.55, 1, s), 1.2)); }, variant: o.variant ?? 0, lift: o.lift ?? 0.002, root: o.root ?? 0.55, tip: o.tipPaint ?? 0.05, ao: (o.ao ?? 1) * (0.72 + 0.4 * rr()), keep: o.keep ?? 1, round: o.round ?? 0.55, twist: o.twist, vol: o.vol});
     };
     // layers A, B: shingled rows, upper cards lie over the roots of the ones below (their offset is larger)
     const layer = (nCol, o) => {
@@ -355,13 +355,18 @@ export function beard(H, p = {}) {
         for (let r = 0; r < rows; r++) {
           const ya = y0 - r * step, yb = Math.max(yEnd, ya - len);
           if (ya - yb < 0.03) break;
-          addCard(zeta, ya, yb, {...o, off: o.off + (rows - 1 - r) * o.rowOff, amp: o.amp * (0.6 + 0.9 * rr()), wl: 0.11 + 0.1 * rr(), shear: (rr() - 0.5) * 0.03, phase: rr() * 6.28, variant: r === rows - 1 && o.tipVariant != null ? o.tipVariant : o.variant, W: o.W * (0.85 + 0.3 * rr()), ao: o.ao + 0.1 * (r / rows), keep: o.keep});
+          addCard(zeta, ya, yb, {...o, off: o.off + (rows - 1 - r) * o.rowOff, amp: o.amp * (0.6 + 0.9 * rr()), wl: 0.11 + 0.1 * rr(), shear: (rr() - 0.5) * 0.03, phase: rr() * 6.28, variant: r === rows - 1 && o.tipVariant != null ? o.tipVariant : o.variant, W: o.W * (0.85 + 0.3 * rr()) * (1 - 0.4 * zeta * zeta), off: (o.off + (rows - 1 - r) * o.rowOff) * (Math.abs(zeta) > 0.7 ? 0.6 : 1), lift: Math.abs(zeta) > 0.7 ? 0 : o.lift, ao: o.ao + 0.1 * (r / rows), keep: o.keep});
         }
       }
     };
     const nA = Math.round(p.locks ?? 24);
     layer(nA, {off: 0.0006, rowOff: 0.0005, len: 0.14, end0: 0.7, end1: 0.3, amp: 0.02, W: 0.0078, ao: 0.8, variant: 3, tipVariant: 0, keep: 0, lift: 0.0002, drift: 0.3});
     layer(Math.round(nA * 1.25), {off: 0.0014, rowOff: 0.0006, len: 0.12, end0: 0.6, end1: 0.25, amp: 0.02, W: 0.0072, ao: 0.9, variant: 0, tipVariant: 1, keep: 1, lift: 0.0004, top: 0.006, span: 0.92, jit: 0.1, drift: 0.32, splay: 0.004});
+    // big locks: ~10 wide twisted cards run most of the beard's length and converge to the tip, so the beard reads as a few clumps
+    for (let i = 0; i < (p.bigLocks ?? 0); i++) {
+      const zeta = ((i + 0.5) / (p.bigLocks ?? 0) * 2 - 1) * 0.85 + (rr() - 0.5) * 0.06, y0 = yRoot(zeta * zMax) - 0.02 - rr() * 0.02, len = L * (0.8 + 0.15 * rr());
+      addCard(zeta, y0, Math.max(-L * 1.0, y0 - len), {off: 0.0026, seg: 6, amp: 0.016 * (0.7 + 0.6 * rr()), wl: 0.14 + 0.08 * rr(), phase: rr() * 6.28, variant: 0, W: 0.0085 * (1 - 0.35 * zeta * zeta), ao: 1.1, keep: 1, lift: 0.0006, drift: 0.55, twist: (rr() < 0.5 ? -1 : 1) * (0.1 + 0.15 * rr()), vol: 0.9, shear: 0});
+    }
     // fill layer: dense cards close to the mass in the lower half so the envelope never shows
     for (let i = 0; i < (p.fill ?? 60); i++) {
       const zeta = (rr() * 2 - 1) * 0.8, y0 = -0.05 - rr() * 0.12 * L / 0.3, len = 0.09 + 0.06 * rr();
@@ -385,7 +390,7 @@ export function beard(H, p = {}) {
     cull: (x, y, z) => H.sdf(x, y, z) < -0.002, project: 0.003, cardsPart: {cardsDirect: direct},
     ao: 0.006, aoFloor: 0.5,
     band: (x, y, z, o) => { o[0] = -y; o[1] = z / Math.max(0.004, halfW(y)) * 0.045; o[2] = 1 - smoothstep(0.0005, 0.007, skinD(x, y, z)); },
-    paint: (x, y, z, o) => { o[0] = 0.7; }};
+    paint: (x, y, z, o) => { const st = fbm(x * 220, y * 14, z * 220, 2) - 0.5, st2 = fbm(x * 70, y * 5, z * 70, 2) - 0.5; o[0] = Math.max(0, Math.min(1, 0.6 + 1.1 * st + 0.7 * st2)); }};
 }
 
 /* =====================================================================================

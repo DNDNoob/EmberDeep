@@ -618,7 +618,7 @@ function paintedMaterial(glowBase){
         float tile=floor(vBand.z-1.5);vec2 auv=vec2((tile+0.03+vBand.x*0.94)*0.25,vBand.y);
         vec4 st=texture2D(uStrand,auv);vec2 dxa=dFdx(auv)*512.0,dya=dFdy(auv)*512.0;float lod=0.5*log2(max(max(dot(dxa,dxa),dot(dya,dya)),1.0));
         float ca=st.a*(1.0+0.3*lod);float hs=fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453);
-        float ed=abs(vBand.x*2.0-1.0);if(ca<mix(0.3,0.5,smoothstep(0.6,0.95,vBand.y))+0.14*smoothstep(0.55,1.0,ed)+(hs-0.5)*0.16)discard;
+        float ed=abs(vBand.x*2.0-1.0);if(ca<mix(0.3,0.5,smoothstep(0.6,0.95,vBand.y))+0.16*smoothstep(0.55,1.0,ed)+0.22*smoothstep(0.75,1.0,vBand.y)+(hs-0.5)*0.16)discard;
         alb*=st.rgb*0.78;alb=min(alb,vec3(0.62));mRough=0.7;mRimK=0.006;mBump=0.0;mHairH=0.0;
       }else{
       float vw=fl.y+0.0011*(n3(vec3(fl.x*55.0,fl.y*140.0,2.0))-0.5)*fd1;      // strands wander a little along their length

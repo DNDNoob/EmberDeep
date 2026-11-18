@@ -183,7 +183,7 @@ export function clothDress(B, o) {
   const ulow = [0, 0, 0];
   // ---- robe layout (in B coordinates) ----
   function layoutRobe() {
-    const F = (x, y, z) => B.torsoCloth(x, Math.max(y, hang), z) - ease, cx = 0.015, yTop = B.Y.neck - 0.09;
+    const F = (x, y, z) => B.torsoCloth(x, Math.max(y, hang), z) - ease, cx = 0.015, yTop = B.Y.neck - 0.075;
     const P = new Float64Array(nu * nv * 3), rows = [];
     for (let i = 0; i < nu; i++) {
       const th = i / nu * 2 * Math.PI, c = Math.cos(th), s = Math.sin(th);
@@ -298,7 +298,7 @@ export function clothDress(B, o) {
     // 4. stole: a capelet over the shoulders whose front edges run down the chest as lappets, laid on the body offset by gapS, simulated like the rest
     if (o.stole) {
       const sto = o.stole, nuS = sto.nu ?? 44, nvS = sto.rows ?? 22, gapS = sto.gap ?? 0.024, a0 = sto.edge ?? 0.3, Ls = sto.yoke ?? 0.12, Lf = sto.lappet ?? 0.3, wl = sto.width ?? 0.5;
-      const yTop = B.Y.neck - (sto.drop ?? 0.062), gapAt = y => (sto.gapTop ?? 0.014) + (gapS - (sto.gapTop ?? 0.014)) * smoothstep(yTop, yTop - 0.06, y), F = (x, y, z) => B.sdf(x, y, z) - gapAt(y), cx = 0.015, e = 0.0008, P = new Float64Array(nuS * nvS * 3), Larc = [];
+      const yTop = B.Y.neck - (sto.drop ?? 0.045), gapAt = y => (sto.gapTop ?? 0.014) + (gapS - (sto.gapTop ?? 0.014)) * smoothstep(yTop, yTop - 0.06, y), F = (x, y, z) => B.sdf(x, y, z) - gapAt(y), cx = 0.015, e = 0.0008, P = new Float64Array(nuS * nvS * 3), Larc = [];
       for (let i = 0; i < nuS; i++) {
         const th = a0 + (2 * Math.PI - 2 * a0) * i / (nuS - 1), c = Math.cos(th), sn = Math.sin(th), dE = Math.min(i, nuS - 1 - i) / (nuS - 1) * (2 * Math.PI - 2 * a0);
         const L = Ls + (Lf - Ls) * smoothstep(wl, wl * 0.4, dE) + 0.004 * Math.sin(th * 9);
