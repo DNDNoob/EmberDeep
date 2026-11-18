@@ -305,7 +305,7 @@ export function* simplifyGen(mesh, target, opts = {}) {
 export const flatten = (mesh, sdf, opts = {}) => drain(flattenGen(mesh, sdf, opts));
 export function* flattenGen(mesh, sdf, opts = {}) {
   const {P, T} = mesh, nv = P.length / 3, nf = opts.normalSdf || sdf, af = opts.aoSdf || sdf, eps = opts.eps || 0.0008, stride = opts.paint ? 9 : 6, aoR = opts.ao || 0;
-  const V = new Float32Array(nv * stride), pp = [0, 0];
+  const V = new Float32Array(nv * stride), pp = [0, 0, 0], BV = opts.band ? new Float32Array(nv * 3) : null;
   for (let v = 0; v < nv; v++) {
     if ((v & 127) === 127) yield;
     let x = P[v * 3], y = P[v * 3 + 1], z = P[v * 3 + 2];
@@ -318,6 +318,7 @@ export function* flattenGen(mesh, sdf, opts = {}) {
     let gx = nf(x + eps, y, z) - nf(x - eps, y, z), gy = nf(x, y + eps, z) - nf(x, y - eps, z), gz = nf(x, y, z + eps) - nf(x, y, z - eps);
     const l = 1 / (Math.hypot(gx, gy, gz) || 1), o = v * stride;
     V[o] = x; V[o + 1] = y; V[o + 2] = z; V[o + 3] = gx * l; V[o + 4] = gy * l; V[o + 5] = gz * l;
+    if (BV) { pp[0] = 0; pp[1] = 0; pp[2] = 0; opts.band(x, y, z, pp); BV[v * 3] = pp[0]; BV[v * 3 + 1] = pp[1]; BV[v * 3 + 2] = pp[2]; }
     if (stride === 9) {
       pp[0] = 0; pp[1] = 0; opts.paint(x, y, z, pp); V[o + 6] = pp[0]; V[o + 7] = pp[1];
       let occ = 0, w = 1;
@@ -328,6 +329,14 @@ export function* flattenGen(mesh, sdf, opts = {}) {
   const out = new Float32Array(T.length * stride);
   for (let i = 0; i < T.length; i++) out.set(V.subarray(T[i] * stride, T[i] * stride + stride), i * stride);
   out.stride = stride;
+  if (BV) { // band coordinates per vertex (u along the band in pattern cells, v across); u wraps by opts.bandWrap round closed loops, so make it continuous inside each triangle
+    const W = opts.bandWrap || 0, bo = new Float32Array(T.length * 3);
+    for (let i = 0; i < T.length; i += 3) {
+      const u0 = BV[T[i] * 3];
+      for (let k = 0; k < 3; k++) { let u = BV[T[i + k] * 3]; if (W) u += W * Math.round((u0 - u) / W); bo[(i + k) * 3] = u; bo[(i + k) * 3 + 1] = BV[T[i + k] * 3 + 1]; bo[(i + k) * 3 + 2] = BV[T[i + k] * 3 + 2]; }
+    }
+    out.band = bo;
+  }
   return out;
 }
 

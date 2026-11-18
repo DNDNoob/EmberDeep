@@ -49,6 +49,8 @@ const VIEWS = {
   chest:    {dist: 0.55, turn: 0,   aimY: 0.88, camY: 0.88},
   chest34:  {dist: 0.55, turn: 40,  aimY: 0.88, camY: 0.88, headLock: true},
   chestside:{dist: 0.55, turn: 90,  aimY: 0.88, camY: 0.88, headLock: true},
+  hip:      {dist: 0.42, turn: 35,  aimY: 0.46, camY: 0.5, lat: 0.04},
+  chestclose:{dist: 0.34, turn: 25, aimY: 0.86, camY: 0.88},
   robe:     {dist: 0.8,  turn: 25,  aimY: 0.5,  camY: 0.5},
   hem:      {dist: 0.6,  turn: 30,  aimY: 0.12, camY: 0.2},
   gripF:    {dist: 0.38, turn: 25,  aimY: 0.58, camY: 0.62, lat: 0.15},

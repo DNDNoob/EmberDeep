@@ -15,7 +15,7 @@ const eye=[tgt[0]+D*Math.cos(el)*Math.cos(ya),tgt[1]+D*Math.sin(el),tgt[2]+D*Mat
 const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],cr=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2],nz=a=>{const l=Math.hypot(...a);return a.map(v=>v/l)};
 const f=nz(sub(tgt,eye)),r=nz(cr(f,[0,1,0])),u=cr(r,f),fov=Math.tan(+(process.env.FOV||25)*Math.PI/180);
 const proj=p=>{const d=sub(p,eye),z=dot(d,f);return [W/2+(dot(d,r)/z/fov)*H/2,H/2-(dot(d,u)/z/fov)*H/2,z]};
-const COL={torso:[200,60,50],sleeve0:[230,110,60],sleeve1:[210,90,110],sash:[230,190,60],cuff0:[240,200,70],cuff1:[240,200,70],gripHand:[225,170,135],restHand:[225,170,135],neck:[225,170,135],skirt:[170,50,45],hem:[230,190,60]};
+const COL={torso:[200,60,50],sleeve0:[230,110,60],sleeve1:[210,90,110],sash:[230,190,60],cuff0:[240,200,70],cuff1:[240,200,70],gripHand:[225,170,135],restHand:[225,170,135],neck:[225,170,135],skirt:[170,50,45],hem:[230,190,60],stole:[40,140,110],brooch:[240,200,80],pouch:[150,90,45],keys:[200,170,80]};
 const L1=nz([0.5,0.8,0.6]),L2=nz([-0.5,0.1,-0.6]);
 function draw(m,off,Mx,col){const n=m.length/9;
   const Pw=[],Nw=[];for(let i=0;i<n;i++){const p=mv(Mx,m[i*9],m[i*9+1],m[i*9+2]);Pw.push([p[0]+off[0],p[1]+off[1],p[2]+off[2]]);Nw.push(mv(Mx,m[i*9+3],m[i*9+4],m[i*9+5]))}

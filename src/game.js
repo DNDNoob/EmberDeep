@@ -529,16 +529,38 @@ float n3(vec3 p){vec3 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);
   return mix(mix(mix(h3(i),h3(i+vec3(1,0,0)),f.x),mix(h3(i+vec3(0,1,0)),h3(i+vec3(1,1,0)),f.x),f.y),
              mix(mix(h3(i+vec3(0,0,1)),h3(i+vec3(1,0,1)),f.x),mix(h3(i+vec3(0,1,1)),h3(i+vec3(1,1,1)),f.x),f.y),f.z);}
 float fbm3(vec3 p){return n3(p)*0.6+n3(p*2.3)*0.3+n3(p*5.1)*0.1;}
+// Embroidery motifs from a per-vertex band coordinate (npc_kit trimBand 'band', stole borders): b.x = cell coordinate along the band
+// (one motif per unit, an integer count round a closed loop), b.y = 2*motif + v with v 0..1 across the band. Pattern only, no textures.
+float sdSegE(vec2 p,vec2 a,vec2 b){vec2 pa=p-a,ba=b-a;return length(pa-ba*clamp(dot(pa,ba)/dot(ba,ba),0.0,1.0));}
+float covE(float d,float aa){return clamp(0.5-d/aa,0.0,1.0);}
+// returns (ink, border line). motif 1 = rows of ember flames with a bright core, 2 and 3 = Greek key (meander); aa = one pixel in cell units
+vec2 embroidery(vec2 b,float motif,float aa){
+  float v=b.y,fu=fract(b.x),x=fu-0.5;vec2 r=vec2(0.0);
+  r.y=covE(min(abs(v-0.075),abs(v-0.925))-0.03,aa);
+  if(motif<1.5){
+    float t=clamp((v-0.16)/0.68,0.0,1.0),w=0.36*sin(3.14159*pow(t,0.6))*(1.0-0.45*t),c=0.12*sin(t*2.6+1.0)*t;
+    float d=max(abs(x-c)-w,max(0.16-v,v-0.84));
+    float t2=clamp((t-0.08)/0.55,0.0,1.0),w2=0.5*0.36*sin(3.14159*pow(t2,0.6))*(1.0-0.45*t2),dc=max(abs(x-c*0.9)-w2,max(0.2-v,v-0.55));
+    r.x=covE(d,aa)*(1.0-covE(dc,aa));
+    float xe=fu<0.5?fu:fu-1.0;r.x=max(r.x,covE(abs(xe)+abs(v-0.5)*1.2-0.085,aa)); // a bead between flames
+  }else{
+    vec2 g=vec2(fu,clamp((v-0.17)/0.66,0.0,1.0));float d=sdSegE(g,vec2(0.0,0.1),vec2(1.0,0.1));
+    d=min(d,sdSegE(g,vec2(0.1,0.1),vec2(0.1,0.9)));d=min(d,sdSegE(g,vec2(0.1,0.9),vec2(0.9,0.9)));d=min(d,sdSegE(g,vec2(0.9,0.9),vec2(0.9,0.3)));
+    d=min(d,sdSegE(g,vec2(0.9,0.3),vec2(0.4,0.3)));d=min(d,sdSegE(g,vec2(0.4,0.3),vec2(0.4,0.65)));d=min(d,sdSegE(g,vec2(0.4,0.65),vec2(0.65,0.65)));
+    r.x=covE((d-0.06)*0.66,aa)*step(0.17,v)*step(v,0.83);
+  }
+  return r;
+}
 `;
 function paintedMaterial(glowBase){
   if(Q===0)return new THREE.MeshLambertMaterial({vertexColors:true,side:THREE.DoubleSide,emissive:new THREE.Color(glowBase,glowBase,glowBase)});
   const m=new THREE.MeshStandardMaterial({vertexColors:true,roughness:0.7,metalness:0,side:THREE.DoubleSide});
   m.onBeforeCompile=sh=>{
     sh.uniforms.uGlowBase={value:glowBase};
-    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nattribute vec4 aLoc;varying vec4 vLoc;')
-      .replace('#include <begin_vertex>','#include <begin_vertex>\nvLoc=aLoc;');
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nattribute vec4 aLoc;varying vec4 vLoc;attribute vec3 aBand;varying vec3 vBand;')
+      .replace('#include <begin_vertex>','#include <begin_vertex>\nvLoc=aLoc;vBand=aBand;');
     sh.fragmentShader=sh.fragmentShader
-      .replace('#include <common>','#include <common>\nvarying vec4 vLoc;uniform float uGlowBase;float mRough=0.7;float mMetal=0.0;float mGlow=0.0;float mRim=0.0;float mSss=0.0;float mRimK=0.0;float mBump=0.0;float mAux=0.0;float mCh=0.0;float mWeave=1.0;'+MAT_GLSL)
+      .replace('#include <common>','#include <common>\nvarying vec4 vLoc;varying vec3 vBand;uniform float uGlowBase;float mRough=0.7;float mMetal=0.0;float mGlow=0.0;float mRim=0.0;float mSss=0.0;float mRimK=0.0;float mBump=0.0;float mAux=0.0;float mCh=0.0;float mWeave=1.0;float mEmb=0.0;'+MAT_GLSL)
       .replace('#include <lights_physical_pars_fragment>',()=>THREE.ShaderChunk.lights_physical_pars_fragment.replace('vec3 irradiance = dotNL * directLight.color;',
         // cheap subsurface look: wrapped diffuse that lets light bleed past the terminator, tinted red where it fades
         `float nlS=dot(geometryNormal,directLight.direction);
@@ -547,6 +569,7 @@ function paintedMaterial(glowBase){
   {vec3 alb=vColor.rgb,q=vLoc.xyz;int m=int(floor(vLoc.w+0.002));mAux=fract(vLoc.w+0.002)*1.1;
     float fine=clamp(1.6-vViewPosition.z*0.45,0.0,1.0); // vViewPosition.z is the distance: fade fine detail out with it
     float mott=fbm3(q*34.0);
+    float mo=floor(vBand.z+0.5);vec2 emb=vec2(0.0);{float fwB=max(fwidth(vBand.x),fwidth(vBand.y))*0.9;if(mo>0.5&&mo<3.5)emb=embroidery(vBand.xy,mo,max(fwB,0.004))*step(-0.001,vBand.y)*step(vBand.y,1.001);}
     // weave: fade by how many radians of the 1500 rad/m pattern fall in one pixel; above ~1 rad/px it aliases into moire, so it dissolves into plain cloth
     float wPh1=q.y*1500.0,wPh2=(q.x+q.z)*1500.0,wFade=1.0-smoothstep(0.7,1.5,max(fwidth(wPh1),fwidth(wPh2)));
     mWeave=wFade;
@@ -559,9 +582,22 @@ function paintedMaterial(glowBase){
       float folds=n3(vec3(q.x*55.0,q.y*5.0,q.z*55.0));
       float weave=sin(q.y*1500.0)*sin((q.x+q.z)*1500.0);
       alb*=(0.88+0.2*folds)*(0.93+0.14*mott)*(1.0+0.06*weave*fine*wFade);mRough=0.9;mRimK=0.04;mBump=1.0;
+      if(mo>2.5&&mo<3.5){ // stole: gold meander border worked into the cloth
+        float th=max(emb.x,emb.y);mEmb=th;alb=mix(alb,vec3(0.82,0.6,0.2)*(0.78+0.3*n3(q*400.0)),th);mRough=mix(0.9,0.45,th);mMetal=0.3*th;
+      }else if(mo>4.5){ // leather: grain, no weave
+        float gr=fbm3(q*210.0);alb*=0.8+0.4*gr;alb*=1.0-0.35*smoothstep(0.55,0.75,n3(q*520.0));mRough=0.55;mRimK=0.02;mSss=0.0;
+      }
     }else if(m==15){ // sculpted trim: gold thread embroidery, a running pattern of stitched diamonds
       float a=atan(q.z,q.x)*40.0,st=abs(fract(a+q.y*120.0)-0.5)+abs(fract(q.y*160.0)-0.5);
-      alb*=(0.82+0.3*smoothstep(0.35,0.45,st))*(0.9+0.2*mott);mRough=0.42;mMetal=0.35;mRimK=0.03;mBump=1.0;
+      if(mo>3.5){ // polished metal (brooch, keys): flat colour, faint wear
+        alb*=0.85+0.3*fbm3(q*300.0);mRough=0.32;mMetal=0.75;mRimK=0.03;
+      }else{
+        alb*=(0.82+0.3*smoothstep(0.35,0.45,st*(mo>0.5?0.0:1.0)+(mo>0.5?0.4:0.0)))*(0.9+0.2*mott);mRough=0.42;mMetal=0.35;mRimK=0.03;
+        if(mo>0.5){ // embroidered band: dark ember ink over gold thread, border lines and beads
+          float ink=max(emb.x,emb.y);mEmb=ink;alb=mix(alb,vec3(0.36,0.05,0.03)*(0.8+0.4*n3(q*300.0)),ink*0.93);mMetal=0.35*(1.0-0.75*ink);mRough=mix(0.42,0.8,ink);
+        }
+      }
+      mBump=1.0;
     }else if(m==14){ // sculpted hair and beard
       float st=n3(vec3(q.x*150.0,q.y*8.0,q.z*150.0));alb*=0.72+0.5*st;mRough=0.45;mRimK=0.015;mBump=1.0;
     }
@@ -596,7 +632,7 @@ function paintedMaterial(glowBase){
   if(mBump>0.5){ // real bump from a procedural height (metres), so pores, weave and strands catch the light without any triangles
     vec3 q=vLoc.xyz;int m=int(floor(vLoc.w+0.002));float fn=clamp(1.6-vViewPosition.z*0.45,0.0,1.0);float hh=0.0;
     if(m==12){hh=0.00012*n3(q*380.0)+mAux*0.0005*(1.0-abs(n3(vec3(q.x*70.0,q.y*330.0,q.z*70.0))*2.0-1.0));} // pores, and creases where the mesh asks for them
-    else if(m==13||m==15){hh=0.0006*(n3(q*160.0)-0.5)+0.0003*fn*mWeave*sin(q.y*1500.0)*sin((q.x+q.z)*1500.0);}
+    else if(m==13||m==15){hh=0.0006*(n3(q*160.0)-0.5)+0.0003*fn*mWeave*sin(q.y*1500.0)*sin((q.x+q.z)*1500.0)+0.0005*mEmb;}
     else if(m==14){hh=0.0009*n3(vec3(q.x*700.0,q.y*24.0,q.z*700.0));}
     vec2 dh=vec2(dFdx(hh),dFdy(hh))*fn;
     vec3 sX=dFdx(-vViewPosition),sY=dFdy(-vViewPosition),R1=cross(sY,normal),R2=cross(normal,sX);
@@ -890,7 +926,8 @@ const MAT={skin:12,cloth:13,hair:14,trim:15,eye:8,wood:6,metal:4,glow:7};
 // frame, c places it.
 function emitS(mesh,f,c,col,col2,mat,R2,sc,dr){
   const cnt=mesh.length/9,T=TB;if(T.n+cnt>T.cap)return;
-  sc=sc||1;const R=R2?m3(f.R,R2):f.R,cs=sc===1?c:[c[0]*sc,c[1]*sc,c[2]*sc],p=fpt(f,cs),b=T.buf,lo=f.lo||ZERO3;let o=T.n*13;
+  const W=T.w||13,bnd=mesh.band;
+  sc=sc||1;const R=R2?m3(f.R,R2):f.R,cs=sc===1?c:[c[0]*sc,c[1]*sc,c[2]*sc],p=fpt(f,cs),b=T.buf,lo=f.lo||ZERO3;let o=T.n*W;
   const c0=col[0],c1=col[1],c2=col[2],d0=col2[0]-c0,d1=col2[1]-c1,d2=col2[2]-c2;
   const l0=c[0]+lo[0],l1=c[1]+lo[1],l2=c[2]+lo[2];
   // drape: vertices below dr.y0 blend towards a second frame (dr.f) that follows the head only partly, so a long beard
@@ -908,6 +945,7 @@ function emitS(mesh,f,c,col,col2,mat,R2,sc,dr){
         const il=1/(Math.hypot(NX,NY,NZ)||1);NX*=il;NY*=il;NZ*=il}}
     b[o++]=X;b[o++]=Y;b[o++]=Z;b[o++]=NX;b[o++]=NY;b[o++]=NZ;
     b[o++]=(c0+d0*w)*ao;b[o++]=(c1+d1*w)*ao;b[o++]=(c2+d2*w)*ao;b[o++]=l0+x;b[o++]=l1+y;b[o++]=l2+z;b[o++]=mat+0.82*mesh[i+7];
+    if(W===16){const k=i/9*3;b[o++]=bnd?bnd[k]:0;b[o++]=bnd?bnd[k+1]:0;b[o++]=bnd?bnd[k+2]:0}
   }
   T.n+=cnt;
 }
@@ -948,12 +986,12 @@ function gpuGeo(baked,g,lod){
   const key=g.key+':'+lod;baked.geo=baked.geo||{};if(baked.geo[key])return baked.geo[key];
   // parts are arrays of LOD meshes; eye meshes are single meshes
   let n=0;const items=g.items.map(it=>{const mesh=Array.isArray(it.m)?it.m[Math.min(lod,it.m.length-1)]:it.m;n+=mesh.length/9;return {...it,mesh}});
-  const tmp={buf:new Float32Array(13*n),n:0,cap:n},keep=TB,F0={p:[0,0,0],R:ID3,lo:ZERO3};TB=tmp;
+  const tmp={buf:new Float32Array(16*n),n:0,cap:n,w:16},keep=TB,F0={p:[0,0,0],R:ID3,lo:ZERO3};TB=tmp;
   for(const it of items)emitS(it.mesh,F0,it.c,it.col,it.col2,it.mat,it.R,1,null);
   TB=keep;
-  const ib=new THREE.InterleavedBuffer(tmp.buf,13),geo=new THREE.BufferGeometry();
+  const ib=new THREE.InterleavedBuffer(tmp.buf,16),geo=new THREE.BufferGeometry();
   geo.setAttribute('position',new THREE.InterleavedBufferAttribute(ib,3,0));geo.setAttribute('normal',new THREE.InterleavedBufferAttribute(ib,3,3));
-  geo.setAttribute('color',new THREE.InterleavedBufferAttribute(ib,3,6));geo.setAttribute('aLoc',new THREE.InterleavedBufferAttribute(ib,4,9));
+  geo.setAttribute('color',new THREE.InterleavedBufferAttribute(ib,3,6));geo.setAttribute('aLoc',new THREE.InterleavedBufferAttribute(ib,4,9));geo.setAttribute('aBand',new THREE.InterleavedBufferAttribute(ib,3,13));
   geo.computeBoundingSphere();geo.boundingSphere.radius=geo.boundingSphere.radius*1.25+0.1; // drape parts and lids move
   geo.userData.tris=n/3;return baked.geo[key]=geo;
 }

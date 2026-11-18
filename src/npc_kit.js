@@ -461,8 +461,28 @@ export function hand(p = {}) {
    ===================================================================================== */
 // Long skirt from the floor to the waist (frame B). p: {height, hem (radius at the floor), waist (radius), folds (count),
 // depth (fold depth), seed}. The bottom 3.5 mm is culled (stands on the floor).
+// Worn, ragged hem as a function lift(x, z) = how high the bottom edge stands off the floor: slow noise (amp), plus `notches` frayed V-cuts
+// (width in radians, depth in metres) placed by a seeded hash. rag = {amp, notches, depth, width, seed}; omit for a clean hem.
+export function hemLift(rag) {
+  if (!rag) return () => 0;
+  const amp = rag.amp ?? 0.005, n = rag.notches ?? 6, dep = rag.depth ?? 0.014, wid = rag.width ?? 0.075, sd = rag.seed ?? 1, N = [];
+  for (let k = 0; k < n; k++) { const h1 = noise(k * 7.31 + sd, 1.7, 3.3), h2 = noise(k * 3.77 + 9.1, sd, 5.1); N.push([(k + h1 * 0.8) / n * Math.PI * 2 - Math.PI, wid * (0.6 + 0.8 * h2), dep * (0.45 + 0.55 * noise(k * 5.9, 2.2, sd))]); }
+  return (x, z) => {
+    const a = Math.atan2(z, x), ca = Math.cos(a), sa = Math.sin(a);
+    let L = amp * cl(0.5 + 1.2 * fbm(ca * 3.1 + sd, sa * 3.1, 11.3, 3), 0, 1);
+    for (const [c, w, d] of N) { let da = Math.abs(a - c); da = Math.min(da, Math.PI * 2 - da); if (da < w) L += d * Math.pow(1 - da / w, 1.6); }
+    return L;
+  };
+}
+// Fabric wear as a paint value 0..1 (blend towards col2): slow colour variation (vary, freq per m) plus dirt that builds up towards the floor
+// (dirt strength, dirtY = height where it fades out). Use it in a part's paint: o[0] = wear(x, y, z).
+export function wearPaint(p = {}) {
+  const vary = p.vary ?? 0.3, fq = p.freq ?? 7, dirt = p.dirt ?? 0, dy = p.dirtY ?? 0.16, sd = p.seed ?? 0;
+  return (x, y, z) => cl(vary * cl(0.5 + 1.1 * fbm(x * fq + sd, y * fq * 0.8, z * fq, 3), 0, 1) + (dirt ? dirt * smoothstep(dy, 0, y) * (0.55 + 0.45 * noise(x * 38 + sd, y * 12, z * 38)) : 0), 0, 1);
+}
 export function robeSkirt(p = {}) {
   const Hh = p.height ?? 0.53, hem = p.hem ?? 0.175, waist = p.waist ?? 0.092, nf = p.folds ?? 10, dep = p.depth ?? 1, asp = p.aspect ?? 1; // aspect: top is wider front-to-back (belly), fading to round at the hem
+  const lift = hemLift(p.rag);   // worn hem: how far the bottom edge rises off the floor at (x, z)
   const rh = (x, z, t) => Math.hypot(x / (1 + (asp - 1) * smoothstep(0.45, 0.92, t)), z);
   function base(x, y, z) { // smooth silhouette, used for trim bands
     const t = cl(y / (Hh - 0.03), 0, 1), rho = rh(x, z, t);
@@ -488,24 +508,34 @@ export function robeSkirt(p = {}) {
     { const w = smoothstep(0, 0.06, x), sd = z - 0.034 * (0.6 + 0.4 * t), step = smoothstep(-0.004, 0.004, sd); R += w * dep * (0.0035 * step - 0.0022 * Math.exp(-(sd * sd) / 0.000006) * smoothstep(0.0, 0.1, y)); }
     let d = (rho - R) * 0.8;
     d = smax(d, y - Hh, 0.01);
-    return smax(d, -y, 0.003);
+    return smax(d, 0.45 * lift(x, z) - y, 0.003);
   }
-  return {sdf, base, bounds: [-hem * 1.3, -0.02, -hem * 1.3, hem * 1.3, Hh + 0.02, hem * 1.3], cell: p.cell || 0.012, tris: p.tris || [480, 180], cull: (x, y) => y < 0.0035, project: 0.004};
+  return {sdf, base, bounds: [-hem * 1.3, -0.02, -hem * 1.3, hem * 1.3, Hh + 0.02, hem * 1.3], cell: p.cell || 0.012, tris: p.tris || [480, 180, 180], cull: (x, y, z) => y < 0.0035 + 0.45 * lift(x, z), project: 0.004, lift};
 }
 
 // A band of trim (hem, sash, cuff) laid over a cloth surface: the shell between `out` and `out+thick` outside
 // base(x,y,z), inside region(x,y,z) < 0. Returns a part spec; also give the cloth part cull: spec.covers so the
 // hidden cloth under the band is dropped.
+// Embroidery (shader pattern, no textures): p.motif = 1 ember flames | 2 Greek key | 3 key on cloth (stole border) | 4 polished metal | 5 leather, drawn by the
+// `trim`/`cloth` shaders from a per-vertex band coordinate (u, v, motif; v is NOT clamped, so it stays linear across big triangles). p.uv(x,y,z,out) sets out = [s, v]: s runs along the band (0..1 once round a closed loop),
+// v 0..1 across it. p.cells = how many motif cells fit along s (an integer for a closed loop, so the pattern closes without a seam).
+// p.rib = height (m) of a raised piping along the band edges (changes the silhouette a little, the rest is paint).
+export function bandCoords(motif, cells, uv, closed = true) {
+  return {band: (x, y, z, o) => { uv(x, y, z, o); o[0] *= cells; o[2] = motif; }, bandWrap: closed ? cells : 0};
+}
+export const constBand = motif => ({band: (x, y, z, o) => { o[0] = 0; o[1] = 0.5; o[2] = motif; }, bandWrap: 0});
 export function trimBand(base, region, p = {}) {
-  const thick = p.thick ?? 0.005, inset = p.inset ?? 0.002, round = p.round ?? 0.003, ripple = p.ripple ?? 0;
+  const thick = p.thick ?? 0.005, inset = p.inset ?? 0.002, round = p.round ?? 0.003, ripple = p.ripple ?? 0, rib = p.rib ?? 0;
   const sdf = (x, y, z) => {
-    let d = smax(Math.abs(base(x, y, z) - (thick - inset) / 2) - (thick + inset) / 2, region(x, y, z), round);
+    const rg = region(x, y, z);
+    let d = smax(Math.abs(base(x, y, z) - (thick - inset) / 2) - (thick + inset) / 2 - (rib ? rib * Math.exp(-(rg * rg) / 0.000012) : 0), rg, round);
     if (ripple && d < 0.006) d += ripple * Math.sin(Math.atan2(z, x) * 40);
     return d;
   };
   // the inner face of the band is buried in the cloth: never mesh it
   const cull = (x, y, z) => base(x, y, z) < 0.0006 || (p.cull && p.cull(x, y, z));
-  return {sdf, bounds: p.bounds, cell: p.cell || 0.0042, tris: p.tris || [160, 60], cull, project: 0.002,
+  const bc = p.motif ? bandCoords(p.motif, p.cells || 1, p.uv, p.closed !== false) : {};
+  return {sdf, bounds: p.bounds, cell: p.cell || 0.0042, tris: p.tris || [160, 60], cull, project: 0.002, ...bc,
     covers: (x, y, z) => region(x, y, z) < -0.0015 && Math.abs(base(x, y, z)) < (p.coverTol ?? 0.006)};
 }
 
@@ -667,12 +697,13 @@ export function dress(B, list) {
   const crease = (x, y, z, other) => smoothstep(0.014, -0.002, other(x, y, z));  // 0..1 near the other shell
   const parts = {}, ends = [];
   parts.torso = {sdf: torsoFold, bounds: robe.bounds || [-0.16, -0.05, -0.2, 0.2, B.Y.neck + 0.06, 0.2], cell: robe.cell || 0.0095, tris: robe.tris || [620, 230], project: 0.004,
-    aoSdf: (x, y, z) => Math.min(torsoFold(x, y, z), sleeveMin(x, y, z) + 0.002), paint: (x, y, z, o) => { o[0] = 0.85 * crease(x, y, z, sleeveMin); },
+    aoSdf: (x, y, z) => Math.min(torsoFold(x, y, z), sleeveMin(x, y, z) + 0.002), paint: (x, y, z, o) => { o[0] = cl(0.85 * crease(x, y, z, sleeveMin) + (robe.wear ? robe.wear(x, y, z) : 0), 0, 1); },
     cull: (x, y, z) => sleeveMin(x, y, z) < -0.003};
   const trims = {};
   if (sash) {
     const sy = sash.y, sh = sash.h;
-    trims.sash = trimBand(torsoFold, (x, y, z) => Math.abs(y - sy) - sh, {thick: sash.thick ?? 0.006, coverTol: 0.011, bounds: [-0.14, sy - sh - 0.01, -0.14, 0.14, sy + sh + 0.01, 0.14], tris: sash.tris || [130, 50], cell: sash.cell ?? 0.0042});
+    const sashMotif = sash.motif ? {motif: sash.motif, cells: Math.round(2 * Math.PI * 0.1 / (2 * sh * (sash.cellAspect ?? 1))), uv: (x, y, z, o) => { o[0] = Math.atan2(z, x) / (2 * Math.PI) + 0.5; o[1] = (y - (sy - sh)) / (2 * sh); }} : {};
+    trims.sash = trimBand(torsoFold, (x, y, z) => Math.abs(y - sy) - sh, {...sashMotif, rib: sash.rib, thick: sash.thick ?? 0.006, coverTol: 0.011, bounds: [-0.14, sy - sh - 0.01, -0.14, 0.14, sy + sh + 0.01, 0.14], tris: sash.tris || [130, 50], cell: sash.cell ?? 0.0042});
     parts.sash = trims.sash;
   }
   sl.forEach((s, i) => {
@@ -681,18 +712,151 @@ export function dress(B, list) {
     const seam = (x, y, z) => Math.exp(-(((base(x, y, z) - 0.003) / 0.0026) ** 2)), sdf = (x, y, z) => { const d = sdf0(x, y, z); return d < 0.012 ? d - 0.0015 * seam(x, y, z) : d; };
     parts['sleeve' + i] = {sdf, bounds: [Math.min(a.S[0], a.E[0], a.W[0]) - 0.11, Math.min(a.S[1], a.E[1], a.W[1]) - 0.11, Math.min(a.S[2], a.E[2], a.W[2]) - 0.11,
       Math.max(a.S[0], a.E[0], a.W[0]) + 0.11, Math.max(a.S[1], a.E[1], a.W[1]) + 0.11, Math.max(a.S[2], a.E[2], a.W[2]) + 0.11], cell: sg.cell || 0.0075, tris: sg.tris || [380, 150], project: 0.004,
-      aoSdf: (x, y, z) => Math.min(sdf(x, y, z), base(x, y, z) + 0.002), paint: (x, y, z, o) => { o[0] = Math.max(0.85 * crease(x, y, z, base), 0.95 * seam(x, y, z)); },
+      aoSdf: (x, y, z) => Math.min(sdf(x, y, z), base(x, y, z) + 0.002), paint: (x, y, z, o) => { o[0] = cl(Math.max(0.85 * crease(x, y, z, base), 0.95 * seam(x, y, z)) + (sg.wear ? sg.wear(x, y, z) : 0), 0, 1); },
       cull: (x, y, z) => base(x, y, z) < -0.004};
     if (cf) {
+      // cuff band coordinates: angle round the mouth axis, position along it
+      const Fb = Math.abs(Fm[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0], b1 = norm3([Fm[1] * Fb[2] - Fm[2] * Fb[1], Fm[2] * Fb[0] - Fm[0] * Fb[2], Fm[0] * Fb[1] - Fm[1] * Fb[0]]), b2 = [Fm[1] * b1[2] - Fm[2] * b1[1], Fm[2] * b1[0] - Fm[0] * b1[2], Fm[0] * b1[1] - Fm[1] * b1[0]], clen = (cf.len ?? 0.028) + 0.014;
+      const cuffMotif = cf.motif ? {motif: cf.motif, cells: Math.round(2 * Math.PI * s.rw / (clen * (cf.cellAspect ?? 1))), uv: (x, y, z, o) => {
+        const vx = x - cEnd[0], vy = y - cEnd[1], vz = z - cEnd[2], t = vx * Fm[0] + vy * Fm[1] + vz * Fm[2], rx = vx - t * Fm[0], ry = vy - t * Fm[1], rz = vz - t * Fm[2];
+        o[0] = Math.atan2(rx * b2[0] + ry * b2[1] + rz * b2[2], rx * b1[0] + ry * b1[1] + rz * b1[2]) / (2 * Math.PI) + 0.5; o[1] = (t + (cf.len ?? 0.028)) / clen; }} : {};
       const cuff = trimBand(cloth, (x, y, z) => { const t = (x - cEnd[0]) * Fm[0] + (y - cEnd[1]) * Fm[1] + (z - cEnd[2]) * Fm[2], vx = x - cEnd[0], vy = y - cEnd[1], vz = z - cEnd[2], rad = Math.sqrt(Math.max(0, vx * vx + vy * vy + vz * vz - t * t)); return Math.max(-(cf.len ?? 0.028) - t, t - 0.014, rad - (s.rw + 0.025)); },   // radial cap: a bare slab would cut through the chest cloth
-        {thick: cf.thick ?? 0.005, coverTol: 0.011, bounds: [cEnd[0] - 0.115, cEnd[1] - 0.115, cEnd[2] - 0.115, cEnd[0] + 0.115, cEnd[1] + 0.115, cEnd[2] + 0.115], tris: cf.tris || [80, 30], cell: cf.cell ?? 0.0042});
+        {...cuffMotif, rib: cf.rib, thick: cf.thick ?? 0.005, coverTol: 0.011, bounds: [cEnd[0] - 0.115, cEnd[1] - 0.115, cEnd[2] - 0.115, cEnd[0] + 0.115, cEnd[1] + 0.115, cEnd[2] + 0.115], tris: cf.tris || [80, 30], cell: cf.cell ?? 0.0042});
       parts['cuff' + i] = cuff; const c0 = parts['sleeve' + i].cull; parts['sleeve' + i].cull = (x, y, z) => c0(x, y, z) || cuff.covers(x, y, z);
     }
     ends[i] = {at: a.W, end: a.end, dir: a.F, r: s.rw};
   });
+  // Stole / mantle: a separate cloth shell over the robe and the sleeve caps: a yoke over the shoulders (front dips into a V, back and
+  // sides lower over the arms) and two lappets hanging down the chest, with an embroidered border (stole.motif) along every free edge.
+  // {type:'stole', gap, thick, yoke (hem height at the front/back), zc/w (lappet centre and width), y0 (lappet bottom), lower (field of the skirt in U coords),
+  //  border (width of the embroidered edge), wear, tris, cell}. Returns parts.stole, stoleSolid (for a beard to rest on) and stoleOuter (outer surface field, to pin a brooch on).
+  let stoleSolid = null, stoleOuter = null;
+  const stg = list.find(g => g.type === 'stole');
+  if (stg) {
+    const gap = stg.gap ?? 0.011, th = stg.thick ?? 0.007, zc = stg.zc ?? 0.07, pw = stg.w ?? 0.045, y0 = stg.y0 ?? 0.075, yc0 = stg.yoke ?? B.Y.chest - 0.02, bw = stg.border ?? 0.018, lower = stg.lower;
+    const under = (x, y, z) => { let d = base(x, y, z); d = Math.min(d, sleeveMin(x, y, z)); if (lower) d = Math.min(d, Math.max(lower(x, y, z), y - 0.05)); return d; };
+    const ycut = (x, z) => { const az = Math.abs(z); return yc0 + 0.045 * smoothstep(0.06, 0.15, az) - 0.022 * smoothstep(0.0, -0.08, x) + 0.075 * smoothstep(0.05, 0.015, az) * smoothstep(0.0, 0.05, x) + 0.004 * Math.sin(az * 90 + x * 40); };
+    const rY = (x, y, z) => Math.max(ycut(x, z) - y, Math.abs(z) - 0.2);
+    const rP = (x, y, z) => Math.max(Math.abs(Math.abs(z) - zc) - pw / 2, 0.012 - x, y - (yc0 + 0.06), y0 + 0.004 * Math.sin(Math.abs(z) * 160) - y, 0.8 * (base(x, y, z) - sleeveMin(x, y, z)));   // the lappets lie on the chest: not on a forearm that crosses in front of it
+    const region = (x, y, z) => Math.min(rY(x, y, z), rP(x, y, z));
+    const outer = (x, y, z) => under(x, y, z) - gap - th;
+    const shell = (x, y, z) => {
+      let d = Math.abs(under(x, y, z) - gap - th / 2) - th / 2;
+      if (d < 0.02) d -= 0.0016 * (0.5 + 0.5 * Math.sin(Math.abs(z) * 120 + 5 * fbm(x * 14, y * 9, z * 14, 2))) * smoothstep(yc0 + 0.02, y0, y);   // hanging folds in the lappets
+      return d;
+    };
+    const sdf = (x, y, z) => {
+      const rg = region(x, y, z);
+      let d = smax(shell(x, y, z), rg, 0.003);
+      return smax(d, -(bowl(x, y, z) - 0.016), 0.004);        // neck opening, a little wider than the scoop so the collar roll shows
+    };
+    const cw = bw;   // one motif cell as wide as the border
+    const uv = (x, y, z, o) => {
+      const e = 0.0025, r0 = region(x, y, z), gy = region(x, y + e, z) - region(x, y - e, z), gz = region(x, y, z + e) - region(x, y, z - e), gl = Math.hypot(gy, gz) || 1;
+      o[0] = (-gz / gl * y + gy / gl * z) / cw; o[1] = -r0 / bw;
+    };
+    stoleSolid = (x, y, z) => smax(outer(x, y, z), region(x, y, z), 0.003);
+    stoleOuter = outer;
+    parts.stole = {sdf, bounds: [-0.14, y0 - 0.02, -0.22, 0.19, B.Y.neck + 0.03, 0.22], cell: stg.cell || 0.0035, tris: stg.tris || [900, 400, 150], project: 0.003, ao: 0.014,
+      aoSdf: (x, y, z) => Math.min(sdf(x, y, z), under(x, y, z) + 0.001), paint: (x, y, z, o) => { o[0] = stg.wear ? stg.wear(x, y, z) : 0; },
+      cull: (x, y, z) => outer(x, y, z) < -0.6 * th,   // only the outer face: the inner one is hidden against the robe
+      ...(stg.motif ? bandCoords(stg.motif, 1, uv, false) : {})};
+    trims.stole = parts.stole;
+  }
   const tc = parts.torso.cull; parts.torso.cull = (x, y, z) => tc(x, y, z) || (trims.sash && trims.sash.covers(x, y, z));
   const torsoSolid = (x, y, z) => B.torsoCloth(x, Math.max(y, hang), z) - ease;   // the cloth without the neckline scoop (what a beard rests on)
-  return {parts, ends, torsoBase: base, torsoSolid, sleeveBase: sl.map(s => s.sb)};
+  return {parts, ends, torsoBase: base, torsoSolid, stoleSolid, stoleOuter, sleeveBase: sl.map(s => s.sb)};
+}
+
+/* =====================================================================================
+   PINNED-ON PROPS  (rigid parts on the waist/chest frame: brooch, pouch, key ring)
+   They are placed on a body surface by a frame at point P: lz along the outward normal n, ly = `up` projected onto the surface (so
+   hanging things follow the skirt's slope), lx along the surface. P and n come from surfacePoint().
+   ===================================================================================== */
+// March along dir from o (t0..t1) until sdf < 0, then bisect: the point where the field crosses zero, and its normal. null if nothing is hit.
+export function surfacePoint(sdf, o, dir, t0 = 0, t1 = 0.4) {
+  const at = t => sdf(o[0] + dir[0] * t, o[1] + dir[1] * t, o[2] + dir[2] * t);
+  let a = t0, b = -1;
+  for (let i = 0; i <= 160; i++) { const t = t0 + (t1 - t0) * i / 160; if (at(t) < 0) { b = t; break; } a = t; }
+  if (b < 0) return null;
+  for (let i = 0; i < 30; i++) { const m = (a + b) / 2; if (at(m) < 0) b = m; else a = m; }
+  const P = [o[0] + dir[0] * b, o[1] + dir[1] * b, o[2] + dir[2] * b], e = 0.0015;
+  return {P, n: surfaceNormal(sdf, P, e)};
+}
+export const surfaceNormal = (sdf, P, e = 0.0015) => norm3([sdf(P[0] + e, P[1], P[2]) - sdf(P[0] - e, P[1], P[2]), sdf(P[0], P[1] + e, P[2]) - sdf(P[0], P[1] - e, P[2]), sdf(P[0], P[1], P[2] + e) - sdf(P[0], P[1], P[2] - e)]);
+// local frame at P: returns to(x,y,z) -> shared [lx, ly, lz]
+function localFrame(P, n, up) {
+  const nn = norm3(n), d = up[0] * nn[0] + up[1] * nn[1] + up[2] * nn[2], uy = norm3([up[0] - d * nn[0], up[1] - d * nn[1], up[2] - d * nn[2]]);
+  const t = [uy[1] * nn[2] - uy[2] * nn[1], uy[2] * nn[0] - uy[0] * nn[2], uy[0] * nn[1] - uy[1] * nn[0]], o = [0, 0, 0];
+  return (x, y, z) => { const a = x - P[0], b = y - P[1], c = z - P[2]; o[0] = a * t[0] + b * t[1] + c * t[2]; o[1] = a * uy[0] + b * uy[1] + c * uy[2]; o[2] = a * nn[0] + b * nn[1] + c * nn[2]; return o; };
+}
+const sdTorusY = (x, y, z, R, r) => Math.hypot(Math.hypot(x, z) - R, y) - r;   // ring round the Y axis
+const cube = (P, h) => [P[0] - h, P[1] - h, P[2] - h, P[0] + h, P[1] + h, P[2] + h];
+
+// Round metal clasp / brooch pinned on the cloth at P with outward normal n. p: {r, cell, tris}. Polished metal (motif 4); the boss is paint 1 (col2: a garnet).
+export function brooch(P, n, up, p = {}) {
+  const R = p.r ?? 0.0115, L = localFrame(P, n, up);
+  const sdf = (x, y, z) => {
+    const q = L(x, y, z), lx = q[0], ly = q[1], lz = q[2], r = Math.hypot(lx, ly);
+    let d = Math.max(r - R, Math.abs(lz - 0.0018) - 0.0027);                                             // the disc, a little off the cloth
+    d = smin(d, Math.max(Math.abs(r - (R - 0.0011)) - 0.0012, Math.abs(lz - 0.0038) - 0.0032), 0.0007); // raised rim
+    d = d + 0.0003 * (r < R - 0.003 ? Math.sin(r * 700) : 0);                                          // turned groove
+    d = smin(d, sdSphere(lx, ly, lz - 0.0046, 0.0046), 0.0012);                                          // boss
+    const a = Math.atan2(ly, lx);
+    for (let k = 0; k < 6; k++) { const c = k * Math.PI / 3 + 0.3; d = smin(d, sdSphere(lx - 0.0066 * Math.cos(c), ly - 0.0066 * Math.sin(c), lz - 0.0042, 0.0013), 0.0004); }
+    return d;
+  };
+  const boss = (x, y, z) => { const q = L(x, y, z); return Math.hypot(q[0], q[1], q[2] - 0.0046); };
+  return {sdf, bounds: cube(P, R + 0.01), cell: p.cell || 0.0009, tris: p.tris || [260, 130, 50], project: 0.0008, ao: 0.006,
+    paint: (x, y, z, o) => { o[0] = boss(x, y, z) < 0.0038 ? 1 : 0; }, ...constBand(4)};
+}
+
+// A small leather pouch hanging from the belt: gathered neck with a drawstring, a flap over the upper half, flat back lying on the body
+// (surf: field of the body in the same coordinates). P = where it is tied on (below the belt), n = outward normal, up = world up in these coordinates.
+export function pouch(P, n, up, surf, p = {}) {
+  const L = localFrame(P, n, up), k = p.size ?? 1;
+  const sdf = (x, y, z) => {
+    const q = L(x, y, z), lx = q[0] / k, ly = q[1] / k, lz = q[2] / k;
+    let d = sdEllipsoid(lx, ly + 0.027, lz - 0.0115, 0.0215, 0.0275, 0.0125);                              // the sack
+    d = smin(d, sdEllipsoid(lx, ly - 0.002, lz - 0.0075, 0.0105, 0.009, 0.0072), 0.008);                    // gathered neck
+    const hem = -0.036 + 0.0065 * (lx / 0.022) ** 2;                                                         // flap: a slightly bigger shell over the upper part, scalloped hem
+    d = smin(d, smax(sdEllipsoid(lx, ly + 0.027, lz - 0.0118, 0.0224, 0.0285, 0.0133), hem - ly, 0.0012), 0.0008);
+    if (ly > -0.012) d += 0.0009 * Math.sin(Math.atan2(lz - 0.0072, lx) * 9) * smoothstep(-0.012, 0.0, ly);   // gathers
+    d = smin(d, sdTorusY(lx, ly + 0.002 - 0.0, lz - 0.0072, 0.0098, 0.0012), 0.0008);                      // drawstring round the neck
+    d = smin(d, sdCapsule(lx, ly, lz, 0.004, -0.003, 0.0165, 0.0062, -0.015, 0.0178, 0.0012), 0.0008);       // tie ends
+    d = smin(d, sdCapsule(lx, ly, lz, -0.003, -0.003, 0.0165, -0.0052, -0.013, 0.0176, 0.0012), 0.0008);
+    d = smax(d * k, -(surf(x, y, z) - 0.0012), 0.0025);                                                    // flat back on the body
+    return d;
+  };
+  const paint = (x, y, z, o) => { const q = L(x, y, z); o[0] = Math.min(1, 0.55 * smoothstep(-0.016, -0.055, q[1] / k) + 0.25 * fbm(x * 90, y * 90, z * 90, 2) + 0.3); o[1] = 0; };
+  return {sdf, bounds: cube([P[0] + up[0] * -0.02 * k, P[1] + up[1] * -0.02 * k, P[2] + up[2] * -0.02 * k], 0.06 * k), cell: p.cell || 0.0016, tris: p.tris || [320, 160, 60], project: 0.0012, ao: 0.008, paint, ...constBand(5)};
+}
+
+// A ring of old keys hanging from a hook at P (ring plane parallel to the body). p: {keys: 3, ring radius}
+export function keyRing(P, n, up, surf, p = {}) {
+  const L0 = localFrame(P, n, up), k = p.size ?? 1, o3 = [0, 0, 0], L = (x, y, z) => { const q = L0(x, y, z); o3[0] = q[0] / k; o3[1] = q[1] / k; o3[2] = q[2] / k; return o3; };   // k scales the whole ring about the hook
+  const RR = p.ringR ?? 0.0075, wr = 0.0016, yc = -0.0095, zc = 0.0085;
+  const KEYS = [{a: -0.38, len: 0.036, dz: -0.0024, sg: 1}, {a: 0.06, len: 0.031, dz: 0.0, sg: -1}, {a: 0.44, len: 0.039, dz: 0.0024, sg: 1}];
+  const key = (lx, ly, lz, K) => {
+    const c = Math.cos(K.a), s = Math.sin(K.a), px = lx, py = ly - (yc - RR);               // pivot at the bottom of the ring
+    const w = px * c - py * s, u = -(px * s + py * c), z = lz - zc - K.dz;                  // u runs down the key, w across
+    let d = sdTorusY(w, z, u - 0.0036, 0.0036, 0.0013);                                         // bow (ring head), hooked over the ring (axis along z)
+    d = smin(d, sdCapsule(w, u, z, 0, 0.0070, 0, 0, K.len, 0, 0.0015), 0.0008);                 // shaft
+    d = smin(d, sdSphere(w, u - 0.0098, z, 0.0021), 0.0006);                                    // collar
+    const bw = K.sg * 0.0036;                                                                   // bit with a notch
+    let bit = sdBox(w - bw, u - (K.len - 0.0042), z, 0.0034, 0.0042, 0.0011, 0.0004);
+    bit = Math.max(bit, -sdBox(w - bw * 1.35, u - (K.len - 0.006), z, 0.0013, 0.0017, 0.003));
+    return smin(d, bit, 0.0006);
+  };
+  const sdf = (x, y, z) => {
+    const q = L(x, y, z), lx = q[0], ly = q[1], lz = q[2];
+    let d = sdTorusY(lx, lz - zc, ly - yc, RR, wr);                                              // the ring: axis along lz
+    d = smin(d, sdCapsule(lx, ly, lz, 0, 0.004, zc, 0, yc + RR, zc, 0.0015), 0.0008);             // staple at the belt
+    for (const K of KEYS) d = smin(d, key(lx, ly, lz, K), 0.0005);
+    return smax(d * k, -(surf(x, y, z) - 0.0006), 0.002);
+  };
+  return {sdf, bounds: cube([P[0] - up[0] * 0.03 * k, P[1] - up[1] * 0.03 * k, P[2] - up[2] * 0.03 * k], 0.06 * k), cell: p.cell || 0.00085 * Math.max(1, k * 0.8), tris: p.tris || [420, 200, 80], project: 0.0006, ao: 0.005,
+    paint: (x, y, z, o) => { o[0] = 0.5 * smoothstep(0.0, -0.03, L(x, y, z)[1]); o[1] = 0; }, ...constBand(4)};
 }
 
 /* =====================================================================================
@@ -768,7 +932,7 @@ export function eyeRig(p = {}) {
 // Mesh hygiene (stride 9): drop non-finite and degenerate triangles, renormalise normals, replace unusable normals with the
 // face normal. A zero or NaN normal on real GPUs becomes NaN in the shader, and NaN in an HDR target blooms into white squares.
 export function sanitize(M, minArea = 1e-10) {
-  const out = new Float32Array(M.length); let o = 0, dropped = 0;
+  const out = new Float32Array(M.length), bo = M.band ? new Float32Array(M.length / 9 * 3) : null; let o = 0, dropped = 0;
   for (let i = 0; i < M.length; i += 27) {
     let ok = true;
     for (let k = 0; k < 27 && ok; k++) ok = Number.isFinite(M[i + k]);
@@ -777,12 +941,13 @@ export function sanitize(M, minArea = 1e-10) {
     if (!ok || fl < 2 * minArea) { dropped++; continue; }
     for (let v = 0; v < 3; v++) {
       const b = i + v * 9, l = Math.hypot(M[b + 3], M[b + 4], M[b + 5]);
+      if (bo) for (let k = 0; k < 3; k++) bo[o / 9 * 3 + k] = M.band[b / 9 * 3 + k];
       for (let k = 0; k < 9; k++) out[o + k] = M[b + k];
       if (l > 1e-4) { out[o + 3] /= l; out[o + 4] /= l; out[o + 5] /= l; } else { out[o + 3] = fx / fl; out[o + 4] = fy / fl; out[o + 5] = fz / fl; }
       o += 9;
     }
   }
-  const r = out.slice(0, o); r.stride = 9; r.dropped = dropped; return r;
+  const r = out.slice(0, o); r.stride = 9; r.dropped = dropped; if (bo) r.band = bo.slice(0, o / 9 * 3); return r;
 }
 
 // Generator: yields during the heavy loops so bakeRecipeIdle can spread the work over many ticks. tris: [near, mid, far] (any length):
@@ -791,7 +956,7 @@ export function* bakePartGen(spec, seed = 1) {
   setSeed(seed);
   const guard = function* (g) { let r; while (!(r = g.next()).done) { yield; setSeed(seed); } return r.value; }; // noise seed is global: restore it after every pause
   const raw = yield* guard(sculptGen(spec.sdf, spec.bounds, spec.cell, {cull: spec.cull}));
-  const fo = {paint: spec.paint || (() => {}), project: spec.project ?? spec.cell * 0.5, normalSdf: spec.normalSdf, aoSdf: spec.aoSdf, eps: 0.0006, ao: spec.ao ?? 0.012};
+  const fo = {paint: spec.paint || (() => {}), project: spec.project ?? spec.cell * 0.5, normalSdf: spec.normalSdf, aoSdf: spec.aoSdf, band: spec.band, bandWrap: spec.bandWrap, eps: 0.0006, ao: spec.ao ?? 0.012};
   const out = []; let m = raw;
   for (const t of spec.tris) { m = yield* guard(simplifyGen(m, t)); out.push(sanitize(yield* guard(flattenGen(m, spec.sdf, fo)))); }
   out.raw = raw.T.length / 3;
