@@ -335,3 +335,12 @@ Both systems replace SDF sculpting of hair and loose cloth. Everything is still 
 4. **Rules**: the SDF garments from `dress()` are not baked any more but still exist as fields (stole, beard `chest`, props rest on them; stole gap 12 mm so simulated folds do not poke through). Do not put cloth parts in the cull of other SDF parts. Pin rows and `gather` are the knobs for fold depth; `pleat` seeds the fold amplitude. For another NPC: `K.body()`, a skirt SDF with `.base`, then `clothDress` / `clothParts` and list the parts in the recipe with their frames.
 
 Keeper v11 costs: bake about 4.9 s in Node (6.3 s CPU in the browser before the last trims) (cloth 1.0 s, hair cards 0.25 s, beard mass 0.5 s), near 22.3k triangles (66.9k vertices), mid 10.0k, far 4.3k; 11 draw calls. Grip lock unchanged (0 mm).
+
+### Keeper v12 changes
+
+- **Stole is a cloth sim.** The old 5 mm SDF shell (surface-nets, culled and simplified, which tore into dark triangular flaps once the simulated robe no longer matched its field) is no longer baked. `clothDress(..., {stole})` lays a 44 x 22 capelet over the shoulders: each column walks down the body field offset by `gapAt(y)` (11 mm at the neck easing to 24 mm), row length grows towards the front edges so they become lappets; row 0 pinned at the neck, collides with the body and the robe grid. Part `stole` (U) with a Greek-key border (`stole {motif:3, border:0.018}`). The SDF stole remains only as a field for the beard/brooch.
+- **Sash** is now a dark cord (`cord`, tube round the waist, knot) with two tasselled hanging ends (`tassels`, B frame, gold tips); the gold band is not baked. Pouch and keys stay.
+- **Beard**: denser, wider overlapping cards (28/34/70 column layers, corner cards at the mouth, edge wisps, tip strays), atlas with triangular strand distribution (thicker strands, tones white/grey/yellow/dark grey), lower alpha threshold in the interior, mass paint matched to the cards. Moustache 1.2x, droop 1.35, blended into the beard at the corners.
+- **Shoulders** narrower (S x +-0.104, deltoid 0.034) and stoop 0.065.
+
+v12 costs: bake about 4.5 s in Node, near 24.5k triangles (73k vertices), mid 10.9k, far 4.4k (GLB far 4.0k). Grip lock 0 mm, sleeve-mouth drift 2.1 mm.
