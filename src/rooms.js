@@ -3,7 +3,7 @@
 //   kiln    a stone hall with an arcade console: walk up, press its buttons to steer the falling stones in the glass, burn enough rows and the door lets you go
 //   fall    there is no floor behind the door
 //   mirror  you stand behind a one-way mirror, watching a parlor; something comes in and then looks back at you
-// Each room owns a small scene of its own, drawn in place of the maze while it runs. To add one: write the room function and add it to KINDS in createRooms. Movement comes free: a room walks like the maze unless MODES (next to KINDS) says otherwise; use createRoomWalker from movement.js.
+// Each room owns its own scene. See docs/strange-doors.md for the authoring workflow.
 import * as THREE from 'three';
 import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
 import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
@@ -12,6 +12,16 @@ import {ShaderPass} from 'three/addons/postprocessing/ShaderPass.js';
 import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
 import {createTheater} from './theater.js';
 import {MOVE,lookStep,lookBy,bobAdvance,bobY,createRoomWalker} from './movement.js';
+
+// Order is part of seeded door rotation. Add new IDs at the end.
+export const DOOR_KINDS={
+  galaxy:{name:'a door full of stars',look:'galaxy',mode:'look'}, // zero-gravity scene with no floor
+  kiln:{name:'the glass kiln',look:'kiln',action:'PRESS',css:'kilnroom'},
+  fall:{name:'a door with no floor behind it',disguise:true,mode:'none',fadeIn:0.18}, // cinematic fall
+  mirror:{name:'a room behind a mirror',look:'mirror',action:'USE',css:'mirroom',fadeIn:1.4},
+  theater:{name:'the picture house',look:'theater',action:'TALK'},
+};
+const modeOf=k=>DOOR_KINDS[k]?.mode||'walk';
 
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
 const ss=(a,b,x)=>{const t=clamp((x-a)/(b-a),0,1);return t*t*(3-2*t)};
@@ -1421,14 +1431,8 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
   }
 
   const theater=createTheater({renderer,scene,cam,o,A,canvasTex,glow,clamp,ss,lerp,nf,rnd,getGroup:()=>group,onClear:fn=>clearHooks.push(fn),finish:r=>finish(r),createRoomWalker,MOVE,lookStep,bobAdvance,bobY});
-  const KINDS={galaxy,fall,kiln,mirror,theater},FADE_IN={fall:0.18,mirror:1.4};
-  // How you move in each room. Anything not listed WALKS: the full maze movement (walk, sprint, jump, stamina, boots, cold) from src/movement.js.
-  // Only a room that truly cannot walk is listed here, with its reason. A new room needs no entry.
-  const MODES={
-    galaxy:'look',   // you float among the stars with no floor to stand on: turning your head is all you get
-    fall:'none',     // a cinematic fall; there is nothing to control
-  };
-  const modeOf=k=>MODES[k]||'walk';
+  const KINDS={galaxy,fall,kiln,mirror,theater};
+  for(const kind of Object.keys(DOOR_KINDS))if(!Object.hasOwn(KINDS,kind))throw new Error('Missing room factory for '+kind);
   A.mode=modeOf;
   // a room only ever sees the controls its mode allows
   const gate=(k,inp)=>{const m=modeOf(k);return m==='walk'?inp:m==='look'?Object.assign({},inp,{mx:0,my:0,jump:false,sprint:false}):Object.assign({},inp,{mx:0,my:0,jump:false,sprint:false,lx:0,ly:0,press:0})};
@@ -1467,7 +1471,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
   A.theaterTest=q=>cur&&cur.test&&cur.test.api?cur.test.api(q):null;
   A.look=(dx,dy)=>{if(cur&&!A.watching&&cur.yaw!==undefined)lookBy(cur,dx,dy,MOVE.roomPitch)};
   // how black the screen overlay should be: fades in at the start, out at the end
-  A.fade=()=>cur?Math.max(cur.fade||0,1-ss(0,FADE_IN[A.kind]||0.7,cur.in)):0;
+  A.fade=()=>cur?Math.max(cur.fade||0,1-ss(0,DOOR_KINDS[A.kind]?.fadeIn||0.7,cur.in)):0;
   A.state=()=>cur;
   A.render=()=>{
     if(!cur)return;

@@ -23,6 +23,7 @@ Click **Host for friends** on the title screen. The invite link is copied for yo
 - Clips live only in the browsers in the room and are gone when you leave. `docs/mimic-brain.md` describes the optional local-AI line picker.
 
 ## Strange doors
+See [Authoring a strange-door room](docs/strange-doors.md) for the room starter workflow and shared movement rules.
 
 Every floor has two or three doors set into its walls. Face one and press E (or OPEN / X) and you are somewhere else. `src/rooms.js` holds the four rooms, each with a small scene of its own.
 
