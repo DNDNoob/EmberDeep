@@ -348,3 +348,10 @@ v12 costs: bake about 4.5 s in Node, near 24.5k triangles (73k vertices), mid 10
 ### Keeper v13 beard pass
 
 Cards are lit with a normal blended 78% from the beard volume's SDF gradient (`Cards.volN`), so the beard shades as one mass. Per-vertex card AO darkens roots (0.8 to 1.0 along the card) and inner layers; the shader dissolves card edges with a dithered threshold; atlas has finer, higher-contrast strands (brightness 0.58-1.1, more dark grey) and the albedo cap was raised so that contrast survives. Fewer, wider, more S-curved cards that converge toward the tip: beard cards 2160 near triangles (was 3112). Known gap: Q0 (low) still shows the plain solid mass.
+
+### Keeper v14
+
+- **Sleeve cuff**: the cuff rim rows (last 2 rings) of each sleeve are pinned at their layout positions at the wrist, so the mouth faces along the arm instead of the free bell dropping and tilting it (`holdRim: false` per sleeve restores the old behaviour). Result is a flared hoop-like cuff.
+- **Neck**: stole starts 4.5 cm below the neck base (`stole.drop`), robe collar 7.5 cm; stole gap 31 mm so the robe no longer pokes through. New shot view `profile` (head and shoulders, 90 deg).
+- **Beard**: `Cards` ribbon option `twist`, cheek cards narrower and flatter, tip fade in the shader, mass paint streaks. A big-locks layer (`bigLocks`, default 0) exists but rendered as dark slabs, so it is off.
+- **Load time**: `src/npc_cache.js` stores finished bakes in IndexedDB (one packed Float32 buffer, key = recipe id + kit source hash defined at build time, all calls wrapped in try/catch). `bakeExport`/`bakePrime` in npc_kit. The Keeper is baked lazily: `keeperWarm()` starts the idle bake when a floor with a Keeper loads or the player is within 30 m, and the classic Keeper is drawn until it is ready (`keeperReady()`). `tools/npc_bake_time.mjs` measures cold and warm loads. Cuts: robe sim 78 steps x 6 iterations, sleeves 64 x 6, coarser cells for hands, pouch, keys, brooch, coarser beard width scan.
