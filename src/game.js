@@ -12,6 +12,9 @@ import {openRoom,newRoomCode,cleanCode} from './net.js';
 import {createVoice} from './voice.js';
 import {createRooms,kilnGame,KILN} from './rooms.js';
 import {createBabyFace,createFallVoid} from './babyface.js';
+import {pickVariant,VARIANTS} from './variants.js';
+import {createForest,coreFaces,INSET,CORE_H} from './forest.js';
+import {initAmbience,updateAmbience,amb} from './ambience.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('gl');
@@ -43,11 +46,15 @@ const store={
 /* ---------- constants ---------- */
 const WALL_H=1.25, EYE=0.62, PR=0.22;
 const BIOMES=[
-  {name:'The Old Stonework', wall:[1.0,0.92,0.82], floor:[0.9,0.85,0.8],  ceil:[0.7,0.65,0.6],   torch:[1.0,0.72,0.42], amb:[0.012,0.012,0.02], stone:[0.44,0.4,0.34], spec:[0.12,0.2,0.05], wet:0.5},
-  {name:'Mossgrown Halls',   wall:[0.7,0.95,0.7],  floor:[0.65,0.85,0.6], ceil:[0.5,0.65,0.5],   torch:[1.0,0.8,0.5],   amb:[0.008,0.02,0.012], stone:[0.3,0.36,0.27], spec:[0.08,0.16,0.05], wet:0.9},
-  {name:'The Frostvault',    wall:[0.7,0.85,1.1],  floor:[0.75,0.9,1.1],  ceil:[0.55,0.65,0.85], torch:[0.95,0.88,0.8], amb:[0.012,0.018,0.035], stone:[0.5,0.62,0.72], spec:[0.75,0.6,0.3], wet:0.3},
-  {name:'Cinder Warrens',    wall:[1.15,0.65,0.5], floor:[1.0,0.6,0.5],   ceil:[0.8,0.45,0.4],   torch:[1.0,0.6,0.3],   amb:[0.03,0.008,0.004], stone:[0.24,0.2,0.19], spec:[0.3,0.22,0.08], wet:0.0},
-  {name:'The Humming Rooms', wall:[1,1,0.8],     floor:[0.8,0.75,0.5],  ceil:[0.9,0.9,0.8],    torch:[1.0,0.93,0.7],  amb:[0.21,0.19,0.105], stone:[0.6,0.58,0.5], spec:[0.03,0.02,0.05], wet:0.35},
+  {base:0,name:'The Old Stonework', wall:[1.0,0.92,0.82], floor:[0.9,0.85,0.8],  ceil:[0.7,0.65,0.6],   torch:[1.0,0.72,0.42], amb:[0.012,0.012,0.02], stone:[0.44,0.4,0.34], spec:[0.12,0.2,0.05], wet:0.5},
+  {base:3,name:'Mossgrown Halls',   wall:[0.7,0.95,0.7],  floor:[0.65,0.85,0.6], ceil:[0.5,0.65,0.5],   torch:[1.0,0.8,0.5],   amb:[0.008,0.02,0.012], stone:[0.3,0.36,0.27], spec:[0.08,0.16,0.05], wet:0.9},
+  {base:6,name:'The Frostvault',    wall:[0.7,0.85,1.1],  floor:[0.75,0.9,1.1],  ceil:[0.55,0.65,0.85], torch:[0.95,0.88,0.8], amb:[0.012,0.018,0.035], stone:[0.5,0.62,0.72], spec:[0.75,0.6,0.3], wet:0.3},
+  {base:9,name:'Cinder Warrens',    wall:[1.15,0.65,0.5], floor:[1.0,0.6,0.5],   ceil:[0.8,0.45,0.4],   torch:[1.0,0.6,0.3],   amb:[0.03,0.008,0.004], stone:[0.24,0.2,0.19], spec:[0.3,0.22,0.08], wet:0.0},
+  {base:13,name:'The Humming Rooms', wall:[1,1,0.8],     floor:[0.8,0.75,0.5],  ceil:[0.9,0.9,0.8],    torch:[1.0,0.93,0.7],  amb:[0.21,0.19,0.105], stone:[0.6,0.58,0.5], spec:[0.03,0.02,0.05], wet:0.35},
+  {base:17,name:'The Bone Galleries', wall:[1.0,0.95,0.84], floor:[0.9,0.84,0.72], ceil:[0.75,0.68,0.58], torch:[1.0,0.78,0.5],  amb:[0.016,0.014,0.012], stone:[0.55,0.5,0.42], spec:[0.1,0.14,0.04], wet:0.15},
+  {base:20,name:'The Rustworks',      wall:[0.95,0.85,0.78], floor:[0.85,0.8,0.75], ceil:[0.7,0.64,0.6],  torch:[1.0,0.7,0.4],   amb:[0.014,0.011,0.01], stone:[0.34,0.27,0.22], spec:[0.5,0.55,0.35], wet:0.7},
+  {base:23,name:'The Glimmer Veins',  wall:[0.8,0.85,1.05], floor:[0.8,0.85,1.0],  ceil:[0.6,0.65,0.85], torch:[0.98,0.86,0.72], amb:[0.012,0.016,0.03], stone:[0.28,0.3,0.36], spec:[0.4,0.45,0.25], wet:0.35},
+  {base:26,name:'The Dark Forest',   wall:[0.7,0.9,0.7],  floor:[0.8,0.85,0.75], ceil:[0,0,0],        torch:[1.0,0.76,0.46], amb:[0.005,0.012,0.009], stone:[0.3,0.28,0.24], spec:[0.05,0.16,0.04], wet:0.45},
 ];
 const ITEM={
   shard:{cell:0,col:[0.35,0.9,1.0], size:0.36},
@@ -76,9 +83,10 @@ function bfs(g,W,H,sx,sy){
   return d;
 }
 // every floor that is not a Humming Rooms floor moves on to the next biome
-function biomeIx(depth){return (depth-1-Math.floor(depth/4))%4}
-function floorKind(depth){if(depth>=4&&depth%4===0)return 'back';if(depth>=3&&depth%4===3)return 'cave';if(depth>=5&&depth%4===1)return 'dark';return 'maze'}
-function genFloor(seedStr,depth){
+const ORDER=[0,1,2,3,5,6,7];
+function biomeIx(depth){return ORDER[(depth-1-Math.floor(depth/4))%ORDER.length]}
+function floorKind(depth){if(depth>=4&&depth%4===0)return 'back';if(depth>=7&&depth%8===7)return 'forest';if(depth>=3&&depth%4===3)return 'cave';if(depth>=5&&depth%4===1)return 'dark';return 'maze'}
+function genFloor(seedStr,depth,look){
   const rng=mulberry32(hashStr(seedStr+'#'+depth));
   const ri=n=>(rng()*n)|0;
   let kind=floorKind(depth);
@@ -343,9 +351,9 @@ function genFloor(seedStr,depth){
     for(const n of npcs)busy.add(idx(Math.floor(n.x),Math.floor(n.z)));
     for(const tr of traps)busy.add(idx(tr.tx,tr.ty));
     busy.add(idx(stx,sty));busy.add(idx(ex,ey));
-    const special=bix===1?'shroom':bix===2?'ice':bix===3?'ember':'urn';
-    const types=kind==='back'?['boxes','boxes','cabinet','cabinet','plant','chair','chair']:kind==='cave'?['bones','bones','sack',special,special,special,'urn']:['barrel','barrel','crate','crate','urn','sack','bones',special,special];
-    const RAD={barrel:0.13,crate:0.15,urn:0.09,sack:0.11,ice:0.08,ember:0.11,boxes:0.15,cabinet:0.14,plant:0.08,chair:0.13};
+    const special=['urn','shroom','ice','ember','urn','bones','barrel','ice'][bix];
+    const types=kind==='back'?['boxes','boxes','cabinet','cabinet','plant','chair','chair']:kind==='forest'?['log','log','stump','stump','fern','shroom','sack','bones','fern']:kind==='cave'?['bones','bones','sack',special,special,special,'urn']:['barrel','barrel','crate','crate','urn','sack','bones',special,special];
+    const RAD={log:0.13,stump:0.14,barrel:0.13,crate:0.15,urn:0.09,sack:0.11,ice:0.08,ember:0.11,boxes:0.15,cabinet:0.14,plant:0.08,chair:0.13};
     const cands=[];
     for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
       const i=idx(x,y);if(g[i]!==0||safeMask[i]||pocketMask[i]||busy.has(i))continue;
@@ -373,6 +381,8 @@ function genFloor(seedStr,depth){
         nw++;
       }else if(kind==='cave'&&!wx&&!wz&&rng()<0.14)props.push({t:'stal',x:x+0.5+(rng()-0.5)*0.5,z:y+0.5+(rng()-0.5)*0.5,r:rng()*6.28,s:0.7+rng()*0.6,v:0});
     }}
+  // a forest keeps no banners or chains: nothing to hang them on
+  if(kind==='forest')for(let i=props.length-1;i>=0;i--)if(props[i].t==='banner'||props[i].t==='chain')props.splice(i,1);
   // strange doors: set into a wall, and what is behind one is never the maze. They draw on their own
   // dice so that the rest of the floor stays the same as it always was for a seed.
   const sdoors=[];
@@ -403,9 +413,24 @@ function genFloor(seedStr,depth){
   // face down an open corridor at the start
   let yaw=0;
   for(const d of DIRS){if(g[idx(stx+d[0],sty+d[1])]===0){yaw=Math.atan2(d[1],d[0]);break}}
-  const bi=kind==='back'?4:biomeIx(depth);
-  return {W,H,g,cw,ch,kind,dark:kind==='dark',back:kind==='back',base:kind==='back'?13:bi*3,panels,panelAt,pocketMask,phantoms,pockets,blk:0,boT:22+rng()*25,props,discs,safe,safeMask,npcs,reveal:false,door,sdoors,traps,pillars,sconces,rubble,frames:[],start:{tx:stx,ty:sty,yaw},exit:{tx:ex,ty:ey,x:ex+0.5,z:ey+0.5},items,shades,
-          seen:new Uint8Array(W*H),dist:d0,bi,biome:BIOMES[bi],
+  const bi=look&&look.bi!=null?look.bi:kind==='back'?4:kind==='forest'?8:biomeIx(depth);
+  // looks are drawn last, from their own dice, so nothing above ever moves
+  const vr=mulberry32(hashStr(seedStr+'#var#'+depth)),variant=pickVariant(vr,bi,look&&look.ix),B=BIOMES[bi];
+  const litter=[];
+  if(variant.rubbleK>1&&kind!=='back'){
+    const spots=[];
+    for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=idx(x,y);if(g[i]!==0||safeMask[i]||pocketMask[i]||(x===stx&&y===sty)||(x===ex&&y===ey))continue;
+      for(const d of DIRS)if(g[idx(x+d[0],y+d[1])]===1){spots.push([x,y,d]);break}}
+    const n=Math.min(spots.length,Math.round(nCells/10*(variant.rubbleK-1)));
+    for(let k=0;k<n;k++){const j=k+((vr()*(spots.length-k))|0),c=spots[j];spots[j]=spots[k];spots[k]=c;
+      const m=1+((vr()*3)|0),off=0.3+vr()*0.12;
+      for(let q=0;q<m;q++){const along=(vr()-0.5)*0.8;
+        litter.push({x:c[0]+0.5+(c[2][0]?c[2][0]*off:along),z:c[1]+0.5+(c[2][1]?c[2][1]*off:along),s:0.04+vr()*0.08,r:vr()*6.28,sy:0.5+vr()*0.6})}}
+  }
+  const stone=[B.stone[0]*variant.stone[0],B.stone[1]*variant.stone[1],B.stone[2]*variant.stone[2]];
+  const forest=bi===8;
+  return {W,H,g,cw,ch,kind:forest?'forest':kind==='forest'?'maze':kind,dark:kind==='dark',back:kind==='back',base:B.base,variant,litter,stone,wet:clamp(B.wet*variant.wetK,0,1),fogK:variant.fogK,ambK:variant.ambK,ambT:variant.ambT,torchT:variant.torch,tex:{v:variant.tex,seed:variant.seed,tint:variant.tint},panels,panelAt,pocketMask,phantoms,pockets,blk:0,boT:22+rng()*25,props,discs,safe,safeMask,npcs,reveal:false,door,sdoors,traps,pillars,sconces,rubble,frames:[],start:{tx:stx,ty:sty,yaw},exit:{tx:ex,ty:ey,x:ex+0.5,z:ey+0.5},items,shades,
+          seen:new Uint8Array(W*H),dist:d0,bi,biome:B,...(forest?{forest:true,fo:{seed:seedStr,depth}}:{}),
           name:kind==='cave'?'The Hollow':kind==='dark'?'The Black Hush':BIOMES[bi].name};
 }
 function trapExt(tr,time){const t=(time+tr.ph)%2.8;return t<0.12?t/0.12:t<1.0?1:t<1.2?1-(t-1)/0.2:0}
@@ -447,7 +472,7 @@ float wNoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);
 `;
 // world surfaces: parallax depth from the normal map's alpha, fine grain, puddles, flickering panels
 function worldMaterial(o){
-  const tex=SAFE?null:SURFS.get(o.layer);
+  const tex=SAFE?null:SURFS.get(o.layer,o.tex);
   const emU={value:o.panel?(Q===0?1.3:2.6):(Q===0?1.6:3.4)};
   const mapChunk=THREE.ShaderChunk.map_fragment.replace(/vMapUv/g,'pUv')+'\nfloat wEm=clamp(1.0-2.0*sampledDiffuseColor.a,0.0,1.0);float wRough=clamp(2.0*sampledDiffuseColor.a-1.0,0.0,1.0);diffuseColor.a=1.0;\n';
   const flicker=o.bad?'{float ph=floor(vWPos.x)*1.7+floor(vWPos.z)*2.3;if(sin(uTime*31.0+ph)+sin(uTime*47.7+ph*2.0)<0.4)wEmis*=0.08;}':'';
@@ -505,16 +530,22 @@ function worldMaterial(o){
   return m;
 }
 const worldMats=new Map();
+// after a floor is built, free the surfaces and materials it did not ask for so GPU memory stays flat
+function sweepWorld(){
+  for(const [k,m] of worldMats)if(!m.userData.used){m.dispose();worldMats.delete(k)}else m.userData.used=false;
+  SURFS.sweep();
+}
 function getWorldMat(F,k){
-  const office=k>=10,kd=k%10,panel=kd===4||kd===6,B=F.biome;
-  const base=office?13:F.base;
-  const layer=kd===3?12:base+(panel?3:kd===5?0:kd);
-  const kind=kd===3?3:panel?2:kd===5?0:kd;
-  const wet=kind===1?(office?0.25:F.kind==='cave'?1:B.wet):0;
+  const office=k>=10,kd=k%10,panel=kd===4||kd===6,B=F.biome,stoneFr=kd===7;
+  const base=office?13:stoneFr?0:F.base,tex=office||kd===3||panel||stoneFr?null:F.tex;
+  const layer=kd===3?12:base+(panel?3:kd===5||stoneFr?0:kd);
+  const kind=kd===3?3:panel?2:kd===5||stoneFr?0:kd;
+  const wet=kind===1?(office?0.25:F.kind==='cave'?1:F.wet):0;
   const gl2=office?BIOMES[4].spec:B.spec,g=kind===3?0.15:gl2[kind];
-  const key=[layer,kd,wet].join(':');
+  const key=[layer,kd,wet,tex?SURFS.key(tex):''].join(':');
   let m=worldMats.get(key);
-  if(!m){m=worldMaterial({layer,kind,panel,bad:kd===6,phantom:kd===5,wet,depth:layer===13?0.02:layer===14?0.025:layer>=15?0.03:0.06});worldMats.set(key,m)}
+  if(!m){m=worldMaterial({layer,kind,panel,bad:kd===6,phantom:kd===5,wet,tex,depth:layer===13?0.02:layer===14?0.025:layer>=15&&layer<17?0.03:0.06});worldMats.set(key,m)}
+  m.userData.used=true;
   return m;
 }
 // characters, creatures and decor: painted procedural materials on top of physically based shading
@@ -660,21 +691,35 @@ function makeSpriteTexture(){
 const SURFS=makeSurfaces(renderer,Q>=2?1024:Q>=1?512:256,NORMALMAP), spriteTex=makeSpriteTexture();
 
 /* ---------- world mesh ---------- */
-let worldMesh=null;
+let worldMesh=null,forestGrp=null;
+const FOREST=createForest({UT,Q,shadows:SHADOWS>0});
 function buildMesh(F){
   const v=[],{W,H,g}=F,Y=WALL_H;
   const quad=(p,n,uv,layer)=>{for(const i of[0,1,2,0,2,3])v.push(p[i][0],p[i][1],p[i][2],n[0],n[1],n[2],uv[i][0],uv[i][1],layer)};
   const wall=(x,y)=>x<0||y<0||x>=W||y>=H||g[y*W+x]===1;
+  const fr=F.forest;
   for(let y=0;y<H;y++)for(let x=0;x<W;x++){
     if(g[y*W+x]===1)continue;
     const pk=F.pocketMask[y*W+x]?10:0;
     const fu=[[x/2,y/2],[(x+1)/2,y/2],[(x+1)/2,(y+1)/2],[x/2,(y+1)/2]];
     quad([[x,0,y],[x+1,0,y],[x+1,0,y+1],[x,0,y+1]],[0,1,0],fu,1+pk);
-    quad([[x,Y,y],[x+1,Y,y],[x+1,Y,y+1],[x,Y,y+1]],[0,-1,0],fu,(pk?4:F.panelAt[y*W+x]===2?6:F.panelAt[y*W+x]?4:2)+pk);
+    // a forest has no ceiling at all, only black sky (the noclip pockets keep theirs); its walls are the undergrowth cores built below
+    if(!fr||pk)quad([[x,Y,y],[x+1,Y,y],[x+1,Y,y+1],[x,Y,y+1]],[0,-1,0],fu,(pk?4:F.panelAt[y*W+x]===2?6:F.panelAt[y*W+x]?4:2)+pk);
+    if(fr&&!pk)continue;
     if(wall(x+1,y))quad([[x+1,0,y],[x+1,0,y+1],[x+1,Y,y+1],[x+1,Y,y]],[-1,0,0],[[y,1],[y+1,1],[y+1,0],[y,0]],pk);
     if(wall(x-1,y))quad([[x,0,y],[x,0,y+1],[x,Y,y+1],[x,Y,y]],[1,0,0],[[y,1],[y+1,1],[y+1,0],[y,0]],pk);
     if(wall(x,y+1))quad([[x,0,y+1],[x+1,0,y+1],[x+1,Y,y+1],[x,Y,y+1]],[0,0,-1],[[x,1],[x+1,1],[x+1,0],[x,0]],pk);
     if(wall(x,y-1))quad([[x,0,y],[x+1,0,y],[x+1,Y,y],[x,Y,y]],[0,0,1],[[x,1],[x+1,1],[x+1,0],[x,0]],pk);
+  }
+  if(fr){
+    // occluding undergrowth core: each wall face sits INSET into its tile, with floor laid under the gap, and runs on past its tile edge at inside corners
+    const vt=1-CORE_H/Y,under=new Set();
+    for(const c of FOREST.faces(F)){
+      const {tx,ty,dx,dz}=c,k=ty*W+tx;
+      if(!under.has(k)){under.add(k);const fu=[[tx/2,ty/2],[(tx+1)/2,ty/2],[(tx+1)/2,(ty+1)/2],[tx/2,(ty+1)/2]];quad([[tx,0,ty],[tx+1,0,ty],[tx+1,0,ty+1],[tx,0,ty+1]],[0,1,0],fu,1)}
+      if(dx){const px=(dx>0?tx+1:tx)-dx*INSET,z0=ty-c.e0,z1=ty+1+c.e1;quad([[px,0,z0],[px,0,z1],[px,CORE_H,z1],[px,CORE_H,z0]],[dx,0,0],[[z0,1],[z1,1],[z1,vt],[z0,vt]],0)}
+      else{const pz=(dz>0?ty+1:ty)-dz*INSET,x0=tx-c.e0,x1=tx+1+c.e1;quad([[x0,0,pz],[x1,0,pz],[x1,CORE_H,pz],[x0,CORE_H,pz]],[0,0,dz],[[x0,1],[x1,1],[x1,vt],[x0,vt]],0)}
+    }
   }
   // walls that are not really there
   for(const q of F.phantoms){
@@ -696,10 +741,11 @@ function buildMesh(F){
     quad([[x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[x0,y0,z1]],[0,-1,0],[[x0,z0],[x1,z0],[x1,z1],[x0,z1]],0);
   };
   const gate=(D,closed)=>{
-    // u runs along the corridor, w across it
-    const b=(u0,y0,w0,u1,y1,w1,door)=>D.ax===0?box(D.tx+u0,y0,D.ty+w0,D.tx+u1,y1,D.ty+w1,door?3:0,0)
-                                               :box(D.tx+w0,y0,D.ty+u0,D.tx+w1,y1,D.ty+u1,0,door?3:0);
-    b(0.34,0,0,0.66,Y,0.14,false);b(0.34,0,0.86,0.66,Y,1,false);b(0.34,1.04,0.14,0.66,Y,0.86,false);
+    // u runs along the corridor, w across it. In the forest the frame is old stone, as tall as the hedge on either side.
+    const FR=fr?7:0,YG=fr?CORE_H:Y;
+    const b=(u0,y0,w0,u1,y1,w1,door)=>D.ax===0?box(D.tx+u0,y0,D.ty+w0,D.tx+u1,y1,D.ty+w1,door?3:FR,0)
+                                               :box(D.tx+w0,y0,D.ty+u0,D.tx+w1,y1,D.ty+u1,0,door?3:FR);
+    b(0.34,0,0,0.66,YG,0.14,false);b(0.34,0,0.86,0.66,YG,1,false);b(0.34,1.04,0.14,0.66,YG,0.86,false);
     if(closed)b(0.40,0,0.14,0.60,1.04,0.86,true);
   };
   if(F.door)gate(F.door,true);
@@ -725,6 +771,8 @@ function buildMesh(F){
   if(worldMesh){scene.remove(worldMesh);worldMesh.geometry.dispose()}
   worldMesh=new THREE.Mesh(geo,mats);worldMesh.castShadow=true;worldMesh.receiveShadow=true;worldMesh.frustumCulled=false;worldMesh.matrixAutoUpdate=false;
   scene.add(worldMesh);
+  if(forestGrp){FOREST.dispose(forestGrp);forestGrp=null}
+  if(fr){forestGrp=FOREST.build(F);scene.add(forestGrp);F.fo.stats=forestGrp.userData.stats}
   for(const l of shadLights)l.userData.key='';
 }
 function buildSdf(){}
@@ -1066,7 +1114,7 @@ function buildHand(t,ex,ey,ez,yaw,pitch){
 /* ---------- static decor: pillars, brazier, rubble, sconces and room dressing ---------- */
 const M6={};function mesh6(k){if(M6[k])return M6[k];const c=MESH_DATA[k],o=new Float32Array(c.length/9*6);for(let i=0,j=0;i<c.length;i+=9)for(let q=0;q<6;q++)o[j++]=c[i+q];return M6[k]=o}
 function buildProp(pr,F){
-  const f={p:[pr.x,0,pr.z],R:rYaw(pr.r),lo:[pr.x*0.37,0,pr.z*0.37]},S=pr.s,st=F.biome.stone;
+  const f={p:[pr.x,0,pr.z],R:rYaw(pr.r),lo:[pr.x*0.37,0,pr.z*0.37]},S=pr.s,st=F.stone;
   const wood=[0.42,0.26,0.13,6],woodD=[0.27,0.17,0.09,6],iron=[0.2,0.2,0.22,4],bone=[0.82,0.78,0.66,9];
   switch(pr.t){
   case 'barrel':{
@@ -1100,7 +1148,21 @@ function buildProp(pr,F){
     break}
   case 'shroom':{
     for(let i=0;i<5;i++){const a=i*2.3+pr.r,r=i?0.05+((i*37)%5)*0.018:0,h=(0.07+((i*53)%7)*0.015)*S,x=Math.cos(a)*r,z=Math.sin(a)*r;
-      seg(f,[x,0,z],[x+0.006,h,z],0.012,0.009,[0.8,0.8,0.7,1]);ball(f,[x+0.006,h,z],[0.035*S,0.018*S,0.035*S],pr.v?[0.25,1.5,1.2,7]:[0.75,0.2,0.12,1]);}
+      seg(f,[x,0,z],[x+0.006,h,z],0.012,0.009,[0.8,0.8,0.7,1]);ball(f,[x+0.006,h,z],[0.035*S,0.018*S,0.035*S],pr.v?(F.forest?[0.1,0.55,0.48,7]:[0.25,1.5,1.2,7]):[0.75,0.2,0.12,1]);}
+    break}
+  case 'log':{
+    const cl=[0.2,0.13,0.08,6],mo=[0.08,0.2,0.06,9];
+    seg(f,[-0.2*S,0.075,0],[0.2*S,0.08,0.01],0.08*S,0.07*S,cl);ball(f,[-0.2*S,0.075,0],[0.012,0.075*S,0.075*S],[0.4,0.32,0.22,6],true);
+    ball(f,[0.03,0.14*S,0],[0.1*S,0.025,0.05],mo,true);if(pr.v)seg(f,[0.05,0.1,0],[0.12,0.2,0.07],0.02,0.008,cl);
+    break}
+  case 'stump':{
+    const cl=[0.22,0.14,0.08,6];
+    seg(f,[0,0,0],[0,0.24*S,0],0.13*S,0.1*S,cl);ball(f,[0,0.245*S,0],[0.1*S,0.01,0.1*S],[0.42,0.34,0.24,6],true);
+    for(let i=0;i<3;i++){const a=i*2.1+pr.r;seg(f,[Math.cos(a)*0.08,0.01,Math.sin(a)*0.08],[Math.cos(a)*0.2,0.01,Math.sin(a)*0.2],0.03,0.006,cl)}
+    if(pr.v)ball(f,[0.09,0.2*S,0.03],[0.05,0.02,0.04],[0.08,0.2,0.06,9],true);
+    break}
+  case 'fern':{
+    for(let i=0;i<7;i++){const a=i*0.9+pr.r,l=0.2+((i*37)%5)*0.025;seg(f,[0,0.02,0],[Math.cos(a)*l,0.1+l*0.3,Math.sin(a)*l],0.012,0.004,[0.06,0.2,0.07,2])}
     break}
   case 'ice':{
     for(let i=0;i<5;i++){const a=i*1.9+pr.r,r=i?0.06+((i*29)%4)*0.015:0,h=(i?0.12+((i*41)%6)*0.03:0.3)*S,x=Math.cos(a)*r,z=Math.sin(a)*r;
@@ -1257,12 +1319,19 @@ function doorKnob(f,col){
 }
 function buildStatic(F){
   TB=DEC;DEC.n=0;
-  const st=[...F.biome.stone,9],dk=[st[0]*0.8,st[1]*0.8,st[2]*0.8,9],iron=[0.1,0.09,0.085,4];
+  const st=[...F.stone,9],dk=[st[0]*0.8,st[1]*0.8,st[2]*0.8,9],iron=[0.1,0.09,0.085,4];
   const I=(x,z,yaw)=>({p:[x,0,z],R:rYaw(yaw||0),lo:[x*0.61,0,z*0.61]});
-  for(const q of F.pillars)emit(mesh6('pillar'),I(q[0],q[1]),ZERO3,[1,1,1],st);
+  if(!F.forest)for(const q of F.pillars)emit(mesh6('pillar'),I(q[0],q[1]),ZERO3,[1,1,1],st);
   if(F.safe){const f=I(F.safe.x,F.safe.z);emit(mesh6('pillar'),f,ZERO3,[1.15,0.3,1.15],st);emit(mesh6('bowl'),f,[0,0.375,0],[1,1,1],iron)}
-  for(const r of F.rubble)emit(mesh6('octa'),I(r.x,r.z,r.r),[0,r.s*r.sy*0.6,0],[r.s*1.4,r.s*r.sy,r.s],dk);
-  for(const q of F.sconces){const f=I(q.x,q.z);slab(f,[0,0.72,0],[0.05,0.2,0.05],iron);slab(f,[-q.dx*0.07,0.82,-q.dz*0.07],[0.12,0.04,0.12],iron)}
+  for(const r of F.rubble.concat(F.litter||[]))emit(mesh6('octa'),I(r.x,r.z,r.r),[0,r.s*r.sy*0.6,0],[r.s*1.4,r.s*r.sy,r.s],dk);
+  for(const q of F.sconces){const f=I(q.x,q.z);
+    if(F.forest){ // an old iron lantern hung from a leaning wooden post
+      const wd=[0.2,0.13,0.08,6],gl=[1.0,0.62,0.25,7],ax=q.dx?0.2:0.045,az=q.dz?0.2:0.045,lx=-q.dx*0.17,lz=-q.dz*0.17;
+      slab(f,[0,0.45,0],[0.055,0.9,0.055],wd);slab(f,[lx/2,0.87,lz/2],[Math.max(ax,0.045)*0.95,0.035,Math.max(az,0.045)*0.95],wd);
+      slab(f,[lx,0.8,lz],[0.01,0.1,0.01],iron);slab(f,[lx,0.6,lz],[0.07,0.016,0.07],iron);slab(f,[lx,0.665,lz],[0.052,0.095,0.052],gl);
+      slab(f,[lx,0.725,lz],[0.082,0.02,0.082],iron);slab(f,[lx,0.745,lz],[0.04,0.02,0.04],iron);
+      for(const a of[-1,1])for(const b of[-1,1])slab(f,[lx+a*0.028,0.665,lz+b*0.028],[0.008,0.1,0.008],iron);
+    }else{slab(f,[0,0.72,0],[0.05,0.2,0.05],iron);slab(f,[-q.dx*0.07,0.82,-q.dz*0.07],[0.12,0.04,0.12],iron)}}
   for(const pr of F.props)buildProp(pr,F);
   for(const D of F.sdoors){
     const f={p:[D.x,0,D.z],R:rYaw(D.r),lo:[D.x*0.37,0,D.z*0.37]},band=[0.13,0.12,0.12,4];
@@ -1552,11 +1621,11 @@ function los(x0,z0,x1,z1){
   for(let i=1;i<n;i++){const t=i/n;if(solidAt(x0+dx*t,z0+dz*t))return false}
   return true;
 }
-function loadFloor(depth){
+function loadFloor(depth,look){
   R.depth=depth;
-  if(depth>deepest){deepest=depth;store.set('deepest',deepest)}
-  R.xray=0;F=genFloor(R.seed,depth);panelLvl=1;P.grab=null;if(typeof MIM!=='undefined')mimicReset();
-  buildMesh(F);buildStatic(F);buildSdf(F);
+  if(depth>deepest&&!(URL_DEPTH&&depth===R.startDepth)){deepest=depth;store.set('deepest',deepest)}
+  R.xray=0;F=genFloor(R.seed,depth,look);panelLvl=1;P.grab=null;if(typeof MIM!=='undefined')mimicReset();
+  buildMesh(F);buildStatic(F);buildSdf(F);sweepWorld();
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
   P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;P.inSafe=false;nearNpc=null;
   sealMsgT=0;doorMsgT=0;
@@ -1578,6 +1647,8 @@ function onTileChange(){
     if(los(P.x,P.z,x+0.5,y+0.5))F.seen[i]=1;
   }
 }
+// ?depth=N lets a new run begin at any depth from 1 to 40 without touching the saved record
+const URL_DEPTH=(()=>{const d=+new URLSearchParams(location.search).get('depth');return d>=1&&d<=40?Math.floor(d):0})();
 let deepest=Math.max(1,+store.get('deepest',1)||1,+((store.get('best',null)||{}).depth)||1);
 function fillStartSel(){
   const sel=$('startSel'),want=clamp(+store.get('startDepth',1)||1,1,deepest);
@@ -1586,10 +1657,11 @@ function fillStartSel(){
     o.textContent='Depth '+d+(d===deepest&&d>1?' (deepest reached)':'');sel.appendChild(o)}
   sel.value=want;$('depthLbl').hidden=deepest<2;
 }
+const floorTag=()=>F.name+(F.variant.ix?` (${F.variant.name})`:'');
 function startRun(seed,depth,force){
   roomLeave();$('deadTitle').textContent='THE DARK TAKES YOU';
   if(MP.guest&&!force){mpJoinClick();return}
-  const sd=force?depth:clamp(depth||+$('startSel').value||1,1,deepest);
+  const sd=force?depth:clamp(depth||URL_DEPTH||+$('startSel').value||1,1,Math.max(deepest,URL_DEPTH));
   P.down=false;
   R.seed=(seed||randSeed()).toUpperCase();R.pk={};P.pick=0;R.score=0;R.time=0;R.gems=0;R.startDepth=sd;
   P.hp=maxHp();P.fuel=100;P.stam=100;P.winded=false;P.flash=1+Math.floor((sd-1)/3)+(up.band|0);P.ward=0;R.wind=false;P.inv=0;P.chill=0;lowFuelSaid=false;
@@ -1597,7 +1669,7 @@ function startRun(seed,depth,force){
   state='play';
   ['title','pause','dead','talk'].forEach(id=>$(id).classList.add('hidden'));talk=null;
   $('hud').classList.remove('hidden');$('map').classList.remove('hidden');
-  say(sd>1?`Depth ${sd}: ${F.name}`:'Find 3 shards to break the seal',4);showTips();
+  say(sd>1?`Depth ${sd}: ${floorTag()}`:'Find 3 shards to break the seal',4);showTips();
   initAudio();
   if(MP.host)mpSendRun();
 }
@@ -1610,7 +1682,7 @@ function showTips(){
   t.forEach((msg,i)=>tipTimers.push(setTimeout(()=>{if(state==='play'&&R.depth===d)say(msg,4)},4200+i*4600)));
 }
 function toTitle(){
-  roomLeave();glFallEnd();
+  roomLeave();glFallEnd();GL.queued=null;
   if(MP.on)mpLeave(false);
   state='title';
   ['pause','dead','hud','map','talk'].forEach(id=>$(id).classList.add('hidden'));talk=null;clearPrompt();
@@ -1642,7 +1714,7 @@ let toastTimer=0;
 function say(t,secs){const el=$('toast');el.textContent=t;el.style.opacity=1;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.style.opacity=0,(secs||2.5)*1000)}
 
 function die(){
-  roomLeave();R.xray=0;
+  roomLeave();GL.queued=null;R.xray=0;
   if(MP.on&&!MP.wiping){mpDown();return}
   state='dead';clearPrompt();
   mpDeadPanel();
@@ -1667,7 +1739,7 @@ function descend(n,why){
     if(P.down){P.down=false;P.hp=maxHp();P.fuel=Math.max(P.fuel,50);P.inv=2;say('You rise again',2)}
     loadFloor(R.depth+n);
     $('fade').style.transition='';$('fade').style.opacity=0;
-    say((why?why+'. ':'')+`Depth ${R.depth}: ${F.name}`,why?5:3.5);showTips();
+    say((why?why+'. ':'')+`Depth ${R.depth}: ${floorTag()}`,why?5:3.5);showTips();
     state='play';
   },550);
 }
@@ -2654,6 +2726,7 @@ function initAudio(){
     master=ac.createGain();master.gain.value=muted?0:0.55;master.connect(ac.destination);
     noiseBuf=ac.createBuffer(1,ac.sampleRate,ac.sampleRate);
     const d=noiseBuf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
+    initAmbience(ac,master,noiseBuf);
     // low ambient drone
     for(const[f,v]of[[55,0.05],[82.6,0.03],[110.7,0.015]]){const o=ac.createOscillator(),g=ac.createGain();o.frequency.value=f;g.gain.value=v;o.connect(g);g.connect(master);o.start()}
   }catch(e){ac=null}
@@ -2821,7 +2894,7 @@ function update(dt){
     let nd=null;
     if(!best&&ctl){let dd=0.72;for(const D of F.sdoors){if(D.used)continue;const d=Math.hypot(D.x-P.x,D.z-P.z);if(d<dd&&(D.x-P.x)*Math.cos(P.yaw)+(D.z-P.z)*Math.sin(P.yaw)>d*0.45){dd=d;nd=D}}}
     if(best!==nearNpc||nd!==nearDoor){nearNpc=best;nearDoor=nd;if(state!=='room')$('tFlash').textContent=best?'TALK':nd?'OPEN':'FLASH'}
-    const pt=!best&&!nd&&state==='play'?pkAim():null;
+    const pt=!best&&!nd&&state==='play'&&P.pick>0&&!P.down&&!P.away&&!P.grab?pkAim():null;
     if(state!=='room')setText('prompt',best?(touch.on?'TALK':pad.id?'X':'E')+': speak with '+NPC[best.type].name:nd?(touch.on?'OPEN':pad.id?'X':'E')+': open the strange door':pt?pt.ok?(touch.on?'PICK':pad.id?'RB':'Q')+': break through this wall':'This wall will not break':'');}
   if(P.fuel<20&&!lowFuelSaid){lowFuelSaid=true;say(P.fuel<=0?'Your torch is out':'Your torch is guttering. Find oil.',3)}
   if(P.inv>0)P.inv-=dt;
@@ -2983,9 +3056,9 @@ function update(dt){
 // never start while something is hunting you, so they unsettle without ever costing a life.
 // __game.glitch('freeze'|'rubber'|'rubberfwd'|'replay'|'hud'|'tpose'|'hole'|'fall'|'loop') forces one for testing.
 const GL={cd:60,used:{},frz:0,frzAfter:null,buzz:null,hist:[],histT:0,rb:null,rbN:0,figs:[],hole:null,fall:null,loop:null,
-  ghosts:[],walked:null,peerH:new Map(),hudOv:{},hudSeq:null,chatT:0,dip:0,netEl:null,netT:0};
+  ghosts:[],walked:null,queued:null,qT:0,peerH:new Map(),hudOv:{},hudSeq:null,chatT:0,dip:0,netEl:null,netT:0};
 function glReset(){
-  glFallEnd();
+  glFallEnd();GL.queued=null;
   GL.cd=F.back?28+Math.random()*30:55+Math.random()*60;GL.used={};GL.frz=0;GL.frzAfter=null;GL.hist=[];GL.rb=null;
   GL.figs=[];GL.ghosts=[];GL.fall=null;GL.loop=null;GL.hudOv={};GL.hudSeq=null;GL.dip=0;GL.walked=new Uint8Array(F.W*F.H);
   glHoleOff();
@@ -3004,6 +3077,10 @@ function glCalm(chasing){
 }
 function glTick(dt,chasing){
   if(!F||state==='title')return;
+  if(GL.queued){   // a console-queued glitch waits for play, then a beat so you see it begin
+    if(state!=='play')GL.qT=0.6;
+    else if((GL.qT-=dt)<=0){const k=GL.queued;GL.queued=null;if(!glStart(k,true))console.log(GL_NOPE)}
+  }
   if(GL.netT>0){GL.netT-=dt;if(GL.netT<=0)glNet('')}
   if(GL.chatT>0)GL.chatT-=dt;
   if(!BABY&&!GL.prep&&R.depth>=3){GL.prep=1;window.requestIdleCallback?requestIdleCallback(glFallBuild,{timeout:9000}):setTimeout(glFallBuild,3000)}   // build the face while nobody is looking
@@ -3030,6 +3107,13 @@ function glTick(dt,chasing){
   let r=Math.random()*sum,pick=null;for(const o of ok){r-=o[1];if(r<=0){pick=o[0];break}}
   if(pick&&glStart(pick)){GL.used[pick]=(GL.used[pick]|0)+1;GL.cd=F.back?35+Math.random()*35:60+Math.random()*70}
   else GL.cd=6;
+}
+const GL_NOPE='not here: step away from the exit or traps and try again';
+// console test hook: starts now, or queues until the game is back in play
+function glTest(k){
+  if(state==='play')return glStart(k,true)?'started':GL_NOPE;
+  if(state==='pause'||state==='trans'){GL.queued=k;GL.qT=0.6;return 'queued: click Resume and it starts'}
+  return 'not now: start a run first';
 }
 function glStart(k,forced){
   if(state!=='play')return false;
@@ -3299,7 +3383,7 @@ FALL.dist=FALL.vt*(FALL.tFall-FALL.tau*(1-Math.exp(-FALL.tFall/FALL.tau)));   //
 let BABY=null,VOID=null;
 function glFallBuild(){   // built once, kept for every later fall
   if(BABY)return true;
-  try{BABY=createBabyFace(THREE,{quality:Q});VOID=createFallVoid(THREE,{quality:Q})}catch(e){BABY=VOID=null;return false}
+  try{BABY=createBabyFace(THREE,{quality:Q});VOID=createFallVoid(THREE,{quality:Q})}catch(e){BABY=VOID=null;console.warn('glFallBuild failed',e);return false}
   return true;
 }
 // mouse and touch look during the fall only nudge the view
@@ -3496,13 +3580,16 @@ function render(t){
   const L={ex,ey,ez,B,torchR,tx:ex+rx*0.2+fwx*0.04,ty:ey-0.14,tz:ez+rz*0.2+fwz*0.04};
   if(solidAt(L.tx,L.tz)){L.tx=ex;L.tz=ez}
   {const pl=F.back?0.05+0.95*panelLvl:1;
-    L.amb=F.dark?AMB_ZERO:F.back?[B.amb[0]*pl,B.amb[1]*pl,B.amb[2]*pl]:B.amb;
-    L.fog=[B.amb[0]*2.2*pl,B.amb[1]*2.2*pl,B.amb[2]*2.2*pl];
+    const aK=F.ambK||1;
+    const aT=F.ambT||[1,1,1],a0=B.amb[0]*aK*aT[0],a1=B.amb[1]*aK*aT[1],a2=B.amb[2]*aK*aT[2];
+    L.amb=F.dark?AMB_ZERO:F.back?[a0*pl,a1*pl,a2*pl]:[a0,a1,a2];
+    L.fog=[a0*2.2*pl,a1*2.2*pl,a2*2.2*pl];scene.fog.density=0.062*(F.fogK||1);
+    if(F.forest){L.fog=[a0*0.4,a1*0.4,a2*0.4];scene.fog.density=0.062*1.3*(F.fogK||1)}
     {const ak=F.back?2.5:LK.amb;ambLight.color.setRGB(L.amb[0]*ak,L.amb[1]*ak,L.amb[2]*ak)}
     scene.fog.color.setRGB(L.fog[0],L.fog[1],L.fog[2]);
-    if(scene.environment)scene.environmentIntensity=F.dark?0.01:F.back?0.3*pl:LK.env;}
+    if(scene.environment)scene.environmentIntensity=F.dark?0.01:F.back?0.3*pl:F.forest?0.012:LK.env;}
   torchLight.position.set(L.tx,L.ty,L.tz);
-  torchLight.color.setRGB(B.torch[0],B.torch[1],B.torch[2]);
+  {const tt=F.torchT||[1,1,1];torchLight.color.setRGB(B.torch[0]*tt[0],B.torch[1]*tt[1],B.torch[2]*tt[2])}
   torchLight.distance=torchR*1.2;
   torchLight.intensity=LK.torch*flick*(0.3+0.7*torchR/7.6)*(F.back?0.5:1);
   flashLight.position.set(ex,ey,ez);flashLight.intensity=flashT*LK.flash;
@@ -3521,7 +3608,7 @@ function render(t){
   for(const q of F.pockets){const d=(q.x-ex)**2+(q.z-ez)**2;if(d<140)lights.push([d,q.x,1.0,q.z,PANEL_COL,q.found?1.1:0.55,2.3])}
   for(const q of F.sconces){const d=(q.lx-ex)**2+(q.lz-ez)**2;if(d<200){
     const fl=1+Math.sin(t*9+q.ph)*0.07+Math.sin(t*17.3+q.ph*2)*0.05;q.fl=fl;
-    lights.push([d-6,q.lx,0.9,q.lz,SCONCE_COL,1.25*fl,4.6,'s'+q.lx+','+q.lz])}}
+    lights.push([d-6,q.lx,F.forest?0.68:0.9,q.lz,SCONCE_COL,1.25*fl,4.6,'s'+q.lx+','+q.lz])}}
   if(F.safe){const d=(F.safe.x-ex)**2+(F.safe.z-ez)**2;if(d<400){
     const fl=1+Math.sin(t*8.3)*0.08+Math.sin(t*19.1)*0.05;F.safe.fl=fl;
     lights.push([d-30,F.safe.x,0.85,F.safe.z,[1.0,0.56,0.2],2.3*fl,7.5,'safe'])}}
@@ -3630,10 +3717,10 @@ function render(t){
   }
   for(const q of F.sconces){
     if((q.x-ex)**2+(q.z-ez)**2>20*20)continue;
-    const fx=q.x-q.dx*0.07,fz=q.z-q.dz*0.07,fl=q.fl||1;
-    spr(fx,0.93,fz,0.15*fl,0.24*fl,11,1.0,0.55,0.16,1,1);
-    spr(fx,0.93,fz,0.8,0.8,7,1.0,0.42,0.1,0.3*fl,1);
-    if(Q>0&&(q.x-ex)**2+(q.z-ez)**2<81)for(let i=0;i<3;i++){const a=(t*0.4+i*0.33+q.ph)%1;spr(fx+Math.sin(i*2.4+t*1.3+q.ph)*0.06*a,0.98+a*0.45,fz+Math.cos(i*1.7+t+q.ph)*0.06*a,0.018,0.018,7,1.0,0.6,0.2,(1-a)*0.9,1)}
+    const fo=F.forest?0.17:0.07,fy=F.forest?0.67:0.93,fx=q.x-q.dx*fo,fz=q.z-q.dz*fo,fl=q.fl||1;
+    spr(fx,fy,fz,F.forest?0.09*fl:0.15*fl,F.forest?0.15*fl:0.24*fl,11,1.0,0.55,0.16,1,1);
+    spr(fx,fy,fz,0.8,0.8,7,1.0,0.42,0.1,0.3*fl,1);
+    if(Q>0&&(q.x-ex)**2+(q.z-ez)**2<81)for(let i=0;i<3;i++){const a=(t*0.4+i*0.33+q.ph)%1;spr(fx+Math.sin(i*2.4+t*1.3+q.ph)*0.06*a,fy+0.05+a*0.45,fz+Math.cos(i*1.7+t+q.ph)*0.06*a,0.018,0.018,7,1.0,0.6,0.2,(1-a)*0.9,1)}
   }
   if(flashT>0){const k=1-flashT,rr=0.4+k*5.5;
     for(let i=0;i<18;i++){const a=i/18*6.283+k;spr(ex+Math.cos(a)*rr,0.25+((i*7)%5)*0.16,ez+Math.sin(a)*rr,0.25,0.25,7,0.8,0.9,1.0,flashT*0.8,1)}}
@@ -3643,6 +3730,13 @@ function render(t){
     const py=0.05+((m[1]+t*0.012+Math.sin(t*0.3+m[3])*0.05)%1.15);
     const k=clamp(1-Math.hypot(px-ex,pz-ez)/Math.min(torchR,4),0,1);
     if(k>0.02)spr(px,py,pz,m[4]*2.4,m[4]*2.4,7,B.torch[0],B.torch[1],B.torch[2],k*0.5,1);
+  }
+  if(F.forest&&F.fo.n){
+    const P2=F.fo.n,fv=F.variant.fo;
+    for(const q of P2.flies){if((q.x-ex)**2+(q.z-ez)**2>64)continue;
+      const fx=q.x+Math.sin(t*q.sp+q.ph)*0.3,fy=q.y+Math.sin(t*q.sp*1.7+q.ph*2)*0.1,fz=q.z+Math.cos(t*q.sp*0.8+q.ph)*0.3,bl=0.5+0.5*Math.sin(t*(1.2+q.sp)+q.ph*3);
+      spr(fx,fy,fz,0.045,0.045,7,0.75,1,0.4,0.95*bl,1);spr(fx,fy,fz,0.2,0.2,7,0.5,1,0.3,0.3*bl,1)}
+    if(fv.glow>0)for(const q of P2.shrooms){if((q.x-ex)**2+(q.z-ez)**2<30)spr(q.x,0.07,q.z,0.32*q.sx,0.32*q.sx,7,0.3,0.9,0.8,0.05*fv.glow,1)}
   }
   // a strange door gives itself away at the keyhole: cold starlight, kiln glow, or nothing at all
   for(const D of F.sdoors){
@@ -3773,7 +3867,7 @@ function frame(now){
   const raw=step(now);
   mpVoiceTick(Math.min(raw,0.1));chatTick();
   if(state==='play')adapt(raw);
-  setHum();
+  setHum();updateAmbience(Math.min(raw,0.1),{F,state,hold:GL.frz>0||!!GL.fall||P.away});
   if(GL.frz<=0){
     if(!window.__norender){if((state==='room'||ROOMS.watching)&&ROOMS.active){resize();renderer.toneMappingExposure=1;ROOMS.render()}else render(now/1000)}
     if(state!=='title'){drawHUD();if(state!=='room'&&!ROOMS.watching)drawMap()}
@@ -3785,5 +3879,5 @@ setInterval(()=>{if(MP.host&&document.hidden&&performance.now()-last>200)step(pe
 // a backdrop maze behind the title screen
 R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
 {const rc=cleanCode(new URLSearchParams(location.search).get('room'));if(rc)mpPrepareJoin(rc)}
-window.__game={roomInput,XR,xrayTick,wallsBetween,update,render,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={amb,roomInput,XR,xrayTick,wallsBetween,update,render,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);
