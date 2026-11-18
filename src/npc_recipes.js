@@ -119,7 +119,7 @@ export const KEEPER = {
     // v11: robe and sleeves are cloth simulations (src/npc_cloth.js) laid out loose round the body SDF; the SDF garments above stay as fields (stole, beard, props rest on them)
     const cd = clothDress(B, {off: this.rig.waist, R: K.rotZ(this.rig.lean), skirtBase: skirt.base, ease: 0.012, hang: 0.03, nu: 72, rowsUp: 18, rowsLow: 32, folds: 12, gather: 0.1, bend: 0.25, rag: skirt.lift, seed: 3,
       sleeves: [{arm: 0, pouch: 0.044, nu: 24, rows: 26}, {arm: 1, pouch: 0.038, nu: 24, rows: 26}],
-      stole: {nu: 44, rows: 22, gap: 0.024, edge: 0.3, yoke: 0.13, lappet: 0.3, width: 0.46}});
+      stole: {nu: 44, rows: 22, gap: 0.031, edge: 0.3, yoke: 0.13, lappet: 0.3, width: 0.46}});
     const cloth = clothParts(cd, {wearTop: WEAR_TOP, wearSkirt: WEAR_SKIRT, rag: skirt.lift, hem: {cells: 25, rows: 6}, cuff: {cells: 8, rows: 3}, placket: {motif: 2}, stole: {motif: 3, border: 0.018}, wearStole: WEAR_STOLE, cord: {knot: -2}});
     const {torso: _t, sleeve0: _s0, sleeve1: _s1, cuff0: _c0, cuff1: _c1, sash: _sa, stole: _st, ...Drest} = D.parts;
     return {

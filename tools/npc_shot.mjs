@@ -39,6 +39,7 @@ const VIEWS = {
   '34':     {dist: 1.15, turn: 38,  aimY: seated ? 0.45 : 0.78, headLock: true},
   full:     {dist: 1.75,  turn: 0,   aimY: seated ? 0.4 : 0.52, camY: seated ? 0.5 : 0.6},
   full34:   {dist: 1.75,  turn: 38,  aimY: seated ? 0.4 : 0.52, camY: seated ? 0.5 : 0.6, headLock: true},
+  profile:  {dist: 0.45, turn: 90,  aimY: 0.9, camY: 0.9, headLock: true},   // head and shoulders from the side (neck and collar)
   side:     {dist: 1.1,  turn: 90,  aimY: seated ? 0.45 : 0.8, headLock: true},
   wide:     {dist: 3.2,  turn: 15,  aimY: seated ? 0.35 : 0.5},
   face:     {dist: 0.38, turn: 0,   aimY: seated ? 0.62 : 0.95, camY: seated ? 0.62 : 0.95},
