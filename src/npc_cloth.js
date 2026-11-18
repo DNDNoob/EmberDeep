@@ -262,6 +262,10 @@ export function clothDress(B, o) {
     // 1. colliders
     bodyGrid = new SdfGrid(B.sdf, [-0.19, -0.14, -0.27, 0.30, 0.43, 0.27], o.gridCell ?? 0.0075); yield* bodyGrid.fill();
     const bodyCol = (thick, mask) => ({thick, mask, mu: 0.5, query: (x, y, z, g) => { const u = toU([x, y, z]), d = bodyGrid.query(u[0], u[1], u[2], g); if (g) { const w = rot(R, [g[0], g[1], g[2]]); g[0] = w[0]; g[1] = w[1]; g[2] = w[2]; } return d; }});
+    // the robe rests exactly on the torso cloth field (no arms: the sleeves are separate), so stole and props that follow that field stay clear of it
+    const Fr = (x, y, z) => B.torsoCloth(x, Math.max(y, hang), z) - ease;
+    const robeGrid = new SdfGrid(Fr, [-0.19, -0.14, -0.27, 0.30, 0.43, 0.27], o.gridCell ?? 0.0075); yield* robeGrid.fill();
+    const robeCol = (thick, mask) => ({thick, mask, mu: 0.5, query: (x, y, z, g) => { const u = toU([x, y, z]), d = robeGrid.query(u[0], u[1], u[2], g); if (g) { const w = rot(R, [g[0], g[1], g[2]]); g[0] = w[0]; g[1] = w[1]; g[2] = w[2]; } return d; }});
     for (let a = 0; a < NA; a++) for (let j = 0; j < NY; j++) rTab[a * NY + j] = marchR(a / NA * 2 * Math.PI, j / (NY - 1) * YH);
     yield;
     const under = (thick, mask, inset = 0) => ({thick, mask, mu: 0.4, query: (x, y, z, g) => {
@@ -274,7 +278,7 @@ export function clothDress(B, o) {
     const P = layoutRobe(); X = P;
     const gu = (i, j) => j < nUp - 1 ? 1 : 1 + gather * smoothstep(0, 1, (j - nUp + 1) / (nLow - 3)) ** 1.2 * (0.8 + 0.4 * noise(i * 0.7, j * 0.2, 3.3));
     robe = new Cloth(P, nu, nv, {gather: gu, bend: o.bend ?? 0.2});
-    robe.colliders.push(bodyCol(ease - 0.002, 1), under(0.004, 1));
+    robe.colliders.push(robeCol(0.001, 1), under(0.004, 1));
     for (let i = 0; i < nu; i++) { robe.pin(i, [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]); const q = (i + (nUp - 1) * nu) * 3; robe.pin(i + (nUp - 1) * nu, [P[q], P[q + 1], P[q + 2]]); }
     yield* robe.run({steps: o.steps ?? 90, iters: o.iters ?? 8, floor: floorY});
     // 3. sleeves

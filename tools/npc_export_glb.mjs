@@ -10,6 +10,8 @@
 import * as R from '../src/npc_recipes.js';
 import {bakeRecipe} from '../src/npc_kit.js';
 import {writeFileSync, mkdirSync} from 'node:fs';
+import {deflateSync} from 'node:zlib';
+import {hairAtlas, ATLAS_TILES} from '../src/npc_hair.js';
 import {resolve, dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -19,6 +21,15 @@ const outDir = flag('out') || '/mnt/project-files/emberdeep/blender';
 const rec = R[name];
 if (!rec) { console.log('no recipe', name, 'have', Object.keys(R).join(', ')); process.exit(1); }
 
+// tiny PNG writer (RGBA8, no filter) for the hair atlas
+const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+const crc32 = b => { let c = 0xFFFFFFFF; for (const x of b) c = CRC[(c ^ x) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+function png(w, h, rgba) {
+  const raw = Buffer.alloc((w * 4 + 1) * h); for (let y = 0; y < h; y++) { raw[y * (w * 4 + 1)] = 0; Buffer.from(rgba.buffer, rgba.byteOffset + y * w * 4, w * 4).copy(raw, y * (w * 4 + 1) + 1); }
+  const chunk = (t, d) => { const b = Buffer.alloc(12 + d.length); b.writeUInt32BE(d.length, 0); b.write(t, 4); d.copy(b, 8); b.writeUInt32BE(crc32(b.subarray(4, 8 + d.length)), 8 + d.length); return b; };
+  const ih = Buffer.alloc(13); ih.writeUInt32BE(w, 0); ih.writeUInt32BE(h, 4); ih[8] = 8; ih[9] = 6;
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ih), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+}
 const m3 = (a, b) => [a[0] * b[0] + a[1] * b[3] + a[2] * b[6], a[0] * b[1] + a[1] * b[4] + a[2] * b[7], a[0] * b[2] + a[1] * b[5] + a[2] * b[8],
   a[3] * b[0] + a[4] * b[3] + a[5] * b[6], a[3] * b[1] + a[4] * b[4] + a[5] * b[7], a[3] * b[2] + a[4] * b[5] + a[5] * b[8],
   a[6] * b[0] + a[7] * b[3] + a[8] * b[6], a[6] * b[1] + a[7] * b[4] + a[8] * b[7], a[6] * b[2] + a[7] * b[5] + a[8] * b[8]];
@@ -41,7 +52,7 @@ if (A.restAt) fr.rest = subF(U, A.restAt.map(v => v * S), A.restR);
 
 // emitS port: returns {pos, nrm, col, mid, det, ao} in game axes (x fwd), before the glTF axis swap
 function place(mesh, f, c, col, col2, matId, R2, sc, dr) {
-  const n = mesh.length / 9, o = {pos: new Float32Array(n * 3), nrm: new Float32Array(n * 3), col: new Float32Array(n * 3), mid: new Float32Array(n), det: new Float32Array(n), ao: new Float32Array(n)};
+  const n = mesh.length / 9, o = {uv: mesh.cards ? Float32Array.from({length: n * 2}, (_, k) => { const b = mesh.band, i = k >> 1, tile = Math.floor(b[i * 3 + 2] - 1.5); return k & 1 ? b[i * 3 + 1] : (tile + 0.03 + b[i * 3] * 0.94) / ATLAS_TILES; }) : null, pos: new Float32Array(n * 3), nrm: new Float32Array(n * 3), col: new Float32Array(n * 3), mid: new Float32Array(n), det: new Float32Array(n), ao: new Float32Array(n)};
   const Rm = R2 ? m3(f.R, R2) : f.R, cs = [c[0] * sc, c[1] * sc, c[2] * sc], p = fpt(f, cs);
   let R3, p3, y0 = 0, iy = 0;
   if (dr) { R3 = R2 ? m3(dr.f.R, R2) : dr.f.R; p3 = fpt(dr.f, cs); y0 = dr.y0; iy = 1 / (dr.y1 - dr.y0); }
@@ -69,7 +80,7 @@ function parts(lod) {
   const list = [];
   for (const q of rec.parts) {
     const f = fr[q.frame], m = baked.parts[q.part]; if (!f || !m) continue;
-    list.push({name: q.part, mat: q.mat, ...place(m[Math.min(lod, m.length - 1)], f, q.at || [0, 0, 0], pal[q.col], pal[q.col2 || q.col], MATID[q.mat], q.R, scOf(q.frame), q.drape && fr.D ? {f: fr.D, y0: q.drape[0], y1: q.drape[1]} : null)});
+    list.push({name: q.part, mat: q.cards ? 'hair_cards' : q.mat, ...place(m[Math.min(lod, m.length - 1)], f, q.at || [0, 0, 0], pal[q.col], pal[q.col2 || q.col], MATID[q.mat], q.R, scOf(q.frame), q.drape && fr.D ? {f: fr.D, y0: q.drape[0], y1: q.drape[1]} : null)});
   }
   const E = baked.eyes, ec = rec.eyes;
   if (E && fr[ec.frame]) {
@@ -91,14 +102,14 @@ function parts(lod) {
 
 // ---- minimal GLB writer ----
 function glb(list) {
-  const bin = [], views = [], acc = [], mats = [], matIx = {}, meshes = [], nodes = [];
+  const bin = [], views = [], acc = [], mats = [], matIx = {}, meshes = [], nodes = [], images = [], textures = [];
   let off = 0;
   const addBuf = (arr, target) => { // arr: typed array; returns bufferView index
     const b = Buffer.from(arr.buffer, arr.byteOffset, arr.byteLength), pad = (4 - b.length % 4) % 4;
     bin.push(b, Buffer.alloc(pad)); views.push({buffer: 0, byteOffset: off, byteLength: b.length, ...(target ? {target} : {})}); off += b.length + pad; return views.length - 1;
   };
   const addAcc = (arr, ct, type, withMinMax) => {
-    const o = {bufferView: addBuf(arr, 34962), componentType: ct, count: arr.length / {SCALAR: 1, VEC3: 3}[type], type};
+    const o = {bufferView: addBuf(arr, 34962), componentType: ct, count: arr.length / {SCALAR: 1, VEC3: 3, VEC2: 2}[type], type};
     if (withMinMax) { const mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9]; for (let i = 0; i < arr.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], arr[i + k]); mx[k] = Math.max(mx[k], arr[i + k]); } o.min = mn; o.max = mx; }
     acc.push(o); return acc.length - 1;
   };
@@ -108,12 +119,18 @@ function glb(list) {
     for (let i = 0; i < n; i++) { // game (x fwd, y up, z side) -> glTF (+Z front): (x,y,z) -> (-z, y, x), a proper rotation
       pos.set([-P.pos[i * 3 + 2], P.pos[i * 3 + 1], P.pos[i * 3]], i * 3); nrm.set([-P.nrm[i * 3 + 2], P.nrm[i * 3 + 1], P.nrm[i * 3]], i * 3);
     }
-    if (!(P.mat in matIx)) { matIx[P.mat] = mats.length; mats.push({name: P.mat, pbrMetallicRoughness: {baseColorFactor: [1, 1, 1, 1], metallicFactor: P.mat === 'metal' ? 0.8 : 0, roughnessFactor: P.mat === 'skin' ? 0.6 : P.mat === 'trim' ? 0.35 : 0.85}}); }
-    const attrs = {POSITION: addAcc(pos, 5126, 'VEC3', true), NORMAL: addAcc(nrm, 5126, 'VEC3'), COLOR_0: addAcc(P.col, 5126, 'VEC3'), _MATID: addAcc(P.mid, 5126, 'SCALAR'), _DETAIL: addAcc(P.det, 5126, 'SCALAR'), _AO: addAcc(P.ao, 5126, 'SCALAR')};
+    if (!(P.mat in matIx)) {
+      matIx[P.mat] = mats.length;
+      if (P.mat === 'hair_cards') { const at = hairAtlas(512), pb = png(at.w, at.h, at.data), bv = views.length; bin.push(pb, Buffer.alloc((4 - pb.length % 4) % 4)); views.push({buffer: 0, byteOffset: off, byteLength: pb.length}); off += pb.length + (4 - pb.length % 4) % 4;
+        images.push({bufferView: bv, mimeType: 'image/png'}); textures.push({source: 0, sampler: 0});
+        mats.push({name: 'hair_cards', alphaMode: 'MASK', alphaCutoff: 0.5, doubleSided: true, pbrMetallicRoughness: {baseColorFactor: [1, 1, 1, 1], baseColorTexture: {index: 0}, metallicFactor: 0, roughnessFactor: 0.75}}); }
+      else mats.push({name: P.mat, pbrMetallicRoughness: {baseColorFactor: [1, 1, 1, 1], metallicFactor: P.mat === 'metal' ? 0.8 : 0, roughnessFactor: P.mat === 'skin' ? 0.6 : P.mat === 'trim' ? 0.35 : 0.85}, ...(P.mat === 'cloth' ? {doubleSided: true} : {})});
+    }
+    const attrs = {POSITION: addAcc(pos, 5126, 'VEC3', true), NORMAL: addAcc(nrm, 5126, 'VEC3'), COLOR_0: addAcc(P.col, 5126, 'VEC3'), _MATID: addAcc(P.mid, 5126, 'SCALAR'), _DETAIL: addAcc(P.det, 5126, 'SCALAR'), _AO: addAcc(P.ao, 5126, 'SCALAR'), ...(P.uv ? {TEXCOORD_0: addAcc(P.uv, 5126, 'VEC2')} : {})};
     meshes.push({name: P.name, primitives: [{attributes: attrs, material: matIx[P.mat], mode: 4}]}); nodes.push({name: P.name, mesh: meshes.length - 1});
     tris += n / 3; verts += n; stats.push([P.name, n / 3]);
   }
-  const json = {asset: {version: '2.0', generator: 'EmberDeep tools/npc_export_glb.mjs'}, scene: 0, scenes: [{name: rec.id, nodes: nodes.map((_, i) => i)}], nodes, meshes, materials: mats, accessors: acc, bufferViews: views, buffers: [{byteLength: off}]};
+  const json = {asset: {version: '2.0', generator: 'EmberDeep tools/npc_export_glb.mjs'}, scene: 0, scenes: [{name: rec.id, nodes: nodes.map((_, i) => i)}], nodes, meshes, materials: mats, ...(images.length ? {images, textures, samplers: [{magFilter: 9729, minFilter: 9987, wrapS: 33071, wrapT: 33071}]} : {}), accessors: acc, bufferViews: views, buffers: [{byteLength: off}]};
   let js = Buffer.from(JSON.stringify(json)); js = Buffer.concat([js, Buffer.alloc((4 - js.length % 4) % 4, 0x20)]);
   const body = Buffer.concat(bin), total = 12 + 8 + js.length + 8 + body.length, h = Buffer.alloc(20);
   h.writeUInt32LE(0x46546C67, 0); h.writeUInt32LE(2, 4); h.writeUInt32LE(total, 8); h.writeUInt32LE(js.length, 12); h.writeUInt32LE(0x4E4F534A, 16);

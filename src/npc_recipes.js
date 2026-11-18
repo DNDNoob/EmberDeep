@@ -74,8 +74,8 @@ export const KEEPER = {
     {type: 'robe', ease: 0.012, hang: 0.03, collar: {r: 0.037}, tris: [1000, 480, 120], cell: 0.0058, wear: WEAR_TOP},
     {type: 'sleeve', arm: 0, tris: [1000, 420, 100], cell: 0.0042, ease: 0.006, pouch: 0.05, drop: 0.05, up: UP, folds: 1.3, wear: WEAR_TOP, cuff: {len: 0.028, tris: [170, 80, 30], cell: 0.0034, motif: 1, rib: 0.0014}},
     {type: 'sleeve', arm: 1, tris: [900, 400, 100], cell: 0.0042, ease: 0.006, pouch: 0.043, drop: 0.04, up: UP, folds: 1.1, wear: WEAR_TOP, cuff: {len: 0.028, tris: [170, 80, 30], cell: 0.0034, motif: 1, rib: 0.0014}},
-    {type: 'sash', y: 0.017, h: 0.027, thick: 0.006, tris: [200, 90, 40], cell: 0.0034, motif: 2, rib: 0.0014},
-    {type: 'stole', gap: 0.006, thick: 0.005, y0: 0.075, border: 0.018, motif: 3, wear: WEAR_STOLE, tris: [700, 330, 80], cell: 0.0035}
+    {type: 'sash', y: 0.017, h: 0.018, thick: 0.007, tris: [200, 90, 40], cell: 0.0042, motif: 2, rib: 0.0014},
+    {type: 'stole', gap: 0.012, thick: 0.005, y0: 0.075, border: 0.018, motif: 3, wear: WEAR_STOLE, tris: [700, 330, 80], cell: 0.0046}
   ],
   eyes: {frame: 'H', sclera: 'sclera', iris: 'iris', pupil: 'pupil', lid: 'skin', lid2: 'skinDeep'},
   build() {
@@ -112,7 +112,7 @@ export const KEEPER = {
     };
     const bro = (() => { const hit = K.surfacePoint(D.stoleOuter, [0.3, 0.2, -0.07], [-1, 0, 0], 0, 0.3); return K.brooch(hit.P, hit.n, upU, {}); })();
     const pk = onBody(bodySurf, 1.31, -0.012, -0.04), kk = onBody(bodySurf, 0.42, -0.012, -0.04);
-    const pouch = K.pouch(pk.P, pk.n, upU, bodySurf, {size: 1.25}), keys = K.keyRing(kk.P, kk.n, upU, bodySurf, {size: 1.5, tris: [280, 160, 40]});
+    const pouch = K.pouch(pk.P, pk.n, upU, bodySurf, {size: 1.25}), keys = K.keyRing(kk.P, kk.n, upU, bodySurf, {size: 1.5, tris: [280, 160, 40], cell: 0.0014});
     const [e0, e1] = D.ends;
     const brw = K.brows(H, {size: 1.15, droop: 1.1}), mou = K.moustache(H, {size: 1.1}), brd = K.beard(H, {length: 0.34, width: 1.12, thick: 0.009, fork: 0, chest: robeInBeard});
     // v11: robe and sleeves are cloth simulations (src/npc_cloth.js) laid out loose round the body SDF; the SDF garments above stay as fields (stole, beard, props rest on them)
