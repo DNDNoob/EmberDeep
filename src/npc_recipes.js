@@ -43,10 +43,10 @@ export const KEEPER = {
     {part: 'skirt', frame: 'B', mat: 'cloth', col: 'robe', col2: 'robeDirt'},
     {part: 'hem', frame: 'B', mat: 'trim', col: 'gold', col2: 'goldDeep'},
     {part: 'torso', frame: 'U', mat: 'cloth', col: 'robe', col2: 'robeDeep'},
-    {part: 'sleeve0', frame: 'U', mat: 'cloth', col: 'robe', col2: 'robeDeep'},
+    {part: 'sleeve0', frame: 'arm0', mat: 'cloth', col: 'robe', col2: 'robeDeep'},
     {part: 'sleeve1', frame: 'U', mat: 'cloth', col: 'robe', col2: 'robeDeep'},
     {part: 'sash', frame: 'U', mat: 'trim', col: 'gold', col2: 'goldDeep'},
-    {part: 'cuff0', frame: 'U', mat: 'trim', col: 'gold', col2: 'goldDeep'},
+    {part: 'cuff0', frame: 'arm0', mat: 'trim', col: 'gold', col2: 'goldDeep'},
     {part: 'cuff1', frame: 'U', mat: 'trim', col: 'gold', col2: 'goldDeep'},
     {part: 'stole', frame: 'U', mat: 'cloth', col: 'stole', col2: 'stoleDeep'},
     {part: 'brooch', frame: 'U', mat: 'trim', col: 'brass', col2: 'garnet'},
@@ -119,6 +119,7 @@ export const KEEPER = {
         gripAt: e0.at, gripR: K.mul3(K.rotX(Math.PI / 2), K.rotY(-grip.grip.alpha)), gripAxis: grip.grip.p,   // hand Z -> down, tilted so the (slightly diagonal) rod is vertical
         // resting hand: along the forearm, back of the hand facing forward
         restAt: e1.at, restR: K.basis(e1.dir, [0.9, 0.25, -0.35]),
+        shoulder0: ARMS[0].S,
         gem: [0.1, 0.02, 0]
       }
     };

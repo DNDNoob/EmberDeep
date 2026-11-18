@@ -1050,17 +1050,28 @@ function drawRecipe(baked,lod,fr,blink,owner){
 }
 // ?npc=classic keeps the old primitive Keeper for comparison
 // The Keeper: recipe KEEPER in src/npc_recipes.js, posed here; the staff and lantern stay primitive.
+let GRIP_DBG=null;
 function buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,lod){
   const K=bakeRecipe(KEEPER),A=K.anchors,fr=humanoidFrames(KEEPER,n,B,t,ph,breath,nod,jaw),U=fr.U0;
   const S=KEEPER.proportions.height||1,q3=(x,y,z)=>[x*S,y*S,z*S]; // props are authored at 1:1 and scaled with the figure
   const wood=[0.3,0.2,0.12,6];
-  // staff hand follows a slow sway; the staff hangs from it, through the fist
-  const g=A.gripAt,hw=fpt(U,q3(g[0],g[1]+br*0.01,g[2]));
+  // The grip is locked: the staff stands on the floor and the hand sits at a fixed point of the figure's base frame (U0 has no breathing),
+  // so the hand never slides along the rod. The arm absorbs the torso's breathing instead: the sleeve/arm frame 'arm0' is U turned about
+  // the shoulder so the wrist stays on the hand (one-bone aim, an error of a mm or two at the cuff).
+  const g=A.gripAt,hw=fpt(U,q3(g[0],g[1],g[2]));
   fr.grip={p:hw,R:m3(B.R,A.gripR)};
+  {const s0=fpt(fr.U,q3(...A.shoulder0)),w0=fpt(fr.U,q3(g[0],g[1],g[2])),a=[w0[0]-s0[0],w0[1]-s0[1],w0[2]-s0[2]],b=[hw[0]-s0[0],hw[1]-s0[1],hw[2]-s0[2]],la=Math.hypot(...a),lb=Math.hypot(...b);
+    const ax=[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],sn=Math.hypot(...ax)/(la*lb),cs=(a[0]*b[0]+a[1]*b[1]+a[2]*b[2])/(la*lb);
+    let Q=ID3;if(sn>1e-9){const k=[ax[0]/(sn*la*lb),ax[1]/(sn*la*lb),ax[2]/(sn*la*lb)],C=1-cs;
+      Q=[cs+k[0]*k[0]*C,k[0]*k[1]*C-k[2]*sn,k[0]*k[2]*C+k[1]*sn,k[1]*k[0]*C+k[2]*sn,cs+k[1]*k[1]*C,k[1]*k[2]*C-k[0]*sn,k[2]*k[0]*C-k[1]*sn,k[2]*k[1]*C+k[0]*sn,cs+k[2]*k[2]*C]}
+    const d=[fr.U.p[0]-s0[0],fr.U.p[1]-s0[1],fr.U.p[2]-s0[2]];
+    fr.arm0={p:[s0[0]+Q[0]*d[0]+Q[1]*d[1]+Q[2]*d[2],s0[1]+Q[3]*d[0]+Q[4]*d[1]+Q[5]*d[2],s0[2]+Q[6]*d[0]+Q[7]*d[1]+Q[8]*d[2]],R:m3(Q,fr.U.R)};
+    // wrist drift of the sleeve mouth relative to the hand, for tools/npc_grip.mjs
+    const wc=fpt(fr.arm0,q3(g[0],g[1],g[2]));GRIP_DBG={hand:hw,wrist:wc,staffY:0,cuffErr:Math.hypot(wc[0]-hw[0],wc[1]-hw[1],wc[2]-hw[2])}}
   fr.rest=subF(fr.U,q3(...A.restAt),A.restR);
   drawRecipe(K,lod,fr,blink,n);
   ball(fr.U,q3(...A.gem),0.012*S,[0.7,0.28,0.08,7],true); // belt gem: a faint warm glint, no light of its own
-  const sp=fpt(fr.grip,[A.gripAxis[0]*S,A.gripAxis[1]*S,(A.gripAxis[2]||0)*S]),SB={p:[sp[0],0,sp[2]],R:B.R};
+  const sp=fpt(fr.grip,[A.gripAxis[0]*S,A.gripAxis[1]*S,(A.gripAxis[2]||0)*S]),SB={p:[sp[0],0,sp[2]],R:B.R};GRIP_DBG.rodPoint=sp;GRIP_DBG.rodBase=SB.p;
   const sg=(a,b,r0,r1,col)=>seg(SB,q3(...a),q3(...b),r0*S,r1*S,col),sb=(c,r,col)=>ball(SB,q3(...c),typeof r==='number'?r*S:r.map(v=>v*S),col,true),sl=(c,z,col)=>slab(SB,q3(...c),q3(...z),col);
   sg([0,0,0],[0.003,0.34,-0.002],0.0092,0.0086,wood);sg([0.003,0.34,-0.002],[-0.002,0.68,0.003],0.0086,0.0079,wood);sg([-0.002,0.68,0.003],[0,1.0,0],0.0079,0.0075,wood);   // staff radius = KEEPER grip hand gripR
   sb([0.003,0.34,-0.002],[0.011,0.02,0.011],wood);sb([-0.002,0.68,0.003],[0.0098,0.018,0.0098],wood);
@@ -3825,7 +3836,10 @@ function studio(o){
 }
 // build the sculpted Keeper once, shortly after load, so the first sanctuary does not hitch
 if(!NPC_CLASSIC)setTimeout(()=>{try{bakeRecipeIdle(KEEPER)}catch(e){console.error(e)}},1500); // one part per tick, so the title screen never stalls
+// grip locking check for tools/npc_grip.mjs: builds the Keeper at the given times (optionally talking) and reports where the hand holds the rod
+function gripProbe(ts,talking){const n=F.npcs.find(q=>q.type==='keeper'),save=talk,res=[];if(talking)talk={npc:n};
+  for(const t of ts){buildNpc(n,t,P.x,0.7,P.z,0.016);res.push({t,...GRIP_DBG})}talk=save;return res}
 function benchNpc(iters){const n=F.npcs.find(q=>q.type==='keeper');const e=[P.x,0.7,P.z];buildNpc(n,1,e[0],e[1],e[2],0.016);let t0=performance.now();
   for(let i=0;i<iters;i++){CH.n=0;buildNpc(n,1+i*0.016,e[0],e[1],e[2],0.016)}return (performance.now()-t0)/iters}
-window.__game={studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);
