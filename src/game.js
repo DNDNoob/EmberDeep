@@ -599,7 +599,7 @@ function paintedMaterial(glowBase){
       }
       mBump=1.0;
     }else if(m==14){ // sculpted hair and beard
-      float st=n3(vec3(q.x*150.0,q.y*8.0,q.z*150.0));alb*=0.72+0.5*st;mRough=0.45;mRimK=0.015;mBump=1.0;
+      float st=n3(vec3(q.x*60.0,q.y*7.0,q.z*60.0));alb=min(alb*(0.8+0.3*st),vec3(0.56));mRough=0.8;mRimK=0.01;mBump=1.0;
     }
     else if(m==2){
       float folds=n3(vec3(q.x*55.0,q.y*5.0,q.z*55.0));
@@ -633,7 +633,7 @@ function paintedMaterial(glowBase){
     vec3 q=vLoc.xyz;int m=int(floor(vLoc.w+0.002));float fn=clamp(1.6-vViewPosition.z*0.45,0.0,1.0);float hh=0.0;
     if(m==12){hh=0.00012*n3(q*380.0)+mAux*0.0005*(1.0-abs(n3(vec3(q.x*70.0,q.y*330.0,q.z*70.0))*2.0-1.0));} // pores, and creases where the mesh asks for them
     else if(m==13||m==15){hh=0.0006*(n3(q*160.0)-0.5)+0.0003*fn*mWeave*sin(q.y*1500.0)*sin((q.x+q.z)*1500.0)+0.0005*mEmb;}
-    else if(m==14){hh=0.0009*n3(vec3(q.x*700.0,q.y*24.0,q.z*700.0));}
+    else if(m==14){hh=0.00022*n3(vec3(q.x*160.0,q.y*12.0,q.z*160.0));}
     vec2 dh=vec2(dFdx(hh),dFdy(hh))*fn;
     vec3 sX=dFdx(-vViewPosition),sY=dFdy(-vViewPosition),R1=cross(sY,normal),R2=cross(normal,sX);
     float fDet=dot(sX,R1)*faceDirection;
@@ -645,7 +645,7 @@ function paintedMaterial(glowBase){
       .replace('#include <metalnessmap_fragment>','float metalnessFactor=mMetal;')
       .replace('#include <emissivemap_fragment>',`#include <emissivemap_fragment>
   {vec3 ec=pow(max(vColor.rgb,vec3(0.0)),vec3(2.2));
-    totalEmissiveRadiance+=ec*(mGlow*1.6+uGlowBase+(mCh>0.75?0.2:0.0)); // 0.2: faint fill so a hand's torch shadow on the robe is dark red, not black holes
+    totalEmissiveRadiance+=ec*(mGlow*1.6+uGlowBase+(mCh>0.75?0.3:0.0)); // 0.2: faint fill so a hand's torch shadow on the robe is dark red, not black holes
     if(mRimK>0.0){float fr=pow(saturate(1.0-abs(dot(normalize(normal),normalize(vViewPosition)))),3.0);totalEmissiveRadiance+=ec*fr*mRimK;} // soft fresnel rim / cloth sheen
     if(mRim>0.5){float rim=pow(saturate(1.0-abs(dot(normalize(normal),normalize(vViewPosition)))),3.0);totalEmissiveRadiance+=ec*rim*rim*1.6;}}`);
     sh.fragmentShader=sh.fragmentShader.replace('#include <dithering_fragment>','#include <dithering_fragment>\n  {uvec3 nb3=floatBitsToUint(gl_FragColor.rgb);bvec3 bad=equal(nb3&uvec3(0x7f800000u),uvec3(0x7f800000u));gl_FragColor.rgb=any(bad)?vec3(0.0):clamp(gl_FragColor.rgb,vec3(0.0),vec3(mCh>0.95?3.0:mCh>0.75?2.0:mCh>0.25?5.0:12.0));} // isnan() can be optimised away on ANGLE/D3D; test the exponent bits (NaN and Inf) instead. // firefly clamp: specular spikes on slivers and silhouettes bloom into squares (see docs/npc-kit.md); sculpted characters (12-15) are held to 3.0, eyes 5.0');

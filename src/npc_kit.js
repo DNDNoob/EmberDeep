@@ -230,7 +230,7 @@ export function moustache(H, p = {}) {
   function sdf(x, y, z) {
     const zs = Math.abs(z);
     let d = chain(x, y, zs, pts, 0.0066 * s, 0.0032 * s, 0.004);
-    if (d < 0.01) d += 0.0011 * Math.sin((zs * 0.8 - y * 0.6) * 1400 + 5 * fbm(x * 80, y * 80, z * 80, 1)) + 0.001 * fbm(x * 200, y * 200, zs * 100, 1);
+    if (d < 0.01) d += 0.0014 * Math.sin((zs * 0.8 - y * 0.6) * 420 + 6 * fbm(x * 40, y * 40, z * 40, 2)) + 0.0006 * fbm(x * 120, y * 120, zs * 100, 1);
     return d;
   }
   return {sdf, bounds: [m[0] - 0.035, m[1] - 0.04, -0.055, nt[0] + 0.01, nt[1] - 0.008, 0.055], cell: p.cell || 0.0022, tris: p.tris || [300, 110],
@@ -247,7 +247,11 @@ export function beard(H, p = {}) {
   // instead of sinking into it, and whatever still lies inside the cloth is cut away.
   const chest = p.chest, gap = p.gap ?? 0.004, PY = [], PS = 0.01;
   if (chest) for (let y = 0.02; y > -L - 0.05; y -= PS) { let x = 0.3; while (x > -0.1 && chest(x, y, 0) > 0) x -= 0.002; PY.push(x); }
+  { const mx = PY.map((v, i) => { let m = -1e9; for (let k = -4; k <= 4; k++) m = Math.max(m, PY[cl(i + k, 0, PY.length - 1)] - 0.0006 * k * k); return m; });   // smooth envelope (no stair where the stole edge ends)
+    for (let r = 0; r < 3; r++) for (let i = 1; i < mx.length - 1; i++) mx[i] = (mx[i - 1] + 2 * mx[i] + mx[i + 1]) / 4;
+    for (let i = 0; i < PY.length; i++) PY[i] = mx[i]; }
   const chestX = y => { const f = cl((0.02 - y) / PS, 0, PY.length - 1.001), i = Math.floor(f), t = f - i; return PY[i] * (1 - t) + PY[i + 1] * t; };
+  const lockPh = (x, y, z, a, t) => Math.sin(a * 3 + t * 5 + 6.5 * (fbm(x * 9, y * 6, z * 9, 2) - 0.5) + 6 * z);   // 3-4 big wavy locks, domain-warped
   function sdf(x, y, z) {
     const zs = Math.abs(z);
     // shell over the lower face: offset of the head surface, kept below the cheek line and in front of the ears
@@ -261,25 +265,30 @@ export function beard(H, p = {}) {
     d = smax(d, y - (m[1] - 0.0135) - 0.05 * smoothstep(0.02, 0.036, zs), 0.003); // under the lip in front, up to the cheek at the sides
     // the hanging mass: a tapered, slightly wavy cone below the chin
     const t = cl(-(y - 0.0) / L, 0, 1), tt = Math.pow(t, 1.25);
-    let cx = m[0] - 0.024 + 0.035 * tt + 0.004 * Math.sin(t * 9);
-    const wx = (0.034 * Math.pow(1 - t, 0.9) + 0.008), wz = W * (0.05 * Math.pow(1 - t, 1.1) + 0.009);
+    let cx = m[0] - 0.024 + 0.035 * tt + 0.005 * Math.sin(t * 5 + 0.6);
+    const wx = 0.040 * Math.pow(1 - t, 0.75) + 0.004, wz = W * (0.058 * Math.pow(1 - t, 0.85) + 0.006);   // broad at the jaw, tapering to a gently pointed end
     if (chest) cx = Math.max(cx, chestX(y) + gap + wx * 0.75);
     const ux = (x - cx) / wx, uz = (z + 0.005 * Math.sin(t * 7)) / wz;
     let h = (Math.hypot(ux, uz) - 1) * Math.min(wx, wz) * 0.9;
+    h += 0.0085 * lockPh(x, y, z, Math.atan2(uz, ux), t) * smoothstep(0.0, 0.2, t) * smoothstep(m[1] - 0.012, m[1] - 0.03, y);   // big wavy locks, only on the hanging mass
     h = smax(h, y - (m[1] - 0.0185), 0.008);
-    h = smax(h, -(y + L + 0.005), 0.02);
+    h = smax(h, -(y + L + 0.012), 0.03);
     d = smin(d, h, 0.012);
     if (chest) d = smax(d, -(chest(x, y, z) - gap * 0.5), 0.004);
     if (fork > 0 && t > 0.55) d = ssub(d, Math.max(Math.abs(z) - 0.0035 * fork, Math.abs(y + L * 0.93) - L * 0.25, Math.abs(x - cx) - 0.05), 0.006);
     if (d < 0.015) {
       const a = Math.atan2(uz, ux);
-      d += 0.0022 * Math.sin(a * 9 + t * 16 + 4 * fbm(x * 25, y * 12, z * 25, 2)) + 0.0014 * (worley(x * 90, y * 30, z * 90) - 0.5);
+      // a few large wavy locks (domain-warped, low frequency) with only a whisper of fine grain; shallow valleys between the locks
+      d += 0.0007 * (fbm(x * 60, y * 25, z * 60, 1) - 0.5);
     }
     return d;
   }
   return {sdf, bounds: [-0.02, -L - 0.03, -0.1, chest ? 0.24 : 0.14, cheekY + 0.01, 0.1], cell: p.cell || 0.0055, tris: p.tris || [540, 200],
     cull: (x, y, z) => H.sdf(x, y, z) < -0.002, project: 0.003,
-    paint: (x, y, z, o) => { o[0] = 0.55 * smoothstep(-0.02, -L, y); }};
+    paint: (x, y, z, o) => {
+      const t = cl(-y / L, 0, 1), cx = m[0] - 0.024 + 0.035 * Math.pow(t, 1.25) + 0.005 * Math.sin(t * 5 + 0.6), a = Math.atan2(z, (x - cx) / (0.040 * Math.pow(1 - t, 0.75) + 0.004) * (0.058 * Math.pow(1 - t, 0.85) + 0.006));
+      o[0] = cl(0.35 * smoothstep(-0.02, -L, y) + 0.5 * (0.5 - 0.5 * lockPh(x, y, z, a, t)), 0, 1);   // darker in the valleys between locks and towards the tip
+    }};
 }
 
 /* =====================================================================================
@@ -535,7 +544,7 @@ export function trimBand(base, region, p = {}) {
   // the inner face of the band is buried in the cloth: never mesh it
   const cull = (x, y, z) => base(x, y, z) < 0.0006 || (p.cull && p.cull(x, y, z));
   const bc = p.motif ? bandCoords(p.motif, p.cells || 1, p.uv, p.closed !== false) : {};
-  return {sdf, bounds: p.bounds, cell: p.cell || 0.0042, tris: p.tris || [160, 60], cull, project: 0.002, ...bc,
+  return {sdf, bounds: p.bounds, cell: p.cell || 0.0042, tris: p.tris || [160, 60], cull, project: 0.002, ao: p.ao, ...bc,
     covers: (x, y, z) => region(x, y, z) < -0.0015 && Math.abs(base(x, y, z)) < (p.coverTol ?? 0.006)};
 }
 
@@ -729,7 +738,7 @@ export function dress(B, list) {
         const vx = x - cEnd[0], vy = y - cEnd[1], vz = z - cEnd[2], t = vx * Fm[0] + vy * Fm[1] + vz * Fm[2], rx = vx - t * Fm[0], ry = vy - t * Fm[1], rz = vz - t * Fm[2];
         o[0] = Math.atan2(rx * b2[0] + ry * b2[1] + rz * b2[2], rx * b1[0] + ry * b1[1] + rz * b1[2]) / (2 * Math.PI) + 0.5; o[1] = (t + (cf.len ?? 0.028)) / clen; }} : {};
       const cuff = trimBand(cloth, (x, y, z) => { const t = (x - cEnd[0]) * Fm[0] + (y - cEnd[1]) * Fm[1] + (z - cEnd[2]) * Fm[2], vx = x - cEnd[0], vy = y - cEnd[1], vz = z - cEnd[2], rad = Math.sqrt(Math.max(0, vx * vx + vy * vy + vz * vz - t * t)); return Math.max(-(cf.len ?? 0.028) - t, t - 0.014, rad - (s.rw + 0.025)); },   // radial cap: a bare slab would cut through the chest cloth
-        {...cuffMotif, rib: cf.rib, thick: cf.thick ?? 0.005, coverTol: 0.011, bounds: [cEnd[0] - 0.115, cEnd[1] - 0.115, cEnd[2] - 0.115, cEnd[0] + 0.115, cEnd[1] + 0.115, cEnd[2] + 0.115], tris: cf.tris || [80, 30], cell: cf.cell ?? 0.0042});
+        {...cuffMotif, rib: cf.rib, thick: cf.thick ?? 0.005, coverTol: 0.011, bounds: [cEnd[0] - 0.115, cEnd[1] - 0.115, cEnd[2] - 0.115, cEnd[0] + 0.115, cEnd[1] + 0.115, cEnd[2] + 0.115], tris: cf.tris || [80, 30], cell: cf.cell ?? 0.0042, ao: 0.005});
       parts['cuff' + i] = cuff; const c0 = parts['sleeve' + i].cull; parts['sleeve' + i].cull = (x, y, z) => c0(x, y, z) || cuff.covers(x, y, z);
     }
     ends[i] = {at: a.W, end: a.end, dir: a.F, r: s.rw};
@@ -741,10 +750,10 @@ export function dress(B, list) {
   let stoleSolid = null, stoleOuter = null;
   const stg = list.find(g => g.type === 'stole');
   if (stg) {
-    const gap = stg.gap ?? 0.011, th = stg.thick ?? 0.007, zc = stg.zc ?? 0.07, pw = stg.w ?? 0.045, y0 = stg.y0 ?? 0.075, yc0 = stg.yoke ?? B.Y.chest - 0.02, bw = stg.border ?? 0.018, lower = stg.lower;
+    const gap = stg.gap ?? 0.007, th = stg.thick ?? 0.005, zc = stg.zc ?? 0.07, pw = stg.w ?? 0.045, y0 = stg.y0 ?? 0.075, yc0 = stg.yoke ?? B.Y.chest - 0.02, bw = stg.border ?? 0.018, lower = stg.lower;
     const under = (x, y, z) => { let d = base(x, y, z); d = Math.min(d, sleeveMin(x, y, z)); if (lower) d = Math.min(d, Math.max(lower(x, y, z), y - 0.05)); return d; };
     const ycut = (x, z) => { const az = Math.abs(z); return yc0 + 0.045 * smoothstep(0.06, 0.15, az) - 0.022 * smoothstep(0.0, -0.08, x) + 0.075 * smoothstep(0.05, 0.015, az) * smoothstep(0.0, 0.05, x) + 0.004 * Math.sin(az * 90 + x * 40); };
-    const rY = (x, y, z) => Math.max(ycut(x, z) - y, Math.abs(z) - 0.2);
+    const rY = (x, y, z) => Math.max(ycut(x, z) - y, Math.abs(z) - 0.165);
     const rP = (x, y, z) => Math.max(Math.abs(Math.abs(z) - zc) - pw / 2, 0.012 - x, y - (yc0 + 0.06), y0 + 0.004 * Math.sin(Math.abs(z) * 160) - y, 0.8 * (base(x, y, z) - sleeveMin(x, y, z)));   // the lappets lie on the chest: not on a forearm that crosses in front of it
     const region = (x, y, z) => Math.min(rY(x, y, z), rP(x, y, z));
     const outer = (x, y, z) => under(x, y, z) - gap - th;
