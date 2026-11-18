@@ -127,11 +127,13 @@ Real cause, found by toggling things in software GL at Q2 (`?npc` default): **bl
 
 ## Budgets
 
-- Near LOD (within 6 m, Q>=1): about **6.7k triangles (20.2k vertices) for the whole character**, eyes included (Keeper v8: 6725 tris; per part in `node tools/npc_stats.mjs`), plus about 2k vertices of primitive staff. Far LOD: about 40% of that.
-- Rough split (v8): head 780, ears 560, beard and hair 700, hands 700 each, torso 540, skirt 520, sleeves 350 each, trims 80 to 120 each, eyes 600 for both. Flat robe panels give triangles to hands and ears.
-- All characters share `CH.cap` = 90k vertices per frame.
-- Bake time: about 1.5 s for the Keeper in total. `bakeRecipeIdle()` at load spreads it across ticks, one part per tick. Add new recipes to the idle bake next to `KEEPER` in game.js.
-- Check budgets with `node tools/npc_stats.mjs KEEPER` (`--obj DIR` dumps the near meshes).
+- Three LODs, `tris: [near, mid, far]` per part (each simplified from the previous one). Keeper v9: **near 15.1k triangles (45.2k vertices)** within 6 m at Q>=1, **mid 7.1k (21.3k)** to 9.5 m (and for Q0 within 8 m), **far 3.6k (10.8k)** to 14 m and for Q0 beyond 8 m. Per-part budgets in `node tools/npc_stats.mjs`: head 1900/780/300, ears 1000/560/200, hands 1700/700/240 each, skirt 1500/520/200, torso 1150/540/210, sleeves 800/350/130, beard 1100/430, hair 450/260/100, brows 300, moustache 420, neck 260, hem 380, sash 260, cuffs 170; eyes 480 near / 330 far (both).
+- Grid cells are about 0.6x the v8 values (head 3.8 mm, ears 1.5 mm, hands 1.7 mm, robe 5.8 mm, sleeves 4.8 mm, trims 3.4 mm) so the raw surface-net mesh stays 4 to 10x the near budget. Finer cells also reveal finer noise in the SDFs (the chest cloth got more crinkled); lower the noise amplitude, not the cell, if that is too much.
+- Thin open shells (hair, moustache) can stall the simplifier far above their budget (link condition); `simplify` re-queues refused edges with a more permissive flip test, and a cell of 6.5 mm for hair / 2.3 mm for the moustache keeps them reaching their far budgets.
+- Bake: `sculptGen`, `simplifyGen`, `flattenGen` and `bakePartGen` are generators that yield inside their loops; `bakeRecipeIdle` runs them in 6 ms slices every 10 ms (no hitch longer than a few ms; `bakeRecipe` drains the rest synchronously, `node tools/npc_stats.mjs` prints the totals). Keeper v9 total CPU time: about 5.2 s in the browser (6.5 s in Node), against 3.7 s for v8 with 3x fewer triangles; it is spread over roughly 15 s after the 1.5 s load delay.
+- All characters share `CH.cap` = 90k vertices per frame for the CPU-posed props only; sculpted parts do not use it.
+- Check budgets with `node tools/npc_stats.mjs KEEPER` (`--obj DIR` dumps the near meshes) and `node tools/npc_perf.mjs`.
+- Weave moire: the cloth weave (1500 rad/m) and its bump fade out with the screen-space derivative of its phase (`wFade`, about 1 rad per pixel), not only with distance, so it never aliases at any resolution.
 
 ## Posing a new NPC (game.js)
 

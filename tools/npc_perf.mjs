@@ -24,5 +24,6 @@ const r = await pg.evaluate(sec => new Promise(res => {
   const t0 = performance.now(); requestAnimationFrame(wait);
 }), +A.seconds);
 r.benchMsPerBuildNpc = await pg.evaluate(() => { const g = window.__game; g.benchNpc(200); return g.benchNpc(2000); }); // pure CPU cost of posing the Keeper, no rendering
+r.bake = await pg.evaluate(() => { const st = window.__game.keeperStats; return {cpuMs: st.ms, tris: st.tris}; });
 console.log(JSON.stringify(r));
 await b.close();

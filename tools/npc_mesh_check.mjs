@@ -25,8 +25,8 @@ function scan(name, M, dropped) {
   bad += prob;
   console.log(name.padEnd(14), String(M.length / 27).padStart(5), 'tris', `NaN ${nan} zeroN ${zeroN} nonUnitN ${nonUnit} degenerate ${degen} (sub-mm2 ${tiny}) windingVsNormal ${flip}`, dropped ? ` [bake dropped ${dropped} tris]` : '', prob ? 'PROBLEM' : 'ok');
 }
-for (const [k, m] of Object.entries(b.parts)) { scan(k + ' near', m[0], m[0].dropped); scan(k + ' far', m[1], m[1].dropped); }
+for (const [k, m] of Object.entries(b.parts)) m.forEach((M, i) => scan(`${k} LOD${i}`, M, M.dropped));
 const E = b.eyes;
-if (E) for (const k of ['ball', 'iris', 'lid', 'lower']) scan('eye.' + k, E[k]);
+if (E) for (const k of ['ball', 'iris', 'lid', 'lower']) { scan('eye.' + k, E[k]); scan('eye.lo.' + k, E.lo[k]); }
 console.log(bad ? `${bad} problems` : 'all meshes clean');
 process.exit(bad ? 1 : 0);

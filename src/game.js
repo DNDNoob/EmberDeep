@@ -538,7 +538,7 @@ function paintedMaterial(glowBase){
     sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nattribute vec4 aLoc;varying vec4 vLoc;')
       .replace('#include <begin_vertex>','#include <begin_vertex>\nvLoc=aLoc;');
     sh.fragmentShader=sh.fragmentShader
-      .replace('#include <common>','#include <common>\nvarying vec4 vLoc;uniform float uGlowBase;float mRough=0.7;float mMetal=0.0;float mGlow=0.0;float mRim=0.0;float mSss=0.0;float mRimK=0.0;float mBump=0.0;float mAux=0.0;float mCh=0.0;'+MAT_GLSL)
+      .replace('#include <common>','#include <common>\nvarying vec4 vLoc;uniform float uGlowBase;float mRough=0.7;float mMetal=0.0;float mGlow=0.0;float mRim=0.0;float mSss=0.0;float mRimK=0.0;float mBump=0.0;float mAux=0.0;float mCh=0.0;float mWeave=1.0;'+MAT_GLSL)
       .replace('#include <lights_physical_pars_fragment>',()=>THREE.ShaderChunk.lights_physical_pars_fragment.replace('vec3 irradiance = dotNL * directLight.color;',
         // cheap subsurface look: wrapped diffuse that lets light bleed past the terminator, tinted red where it fades
         `float nlS=dot(geometryNormal,directLight.direction);
@@ -547,6 +547,9 @@ function paintedMaterial(glowBase){
   {vec3 alb=vColor.rgb,q=vLoc.xyz;int m=int(floor(vLoc.w+0.002));mAux=fract(vLoc.w+0.002)*1.1;
     float fine=clamp(1.6-vViewPosition.z*0.45,0.0,1.0); // vViewPosition.z is the distance: fade fine detail out with it
     float mott=fbm3(q*34.0);
+    // weave: fade by how many radians of the 1500 rad/m pattern fall in one pixel; above ~1 rad/px it aliases into moire, so it dissolves into plain cloth
+    float wPh1=q.y*1500.0,wPh2=(q.x+q.z)*1500.0,wFade=1.0-smoothstep(0.7,1.5,max(fwidth(wPh1),fwidth(wPh2)));
+    mWeave=wFade;
     if(m==1){alb*=0.92+0.16*mott;mRough=0.55;mSss=0.2;mRimK=0.02;}
     else if(m==12){ // sculpted skin (npc_kit): colour variation comes painted per vertex, mAux marks wrinkle areas
       alb*=0.9+0.2*mott;
@@ -555,7 +558,7 @@ function paintedMaterial(glowBase){
     }else if(m==13){ // sculpted cloth: folds are in the geometry, so the shader only adds weave, nap and sheen
       float folds=n3(vec3(q.x*55.0,q.y*5.0,q.z*55.0));
       float weave=sin(q.y*1500.0)*sin((q.x+q.z)*1500.0);
-      alb*=(0.88+0.2*folds)*(0.93+0.14*mott)*(1.0+0.06*weave*fine);mRough=0.9;mRimK=0.04;mBump=1.0;
+      alb*=(0.88+0.2*folds)*(0.93+0.14*mott)*(1.0+0.06*weave*fine*wFade);mRough=0.9;mRimK=0.04;mBump=1.0;
     }else if(m==15){ // sculpted trim: gold thread embroidery, a running pattern of stitched diamonds
       float a=atan(q.z,q.x)*40.0,st=abs(fract(a+q.y*120.0)-0.5)+abs(fract(q.y*160.0)-0.5);
       alb*=(0.82+0.3*smoothstep(0.35,0.45,st))*(0.9+0.2*mott);mRough=0.42;mMetal=0.35;mRimK=0.03;mBump=1.0;
@@ -593,7 +596,7 @@ function paintedMaterial(glowBase){
   if(mBump>0.5){ // real bump from a procedural height (metres), so pores, weave and strands catch the light without any triangles
     vec3 q=vLoc.xyz;int m=int(floor(vLoc.w+0.002));float fn=clamp(1.6-vViewPosition.z*0.45,0.0,1.0);float hh=0.0;
     if(m==12){hh=0.00012*n3(q*380.0)+mAux*0.0005*(1.0-abs(n3(vec3(q.x*70.0,q.y*330.0,q.z*70.0))*2.0-1.0));} // pores, and creases where the mesh asks for them
-    else if(m==13||m==15){hh=0.0006*(n3(q*160.0)-0.5)+0.0003*fn*sin(q.y*1500.0)*sin((q.x+q.z)*1500.0);}
+    else if(m==13||m==15){hh=0.0006*(n3(q*160.0)-0.5)+0.0003*fn*mWeave*sin(q.y*1500.0)*sin((q.x+q.z)*1500.0);}
     else if(m==14){hh=0.0009*n3(vec3(q.x*700.0,q.y*24.0,q.z*700.0));}
     vec2 dh=vec2(dFdx(hh),dFdy(hh))*fn;
     vec3 sX=dFdx(-vViewPosition),sY=dFdy(-vViewPosition),R1=cross(sY,normal),R2=cross(normal,sX);
@@ -938,7 +941,7 @@ function gpuGroups(baked){
     for(const [key,fields,lid] of[[ec.frame,['ball','iris','lower'],false],['lid:'+ec.frame,['lid'],true]]){const g=grp(key,ec.frame);g.lid=lid;
       for(const z of[-a[2],a[2]])for(const fl of fields){
         const mat=fl==='lid'||fl==='lower'?MAT.skin:MAT.eye,c1=fl==='ball'?ec.sclera:fl==='iris'?ec.iris:ec.lid,c2=fl==='ball'?ec.sclera:fl==='iris'?ec.pupil:ec.lid2;
-        g.items.push({m:E[fl],c:[a[0],a[1],z],col:pal[c1],col2:pal[c2],mat,R:null})}}}
+        g.items.push({m:[E[fl],E.lo[fl],E.lo[fl]],c:[a[0],a[1],z],col:pal[c1],col2:pal[c2],mat,R:null})}}}
   return baked.groups=[...G.values()];
 }
 function gpuGeo(baked,g,lod){
@@ -1053,7 +1056,7 @@ function buildNpc(n,t,ex,ey,ez,dtR){
   const nod=talking?Math.sin(t*5.5)*0.05:0,jaw=talking?Math.max(0,Math.sin(t*9))*0.006:0;
   const B={p:[n.x+(n.ox||0),0,n.z+(n.oz||0)],R:rYaw(n.yaw)};
   const out={top:1,lantern:null};
-  if(n.type==='keeper'&&!NPC_CLASSIC&&dist<14)buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,STUDIO&&STUDIO.lod!=null?STUDIO.lod:dist<6&&Q>=1?0:1);
+  if(n.type==='keeper'&&!NPC_CLASSIC&&dist<14)buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,STUDIO&&STUDIO.lod!=null?STUDIO.lod:Q>=1?(dist<6?0:dist<9.5?1:2):(dist<8?1:2)); // near / mid / far; low quality never uses the near LOD
   else if(n.type==='keeper'){
     const robe=[0.36,0.1,0.07,2],robeD=[0.24,0.07,0.06,2],gold=[0.8,0.58,0.18,2],skin=[0.8,0.6,0.47,1],white=[0.9,0.9,0.86,5],wood=[0.3,0.2,0.12,6];
     seg(B,[0,0,0],[0,0.05,0],0.178,0.172,gold);

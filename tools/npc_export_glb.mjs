@@ -69,13 +69,13 @@ function parts(lod) {
   const list = [];
   for (const q of rec.parts) {
     const f = fr[q.frame], m = baked.parts[q.part]; if (!f || !m) continue;
-    list.push({name: q.part, mat: q.mat, ...place(m[lod], f, q.at || [0, 0, 0], pal[q.col], pal[q.col2 || q.col], MATID[q.mat], q.R, scOf(q.frame), q.drape && fr.D ? {f: fr.D, y0: q.drape[0], y1: q.drape[1]} : null)});
+    list.push({name: q.part, mat: q.mat, ...place(m[Math.min(lod, m.length - 1)], f, q.at || [0, 0, 0], pal[q.col], pal[q.col2 || q.col], MATID[q.mat], q.R, scOf(q.frame), q.drape && fr.D ? {f: fr.D, y0: q.drape[0], y1: q.drape[1]} : null)});
   }
   const E = baked.eyes, ec = rec.eyes;
   if (E && fr[ec.frame]) {
     const a = A.eye, es = scOf(ec.frame);
     for (const [side, z] of [['L', a[2]], ['R', -a[2]]]) for (const [k, cn, c2n, mat] of [['ball', ec.sclera, ec.sclera, 'eye'], ['iris', ec.iris, ec.pupil, 'eye'], ['lid', ec.lid, ec.lid2, 'skin'], ['lower', ec.lid, ec.lid2, 'skin']])
-      list.push({name: `eye${side}_${k}`, mat, ...place(E[k], fr[ec.frame], [a[0], a[1], z], pal[cn], pal[c2n], MATID[mat], null, es, null)});
+      list.push({name: `eye${side}_${k}`, mat, ...place((lod > 1 ? E.lo : E)[k], fr[ec.frame], [a[0], a[1], z], pal[cn], pal[c2n], MATID[mat], null, es, null)});
   }
   // staff: primitive in the game (a few segments); here one tapered cylinder plus the lantern, so the figure reads in context
   if (fr.grip && A.gripAxis) {
@@ -123,7 +123,7 @@ function glb(list) {
 
 mkdirSync(outDir, {recursive: true});
 const base = name === 'KEEPER' ? 'keeper' : name.toLowerCase();
-for (const [lod, file] of [[0, base + '.glb'], [1, base + '-far.glb']]) {
+for (const [lod, file] of [[0, base + '.glb'], [2, base + '-far.glb']]) {
   const g = glb(parts(lod)), path = resolve(outDir, file);
   writeFileSync(path, g.buf);
   console.log(`${path}  ${(g.buf.length / 1024).toFixed(0)} KB  ${g.tris} triangles  ${g.verts} vertices  ${g.stats.length} meshes`);

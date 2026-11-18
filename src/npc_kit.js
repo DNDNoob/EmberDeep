@@ -672,7 +672,7 @@ export function dress(B, list) {
   const trims = {};
   if (sash) {
     const sy = sash.y, sh = sash.h;
-    trims.sash = trimBand(torsoFold, (x, y, z) => Math.abs(y - sy) - sh, {thick: sash.thick ?? 0.006, coverTol: 0.011, bounds: [-0.14, sy - sh - 0.01, -0.14, 0.14, sy + sh + 0.01, 0.14], tris: sash.tris || [130, 50], cell: 0.0042});
+    trims.sash = trimBand(torsoFold, (x, y, z) => Math.abs(y - sy) - sh, {thick: sash.thick ?? 0.006, coverTol: 0.011, bounds: [-0.14, sy - sh - 0.01, -0.14, 0.14, sy + sh + 0.01, 0.14], tris: sash.tris || [130, 50], cell: sash.cell ?? 0.0042});
     parts.sash = trims.sash;
   }
   sl.forEach((s, i) => {
@@ -685,7 +685,7 @@ export function dress(B, list) {
       cull: (x, y, z) => base(x, y, z) < -0.004};
     if (cf) {
       const cuff = trimBand(cloth, (x, y, z) => { const t = (x - cEnd[0]) * Fm[0] + (y - cEnd[1]) * Fm[1] + (z - cEnd[2]) * Fm[2], vx = x - cEnd[0], vy = y - cEnd[1], vz = z - cEnd[2], rad = Math.sqrt(Math.max(0, vx * vx + vy * vy + vz * vz - t * t)); return Math.max(-(cf.len ?? 0.028) - t, t - 0.014, rad - (s.rw + 0.025)); },   // radial cap: a bare slab would cut through the chest cloth
-        {thick: cf.thick ?? 0.005, coverTol: 0.011, bounds: [cEnd[0] - 0.115, cEnd[1] - 0.115, cEnd[2] - 0.115, cEnd[0] + 0.115, cEnd[1] + 0.115, cEnd[2] + 0.115], tris: [80, 30], cell: 0.0042});
+        {thick: cf.thick ?? 0.005, coverTol: 0.011, bounds: [cEnd[0] - 0.115, cEnd[1] - 0.115, cEnd[2] - 0.115, cEnd[0] + 0.115, cEnd[1] + 0.115, cEnd[2] + 0.115], tris: cf.tris || [80, 30], cell: cf.cell ?? 0.0042});
       parts['cuff' + i] = cuff; const c0 = parts['sleeve' + i].cull; parts['sleeve' + i].cull = (x, y, z) => c0(x, y, z) || cuff.covers(x, y, z);
     }
     ends[i] = {at: a.W, end: a.end, dir: a.F, r: s.rw};
@@ -731,30 +731,34 @@ export function eyeRig(p = {}) {
   const r = p.r ?? 0.0115, ir = p.iris ?? 0.5, open = (p.open ?? 16) * D2R, low = (p.low ?? -24) * D2R, lt = p.lidT ?? 0.0016, arch = (p.arch ?? 9) * D2R, sp = 0.86;
   const sph = (rad, e, a) => [rad * Math.cos(e) * Math.cos(a), rad * Math.sin(e), rad * Math.cos(e) * Math.sin(a)];
   // only the front of the ball can ever show; the back is inside the head
-  const ball = orient(gridMesh(9, 5, (u, v) => sph(r, (v - 0.5) * 0.85 * Math.PI, (u - 0.5) * 1.5 * Math.PI), (u, v, o) => { o[2] = 1 - 0.55 * Math.abs(u - 0.5) * 2; }));
+  // closing: rotate the lid edge from `open` down to just past the lower lid
+  const shut = open + arch - low + 4 * D2R;
+  const mk = hi => {   // hi: finer grids for the near LOD
+  const ball = orient(gridMesh(hi ? 12 : 9, hi ? 7 : 5, (u, v) => sph(r, (v - 0.5) * 0.85 * Math.PI, (u - 0.5) * 1.5 * Math.PI), (u, v, o) => { o[2] = 1 - 0.55 * Math.abs(u - 0.5) * 2; }));
   // iris: a slightly domed disc (the cornea) over the front of the ball; paint 1 at the pupil, a dark limbal ring
   const ia = Math.asin(ir);
-  const iris = orient(gridMesh(10, 3, (u, v) => { const t = v * ia, a = u * 2 * Math.PI, rr = r * (1.012 + 0.03 * Math.cos(t / ia * Math.PI / 2)); return [rr * Math.cos(t), rr * Math.sin(t) * Math.sin(a), rr * Math.sin(t) * Math.cos(a)]; },
+  const iris = orient(gridMesh(hi ? 12 : 10, 3, (u, v) => { const t = v * ia, a = u * 2 * Math.PI, rr = r * (1.012 + 0.03 * Math.cos(t / ia * Math.PI / 2)); return [rr * Math.cos(t), rr * Math.sin(t) * Math.sin(a), rr * Math.sin(t) * Math.cos(a)]; },
     (u, v, o) => { o[0] = v < 0.4 ? 1 : 0; o[1] = v > 0.9 ? 1 : 0; }));
   // upper lid: a shell slightly bigger than the ball over the top, with a rolled edge; edge elevation arches over the iris
   const lidPos = (rad, u, e0) => { const a = (u - 0.5) * 2 * 100 * D2R, e = e0 + arch * (1 - ((u - 0.5) * 2) ** 2); return {a, e}; };
-  const lid = orient(gridMesh(9, 6, (u, v) => {
+  const lid = orient(gridMesh(hi ? 14 : 9, 6, (u, v) => {
     const {a, e} = lidPos(0, u, open);
     // v: 0 = back over the top, 4/6 = the edge outer side, 1 = the inner lip touching the ball
     const rows = [[85 * D2R, r + lt], [55 * D2R, r + lt], [35 * D2R, r + lt * 1.05], [12 * D2R, r + lt], [0, r + lt * 0.75], [-2.5 * D2R, r + lt * 0.15], [-1 * D2R, r * 0.985]];
     const k = Math.round(v * 6), [de, rad] = rows[k], ee = k === 0 ? de : e + de;
     return sph(rad, Math.min(ee, 88 * D2R), a * (k === 0 ? 0.9 : 1) * sp / 0.86);
   }, (u, v, o) => { o[0] = v > 0.6 ? 0.75 : 0.15; o[2] = v > 0.75 ? 0.45 : 1; }));
-  const lower = orient(gridMesh(9, 4, (u, v) => {
+  const lower = orient(gridMesh(hi ? 14 : 9, 4, (u, v) => {
     const a = (u - 0.5) * 2 * 100 * D2R, e = low - arch * 0.4 * (1 - ((u - 0.5) * 2) ** 2);
     const rows = [[-80 * D2R, r + lt], [-30 * D2R, r + lt], [0, r + lt * 0.8], [1.5 * D2R, r + lt * 0.2], [0.5 * D2R, r * 0.985]];
     const [de, rad] = rows[Math.round(v * 4)];
     return sph(rad, Math.max(-88 * D2R, v === 0 ? de : e + de), a);
   }, (u, v, o) => { o[0] = v > 0.5 ? 0.6 : 0.2; o[2] = v > 0.7 ? 0.6 : 1; }));
-  // closing: rotate the lid edge from `open` down to just past the lower lid
-  const shut = open + arch - low + 4 * D2R;
   // sanitize: the iris cap has zero-area triangles at its pole
-  return {ball: sanitize(ball), iris: sanitize(iris), lid: sanitize(lid), lower: sanitize(lower), r, lidAngle: blink => -(1 - blink) * shut};
+  return {ball: sanitize(ball), iris: sanitize(iris), lid: sanitize(lid), lower: sanitize(lower)};
+  };
+  const hi = mk(true);
+  return {...hi, lo: mk(false), r, lidAngle: blink => -(1 - blink) * shut};
 }
 
 /* =====================================================================================
@@ -844,6 +848,6 @@ export function bakeRecipe(recipe) {
 }
 export function bakeRecipeIdle(recipe, done) {
   const st = start(recipe);
-  const tick = () => { if (st.done) { if (done) done(st.res); return; } advance(st, 8); setTimeout(tick, 6); };
+  const tick = () => { if (st.done) { if (done) done(st.res); return; } advance(st, 6); setTimeout(tick, 10); };
   setTimeout(tick, 0);
 }

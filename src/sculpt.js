@@ -243,8 +243,18 @@ export function* simplifyGen(mesh, target, opts = {}) {
   const isBorder = (a, b) => { let c = 0; for (const t of VT[a]) if (alive[t]) { const x = T[t * 3], y = T[t * 3 + 1], z = T[t * 3 + 2]; if (x === b || y === b || z === b) c++; } return c === 1; };
   const o3 = [0, 0, 0], m3 = [0, 0, 0];
   let live = ntri;
-  let it = 0;
-  while (live > target && hc.length) {
+  let it = 0, pass = 0, flipK = 0.25;
+  for (;;) {
+  if (!(live > target && hc.length)) {
+    // the heap ran dry above the target: edges refused earlier are not re-queued unless a neighbour changes, so thin shells (hair, moustache) stalled
+    // far above their budget. Queue every live edge again with a more permissive flip test, a few times.
+    if (live <= target || ++pass > 3) break;
+    flipK = [0.25, 0.1, 0.0, -0.3][pass]; hc = []; ha = []; hb = []; hva = []; hvb = []; hp = [];
+    const seenE = new Set();
+    for (let t = 0; t < ntri; t++) if (alive[t]) for (let q = 0; q < 3; q++) { const a0 = T[t * 3 + q], b0 = T[t * 3 + (q + 1) % 3], key = ek(a0, b0); if (!seenE.has(key)) { seenE.add(key); push(a0, b0); } }
+    if (!hc.length) break;
+  }
+  {
     if ((++it & 1023) === 0) yield;
     pop(); const a = r[1], b = r[2], px = r[5], py = r[6], pz = r[7];
     if (vdead[a] || vdead[b] || ver[a] !== r[3] || ver[b] !== r[4]) continue;
@@ -261,7 +271,7 @@ export function* simplifyGen(mesh, target, opts = {}) {
       const s0 = P[v * 3], s1 = P[v * 3 + 1], s2 = P[v * 3 + 2]; P[v * 3] = px; P[v * 3 + 1] = py; P[v * 3 + 2] = pz;
       fn(i0, i1, i2, m3); P[v * 3] = s0; P[v * 3 + 1] = s1; P[v * 3 + 2] = s2;
       const lo = Math.hypot(o3[0], o3[1], o3[2]), lm = Math.hypot(m3[0], m3[1], m3[2]);
-      if (lm < 1e-20 || (o3[0] * m3[0] + o3[1] * m3[1] + o3[2] * m3[2]) < 0.25 * lo * lm) { ok = false; break; }
+      if (lm < 1e-20 || (o3[0] * m3[0] + o3[1] * m3[1] + o3[2] * m3[2]) < flipK * lo * lm) { ok = false; break; }
     }
     if (!ok) continue;
     // collapse b into a
@@ -277,6 +287,7 @@ export function* simplifyGen(mesh, target, opts = {}) {
     vdead[b] = 1; VT[b] = []; ver[a]++;
     VT[a] = VT[a].filter(t => alive[t]);
     stamp++; nbr(a, mark, nlist); for (const w of nlist.slice()) push(a, w); // only edges touching a changed cost; the rest of the heap stays valid
+  }
   }
   // compact
   const remap = new Int32Array(nv).fill(-1), OP = [], OT = [];
