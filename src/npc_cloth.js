@@ -280,7 +280,7 @@ export function clothDress(B, o) {
     robe = new Cloth(P, nu, nv, {gather: gu, bend: o.bend ?? 0.2});
     robe.colliders.push(robeCol(0.001, 1), under(0.004, 1));
     for (let i = 0; i < nu; i++) { robe.pin(i, [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]); const q = (i + (nUp - 1) * nu) * 3; robe.pin(i + (nUp - 1) * nu, [P[q], P[q + 1], P[q + 2]]); }
-    yield* robe.run({steps: o.steps ?? 90, iters: o.iters ?? 8, floor: floorY});
+    yield* robe.run({steps: o.steps ?? 78, iters: o.iters ?? 6, floor: floorY});
     // 3. sleeves
     for (const sg of o.sleeves) {
       const L = layoutSleeve(sg), cs = new Cloth(L.P, L.nuS, L.nvS, {gather: () => 1 + (sg.gather ?? 0), bend: 0.1});
@@ -292,7 +292,7 @@ export function clothDress(B, o) {
       for (let j = 2; j < L.nvS; j++) for (let i = 0; i < half; i++) { const a = i + j * L.nuS, b = i + half + j * L.nuS; ci.push(a); cj.push(b); cr.push(Math.hypot(L.P[a * 3] - L.P[b * 3], L.P[a * 3 + 1] - L.P[b * 3 + 1], L.P[a * 3 + 2] - L.P[b * 3 + 2]) * 0.8); ck.push(0.06); }
       cs.ci = Int32Array.from([...cs.ci, ...ci]); cs.cj = Int32Array.from([...cs.cj, ...cj]); cs.cr = Float64Array.from([...cs.cr, ...cr]); cs.ck = Float64Array.from([...cs.ck, ...ck]);
       cs.colliders.push(bodyCol(0.016, 1), under(0.016, 1));
-      yield* cs.run({steps: o.sleeveSteps ?? 80, iters: o.iters ?? 8, floor: floorY});
+      yield* cs.run({steps: o.sleeveSteps ?? 64, iters: o.iters ?? 6, floor: floorY});
       sleeves.push({L, cs});
     }
     // 4. stole: a capelet over the shoulders whose front edges run down the chest as lappets, laid on the body offset by gapS, simulated like the rest

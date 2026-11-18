@@ -27,7 +27,7 @@ const ARMS = [
 const WEAR_TOP = K.wearPaint({vary: 0.28, freq: 8, seed: 11}), WEAR_STOLE = K.wearPaint({vary: 0.35, freq: 9, seed: 5}), WEAR_SKIRT = K.wearPaint({vary: 0.28, freq: 6, dirt: 0.85, dirtY: 0.16, seed: 3});
 const RAG = {amp: 0.005, notches: 6, depth: 0.016, width: 0.07, seed: 2};   // frayed hem: noise on the edge height plus a few V-shaped notches
 export const KEEPER = {
-  id: 'keeper-v13', seed: 4242,
+  id: 'keeper-v14', seed: 4242,
   // Human proportions (see docs/npc-kit.md): the head is built at its natural size and drawn at headScale; the torso is
   // stretched (len) and the skirt (legs) raised so the figure is ~7.25 heads tall with shoulders about 2.7 head widths wide.
   proportions: {headScale: 0.6, frames: ['H', 'J'], height: 0.93},   // height: uniform scale of the whole figure and its props (crown 1.03 m * 0.93 = 0.96 m)
@@ -101,8 +101,8 @@ export const KEEPER = {
     const nxy = [this.rig.neck[0] + this.rig.drape.push, this.rig.neck[1], this.rig.neck[2]];
     const torsoSolidAll = (x, y, z) => Math.min(D.torsoSolid(x, y, z), D.stoleSolid(x, y, z));
     const robeInBeard = (x, y, z) => torsoSolidAll(nxy[0] + hs * (cD * x - sD * y), nxy[1] + hs * (sD * x + cD * y), nxy[2] + hs * z) / hs;
-    const grip = K.hand({pose: 'grip', side: -1, gripR: this.gripR ?? 0.0092, age: 1.2, tris: [1300, 600, 100], cell: 0.0017});
-    const rest = K.hand({pose: 'rest', side: 1, age: 1.2, curl: 1.15, tris: [1300, 600, 100], cell: 0.0017});
+    const grip = K.hand({pose: 'grip', side: -1, gripR: this.gripR ?? 0.0092, age: 1.2, tris: [1300, 600, 100], cell: 0.002});
+    const rest = K.hand({pose: 'rest', side: 1, age: 1.2, curl: 1.15, tris: [1300, 600, 100], cell: 0.002});
     const sleeveCull = sp => { const c = sp.cull; sp.cull = (x, y, z) => (c && c(x, y, z)) || x < -0.032; return sp; };
     // pinned-on props (frame U): brooch on the stole's lappet, pouch and key ring on the belt. up = world up in U coordinates (U leans by rig.lean).
     const upU = [Math.sin(this.rig.lean), Math.cos(this.rig.lean), 0];
@@ -111,9 +111,9 @@ export const KEEPER = {
       const c = Math.cos(theta), s = Math.sin(theta), hit = yy => K.surfacePoint(surf, [0.3 * c, yy, 0.3 * s], [-c, 0, -s], 0, 0.3), a = hit(y), m = hit(yMid ?? y);
       return {P: a.P, n: m.n};
     };
-    const bro = (() => { const hit = K.surfacePoint(D.stoleOuter, [0.3, 0.2, -0.07], [-1, 0, 0], 0, 0.3); return K.brooch(hit.P, hit.n, upU, {}); })();
+    const bro = (() => { const hit = K.surfacePoint(D.stoleOuter, [0.3, 0.2, -0.07], [-1, 0, 0], 0, 0.3); return K.brooch(hit.P, hit.n, upU, {cell: 0.0013}); })();
     const pk = onBody(bodySurf, 1.31, -0.012, -0.04), kk = onBody(bodySurf, 0.42, -0.012, -0.04);
-    const pouch = K.pouch(pk.P, pk.n, upU, bodySurf, {size: 1.25}), keys = K.keyRing(kk.P, kk.n, upU, bodySurf, {size: 1.5, tris: [280, 160, 40], cell: 0.0014});
+    const pouch = K.pouch(pk.P, pk.n, upU, bodySurf, {size: 1.25, cell: 0.0025}), keys = K.keyRing(kk.P, kk.n, upU, bodySurf, {size: 1.5, tris: [280, 160, 40], cell: 0.002});
     const [e0, e1] = D.ends;
     const brw = K.brows(H, {size: 1.15, droop: 1.1}), mou = K.moustache(H, {size: 1.2, droop: 1.35}), brd = K.beard(H, {length: 0.34, width: 1.12, thick: 0.009, fork: 0, chest: robeInBeard});
     // v11: robe and sleeves are cloth simulations (src/npc_cloth.js) laid out loose round the body SDF; the SDF garments above stay as fields (stole, beard, props rest on them)

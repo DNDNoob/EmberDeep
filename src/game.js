@@ -11,7 +11,8 @@ import {makeSurfaces} from './textures.js';
 import {openRoom,newRoomCode,cleanCode} from './net.js';
 import {createVoice} from './voice.js';
 import {createRooms,kilnGame,KILN} from './rooms.js';
-import {bakeRecipe,bakeRecipeIdle} from './npc_kit.js';
+import {bakeRecipe,bakeRecipeIdle,bakeIsDone,bakeStarted,bakeExport,bakePrime,KIT_HASH} from './npc_kit.js';
+import {loadBake,saveBake,cacheStats} from './npc_cache.js';
 import {hairAtlas,ATLAS_TILES} from './npc_hair.js';
 import {KEEPER} from './npc_recipes.js';
 
@@ -950,7 +951,8 @@ function face(H,o){
   ball(H,[0.089,ey-0.027,0],o.nose||[0.015,0.017,0.013],[sk[0]*0.93,sk[1]*0.88,sk[2]*0.86,1],true);
   if(o.mouth)slab(H,[0.08,0.034,0],[0.008,0.006+(o.talk||0),o.mouthW||0.03],o.mouth);
 }
-const NPC_CLASSIC=new URLSearchParams(location.search).get('npc')==='classic',ONE3=[1,1,1];
+let PROBE_SYNC=false;const NPC_CLASSIC=new URLSearchParams(location.search).get('npc')==='classic',ONE3=[1,1,1];
+let KEEPER_WARM=false,KEEPER_SAVED=false;const KEEPER_CACHE_KEY=KEEPER.id+':'+KIT_HASH,KT0=performance.now(),KEEPER_T={load:-1,hit:false},KEEPER_LOAD=NPC_CLASSIC?null:loadBake(KEEPER_CACHE_KEY).then(pl=>{try{const t1=performance.now();if(pl)KEEPER_T.hit=bakePrime(KEEPER,pl);KEEPER_T.load=performance.now()-t1;KEEPER_T.readMs=cacheStats.readMs}catch(e){console.error(e)}});
 let STUDIO=null; // set by __game.studio(): fixed camera, frozen gameplay, for NPC screenshots
 /* ---------- sculpted NPCs (src/npc_kit.js + src/npc_recipes.js) ---------- */
 // material names used by recipes -> shader material ids in paintedMaterial()
@@ -1129,6 +1131,7 @@ function buildNpc(n,t,ex,ey,ez,dtR){
     }else n.yaw=n.type==='keeper'&&F.safe?Math.atan2(F.safe.z-n.z,F.safe.x-n.x):toP;
   }
   const wrap=a=>{while(a>Math.PI)a-=Math.PI*2;while(a<-Math.PI)a+=Math.PI*2;return a};
+  if(n.type==='keeper'&&dist<30)keeperWarm();
   const talking=talk&&talk.npc===n;
   let diff=wrap(toP-n.yaw);
   if(!seated&&!n.lock&&dist<5&&(Math.abs(diff)>0.45||talking)){const st=Math.sign(diff)*Math.min(Math.abs(diff),2.6*dtR);n.yaw+=st;diff-=st}
@@ -1141,7 +1144,7 @@ function buildNpc(n,t,ex,ey,ez,dtR){
   const nod=talking?Math.sin(t*5.5)*0.05:0,jaw=talking?Math.max(0,Math.sin(t*9))*0.006:0;
   const B={p:[n.x+(n.ox||0),0,n.z+(n.oz||0)],R:rYaw(n.yaw)};
   const out={top:1,lantern:null};
-  if(n.type==='keeper'&&!NPC_CLASSIC&&dist<14)buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,STUDIO&&STUDIO.lod!=null?STUDIO.lod:Q>=1?(dist<6?0:dist<9.5?1:2):(dist<8?1:2)); // near / mid / far; low quality never uses the near LOD
+  if(n.type==='keeper'&&!NPC_CLASSIC&&dist<14&&keeperReady())buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,STUDIO&&STUDIO.lod!=null?STUDIO.lod:Q>=1?(dist<6?0:dist<9.5?1:2):(dist<8?1:2)); // near / mid / far; low quality never uses the near LOD
   else if(n.type==='keeper'){
     const robe=[0.36,0.1,0.07,2],robeD=[0.24,0.07,0.06,2],gold=[0.8,0.58,0.18,2],skin=[0.8,0.6,0.47,1],white=[0.9,0.9,0.86,5],wood=[0.3,0.2,0.12,6];
     seg(B,[0,0,0],[0,0.05,0],0.178,0.172,gold);
@@ -1769,7 +1772,7 @@ function loadFloor(depth){
   R.depth=depth;
   if(depth>deepest){deepest=depth;store.set('deepest',deepest)}
   F=genFloor(R.seed,depth);panelLvl=1;P.grab=null;if(typeof MIM!=='undefined')mimicReset();
-  buildMesh(F);buildStatic(F);buildSdf(F);
+  buildMesh(F);buildStatic(F);buildSdf(F);if(F.npcs&&F.npcs.some(q=>q.type==='keeper'))keeperWarm();
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
   P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;P.inSafe=false;nearNpc=null;
   sealMsgT=0;doorMsgT=0;
@@ -3870,12 +3873,15 @@ function studio(o){
   STUDIO.open=o.open;STUDIO.blink=o.blink;STUDIO.lod=o.lod;P.x=cx;P.z=cz;
   return {spot:S,cam:STUDIO.cam,Q};
 }
-// build the sculpted Keeper once, shortly after load, so the first sanctuary does not hitch
-if(!NPC_CLASSIC)setTimeout(()=>{try{bakeRecipeIdle(KEEPER)}catch(e){console.error(e)}},1500); // one part per tick, so the title screen never stalls
+// The sculpted Keeper: baked lazily (keeperWarm, called when a floor with the Keeper loads and when the player is within 30 m) in idle slices; until it is done the
+// classic Keeper is drawn. A finished bake is stored in IndexedDB (src/npc_cache.js, keyed by recipe id + kit source hash) and primed from there on later loads.
+function keeperSave(){if(KEEPER_SAVED||!bakeIsDone(KEEPER))return;KEEPER_SAVED=true;if(bakeRecipe(KEEPER).cached)return;const pl=bakeExport(KEEPER);if(pl)saveBake(KEEPER_CACHE_KEY,pl)}
+function keeperWarm(){if(NPC_CLASSIC||KEEPER_WARM)return;KEEPER_WARM=true;(KEEPER_LOAD||Promise.resolve()).then(()=>{if(bakeIsDone(KEEPER))return;try{bakeRecipeIdle(KEEPER,()=>keeperSave())}catch(e){console.error(e)}})}
+function keeperReady(){if(bakeIsDone(KEEPER))return true;if(STUDIO||PROBE_SYNC){bakeRecipe(KEEPER);keeperSave();return true}keeperWarm();return false}
 // grip locking check for tools/npc_grip.mjs: builds the Keeper at the given times (optionally talking) and reports where the hand holds the rod
-function gripProbe(ts,talking){const n=F.npcs.find(q=>q.type==='keeper'),save=talk,res=[];if(talking)talk={npc:n};
+function gripProbe(ts,talking){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='keeper'),save=talk,res=[];if(talking)talk={npc:n};
   for(const t of ts){buildNpc(n,t,P.x,0.7,P.z,0.016);res.push({t,...GRIP_DBG})}talk=save;return res}
-function benchNpc(iters){const n=F.npcs.find(q=>q.type==='keeper');const e=[P.x,0.7,P.z];buildNpc(n,1,e[0],e[1],e[2],0.016);let t0=performance.now();
+function benchNpc(iters){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='keeper');const e=[P.x,0.7,P.z];buildNpc(n,1,e[0],e[1],e[2],0.016);let t0=performance.now();
   for(let i=0;i<iters;i++){CH.n=0;buildNpc(n,1+i*0.016,e[0],e[1],e[2],0.016)}return (performance.now()-t0)/iters}
-window.__game={gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);

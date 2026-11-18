@@ -325,7 +325,7 @@ export function beard(H, p = {}) {
   const inset = p.inset ?? 0.0034, rr = rng(p.seed ?? 17), zMax = 0.06 * W;
   const ZY0 = cheekY + 0.004, ZS = 0.005, zExt = [];
   for (let y = ZY0; y > -L - 0.03; y -= ZS) {
-    let w = 0.004; for (let z = 0.1; z > 0.004; z -= 0.003) { let hit = false; for (let x = 0.04; x < 0.14 && !hit; x += 0.004) hit = core(x, y, z) < 0; if (hit) { w = z; break; } }
+    let w = 0.004; for (let z = 0.1; z > 0.004; z -= 0.004) { let hit = false; for (let x = 0.04; x < 0.14 && !hit; x += 0.007) hit = core(x, y, z) < 0; if (hit) { w = z; break; } }
     zExt.push(w);
   }
   for (let r = 0; r < 2; r++) for (let i = 1; i < zExt.length - 1; i++) zExt[i] = (zExt[i - 1] + 2 * zExt[i] + zExt[i + 1]) / 4;
@@ -355,7 +355,7 @@ export function beard(H, p = {}) {
         for (let r = 0; r < rows; r++) {
           const ya = y0 - r * step, yb = Math.max(yEnd, ya - len);
           if (ya - yb < 0.03) break;
-          addCard(zeta, ya, yb, {...o, off: o.off + (rows - 1 - r) * o.rowOff, amp: o.amp * (0.6 + 0.9 * rr()), wl: 0.11 + 0.1 * rr(), shear: (rr() - 0.5) * 0.03, phase: rr() * 6.28, variant: r === rows - 1 && o.tipVariant != null ? o.tipVariant : o.variant, W: o.W * (0.85 + 0.3 * rr()) * (1 - 0.4 * zeta * zeta), off: (o.off + (rows - 1 - r) * o.rowOff) * (Math.abs(zeta) > 0.7 ? 0.6 : 1), lift: Math.abs(zeta) > 0.7 ? 0 : o.lift, ao: o.ao + 0.1 * (r / rows), keep: o.keep});
+          addCard(zeta, ya, yb, {...o, amp: o.amp * (0.6 + 0.9 * rr()), wl: 0.11 + 0.1 * rr(), shear: (rr() - 0.5) * 0.03, phase: rr() * 6.28, variant: r === rows - 1 && o.tipVariant != null ? o.tipVariant : o.variant, W: o.W * (0.85 + 0.3 * rr()) * (1 - 0.4 * zeta * zeta), off: (o.off + (rows - 1 - r) * o.rowOff) * (Math.abs(zeta) > 0.7 ? 0.6 : 1), lift: Math.abs(zeta) > 0.7 ? 0 : o.lift, ao: o.ao + 0.1 * (r / rows), keep: o.keep});
         }
       }
     };
@@ -1111,12 +1111,32 @@ export function bakePart(spec, seed = 1) {
 // bakeRecipe() finishes synchronously; bakeRecipeIdle() bakes in slices of a few ms per tick (call it at load so no frame
 // stalls for long), and a later bakeRecipe() simply finishes whatever is left.
 const CACHE = new Map();
+export const KIT_HASH = typeof __KIT_HASH__ !== 'undefined' ? __KIT_HASH__ : 'dev';
+export const bakeIsDone = recipe => !!CACHE.get(recipe.id)?.done;
+export const bakeStarted = recipe => CACHE.has(recipe.id);
+// serialisable copy of a finished bake (typed arrays plus their band / flags), for the IndexedDB cache; bakePrime() installs one without baking
+export function bakeExport(recipe) {
+  const st = CACHE.get(recipe.id); if (!st || !st.done) return null;
+  // every vertex and band array goes into ONE buffer (a single memcpy for the structured clone, views on load); meta lists offsets
+  let n = 0; const meta = {};
+  for (const [k, m] of Object.entries(st.res.parts)) meta[k] = {raw: m.raw, ms: m.ms, lods: m.map(x => { const e = {o: n, n: x.length, cards: !!x.cards}; n += x.length; if (x.band) { e.bo = n; e.bn = x.band.length; n += x.band.length; } return e; })};
+  const buf = new Float32Array(n);
+  for (const [k, m] of Object.entries(st.res.parts)) m.forEach((x, i) => { const e = meta[k].lods[i]; buf.set(x, e.o); if (x.band) buf.set(x.band, e.bo); });
+  return {key: recipe.id + ':' + KIT_HASH, meta, buf, stats: st.res.stats, eyes: st.eyesSpec, anchors: st.res.anchors};
+}
+export function bakePrime(recipe, pl) {
+  if (!pl || pl.key !== recipe.id + ':' + KIT_HASH || CACHE.has(recipe.id)) return false;
+  const parts = {}; let nLod = 1;
+  for (const [k, v] of Object.entries(pl.meta)) { const m = v.lods.map(l => { const a = pl.buf.subarray(l.o, l.o + l.n); a.stride = 9; if (l.bn) a.band = pl.buf.subarray(l.bo, l.bo + l.bn); if (l.cards) a.cards = true; return a; }); m.raw = v.raw; m.ms = v.ms; parts[k] = m; nLod = Math.max(nLod, m.length); }
+  CACHE.set(recipe.id, {res: {recipe, nLod, parts, eyes: pl.eyes ? eyeRig(pl.eyes) : null, anchors: pl.anchors || {}, stats: pl.stats, cached: true}, done: true, eyesSpec: pl.eyes});
+  return true;
+}
 function start(recipe) {
   let st = CACHE.get(recipe.id);
   if (!st) {
     const built = recipe.build();
     st = {res: {recipe, nLod: 1, parts: {}, eyes: built.eyes ? eyeRig(built.eyes) : null, anchors: built.anchors || {}, stats: {parts: {}, tris: [], ms: 0}},
-      names: Object.keys(built.parts), todo: Object.keys(built.parts), built, seed: recipe.seed ?? 1, done: false, cur: null};
+      names: Object.keys(built.parts), todo: Object.keys(built.parts), built, seed: recipe.seed ?? 1, done: false, cur: null, eyesSpec: built.eyes};
     CACHE.set(recipe.id, st);
   }
   return st;
