@@ -20,8 +20,8 @@ import {clothDress, clothParts} from './npc_cloth.js';
 // Arm joint centres in U coords (waist origin): shoulder, elbow, wrist, and radii of the bare arm [deltoid, elbow, wrist].
 const UP = [Math.sin(-0.15), Math.cos(-0.15), 0];   // world up in U coordinates (the upper body leans by rig.lean)
 const ARMS = [
-  {S: [0, 0.318, 0.115], E: [0.07, 0.115, 0.17], W: [0.225, 0.15, 0.18], r: [0.036, 0.026, 0.018], back: 0.034},   // staff arm (+Z)
-  {S: [0, 0.318, -0.115], E: [0.0, 0.12, -0.165], W: [0.105, 0.04, -0.075], r: [0.036, 0.026, 0.018], back: 0.024} // hand resting on the sash
+  {S: [0.004, 0.314, 0.104], E: [0.07, 0.115, 0.17], W: [0.225, 0.15, 0.18], r: [0.034, 0.026, 0.018], back: 0.034},   // staff arm (+Z)
+  {S: [0.004, 0.314, -0.104], E: [0.0, 0.12, -0.165], W: [0.105, 0.04, -0.075], r: [0.034, 0.026, 0.018], back: 0.024} // hand resting on the sash
 ];
 // worn fabric: slow colour variation everywhere, dirt towards the floor on the skirt
 const WEAR_TOP = K.wearPaint({vary: 0.28, freq: 8, seed: 11}), WEAR_STOLE = K.wearPaint({vary: 0.35, freq: 9, seed: 5}), WEAR_SKIRT = K.wearPaint({vary: 0.28, freq: 6, dirt: 0.85, dirtY: 0.16, seed: 3});
@@ -36,11 +36,11 @@ export const KEEPER = {
     robe: [0.33, 0.06, 0.055], robeDeep: [0.2, 0.035, 0.04],
     gold: [0.8, 0.58, 0.18], goldDeep: [0.55, 0.36, 0.1],
     white: [0.74, 0.73, 0.69], whiteDeep: [0.36, 0.35, 0.34],
-    robeDirt: [0.17, 0.075, 0.05], stole: [0.04, 0.05, 0.13], stoleDeep: [0.015, 0.02, 0.06],
+    robeDirt: [0.17, 0.075, 0.05], cord: [0.1, 0.06, 0.04], cordTip: [0.6, 0.42, 0.14], stole: [0.04, 0.05, 0.13], stoleDeep: [0.015, 0.02, 0.06],
     brass: [0.62, 0.47, 0.2], brassDeep: [0.36, 0.25, 0.1], garnet: [0.55, 0.04, 0.06], leather: [0.34, 0.19, 0.09], leatherDeep: [0.16, 0.085, 0.045],
     nail: [0.84, 0.66, 0.58], nailDeep: [0.74, 0.52, 0.46], sclera: [0.86, 0.82, 0.74], iris: [0.42, 0.26, 0.12], pupil: [0.02, 0.015, 0.012]
   },
-  rig: {waist: [0, 0.52, 0], lean: -0.15, neck: [0.005, 0.418, 0], jaw: 0.003, drape: {follow: 0.3, push: 0.012}},
+  rig: {waist: [0, 0.52, 0], lean: -0.15, neck: [0.009, 0.414, 0], jaw: 0.003, drape: {follow: 0.3, push: 0.012}},
   parts: [
     {part: 'skirt', frame: 'B', mat: 'cloth', col: 'robe', col2: 'robeDirt'},
     {part: 'hem', frame: 'B', mat: 'trim', col: 'gold', col2: 'goldDeep'},
@@ -48,7 +48,8 @@ export const KEEPER = {
     {part: 'torso', frame: 'U', mat: 'cloth', col: 'robe', col2: 'robeDeep'},
     {part: 'sleeve0', frame: 'arm0', mat: 'cloth', col: 'robe', col2: 'robeDeep'},
     {part: 'sleeve1', frame: 'U', mat: 'cloth', col: 'robe', col2: 'robeDeep'},
-    {part: 'sash', frame: 'U', mat: 'trim', col: 'gold', col2: 'goldDeep'},
+    {part: 'cord', frame: 'U', mat: 'cloth', col: 'cord', col2: 'cordTip'},
+    {part: 'tassels', frame: 'B', mat: 'cloth', col: 'cord', col2: 'cordTip'},
     {part: 'cuff0', frame: 'arm0', mat: 'trim', col: 'gold', col2: 'goldDeep'},
     {part: 'cuff1', frame: 'U', mat: 'trim', col: 'gold', col2: 'goldDeep'},
     {part: 'stole', frame: 'U', mat: 'cloth', col: 'stole', col2: 'stoleDeep'},
@@ -69,13 +70,13 @@ export const KEEPER = {
     {part: 'restHand', frame: 'rest', mat: 'skin', col: 'skin', col2: 'skinDeep'}
   ],
   // Body first, clothes over it (docs/npc-kit.md): the body is only an SDF; the garments are the meshes.
-  body: {y: {neck: 0.418}, stoop: 0.05, belly: 0.5, narrow: 1.0, waistNarrow: 0.86, arms: ARMS},
+  body: {y: {neck: 0.414, shoulder: 0.33}, stoop: 0.065, belly: 0.5, narrow: 1.0, waistNarrow: 0.86, arms: ARMS},
   garments: [
     {type: 'robe', ease: 0.012, hang: 0.03, collar: {r: 0.037}, tris: [1000, 480, 120], cell: 0.0058, wear: WEAR_TOP},
     {type: 'sleeve', arm: 0, tris: [1000, 420, 100], cell: 0.0042, ease: 0.006, pouch: 0.05, drop: 0.05, up: UP, folds: 1.3, wear: WEAR_TOP, cuff: {len: 0.028, tris: [170, 80, 30], cell: 0.0034, motif: 1, rib: 0.0014}},
     {type: 'sleeve', arm: 1, tris: [900, 400, 100], cell: 0.0042, ease: 0.006, pouch: 0.043, drop: 0.04, up: UP, folds: 1.1, wear: WEAR_TOP, cuff: {len: 0.028, tris: [170, 80, 30], cell: 0.0034, motif: 1, rib: 0.0014}},
     {type: 'sash', y: 0.017, h: 0.018, thick: 0.007, tris: [200, 90, 40], cell: 0.0042, motif: 2, rib: 0.0014},
-    {type: 'stole', gap: 0.012, thick: 0.005, y0: 0.075, border: 0.018, motif: 3, wear: WEAR_STOLE, tris: [700, 330, 80], cell: 0.0046}
+    {type: 'stole', gap: 0.011, thick: 0.001, y0: 0.075, border: 0.018, motif: 3, wear: WEAR_STOLE, tris: [700, 330, 80], cell: 0.0046}
   ],
   eyes: {frame: 'H', sclera: 'sclera', iris: 'iris', pupil: 'pupil', lid: 'skin', lid2: 'skinDeep'},
   build() {
@@ -117,9 +118,10 @@ export const KEEPER = {
     const brw = K.brows(H, {size: 1.15, droop: 1.1}), mou = K.moustache(H, {size: 1.1}), brd = K.beard(H, {length: 0.34, width: 1.12, thick: 0.009, fork: 0, chest: robeInBeard});
     // v11: robe and sleeves are cloth simulations (src/npc_cloth.js) laid out loose round the body SDF; the SDF garments above stay as fields (stole, beard, props rest on them)
     const cd = clothDress(B, {off: this.rig.waist, R: K.rotZ(this.rig.lean), skirtBase: skirt.base, ease: 0.012, hang: 0.03, nu: 72, rowsUp: 18, rowsLow: 32, folds: 12, gather: 0.1, bend: 0.25, rag: skirt.lift, seed: 3,
-      sleeves: [{arm: 0, pouch: 0.044, nu: 24, rows: 26}, {arm: 1, pouch: 0.038, nu: 24, rows: 26}]});
-    const cloth = clothParts(cd, {wearTop: WEAR_TOP, wearSkirt: WEAR_SKIRT, rag: skirt.lift, hem: {cells: 25, rows: 6}, cuff: {cells: 8, rows: 3}, placket: {motif: 2}});
-    const {torso: _t, sleeve0: _s0, sleeve1: _s1, cuff0: _c0, cuff1: _c1, ...Drest} = D.parts;
+      sleeves: [{arm: 0, pouch: 0.044, nu: 24, rows: 26}, {arm: 1, pouch: 0.038, nu: 24, rows: 26}],
+      stole: {nu: 44, rows: 22, gap: 0.024, edge: 0.3, yoke: 0.13, lappet: 0.3, width: 0.46}});
+    const cloth = clothParts(cd, {wearTop: WEAR_TOP, wearSkirt: WEAR_SKIRT, rag: skirt.lift, hem: {cells: 25, rows: 6}, cuff: {cells: 8, rows: 3}, placket: {motif: 2}, stole: {motif: 3, border: 0.018}, wearStole: WEAR_STOLE, cord: {knot: -2}});
+    const {torso: _t, sleeve0: _s0, sleeve1: _s1, cuff0: _c0, cuff1: _c1, sash: _sa, stole: _st, ...Drest} = D.parts;
     return {
       parts: {...cloth, ...Drest, brooch: bro, pouch, keys,
         head: H, ears: K.ears(H, {tris: [650, 400, 60], cell: 0.0015}), hair: K.hairCap(H, {crown: 0.128, tris: [450, 260, 60], cell: 0.0065}), brows: brw, moustache: mou, browCards: {cardsDirect: brw.cardsPart.cardsDirect}, mousCards: {cardsDirect: mou.cardsPart.cardsDirect}, beardCards: {cardsDirect: brd.cardsPart.cardsDirect},

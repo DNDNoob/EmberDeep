@@ -170,7 +170,7 @@ export function clothDress(B, o) {
   const off = o.off, R = o.R, toB = p => { const q = rot(R, p); return [q[0] + off[0], q[1] + off[1], q[2] + off[2]]; }, toU = p => rotT(R, [p[0] - off[0], p[1] - off[1], p[2] - off[2]]);
   const ease = o.ease ?? 0.012, hang = o.hang ?? 0.03, nu = o.nu ?? 72, nUp = o.rowsUp ?? 18, nLow = o.rowsLow ?? 32, nv = nUp + nLow, floorY = o.floorY ?? 0, nf = o.folds ?? 12;
   const state = {done: false, res: null};
-  let bodyGrid = null, X = null, robe = null, sleeves = [];
+  let bodyGrid = null, X = null, robe = null, sleeves = [], stoleState = null;
   const gather = o.gather ?? 0.06;
   // ---- skirt silhouette table: radius of the smooth skirt at (azimuth, height) in B coordinates ----
   const sb = o.skirtBase, NA = 48, NY = 40, YH = 0.58, rTab = new Float32Array(NA * NY);
@@ -293,9 +293,40 @@ export function clothDress(B, o) {
       yield* cs.run({steps: o.sleeveSteps ?? 80, iters: o.iters ?? 8, floor: floorY});
       sleeves.push({L, cs});
     }
+    // 4. stole: a capelet over the shoulders whose front edges run down the chest as lappets, laid on the body offset by gapS, simulated like the rest
+    if (o.stole) {
+      const sto = o.stole, nuS = sto.nu ?? 44, nvS = sto.rows ?? 22, gapS = sto.gap ?? 0.024, a0 = sto.edge ?? 0.3, Ls = sto.yoke ?? 0.12, Lf = sto.lappet ?? 0.3, wl = sto.width ?? 0.5;
+      const yTop = B.Y.neck - 0.03, gapAt = y => (sto.gapTop ?? 0.011) + (gapS - (sto.gapTop ?? 0.011)) * smoothstep(yTop, yTop - 0.06, y), F = (x, y, z) => B.sdf(x, y, z) - gapAt(y), cx = 0.015, e = 0.0008, P = new Float64Array(nuS * nvS * 3), Larc = [];
+      for (let i = 0; i < nuS; i++) {
+        const th = a0 + (2 * Math.PI - 2 * a0) * i / (nuS - 1), c = Math.cos(th), sn = Math.sin(th), dE = Math.min(i, nuS - 1 - i) / (nuS - 1) * (2 * Math.PI - 2 * a0);
+        const L = Ls + (Lf - Ls) * smoothstep(wl, wl * 0.4, dE) + 0.004 * Math.sin(th * 9);
+        let lo = 0, hi = 0.35; for (let k = 0; k < 16; k++) { const m = (lo + hi) / 2; if (F(cx + c * m, yTop, sn * m) < 0) lo = m; else hi = m; }
+        let rho = (lo + hi) / 2, y = yTop; const poly = [[rho, y]];
+        for (let it = 0; it < Math.ceil(L / 0.004) + 2; it++) {
+          const px = cx + c * rho, pz = sn * rho;
+          const gx = F(px + e, y, pz) - F(px - e, y, pz), gy = F(px, y + e, pz) - F(px, y - e, pz), gz = F(px, y, pz + e) - F(px, y, pz - e);
+          const gr = gx * c + gz * sn, gl = Math.hypot(gr, gy) || 1; let tr = gy / gl, ty = -gr / gl; if (ty > 0) { tr = -tr; ty = -ty; }
+          rho += tr * 0.004; y += ty * 0.004;
+          for (let q = 0; q < 2; q++) { const qx = cx + c * rho, qz = sn * rho, d = F(qx, y, qz), g2x = F(qx + e, y, qz) - F(qx - e, y, qz), g2y = F(qx, y + e, qz) - F(qx, y - e, qz), g2z = F(qx, y, qz + e) - F(qx, y, qz - e), gg = (g2x * g2x + g2y * g2y + g2z * g2z) / (4 * e * e) || 1; const sc = d / gg / (2 * e); rho -= (g2x * c + g2z * sn) * sc; y -= g2y * sc; }
+          poly.push([rho, y]);
+        }
+        const cum = [0]; for (let k = 1; k < poly.length; k++) cum.push(cum[k - 1] + Math.hypot(poly[k][0] - poly[k - 1][0], poly[k][1] - poly[k - 1][1]));
+        const tot = Math.min(L, cum[cum.length - 1]); Larc.push(tot);
+        for (let j = 0; j < nvS; j++) {
+          const t = j / (nvS - 1) * tot; let k = 1; while (k < cum.length - 1 && cum[k] < t) k++;
+          const f = (t - cum[k - 1]) / ((cum[k] - cum[k - 1]) || 1), r = poly[k - 1][0] + (poly[k][0] - poly[k - 1][0]) * f, yy = poly[k - 1][1] + (poly[k][1] - poly[k - 1][1]) * f;
+          const pb = toB([cx + c * r, yy, sn * r]), q = (i + j * nuS) * 3; P[q] = pb[0]; P[q + 1] = pb[1]; P[q + 2] = pb[2];
+        }
+      }
+      const st = new Cloth(P, nuS, nvS, {closed: false, bend: 0.3});
+      for (let i = 0; i < nuS; i++) st.pin(i, [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]);
+      st.colliders.push({thick: 0, mask: 1, mu: 0.5, query: (x, y, z, g) => { const u = toU([x, y, z]), d = bodyGrid.query(u[0], u[1], u[2], g); if (g) { const w = rot(R, [g[0], g[1], g[2]]); g[0] = w[0]; g[1] = w[1]; g[2] = w[2]; } return d - gapAt(u[1]) + 0.002; }});
+      yield* st.run({steps: sto.steps ?? 50, iters: 8, floor: -1});
+      stoleState = {cs: st, nuS, nvS, Larc, a0};
+    }
     state.done = true;
   }
-  return {ensure, parts: null, internals: () => ({X, robe, sleeves, nu, nv, nUp, nLow, toU, toB, R, off}), nu, nv, nUp, nLow, state, nf, toU, toB};
+  return {ensure, parts: null, internals: () => ({X, robe, sleeves, stoleState, nu, nv, nUp, nLow, toU, toB, R, off}), nu, nv, nUp, nLow, state, nf, toU, toB};
 }
 
 // Part specs for the baker from a clothDress() object. Each returns {gen}: bakePartGen runs gen() (it triggers the shared simulation once) and gets one mesh per LOD.
@@ -317,7 +348,17 @@ export function clothParts(cd, o) {
       const N = gridNormals(Xs, L.nuS, L.nvS, true, outw);
       return {L, X: Xs, N, AO: gridAO(Xs, N, L.nuS, L.nvS, true, o.aoK ?? 60)};
     });
-    return Object.assign(cache, {ok: true, I, Xu, Xb, NU, AOu, NB, AOb, sl});
+    let st = null;
+    if (I.stoleState) {
+      const {cs, nuS, nvS, Larc} = I.stoleState, Xs = new Float64Array(cs.x.length); for (let k = 0; k < nuS * nvS; k++) { const u = toU([cs.x[k * 3], cs.x[k * 3 + 1], cs.x[k * 3 + 2]]); Xs[k * 3] = u[0]; Xs[k * 3 + 1] = u[1]; Xs[k * 3 + 2] = u[2]; }
+      const N = gridNormals(Xs, nuS, nvS, false, (x, y, z) => [x - 0.015, 0.3 * (y - 0.3), z]), bw = o.stole?.border ?? 0.018, bu = new Float32Array(nuS * nvS), bv = new Float32Array(nuS * nvS);
+      for (let j = 0; j < nvS; j++) { let cum = 0; const tot = []; const cm = [0];
+        for (let i = 1; i < nuS; i++) { const a = (i - 1 + j * nuS) * 3, b = (i + j * nuS) * 3; cum += Math.hypot(Xs[a] - Xs[b], Xs[a + 1] - Xs[b + 1], Xs[a + 2] - Xs[b + 2]); cm.push(cum); } void tot;
+        for (let i = 0; i < nuS; i++) { const sj = j / (nvS - 1) * Larc[i], dH = Larc[i] - sj, dE = Math.min(cm[i], cum - cm[i]), q = i + j * nuS;
+          if (dH < dE) { bv[q] = dH / bw; bu[q] = cm[i] / bw; } else { bv[q] = dE / bw; bu[q] = sj / bw; } } }
+      st = {X: Xs, N, AO: gridAO(Xs, N, nuS, nvS, false, o.aoK ?? 60), nuS, nvS, bu, bv};
+    }
+    return Object.assign(cache, {ok: true, I, Xu, Xb, NU, AOu, NB, AOb, sl, st});
   };
   const hemRows = o.hem?.rows ?? 6, cuffRows = o.cuff?.rows ?? 3, nuC = cd.nu, nvC = cd.nv, nUp = cd.nUp;
   const mk = fn => ({gen: function* () { yield* cd.ensure(); yield; const C = prep(); yield; return LODS.map(L => fn(C, L)); }});
@@ -343,6 +384,32 @@ export function clothParts(cd, o) {
     for (let a = 0; a < rows.length - 1; a++) for (let b = 0; b < 2; b++) { const c0 = cols[b], c1 = cols[b + 1]; put(a, c0); put(a, c1); put(a + 1, c1); put(a, c0); put(a + 1, c1); put(a + 1, c0); }
     const m = new Float32Array(V); m.stride = 9; m.band = new Float32Array(Bd); return m;
   });
+  if (o.stole) parts.stole = mk((C, L) => { const S = C.st; return meshFromGrid(S.X, S.nuS, S.nvS, false, {j0: 0, j1: S.nvS - 1, si: L.si, sj: L.sj, N: S.N, AO: S.AO, paint: o.wearStole ? (x, y, z, t) => { t[0] = o.wearStole(x, y, z); } : null,
+    band: (i, j, x, y, z, t) => { const q = i + j * S.nuS; t[0] = S.bu[q]; t[1] = S.bv[q]; t[2] = o.stole.motif ?? 3; }}); });
+  // cord round the waist (frame U) and its tied knot with two hanging tassels (frame B), laid on the simulated robe
+  if (o.cord) {
+    const r0 = o.cord.radius ?? 0.0036, rowU = nUp - 2;
+    parts.cord = mk((C, L) => { const pts = []; for (let i = 0; i <= nuC; i += L.si) { const k = ((i % nuC) + nuC) % nuC + rowU * nuC; pts.push([C.Xu[k * 3] + C.NU[k * 3] * r0 * 0.8, C.Xu[k * 3 + 1] + C.NU[k * 3 + 1] * r0 * 0.8, C.Xu[k * 3 + 2] + C.NU[k * 3 + 2] * r0 * 0.8]); }
+      return tubeMesh(pts, s => r0 * (1 + 0.1 * Math.sin(s * 150)), L.si > 2 ? 4 : 6, {paint: s => 0.5 * (0.5 + 0.5 * Math.sin(s * 150))}); });
+    parts.tassels = mk((C, L) => {
+      const iK = o.cord.knot ?? -2, col = i => ((i % nuC) + nuC) % nuC, meshes = [];
+      const strand = (ic, len, lat) => {
+        const pts = []; let acc = 0, prev = null;
+        for (let j = nUp - 2; j < nvC; j++) { const k = col(ic) + j * nuC, p = [C.Xb[k * 3] + C.NB[k * 3] * 0.005, C.Xb[k * 3 + 1] + C.NB[k * 3 + 1] * 0.005, C.Xb[k * 3 + 2] + C.NB[k * 3 + 2] * 0.005]; if (prev) acc += Math.hypot(p[0] - prev[0], p[1] - prev[1], p[2] - prev[2]); prev = p; pts.push(p); if (acc >= len) break; }
+        const last = pts[pts.length - 1], pr = pts[pts.length - 2], dl = Math.hypot(last[0] - pr[0], last[1] - pr[1], last[2] - pr[2]) || 1, dir = [(last[0] - pr[0]) / dl, (last[1] - pr[1]) / dl, (last[2] - pr[2]) / dl];
+        const Ltot = len, Lh = 0.036; for (let t = 1; t <= 3; t++) pts.push([last[0] + dir[0] * t * Lh / 3, last[1] + dir[1] * t * Lh / 3, last[2] + dir[2] * t * Lh / 3]);
+        const n = pts.length; let tot = 0; for (let k = 1; k < n; k++) tot += Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1], pts[k][2] - pts[k - 1][2]);
+        void Ltot;
+        const rad = s => { const d = (1 - s) * tot; if (d > Lh + 0.004) return 0.0032; if (d > Lh) return 0.0026; const q = d / Lh; return q > 0.78 ? 0.0024 : q > 0.3 ? 0.0085 * Math.sin(Math.PI * (q - 0.3) / 0.9 + 0.2) + 0.0012 : 0.0042 * (0.4 + q / 0.3 * 0.6) + 0.0012; };
+        return tubeMesh(pts, rad, L.si > 2 ? 4 : 7, {paint: s => (1 - s) * tot < Lh ? 0.9 : 0.1});
+      };
+      meshes.push(strand(iK - 1, 0.17, 0), strand(iK + 3, 0.12, 0));
+      const k0 = col(iK) + (nUp - 2) * nuC, kn = [C.Xb[k0 * 3] + C.NB[k0 * 3] * 0.006, C.Xb[k0 * 3 + 1] + C.NB[k0 * 3 + 1] * 0.006, C.Xb[k0 * 3 + 2] + C.NB[k0 * 3 + 2] * 0.006];
+      const ka = col(iK + 3) + (nUp - 2) * nuC, kb = col(iK - 1) + (nUp - 2) * nuC;   // the knot: a short fat tube across the front where the two strands leave
+      meshes.push(tubeMesh([[C.Xb[kb * 3] + C.NB[kb * 3] * 0.006, C.Xb[kb * 3 + 1] + C.NB[kb * 3 + 1] * 0.006 + 0.004, C.Xb[kb * 3 + 2] + C.NB[kb * 3 + 2] * 0.006], kn, [C.Xb[ka * 3] + C.NB[ka * 3] * 0.006, C.Xb[ka * 3 + 1] + C.NB[ka * 3 + 1] * 0.006 + 0.004, C.Xb[ka * 3 + 2] + C.NB[ka * 3 + 2] * 0.006]], s => 0.0045 * Math.sin(Math.PI * s) + 0.0025, 6, {paint: () => 0.2}));
+      let nn = 0; for (const m of meshes) nn += m.length; const out = new Float32Array(nn); let off = 0; for (const m of meshes) { out.set(m, off); off += m.length; } out.stride = 9; return out;
+    });
+  }
   const nuS = (o.sleeveNu ?? 24);
   for (let s = 0; s < (o.sleeveCount ?? 2); s++) {
     const nvS = o.sleeveRows ?? 26, jc = nvS - 1 - cuffRows, ccells = o.cuff?.cells ?? 8;
@@ -351,4 +418,24 @@ export function clothParts(cd, o) {
       band: (i, j, x, y, z, t) => { t[0] = i / nuS * ccells; t[1] = (j - jc) / (nvS - 1 - jc); t[2] = o.cuff?.motif ?? 1; }}); });
   }
   return parts;
+}
+
+// Tube along a path (array of [x,y,z]); rad(s) with s = 0..1 along it; nSeg sides. Returns a stride 9 mesh (paint 0 or paint(s)). Used for cords, tassels, piping.
+export function tubeMesh(path, rad, nSeg = 6, o = {}) {
+  const n = path.length, V = [], ring = [];
+  let nx = 0, ny = 1, nz = 0;
+  for (let k = 0; k < n; k++) {
+    const a = path[Math.max(0, k - 1)], b = path[Math.min(n - 1, k + 1)];
+    let tx = b[0] - a[0], ty = b[1] - a[1], tz = b[2] - a[2]; const tl = Math.hypot(tx, ty, tz) || 1; tx /= tl; ty /= tl; tz /= tl;
+    // parallel transport: keep the previous normal, made perpendicular to the new tangent
+    let d = nx * tx + ny * ty + nz * tz; nx -= d * tx; ny -= d * ty; nz -= d * tz; let l = Math.hypot(nx, ny, nz);
+    if (l < 1e-4) { nx = Math.abs(tx) < 0.9 ? 1 : 0; ny = Math.abs(tx) < 0.9 ? 0 : 1; nz = 0; d = nx * tx + ny * ty + nz * tz; nx -= d * tx; ny -= d * ty; nz -= d * tz; l = Math.hypot(nx, ny, nz); }
+    nx /= l; ny /= l; nz /= l;
+    const bx = ty * nz - tz * ny, by = tz * nx - tx * nz, bz = tx * ny - ty * nx, r = rad(k / (n - 1)), pts = [];
+    for (let j = 0; j < nSeg; j++) { const an = j / nSeg * 2 * Math.PI, c = Math.cos(an), sn = Math.sin(an), dx = nx * c + bx * sn, dy = ny * c + by * sn, dz = nz * c + bz * sn; pts.push([path[k][0] + dx * r, path[k][1] + dy * r, path[k][2] + dz * r, dx, dy, dz]); }
+    ring.push(pts);
+  }
+  const put = (q, k) => V.push(q[0], q[1], q[2], q[3], q[4], q[5], o.paint ? o.paint(k / (n - 1)) : 0, 0, 1);
+  for (let k = 0; k < n - 1; k++) for (let j = 0; j < nSeg; j++) { const j2 = (j + 1) % nSeg, a = ring[k][j], b = ring[k][j2], c = ring[k + 1][j2], d = ring[k + 1][j]; put(a, k); put(b, k); put(c, k + 1); put(a, k); put(c, k + 1); put(d, k + 1); }
+  const m = new Float32Array(V); m.stride = 9; return m;
 }
