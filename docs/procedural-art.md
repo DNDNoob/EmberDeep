@@ -62,7 +62,7 @@ idea → SDF (primitives + smooth-min + noise) → mesh (surface nets, once) →
 ## 7. Performance budget (target: GTX 1660 Ti laptop, also phones on low)
 
 - Instance anything that repeats (moss, pebbles, mushrooms, bones) and cull by a coarse grid; merge neighbouring visible cells into one draw.
-- Per-frame CPU posing is the bottleneck for characters: about 20k vertices (6k triangles) for a close NPC including props, about 40% of that at range. Sculpting runs at load, spread one part per tick (`bakeRecipeIdle`).
+- Sculpted characters are posed on the GPU (static geometry per part, one model matrix per frame group, see `docs/npc-kit.md`), so their cost is triangles and draw calls (8 for the Keeper), not CPU per vertex. Props still drawn through `CH` are posed on the CPU: keep those to a few thousand vertices. Sculpting runs at load, in slices of a few ms per tick (`bakeRecipeIdle`).
 - Every effect needs a low-quality path (`Q === 0` stays Lambert, no extras).
 - Abyssal Garden adapts resolution from GPU timings; worth copying if frame times become a problem.
 

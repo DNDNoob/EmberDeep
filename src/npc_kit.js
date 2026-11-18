@@ -14,7 +14,7 @@
 // detail mask (0..1, drives wrinkles / fine bump in the shader), baked ambient occlusion (1 = open).
 // game.js poses these with emitS().
 import {ANTHRO, HEAD_H} from './anthro.js';
-import {sculptIndexed, simplify, flatten, smin, smax, ssub, smoothstep, sdSphere, sdEllipsoid, sdRoundCone, sdCapsule, sdBox, fbm, noise, worley, setSeed} from './sculpt.js';
+import {sculptGen, simplifyGen, flattenGen, smin, smax, ssub, smoothstep, sdSphere, sdEllipsoid, sdRoundCone, sdCapsule, sdBox, fbm, noise, worley, setSeed} from './sculpt.js';
 
 const D2R = Math.PI / 180, cl = (v, a, b) => Math.min(b, Math.max(a, v));
 const norm3 = v => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
@@ -781,52 +781,69 @@ export function sanitize(M, minArea = 1e-10) {
   const r = out.slice(0, o); r.stride = 9; r.dropped = dropped; return r;
 }
 
-export function bakePart(spec, seed = 1) {
+// Generator: yields during the heavy loops so bakeRecipeIdle can spread the work over many ticks. tris: [near, mid, far] (any length):
+// each LOD is simplified from the previous one, so the cheaper LODs are decimated versions of the finest.
+export function* bakePartGen(spec, seed = 1) {
   setSeed(seed);
-  const t0 = performance.now();
-  const raw = sculptIndexed(spec.sdf, spec.bounds, spec.cell, {cull: spec.cull});
-  const t1 = performance.now();
-  const near = simplify(raw, spec.tris[0]), far = simplify(near, spec.tris[1]);
+  const guard = function* (g) { let r; while (!(r = g.next()).done) { yield; setSeed(seed); } return r.value; }; // noise seed is global: restore it after every pause
+  const raw = yield* guard(sculptGen(spec.sdf, spec.bounds, spec.cell, {cull: spec.cull}));
   const fo = {paint: spec.paint || (() => {}), project: spec.project ?? spec.cell * 0.5, normalSdf: spec.normalSdf, aoSdf: spec.aoSdf, eps: 0.0006, ao: spec.ao ?? 0.012};
-  const out = [sanitize(flatten(near, spec.sdf, fo)), sanitize(flatten(far, spec.sdf, fo))];
-  out.ms = performance.now() - t0; out.netsMs = t1 - t0; out.raw = raw.T.length / 3;
+  const out = []; let m = raw;
+  for (const t of spec.tris) { m = yield* guard(simplifyGen(m, t)); out.push(sanitize(yield* guard(flattenGen(m, spec.sdf, fo)))); }
+  out.raw = raw.T.length / 3;
   return out;
+}
+export function bakePart(spec, seed = 1) {
+  const t0 = performance.now(), g = bakePartGen(spec, seed); let r;
+  while (!(r = g.next()).done);
+  r.value.ms = performance.now() - t0; return r.value;
 }
 
 // Bake a whole recipe (see src/npc_recipes.js). recipe.build() returns {parts:{name: spec}, eyes, anchors}.
-// Cached by recipe.id; the result lists per-part meshes for both LODs and the stats.
-// bakeRecipe() finishes synchronously; bakeRecipeIdle() bakes one part per tick (call it at load so no frame
+// Cached by recipe.id; the result lists per-part meshes for every LOD and the stats.
+// bakeRecipe() finishes synchronously; bakeRecipeIdle() bakes in slices of a few ms per tick (call it at load so no frame
 // stalls for long), and a later bakeRecipe() simply finishes whatever is left.
 const CACHE = new Map();
 function start(recipe) {
   let st = CACHE.get(recipe.id);
   if (!st) {
     const built = recipe.build();
-    st = {res: {recipe, parts: {}, eyes: built.eyes ? eyeRig(built.eyes) : null, anchors: built.anchors || {}, stats: {parts: {}, tris: [0, 0], ms: 0}},
-      names: Object.keys(built.parts), todo: Object.keys(built.parts), built, seed: recipe.seed ?? 1, done: false};
+    st = {res: {recipe, nLod: 1, parts: {}, eyes: built.eyes ? eyeRig(built.eyes) : null, anchors: built.anchors || {}, stats: {parts: {}, tris: [], ms: 0}},
+      names: Object.keys(built.parts), todo: Object.keys(built.parts), built, seed: recipe.seed ?? 1, done: false, cur: null};
     CACHE.set(recipe.id, st);
   }
   return st;
 }
-function step(st) {
-  const name = st.todo.shift(), {res} = st, m = bakePart(st.built.parts[name], st.seed + st.names.indexOf(name));
-  res.parts[name] = m; res.stats.ms += m.ms;
-  res.stats.parts[name] = {raw: m.raw, near: m[0].length / 27, far: m[1].length / 27, ms: Math.round(m.ms), nets: Math.round(m.netsMs)};
+// run the bake for about `budget` ms (Infinity = to the end)
+function advance(st, budget) {
+  const end = performance.now() + budget;
+  while (!st.done) {
+    if (!st.cur) { const name = st.todo.shift(); st.cur = {name, gen: bakePartGen(st.built.parts[name], st.seed + st.names.indexOf(name)), ms: 0}; }
+    const t0 = performance.now(), r = st.cur.gen.next(); st.cur.ms += performance.now() - t0;
+    if (r.done) finishPart(st, st.cur.name, r.value, st.cur.ms), st.cur = null;
+    if (performance.now() >= end) break;
+  }
+}
+function finishPart(st, name, m, ms) {
+  const {res} = st; m.ms = ms;
+  res.parts[name] = m; res.stats.ms += ms; res.nLod = Math.max(res.nLod, m.length);
+  res.stats.parts[name] = {raw: m.raw, lods: m.map(x => x.length / 27), near: m[0].length / 27, far: m[m.length - 1].length / 27, ms: Math.round(ms)};
   if (st.todo.length) return;
   st.done = true; st.built = null; res.stats.ms = Math.round(res.stats.ms);
   const E = res.eyes;
-  for (const lod of [0, 1]) {
-    for (const q of res.recipe.parts) if (res.parts[q.part]) res.stats.tris[lod] += res.parts[q.part][lod].length / 27;
+  for (let lod = 0; lod < res.nLod; lod++) {
+    res.stats.tris[lod] = 0;
+    for (const q of res.recipe.parts) if (res.parts[q.part]) res.stats.tris[lod] += res.parts[q.part][Math.min(lod, res.parts[q.part].length - 1)].length / 27;
     if (E) res.stats.tris[lod] += 2 * (E.ball.length + E.iris.length + E.lid.length + E.lower.length) / 27;
   }
 }
 export function bakeRecipe(recipe) {
   const st = start(recipe);
-  while (!st.done) step(st);
+  advance(st, Infinity);
   return st.res;
 }
 export function bakeRecipeIdle(recipe, done) {
   const st = start(recipe);
-  const tick = () => { if (st.done) { if (done) done(st.res); return; } step(st); setTimeout(tick, 16); };
+  const tick = () => { if (st.done) { if (done) done(st.res); return; } advance(st, 8); setTimeout(tick, 6); };
   setTimeout(tick, 0);
 }

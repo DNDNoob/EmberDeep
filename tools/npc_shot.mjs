@@ -12,6 +12,8 @@
 //   --seed STUDIO1 --depth 2  floor the studio corridor is picked from
 //   --file index.html         which build to load (default the repo's index.html)
 //   --pose YAW,PITCH          fixed head angles in radians (check beard/neck at extremes)
+//   --blink 0..1              force the eyelids (1 open, 0 shut)
+//   --lod N                   force the LOD (0 near, 1 mid, 2 far) to check what far players see
 //   --hud                     keep the HUD visible (hidden by default)
 //   --stats                   print character vertex counts and sculpt time
 //
@@ -76,7 +78,7 @@ for (const v of A.views.split(',')) {
   const o = VIEWS[v];
   if (!o) { console.log('unknown view', v); continue; }
   const t0 = Date.now();
-  const r = await pg.evaluate(o => window.__game.studio(o), {type: A.npc, seed: A.seed, depth: +A.depth, ...o, ...(A.pose ? {pose: A.pose.split(',').map(Number), headLock: true} : {})});
+  const r = await pg.evaluate(o => window.__game.studio(o), {type: A.npc, seed: A.seed, depth: +A.depth, ...o, ...(A.lod != null ? {lod: +A.lod} : {}), ...(A.blink != null ? {blink: +A.blink} : {}), ...(A.pose ? {pose: A.pose.split(',').map(Number), headLock: true} : {})});
   await frames(+A.scale > 1 ? 3 : 6); // head tracking settles, shaders compile
   const file = resolve(A.out, `${A.prefix || A.npc}-${v}.png`);
   await pg.screenshot({path: file, timeout: 600000});

@@ -86,11 +86,14 @@ export function worley(x, y, z) {
 // opts.cull(cx,cy,cz): optional predicate on a triangle centroid, true drops it (hidden caps, parts buried in others).
 // Returns an indexed mesh {P: Float32Array xyz, T: Int32Array triangles}, wound outward.
 // Far from the surface the field is sampled once per 4x4x4 block (narrow band), which is most of the grid.
-export function sculptIndexed(sdf, bounds, cell, opts = {}) {
+// Generator version: yields now and then so a caller can spread a big bake across frames (see bakeRecipeIdle); sculptIndexed() drains it.
+export function* sculptGen(sdf, bounds, cell, opts = {}) {
   const [x0, y0, z0, x1, y1, z1] = bounds;
   const nx = Math.ceil((x1 - x0) / cell) + 1, ny = Math.ceil((y1 - y0) / cell) + 1, nz = Math.ceil((z1 - z0) / cell) + 1;
   const F = new Float32Array(nx * ny * nz), BS = 4, safe = BS * cell * 0.87 * 1.6; // block half diagonal, with slack for non-exact fields
+  let tick = 0;
   for (let bk = 0; bk < nz; bk += BS) for (let bj = 0; bj < ny; bj += BS) for (let bi = 0; bi < nx; bi += BS) {
+    if ((++tick & 255) === 0) yield;
     const ek = Math.min(nz, bk + BS), ej = Math.min(ny, bj + BS), ei = Math.min(nx, bi + BS);
     const dc = sdf(x0 + (bi + (ei - bi - 1) / 2) * cell, y0 + (bj + (ej - bj - 1) / 2) * cell, z0 + (bk + (ek - bk - 1) / 2) * cell);
     const far = Math.abs(dc) > safe;
@@ -103,6 +106,7 @@ export function sculptIndexed(sdf, bounds, cell, opts = {}) {
   const E = [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]];
   const cv = new Float32Array(8);
   for (let k = 0; k < cz; k++) for (let j = 0; j < cy; j++) for (let i = 0; i < cx; i++) {
+    if (i === 0 && j === 0 && (k & 7) === 0) yield;
     const b = i * sx + j * sy + k * sz;
     cv[0] = F[b]; cv[1] = F[b + sx]; cv[2] = F[b + sy]; cv[3] = F[b + sx + sy];
     cv[4] = F[b + sz]; cv[5] = F[b + sx + sz]; cv[6] = F[b + sy + sz]; cv[7] = F[b + sx + sy + sz];
@@ -133,6 +137,7 @@ export function sculptIndexed(sdf, bounds, cell, opts = {}) {
   };
   const C = (i, j, k) => cid[i + j * cx + k * cx * cy];
   for (let k = 1; k < nz - 1; k++) for (let j = 1; j < ny - 1; j++) for (let i = 1; i < nx - 1; i++) {
+    if (i === 1 && j === 1 && (k & 7) === 0) yield;
     const b = i * sx + j * sy + k * sz, s0 = F[b] < 0;
     if ((F[b + sx] < 0) !== s0) quad(C(i, j - 1, k - 1), C(i, j, k - 1), C(i, j, k), C(i, j - 1, k), !s0);
     if ((F[b + sy] < 0) !== s0) quad(C(i - 1, j, k - 1), C(i - 1, j, k), C(i, j, k), C(i, j, k - 1), !s0);
@@ -140,13 +145,16 @@ export function sculptIndexed(sdf, bounds, cell, opts = {}) {
   }
   return {P: new Float32Array(VP), T: new Int32Array(T)};
 }
+const drain = g => { let r; while (!(r = g.next()).done); return r.value; };
+export const sculptIndexed = (sdf, bounds, cell, opts = {}) => drain(sculptGen(sdf, bounds, cell, opts));
 
 /* ---------- quadric error mesh simplification (Garland-Heckbert edge collapse) ---------- */
 // Reduces an indexed mesh to about `target` triangles, spending them where the shape bends:
 // a nose keeps its triangles, a flat robe panel loses them. Boundary edges (from culling) are pinned
 // by extra constraint planes. Collapses that would flip a triangle or pinch the mesh are refused.
 // Returns a new {P, T}. Cost is roughly O(n log n); a 20k-triangle part takes a few tens of ms.
-export function simplify(mesh, target, opts = {}) {
+export const simplify = (mesh, target, opts = {}) => drain(simplifyGen(mesh, target, opts));
+export function* simplifyGen(mesh, target, opts = {}) {
   const P = Float64Array.from(mesh.P), T = Int32Array.from(mesh.T), nv = P.length / 3, ntri = T.length / 3;
   if (ntri <= target) return {P: new Float32Array(P), T: new Int32Array(T)};
   const Q = new Float64Array(nv * 10), alive = new Uint8Array(ntri).fill(1), vdead = new Uint8Array(nv), ver = new Uint32Array(nv);
@@ -235,7 +243,9 @@ export function simplify(mesh, target, opts = {}) {
   const isBorder = (a, b) => { let c = 0; for (const t of VT[a]) if (alive[t]) { const x = T[t * 3], y = T[t * 3 + 1], z = T[t * 3 + 2]; if (x === b || y === b || z === b) c++; } return c === 1; };
   const o3 = [0, 0, 0], m3 = [0, 0, 0];
   let live = ntri;
+  let it = 0;
   while (live > target && hc.length) {
+    if ((++it & 1023) === 0) yield;
     pop(); const a = r[1], b = r[2], px = r[5], py = r[6], pz = r[7];
     if (vdead[a] || vdead[b] || ver[a] !== r[3] || ver[b] !== r[4]) continue;
     // link condition: the two ends may share only the two vertices opposite the edge
@@ -281,10 +291,12 @@ export function simplify(mesh, target, opts = {}) {
 // then with opts.paint (stride 9): colour blend 0..1 and detail mask 0..1 from opts.paint(x,y,z,out2), and baked
 // ambient occlusion 0..1 marched along the normal through the field (opts.ao = reach in metres, 0 = off).
 // opts.project: pull each vertex back onto the surface first (undoes the smoothing error of simplification).
-export function flatten(mesh, sdf, opts = {}) {
+export const flatten = (mesh, sdf, opts = {}) => drain(flattenGen(mesh, sdf, opts));
+export function* flattenGen(mesh, sdf, opts = {}) {
   const {P, T} = mesh, nv = P.length / 3, nf = opts.normalSdf || sdf, af = opts.aoSdf || sdf, eps = opts.eps || 0.0008, stride = opts.paint ? 9 : 6, aoR = opts.ao || 0;
   const V = new Float32Array(nv * stride), pp = [0, 0];
   for (let v = 0; v < nv; v++) {
+    if ((v & 127) === 127) yield;
     let x = P[v * 3], y = P[v * 3 + 1], z = P[v * 3 + 2];
     for (let it = 0; it < (opts.project ? 2 : 0); it++) {
       const d = sdf(x, y, z), gx = sdf(x + eps, y, z) - sdf(x - eps, y, z), gy = sdf(x, y + eps, z) - sdf(x, y - eps, z), gz = sdf(x, y, z + eps) - sdf(x, y, z - eps);

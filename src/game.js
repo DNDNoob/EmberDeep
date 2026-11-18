@@ -919,20 +919,93 @@ function humanoidFrames(rec,n,B,t,ph,breath,nod,jaw){
   if(rig.drape){const k=rig.drape.follow;fr.D=subF(U,[(ne[0]+rig.drape.push)*S,(ne[1]+breath)*S,ne[2]*S],m3(rYaw(n.hy*k),rZ((n.hp+(rig.headTilt??0.12)+nod)*k)))}
   return fr;
 }
+// ---- GPU posing for sculpted recipes ----
+// Each baked rigid part is uploaded once as a static BufferGeometry (same 13-float layout and the same emitS maths as the old CPU
+// path, written with an identity frame) and drawn with a per-group model matrix built from the frame {p,R} and the figure scale.
+// Parts that share a frame are merged into one geometry (B: skirt, hem; U: torso, sleeves, sash, cuffs; H: head, ears, hair, brows,
+// eyeballs, irises, lower lids; ...). Eyelids get their own group (matrix = H * rotate about the eye axis). Drape parts (neck, beard)
+// blend between two frames per vertex, so they run a small vertex-shader blend (uRel = frame1^-1 * frame2) with a private material.
+const GPU_RIGS=new Set();
+const NPC_T={ms:0,n:0,tris:0,draws:0}; // CPU time spent in buildNpc, and what the sculpted characters submit to the GPU
+function gpuGroups(baked){
+  if(baked.groups)return baked.groups;
+  const rec=baked.recipe,pal=rec.palette,G=new Map(),ec=rec.eyes,E=baked.eyes;
+  const grp=(key,frame,drape)=>{let g=G.get(key);if(!g)G.set(key,g=({key,frame,drape:drape||null,items:[],lid:false}));return g};
+  for(const q of rec.parts){const m=baked.parts[q.part];if(!m)continue;
+    const dr=q.drape&&rec.rig.drape;
+    grp(dr?'d:'+q.part:q.frame,q.frame,dr?{y0:q.drape[0],y1:q.drape[1]}:null).items.push({m,c:q.at||ZERO3,col:pal[q.col],col2:pal[q.col2||q.col],mat:MAT[q.mat],R:q.R||null})}
+  if(E&&ec){const a=baked.anchors.eye;
+    for(const [key,fields,lid] of[[ec.frame,['ball','iris','lower'],false],['lid:'+ec.frame,['lid'],true]]){const g=grp(key,ec.frame);g.lid=lid;
+      for(const z of[-a[2],a[2]])for(const fl of fields){
+        const mat=fl==='lid'||fl==='lower'?MAT.skin:MAT.eye,c1=fl==='ball'?ec.sclera:fl==='iris'?ec.iris:ec.lid,c2=fl==='ball'?ec.sclera:fl==='iris'?ec.pupil:ec.lid2;
+        g.items.push({m:E[fl],c:[a[0],a[1],z],col:pal[c1],col2:pal[c2],mat,R:null})}}}
+  return baked.groups=[...G.values()];
+}
+function gpuGeo(baked,g,lod){
+  const key=g.key+':'+lod;baked.geo=baked.geo||{};if(baked.geo[key])return baked.geo[key];
+  // parts are arrays of LOD meshes; eye meshes are single meshes
+  let n=0;const items=g.items.map(it=>{const mesh=Array.isArray(it.m)?it.m[Math.min(lod,it.m.length-1)]:it.m;n+=mesh.length/9;return {...it,mesh}});
+  const tmp={buf:new Float32Array(13*n),n:0,cap:n},keep=TB,F0={p:[0,0,0],R:ID3,lo:ZERO3};TB=tmp;
+  for(const it of items)emitS(it.mesh,F0,it.c,it.col,it.col2,it.mat,it.R,1,null);
+  TB=keep;
+  const ib=new THREE.InterleavedBuffer(tmp.buf,13),geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.InterleavedBufferAttribute(ib,3,0));geo.setAttribute('normal',new THREE.InterleavedBufferAttribute(ib,3,3));
+  geo.setAttribute('color',new THREE.InterleavedBufferAttribute(ib,3,6));geo.setAttribute('aLoc',new THREE.InterleavedBufferAttribute(ib,4,9));
+  geo.computeBoundingSphere();geo.boundingSphere.radius=geo.boundingSphere.radius*1.25+0.1; // drape parts and lids move
+  geo.userData.tris=n/3;return baked.geo[key]=geo;
+}
+// vertex-shader blend between the part's frame and a second frame (see drape in emitS): u.uRel = inverse(frame1) * frame2, u.uDr = (y0, y1, 1/(y1-y0))
+function drapeMaterials(){
+  const u={uRel:{value:new THREE.Matrix4()},uDr:{value:new THREE.Vector3()}},m=paintedMaterial(0.012),prev=m.onBeforeCompile;
+  const dk=nm=>`float ${nm}=clamp((position.y-uDr.x)*uDr.z,0.0,1.0);${nm}=${nm}*${nm}*(3.0-2.0*${nm});`;
+  const patch=(sh,withN)=>{sh.uniforms.uRel=u.uRel;sh.uniforms.uDr=u.uDr;
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nuniform mat4 uRel;uniform vec3 uDr;')
+      .replace('#include <begin_vertex>','#include <begin_vertex>\n'+dk('dkP')+'transformed=mix(transformed,(uRel*vec4(transformed,1.0)).xyz,dkP);');
+    if(withN)sh.vertexShader=sh.vertexShader.replace('#include <beginnormal_vertex>','#include <beginnormal_vertex>\n'+dk('dkN')+'objectNormal=normalize(mix(objectNormal,mat3(uRel)*objectNormal,dkN));')};
+  m.onBeforeCompile=sh=>{if(prev)prev(sh);patch(sh,true)};m.customProgramCacheKey=()=>'painted-drape'+Q;
+  const dm=new THREE.MeshDepthMaterial({depthPacking:THREE.RGBADepthPacking}),ds=new THREE.MeshDistanceMaterial();
+  dm.onBeforeCompile=sh=>patch(sh,false);ds.onBeforeCompile=sh=>patch(sh,false);dm.customProgramCacheKey=()=>'dr-depth';ds.customProgramCacheKey=()=>'dr-dist';
+  return {u,m,dm,ds};
+}
+function gpuRig(owner,baked){
+  let R=owner.gpuRig;if(R&&R.baked===baked)return R;
+  R={baked,groups:baked.recipe&&gpuGroups(baked).map(g=>({g,meshes:[],mat:null})),hide(){for(const x of this.groups)for(const m of x.meshes)if(m)m.visible=false}};
+  for(const x of R.groups)if(x.g.drape)x.mat=drapeMaterials();
+  owner.gpuRig=R;GPU_RIGS.add(R);return R;
+}
+function setMat4(M,f,sc,R2){ // M = [sc*R | p] for frame f, optionally with R2 applied inside (lid rotation about the eye axis)
+  const R=R2?m3(f.R,R2):f.R,e=M.elements;
+  e[0]=R[0]*sc;e[1]=R[3]*sc;e[2]=R[6]*sc;e[3]=0;e[4]=R[1]*sc;e[5]=R[4]*sc;e[6]=R[7]*sc;e[7]=0;e[8]=R[2]*sc;e[9]=R[5]*sc;e[10]=R[8]*sc;e[11]=0;e[12]=f.p[0];e[13]=f.p[1];e[14]=f.p[2];e[15]=1;
+}
 // Draw every part of a baked recipe into its frame, then the eyes (upper lids rotate to blink).
 // Scale: proportions.height scales the whole figure; proportions.headScale additionally scales the head frames.
-function drawRecipe(baked,lod,fr,blink){
-  const rec=baked.recipe,pal=rec.palette;
-  const pr=rec.proportions,hs=pr?pr.headScale:1,S=pr&&pr.height||1,scOf=fn=>S*(pr&&pr.frames.includes(fn)?hs:1);
-  for(const q of rec.parts){const f=fr[q.frame],m=baked.parts[q.part];if(!f||!m)continue;
-    emitS(m[lod],f,q.at||ZERO3,pal[q.col],pal[q.col2||q.col],MAT[q.mat],q.R,scOf(q.frame),q.drape&&fr.D?{f:fr.D,y0:q.drape[0],y1:q.drape[1]}:null)}
-  const E=baked.eyes,ec=rec.eyes;if(!E||!fr[ec.frame])return;
-  const H=fr[ec.frame],a=baked.anchors.eye,lidR=rZ(E.lidAngle(blink)),es=scOf(ec.frame);
-  for(const z of[-a[2],a[2]]){const c=[a[0],a[1],z];
-    emitS(E.ball,H,c,pal[ec.sclera],pal[ec.sclera],MAT.eye,null,es);
-    emitS(E.iris,H,c,pal[ec.iris],pal[ec.pupil],MAT.eye,null,es);
-    emitS(E.lid,H,c,pal[ec.lid],pal[ec.lid2],MAT.skin,lidR,es);
-    emitS(E.lower,H,c,pal[ec.lid],pal[ec.lid2],MAT.skin,null,es)}
+function drawRecipe(baked,lod,fr,blink,owner){
+  const rec=baked.recipe,pr=rec.proportions,hs=pr?pr.headScale:1,S=pr&&pr.height||1,scOf=fn=>S*(pr&&pr.frames.includes(fn)?hs:1);
+  const rig=gpuRig(owner,baked),E=baked.eyes;
+  for(const x of rig.groups){const g=x.g,f=fr[g.frame];if(!f)continue;
+    const l=Math.min(lod,baked.nLod-1);let mesh=x.meshes[l];
+    if(!mesh){mesh=new THREE.Mesh(gpuGeo(baked,g,l),x.mat?x.mat.m:charMesh.material);
+      mesh.matrixAutoUpdate=false;mesh.matrixWorldAutoUpdate=false;mesh.castShadow=true;mesh.receiveShadow=true;
+      if(x.mat){mesh.customDepthMaterial=x.mat.dm;mesh.customDistanceMaterial=x.mat.ds}
+      scene.add(mesh);x.meshes[l]=mesh}
+    const sc=scOf(g.frame);
+    if(g.lid){const a=baked.anchors.eye,ang=E.lidAngle(blink),c=Math.cos(ang),s=Math.sin(ang);
+      // rotate about the axis through the eye centre: R = Rz(ang), pivot (a0,a1): matrix = H * T(pivot) * Rz * T(-pivot)
+      setMat4(mesh.matrixWorld,f,sc,[c,-s,0,s,c,0,0,0,1]);
+      const e=mesh.matrixWorld.elements,tx=a[0]-(c*a[0]-s*a[1]),ty=a[1]-(s*a[0]+c*a[1]);
+      // translation of T(pivot)*Rz*T(-pivot) is (tx,ty,0) in frame units, i.e. scaled by sc along the frame axes
+      const R=f.R;e[12]=f.p[0]+sc*(R[0]*tx+R[1]*ty);e[13]=f.p[1]+sc*(R[3]*tx+R[4]*ty);e[14]=f.p[2]+sc*(R[6]*tx+R[7]*ty)}
+    else setMat4(mesh.matrixWorld,f,sc,null);
+    if(x.mat&&fr.D){const f1=f,f2=fr.D,R1=f1.R,R2=f2.R,u=x.mat.u,e=u.uRel.value.elements,d=g.drape;
+      const rel=[R1[0]*R2[0]+R1[3]*R2[3]+R1[6]*R2[6],R1[0]*R2[1]+R1[3]*R2[4]+R1[6]*R2[7],R1[0]*R2[2]+R1[3]*R2[5]+R1[6]*R2[8],
+                 R1[1]*R2[0]+R1[4]*R2[3]+R1[7]*R2[6],R1[1]*R2[1]+R1[4]*R2[4]+R1[7]*R2[7],R1[1]*R2[2]+R1[4]*R2[5]+R1[7]*R2[8],
+                 R1[2]*R2[0]+R1[5]*R2[3]+R1[8]*R2[6],R1[2]*R2[1]+R1[5]*R2[4]+R1[8]*R2[7],R1[2]*R2[2]+R1[5]*R2[5]+R1[8]*R2[8]];
+      const dx=(f2.p[0]-f1.p[0])/sc,dy=(f2.p[1]-f1.p[1])/sc,dz=(f2.p[2]-f1.p[2])/sc;
+      e[0]=rel[0];e[1]=rel[3];e[2]=rel[6];e[3]=0;e[4]=rel[1];e[5]=rel[4];e[6]=rel[7];e[7]=0;e[8]=rel[2];e[9]=rel[5];e[10]=rel[8];e[11]=0;
+      e[12]=R1[0]*dx+R1[3]*dy+R1[6]*dz;e[13]=R1[1]*dx+R1[4]*dy+R1[7]*dz;e[14]=R1[2]*dx+R1[5]*dy+R1[8]*dz;e[15]=1;
+      u.uDr.value.set(d.y0,d.y1,1/(d.y1-d.y0))}
+    else if(x.mat)x.mat.u.uDr.value.set(1e9,1e9+1,1); // no second frame: stay rigid
+    mesh.visible=true;NPC_T.tris+=mesh.geometry.userData.tris;NPC_T.draws++}
 }
 // ?npc=classic keeps the old primitive Keeper for comparison
 // The Keeper: recipe KEEPER in src/npc_recipes.js, posed here; the staff and lantern stay primitive.
@@ -944,7 +1017,7 @@ function buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,lod){
   const g=A.gripAt,hw=fpt(U,q3(g[0],g[1]+br*0.01,g[2]));
   fr.grip={p:hw,R:m3(B.R,A.gripR)};
   fr.rest=subF(fr.U,q3(...A.restAt),A.restR);
-  drawRecipe(K,lod,fr,blink);
+  drawRecipe(K,lod,fr,blink,n);
   ball(fr.U,q3(...A.gem),0.012*S,[0.7,0.28,0.08,7],true); // belt gem: a faint warm glint, no light of its own
   const sp=fpt(fr.grip,[A.gripAxis[0]*S,A.gripAxis[1]*S,(A.gripAxis[2]||0)*S]),SB={p:[sp[0],0,sp[2]],R:B.R};
   const sg=(a,b,r0,r1,col)=>seg(SB,q3(...a),q3(...b),r0*S,r1*S,col),sb=(c,r,col)=>ball(SB,q3(...c),typeof r==='number'?r*S:r.map(v=>v*S),col,true),sl=(c,z,col)=>slab(SB,q3(...c),q3(...z),col);
@@ -976,11 +1049,11 @@ function buildNpc(n,t,ex,ey,ez,dtR){
   const k=Math.min(1,dtR*6);n.hy+=(wantY-n.hy)*k;n.hp+=(wantP-n.hp)*k;
   if(n.pose){n.hy=n.pose[0];n.hp=n.pose[1]}
   const ph=n.ph,br=Math.sin(t*1.7+ph),breath=br*0.004;
-  const blink=STUDIO&&STUDIO.open?1:((t*0.23+ph)%1)<0.035?0.12:1;
+  const blink=STUDIO&&STUDIO.blink!=null?STUDIO.blink:STUDIO&&STUDIO.open?1:((t*0.23+ph)%1)<0.035?0.12:1;
   const nod=talking?Math.sin(t*5.5)*0.05:0,jaw=talking?Math.max(0,Math.sin(t*9))*0.006:0;
   const B={p:[n.x+(n.ox||0),0,n.z+(n.oz||0)],R:rYaw(n.yaw)};
   const out={top:1,lantern:null};
-  if(n.type==='keeper'&&!NPC_CLASSIC&&dist<14)buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,dist<6&&Q>=1?0:1);
+  if(n.type==='keeper'&&!NPC_CLASSIC&&dist<14)buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,STUDIO&&STUDIO.lod!=null?STUDIO.lod:dist<6&&Q>=1?0:1);
   else if(n.type==='keeper'){
     const robe=[0.36,0.1,0.07,2],robeD=[0.24,0.07,0.06,2],gold=[0.8,0.58,0.18,2],skin=[0.8,0.6,0.47,1],white=[0.9,0.9,0.86,5],wood=[0.3,0.2,0.12,6];
     seg(B,[0,0,0],[0,0.05,0],0.178,0.172,gold);
@@ -3439,7 +3512,7 @@ function render(t){
   // traps and crystals are posed into the same buffer as the characters
   const flat={p:[0,0,0],R:ID3,lo:ZERO3};
   sprList.length=0;
-  CH.n=0;
+  CH.n=0;for(const r of GPU_RIGS)r.hide();NPC_T.tris=0;NPC_T.draws=0;
   for(const tr of F.traps){
     if((tr.x-ex)**2+(tr.z-ez)**2>16*16)continue;
     const h=0.04+trapExt(tr,R.time)*0.44;
@@ -3455,7 +3528,7 @@ function render(t){
   for(const n of F.npcs){
     const d2=(n.x-ex)**2+(n.z-ez)**2;if(d2>16*16)continue;
     if((n.x-ex)*fwx+(n.z-ez)*fwz<-1.5)continue;
-    const o=buildNpc(n,t,ex,ey,ez,dtR);
+    const tN=performance.now();const o=buildNpc(n,t,ex,ey,ez,dtR);NPC_T.ms+=performance.now()-tN;NPC_T.n++;
     if(o.lantern){const q=o.lantern,fl=1+Math.sin(t*10+n.ph)*0.1;spr(q[0],q[1]+0.012,q[2],0.045*fl,0.07*fl,11,1.0,0.6,0.2,1,1);spr(q[0],q[1],q[2],0.5,0.5,7,1.0,0.5,0.15,0.3,1)}
     if(o.lamp){const q=o.lamp;spr(q[0],q[1],q[2],0.22,0.22,7,1.0,0.75,0.3,0.4,1)}
     if(!n.used&&n.type!=='keeper'){const y=o.top+0.08+Math.sin(t*3+n.ph)*0.03,X=n.x+(n.ox||0),Z=n.z+(n.oz||0);spr(X,y,Z,0.08,0.08,7,1.0,0.85,0.4,1,1);spr(X,y,Z,0.32,0.32,7,1.0,0.7,0.2,0.3,1)}
@@ -3703,10 +3776,12 @@ function studio(o){
   n.yaw=Math.atan2(S.dz,S.dx)+o.turn*Math.PI/180;
   const lat=o.lat||0,cx=S.x+S.dx*o.dist-S.dz*lat,cz=S.z+S.dz*o.dist+S.dx*lat,aim=o.level?o.camY:o.aimY==null?(o.type==='delver'?0.55:0.8):o.aimY;
   STUDIO.cam={x:cx,z:cz,y:o.camY,yaw:Math.atan2(-S.dz,-S.dx),pitch:Math.atan2(aim-o.camY,o.dist)};
-  STUDIO.open=o.open;P.x=cx;P.z=cz;
+  STUDIO.open=o.open;STUDIO.blink=o.blink;STUDIO.lod=o.lod;P.x=cx;P.z=cz;
   return {spot:S,cam:STUDIO.cam,Q};
 }
 // build the sculpted Keeper once, shortly after load, so the first sanctuary does not hitch
 if(!NPC_CLASSIC)setTimeout(()=>{try{bakeRecipeIdle(KEEPER)}catch(e){console.error(e)}},1500); // one part per tick, so the title screen never stalls
-window.__game={studio,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+function benchNpc(iters){const n=F.npcs.find(q=>q.type==='keeper');const e=[P.x,0.7,P.z];buildNpc(n,1,e[0],e[1],e[2],0.016);let t0=performance.now();
+  for(let i=0;i<iters;i++){CH.n=0;buildNpc(n,1+i*0.016,e[0],e[1],e[2],0.016)}return (performance.now()-t0)/iters}
+window.__game={studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm){const t=SURFS.get(i),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);

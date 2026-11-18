@@ -34,8 +34,12 @@ recipe.build()  -> part specs {sdf, bounds, cell, tris:[near,far], cull, paint}
 bakePart()      -> surface nets on a fine grid (narrow band)
                 -> simplify to tris[0] (near LOD) -> simplify again to tris[1] (far LOD)
                 -> flatten: project onto the surface, SDF normals, paint + detail mask + baked AO
-drawRecipe()    -> emitS() each part into its frame every frame; eyes and blinking lids
+drawRecipe()    -> GPU posing: each baked part is uploaded once as a static geometry (emitS with an identity frame), parts that share a
+                   frame are merged, and every frame only a model matrix per group is set from the frame {p,R} and the figure scale
 ```
+
+**GPU posing (v9).** Nothing is transformed per vertex on the CPU any more. `gpuGroups(baked)` (game.js) groups the recipe's parts by frame (B, U, H, grip, rest, ...; the eyeballs, irises and lower lids join the head group, pre-translated to the eye centres) and builds one `THREE.Mesh` per group and LOD on first use (lazy, cached on the baked object). The mesh uses the shared painted material (`charMesh.material`: same shader, same clamps), `matrixAutoUpdate = false` and a model matrix `[scale*R | p]` written by `setMat4` each frame; frustum culling uses a bounding sphere, and the meshes are hidden (`GPU_RIGS`, reset each frame) when the NPC is not drawn. Eyelids are their own group: the matrix is `H * T(pivot) * Rz(lidAngle) * T(-pivot)`. **Drape parts** (`drape: [y0, y1]`: neck, beard) get a private material with a small vertex-shader blend between the part's frame and `D` (`uRel = frame^-1 * D`, `uDr = (y0, y1, 1/(y1-y0))`, smoothstep weight from the local y, normals blended and renormalised), with matching depth and distance materials so their shadows follow. Result: the Keeper's `buildNpc` went from 0.65 ms (23.6k vertices written into `CH` and re-uploaded each frame) to 0.10 ms per call and 8 draw calls. Props (staff, lantern, belt gem) are still primitives in `CH`. `__game.NPC_T` counts CPU ms, triangles and draw calls; `node tools/npc_perf.mjs` prints them. `tools/npc_shot.mjs --blink 0` and `--lod N` force the eyelids and the LOD.
+
 
 The simplifier spends triangles where the shape bends: a nose keeps its triangles, a flat robe panel loses them. Shading stays smooth because normals come from the SDF, not from the triangles. So set the budget with `tris`, and set `cell` only fine enough to capture the smallest feature. Aim for a raw grid of about 4 to 10 times the near budget.
 
