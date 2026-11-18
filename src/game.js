@@ -1612,7 +1612,7 @@ function showTips(){
   t.forEach((msg,i)=>tipTimers.push(setTimeout(()=>{if(state==='play'&&R.depth===d)say(msg,4)},4200+i*4600)));
 }
 function toTitle(){
-  roomLeave();glFallEnd();
+  roomLeave();glFallEnd();GL.queued=null;
   if(MP.on)mpLeave(false);
   state='title';
   ['pause','dead','hud','map','talk'].forEach(id=>$(id).classList.add('hidden'));talk=null;clearPrompt();
@@ -1644,7 +1644,7 @@ let toastTimer=0;
 function say(t,secs){const el=$('toast');el.textContent=t;el.style.opacity=1;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.style.opacity=0,(secs||2.5)*1000)}
 
 function die(){
-  roomLeave();
+  roomLeave();GL.queued=null;
   if(MP.on&&!MP.wiping){mpDown();return}
   state='dead';clearPrompt();
   mpDeadPanel();
@@ -2986,9 +2986,9 @@ function update(dt){
 // never start while something is hunting you, so they unsettle without ever costing a life.
 // __game.glitch('freeze'|'rubber'|'rubberfwd'|'replay'|'hud'|'tpose'|'hole'|'fall'|'loop') forces one for testing.
 const GL={cd:60,used:{},frz:0,frzAfter:null,buzz:null,hist:[],histT:0,rb:null,rbN:0,figs:[],hole:null,fall:null,loop:null,
-  ghosts:[],walked:null,peerH:new Map(),hudOv:{},hudSeq:null,chatT:0,dip:0,netEl:null,netT:0};
+  ghosts:[],walked:null,queued:null,qT:0,peerH:new Map(),hudOv:{},hudSeq:null,chatT:0,dip:0,netEl:null,netT:0};
 function glReset(){
-  glFallEnd();
+  glFallEnd();GL.queued=null;
   GL.cd=F.back?28+Math.random()*30:55+Math.random()*60;GL.used={};GL.frz=0;GL.frzAfter=null;GL.hist=[];GL.rb=null;
   GL.figs=[];GL.ghosts=[];GL.fall=null;GL.loop=null;GL.hudOv={};GL.hudSeq=null;GL.dip=0;GL.walked=new Uint8Array(F.W*F.H);
   glHoleOff();
@@ -3007,6 +3007,10 @@ function glCalm(chasing){
 }
 function glTick(dt,chasing){
   if(!F||state==='title')return;
+  if(GL.queued){   // a console-queued glitch waits for play, then a beat so you see it begin
+    if(state!=='play')GL.qT=0.6;
+    else if((GL.qT-=dt)<=0){const k=GL.queued;GL.queued=null;if(!glStart(k,true))console.log(GL_NOPE)}
+  }
   if(GL.netT>0){GL.netT-=dt;if(GL.netT<=0)glNet('')}
   if(GL.chatT>0)GL.chatT-=dt;
   if(!BABY&&!GL.prep&&R.depth>=3){GL.prep=1;window.requestIdleCallback?requestIdleCallback(glFallBuild,{timeout:9000}):setTimeout(glFallBuild,3000)}   // build the face while nobody is looking
@@ -3033,6 +3037,13 @@ function glTick(dt,chasing){
   let r=Math.random()*sum,pick=null;for(const o of ok){r-=o[1];if(r<=0){pick=o[0];break}}
   if(pick&&glStart(pick)){GL.used[pick]=(GL.used[pick]|0)+1;GL.cd=F.back?35+Math.random()*35:60+Math.random()*70}
   else GL.cd=6;
+}
+const GL_NOPE='not here: step away from the exit or traps and try again';
+// console test hook: starts now, or queues until the game is back in play
+function glTest(k){
+  if(state==='play')return glStart(k,true)?'started':GL_NOPE;
+  if(state==='pause'||state==='trans'){GL.queued=k;GL.qT=0.6;return 'queued: click Resume and it starts'}
+  return 'not now: start a run first';
 }
 function glStart(k,forced){
   if(state!=='play')return false;
@@ -3302,7 +3313,7 @@ FALL.dist=FALL.vt*(FALL.tFall-FALL.tau*(1-Math.exp(-FALL.tFall/FALL.tau)));   //
 let BABY=null,VOID=null;
 function glFallBuild(){   // built once, kept for every later fall
   if(BABY)return true;
-  try{BABY=createBabyFace(THREE,{quality:Q});VOID=createFallVoid(THREE,{quality:Q})}catch(e){BABY=VOID=null;return false}
+  try{BABY=createBabyFace(THREE,{quality:Q});VOID=createFallVoid(THREE,{quality:Q})}catch(e){BABY=VOID=null;console.warn('glFallBuild failed',e);return false}
   return true;
 }
 // mouse and touch look during the fall only nudge the view
@@ -3798,5 +3809,5 @@ setInterval(()=>{if(MP.host&&document.hidden&&performance.now()-last>200)step(pe
 // a backdrop maze behind the title screen
 R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
 {const rc=cleanCode(new URLSearchParams(location.search).get('room'));if(rc)mpPrepareJoin(rc)}
-window.__game={amb,update,render,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:k=>glStart(k,true),GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={amb,update,render,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);
