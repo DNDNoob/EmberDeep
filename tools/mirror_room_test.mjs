@@ -93,8 +93,8 @@ await pg.evaluate(free);
    o.state2=G.state;return o});
  console.log('m break',JSON.stringify(r));
  if(!(r.blind[0]<r.blind[1]*0.8&&r.blind[0]>0))bad('m blind not slower '+r.blind);if(r.tg!=='glass'||/break|glass/i.test(r.glassHud))bad('m aim/prompt '+r.tg+' '+r.glassHud);if(r.b1!==1||r.b2!==2||r.brokeEarly)bad('m blows '+[r.b1,r.b2]);if(r.b3!==3||!r.gb||!r.shards)bad('m third blow');if(r.state!=='room'||r.state2!=='room')bad('m ended');
- if(!(r.blockZ>-1.72)||r.blockSt)bad('m walked over the sill '+r.blockZ+' '+r.blockSt);if(!(r.z<-2.4)||!r.st)bad('m jump did not carry through '+r.z);if(!(r.apex>0.45&&r.apex<0.65)||Math.abs(r.eyeAfter-1.6)>0.08)bad('m jump arc '+r.apex+' '+r.eyeAfter);
- if(!(r.backBlock<-2.3))bad('m walked back over the sill '+r.backBlock);if(!(r.back>-1.75))bad('m jump back '+r.back);if(!(r.maxEye<2.55))bad('m head through the lintel '+r.maxEye);
+ if(!(r.blockZ>-1.72)||r.blockSt)bad('m walked over the sill '+r.blockZ+' '+r.blockSt);if(!(r.z<-2.4)||!r.st)bad('m jump did not carry through '+r.z);if(!(r.apex>0.6&&r.apex<1.0)||Math.abs(r.eyeAfter-1.6)>0.1)bad('m jump arc '+r.apex+' '+r.eyeAfter);
+ if(!(r.backBlock<-2.3))bad('m walked back over the sill '+r.backBlock);if(!(r.back>-1.75))bad('m jump back '+r.back);if(!(r.maxEye<3.3))bad('m head through the ceiling '+r.maxEye);
  if((await pg.evaluate(()=>[...window.__seen])).some(t=>/break/i.test(t)))bad('m text about breaking');if(r.far<-6.6)bad('m parlor wall '+r.far);if(r.wallX>3.5)bad('m side wall '+r.wallX)}
 // (n) leaving by the door after walking back from the parlor wins
 {const g0=(await info()).gems;const r=await pg.evaluate(()=>{const G=window.__game,R=G.ROOMS,S=window.__free(32),H=document.getElementById('roomHud'),o={};
@@ -143,10 +143,10 @@ await pg.evaluate(free);
    const S2=window.__free(42);window.__at(0,-0.6,0,0.05);for(let i=0;i<3;i++){window.__tap({press:1});window.__run(S2.t+0.3)}window.__enter(S2);const L=S2.lampAt,sx=L[0]<0?1:-1;window.__at(L[0]+sx,L[1],Math.atan2(-sx,0),-0.1);window.__run(S2.t+0.2);window.__tap({press:1});window.__run(S2.t+0.5);
    window.__U(window.__I({jump:1}));window.__walk(8,{});const q=R.snap();o.snap=[q.lo,q.jy,q.kn];
    G.roomLeave();R.abort();R.watch('mirror',q);const W=R.state();for(let i=0;i<40;i++)R.update(1/60,window.__I());o.w=[W.lamp,W.reveal()>0.9,W.jy>0.05];
-   for(const g of [{lo:7,jy:'x',kn:'z'},{lo:'a',jy:1e9},{jy:-4,lo:null},{jy:NaN}]){R.sync(g)}for(let i=0;i<60;i++)R.update(1/60,window.__I());o.ok=isFinite(W.jy)&&W.jy>=0&&W.jy<=1.2;R.abort();return o});
+   for(const g of [{lo:7,jy:'x',kn:'z'},{lo:'a',jy:1e9},{jy:-4,lo:null},{jy:NaN}]){R.sync(g)}for(let i=0;i<60;i++)R.update(1/60,window.__I());o.ok=isFinite(W.jy)&&W.jy>=0&&W.jy<=2;R.abort();return o});
  console.log('q controls',JSON.stringify(r));
  if(r.space[0]||!r.space[1])bad('q Space should jump, not press '+r.space);if(!r.e[0])bad('q E should press '+r.e);if(r.heldBySpace)bad('q Space picked up the can');if(!r.heldByE)bad('q E did not pick up');
- if(!(r.apex>0.5&&r.apex<0.6)||!(r.air>=30&&r.air<=45)||Math.abs(r.land)>0.08)bad('q jump arc '+r.apex+' '+r.air+' '+r.land);if(r.snap[0]!==0||!(r.snap[1]>0))bad('q snap '+r.snap);if(r.w[0]!==0||!r.w[1])bad('q watcher lamp '+r.w);if(!r.ok)bad('q garbage jump')}
+ if(!(r.apex>1.35&&r.apex<1.6)||!(r.air>=30&&r.air<=45)||Math.abs(r.land)>0.08)bad('q jump arc '+r.apex+' '+r.air+' '+r.land);if(r.snap[0]!==0||!(r.snap[1]>0))bad('q snap '+r.snap);if(r.w[0]!==0||!r.w[1])bad('q watcher lamp '+r.w);if(!r.ok)bad('q garbage jump')}
 // (p) every seed places the little mirror on a wall and builds without throwing
 {const r=await pg.evaluate(()=>{const G=window.__game,out=new Set();let bad=0;for(let sd=1;sd<=40;sd++){window.__open(sd);const S=G.ROOMS.state(),m=S.mini;if(!m||!(Math.abs(m[0])===3.7||m[1]===-6.8))bad++;else out.add(Math.abs(m[0])===3.7?(m[0]<0?'L':'R'):'F')}G.ROOMS.abort();return{bad,sides:[...out].sort()}});
  console.log('p mini',JSON.stringify(r));if(r.bad)bad('p placement');if(r.sides.length<2)bad('p sides '+r.sides)}

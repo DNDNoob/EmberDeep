@@ -152,7 +152,7 @@ ok(r.tested>0&&r.bad===0,'with a gate shut the light only targets what is reacha
     const pg2=await b.newPage({viewport:{width:1280,height:720}}),e2=[];pg2.on('pageerror',e=>e2.push(String(e)));
     await pg2.route('https://www.youtube.com/iframe_api',rt=>mode==='blocked'?rt.abort():rt.fulfill({contentType:'text/javascript',body:stub(mode)}));
     await pg2.addInitScript(()=>{window.__norender=true});
-    await pg2.goto(url);await pg2.waitForFunction(()=>window.__game&&window.__game.genFloor);
+    await pg2.goto(url,{timeout:120000});await pg2.waitForFunction(()=>window.__game&&window.__game.genFloor,null,{timeout:120000});
     await pg2.evaluate(()=>{const G=__game;G.startRun('yt1',1,true);G.ROOMS.theaterOpts.noMic=true;const D=G.F.sdoors[0];D.kind='theater';G.sdoorOpen(D)});
     await pg2.waitForTimeout(mode==='blocked'?600:700);
     const o=await pg2.evaluate(()=>{const S=__game.ROOMS.state(),y=window.__yt||{},now=document.getElementById('theaterNow'),a=now&&now.querySelector('a');

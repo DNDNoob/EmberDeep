@@ -3,7 +3,7 @@
 //   kiln    a stone hall with an arcade console: walk up, press its buttons to steer the falling stones in the glass, burn enough rows and the door lets you go
 //   fall    there is no floor behind the door
 //   mirror  you stand behind a one-way mirror, watching a parlor; something comes in and then looks back at you
-// Each room owns a small scene of its own, drawn in place of the maze while it runs. To add one: write the room function and add it to KINDS in createRooms.
+// Each room owns a small scene of its own, drawn in place of the maze while it runs. To add one: write the room function and add it to KINDS in createRooms. Movement comes free: a room walks like the maze unless MODES (next to KINDS) says otherwise; use createRoomWalker from movement.js.
 import * as THREE from 'three';
 import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
 import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
@@ -11,6 +11,7 @@ import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
 import {ShaderPass} from 'three/addons/postprocessing/ShaderPass.js';
 import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
 import {createTheater} from './theater.js';
+import {MOVE,lookStep,lookBy,bobAdvance,bobY,createRoomWalker} from './movement.js';
 
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
 const ss=(a,b,x)=>{const t=clamp((x-a)/(b-a),0,1);return t*t*(3-2*t)};
@@ -296,7 +297,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     const HOLE_AT=6.5,EAT=8.3,END=13.6,OUT=14.4,FIN=16.2;
     S.update=(dt,inp)=>{
       S.t+=dt;const t=S.t;
-      S.yaw+=inp.lx*1.6*dt;S.pitch=clamp(S.pitch-inp.ly*1.4*dt,-1.2,1.2);
+      lookStep(S,dt,inp.lx,inp.ly);
       if(S.said===0&&t>0.9){S.said=1;o.say('You are floating. There is no floor, and no maze.',4)}
       if(S.said===1&&t>HOLE_AT){S.said=2;o.say('The sun goes out.',3.5);o.tone(55,3.5,'sawtooth',0.2,0,-30);o.noise(2.5,0.25,180,0.7)}
       if(S.said===2&&t>EAT+1.6){S.said=3;o.say('It is pulling everything in.',3.5)}
@@ -414,9 +415,12 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
   /* ---------- the glass kiln: a walkable arcade hall ---------- */
   function kiln(){
     const {W,H}=KILN,C=0.2,BY=1.35,KZ=-6.3,CZ=-0.4,RX=6,RZ=7,RH=7.5,EYE=1.6,REACH=2.5,SNAP=0.2,SNAPT=0.15,RAD=0.32;
-    const S={t:0,rep:0,softT:0,endT:0,shake:0,px:0,pz:6.2,yaw:0,pitch:-0.05,ux:0,uz:0,vx:0,vz:6.2,vyaw:0,vpitch:-0.05,tx:0,tz:6.2,tyaw:0,tpitch:-0.05,hasPose:false,
-      aim:-1,held:-1,pb:-1,pl:0,tb:-1,started:false,lit:0,bobP:0,bob:0,eyeY:EYE,sink:[0,0,0,0,0],hot:[0.6,0.6,0.6,0.6,0.6]};
+    const S={t:0,rep:0,softT:0,endT:0,shake:0,yaw:0,pitch:-0.05,vx:0,vz:6.2,vyaw:0,vpitch:-0.05,tx:0,tz:6.2,tyaw:0,tpitch:-0.05,tjy:0,hasPose:false,
+      aim:-1,held:-1,pb:-1,pl:0,tb:-1,started:false,lit:0,jy:0,eyeY:EYE,sink:[0,0,0,0,0],hot:[0.6,0.6,0.6,0.6,0.6]};
     const K=S.K=kilnGame(Math.random);
+    // walking, sprinting and jumping come from the shared walker (src/movement.js); the hall only says what is solid
+    const WK=createRoomWalker({o,eye:EYE,x:0,z:6.2,collide:b=>collide(b)});
+    Object.defineProperty(S,'px',{get:()=>WK.b.x,set:v=>{WK.b.x=v}});Object.defineProperty(S,'pz',{get:()=>WK.b.z,set:v=>{WK.b.z=v}});
     cam.fov=70;cam.near=0.05;cam.far=80;
     scene.fog=new THREE.FogExp2(0x060403,0.03);
     const bw=W*C,bh=H*C;S.dims={bw,bh,BY,KZ,CZ,RX,RZ};
@@ -588,30 +592,30 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       }else if(h===0||h===1){S.rep-=dt;if(S.rep<=0){S.rep=0.06;if(K.move(h?1:-1))o.tone(520,0.03,'square',0.04)}}
       return false;
     };
-    const walk=(dt,inp)=>{
-      const mx=nf(inp.mx)?clamp(inp.mx,-1,1):0,my=nf(inp.my)?clamp(inp.my,-1,1):0,lx=nf(inp.lx)?inp.lx:0,ly=nf(inp.ly)?inp.ly:0;
-      S.yaw+=lx*1.6*dt;S.pitch=clamp(S.pitch-ly*1.4*dt,-1.2,1.2);
-      S.yaw=((S.yaw+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;
-      const sy=Math.sin(S.yaw),cy=Math.cos(S.yaw);let dx=cy*mx-sy*my,dz=sy*mx+cy*my;const l=Math.hypot(dx,dz);if(l>1){dx/=l;dz/=l}
-      const k=Math.min(1,dt*12);S.ux+=(dx*3.2-S.ux)*k;S.uz+=(dz*3.2-S.uz)*k;
-      const ox=S.px,oz=S.pz;S.px+=S.ux*dt;S.pz+=S.uz*dt;
+    const collide=b=>{
       for(let it=0;it<2;it++){
-        for(const b of BOXES){const qx=clamp(S.px,b[0],b[1]),qz=clamp(S.pz,b[2],b[3]),ex=S.px-qx,ez=S.pz-qz,d=Math.hypot(ex,ez);
-          if(d<RAD){if(d>1e-6){S.px=qx+ex/d*RAD;S.pz=qz+ez/d*RAD}else{const m=[S.px-b[0],b[1]-S.px,S.pz-b[2],b[3]-S.pz],i=m.indexOf(Math.min(...m));
-            if(i===0)S.px=b[0]-RAD;else if(i===1)S.px=b[1]+RAD;else if(i===2)S.pz=b[2]-RAD;else S.pz=b[3]+RAD}}}
-        S.px=clamp(S.px,-RX+RAD,RX-RAD);S.pz=clamp(S.pz,-RZ+RAD,RZ-RAD);
+        for(const q of BOXES){const qx=clamp(b.x,q[0],q[1]),qz=clamp(b.z,q[2],q[3]),ex=b.x-qx,ez=b.z-qz,d=Math.hypot(ex,ez);
+          if(d<RAD){if(d>1e-6){b.x=qx+ex/d*RAD;b.z=qz+ez/d*RAD}else{const m=[b.x-q[0],q[1]-b.x,b.z-q[2],q[3]-b.z],i=m.indexOf(Math.min(...m));
+            if(i===0)b.x=q[0]-RAD;else if(i===1)b.x=q[1]+RAD;else if(i===2)b.z=q[2]-RAD;else b.z=q[3]+RAD}}}
+        b.x=clamp(b.x,-RX+RAD,RX-RAD);b.z=clamp(b.z,-RZ+RAD,RZ-RAD);
       }
-      view(dt,Math.hypot(S.px-ox,S.pz-oz)/Math.max(dt,1e-4));S.vx=S.px;S.vz=S.pz;S.vyaw=S.yaw;S.vpitch=S.pitch;
-      const B=basis();S.aim=K.over?-1:pick(B.f,SNAP);
     };
-    // the walk bob follows how fast the view is really moving, for the player and for a watcher alike
-    const view=(dt,sp)=>{if(dt<=0)return;const a=clamp(sp/3,0,1);S.bobP+=sp*dt*2.3;S.bob+=(Math.sin(S.bobP)*0.028*a-S.bob)*Math.min(1,dt*20);S.eyeY=EYE+S.bob};
+    const walk=(dt,inp)=>{
+      lookStep(S,dt,nf(inp.lx)?inp.lx:0,nf(inp.ly)?inp.ly:0);
+      S.yaw=((S.yaw+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;
+      WK.step(dt,inp,S.yaw);S.jy=WK.b.y;
+      view();S.vx=S.px;S.vz=S.pz;S.vyaw=S.yaw;S.vpitch=S.pitch;
+      // aiming a button works on the ground only
+      const B=basis();S.aim=K.over||WK.inAir()?-1:pick(B.f,SNAP);
+    };
+    // the eye follows the jump and the footstep bob; a watcher gets the same bob from how far the view really moved
+    const view=()=>{S.eyeY=EYE+S.jy+bobY(WK.b,WK.scale)};
     const watchView=dt=>{
       const wr=a=>((a+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;
       if(!S.hasPose||Math.hypot(S.tx-S.vx,S.tz-S.vz)>4){S.vx=S.tx;S.vz=S.tz;S.vyaw=S.tyaw;S.vpitch=S.tpitch;S.hasPose=true;return}
       const k=Math.min(1,dt*12),ox=S.vx,oz=S.vz;
       S.vx+=(S.tx-S.vx)*k;S.vz+=(S.tz-S.vz)*k;S.vyaw=wr(S.vyaw+wr(S.tyaw-S.vyaw)*k);S.vpitch+=(S.tpitch-S.vpitch)*k;
-      view(dt,Math.hypot(S.vx-ox,S.vz-oz)/dt);S.px=S.vx;S.pz=S.vz;
+      S.jy+=(S.tjy-S.jy)*k;bobAdvance(WK.b,Math.hypot(S.vx-ox,S.vz-oz),WK.scale);view();S.px=S.vx;S.pz=S.vz;
     };
     const visuals=dt=>{
       const k=Math.min(1,dt*28);
@@ -662,7 +666,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     };
     S.snap=()=>{const p=K.piece,n=K.next,fl=[];for(const f of K.flash)if(f.t>0)fl.push([f.y,+f.t.toFixed(2)]);
       return {g:Array.from(K.g).join(''),p:p?[p.col,p.x,p.y,p.c.flat()]:null,n:n?[n.col,n.c.flat()]:null,cl:K.cleared,a:+K.ashT.toFixed(1),o:K.over,f:fl,e:+S.endT.toFixed(2),
-        x:+S.px.toFixed(2),z:+S.pz.toFixed(2),yw:+S.yaw.toFixed(2),pt:+S.pitch.toFixed(2),am:S.aim,hd:S.held,st:S.started?1:0}};
+        x:+S.px.toFixed(2),z:+S.pz.toFixed(2),jy:+S.jy.toFixed(2),yw:+S.yaw.toFixed(2),pt:+S.pitch.toFixed(2),am:S.aim,hd:S.held,st:S.started?1:0}};
     const cells=a=>{if(!Array.isArray(a)||a.length<2||a.length>16||a.length%2)return null;const c=[];
       for(let i=0;i<a.length;i+=2){const x=a[i],y=a[i+1];if(!Number.isInteger(x)||!Number.isInteger(y)||Math.abs(x)>6||Math.abs(y)>6)return null;c.push([x,y])}return c};
     S.apply=q=>{
@@ -678,6 +682,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       if(nf(q.e)&&K.over&&Math.abs(q.e-S.endT)>0.25)S.endT=clamp(q.e,0,3);
       // where the player stands and looks, what they aim at and hold (a client without these fields is taken to be playing)
       if(nf(q.x)&&nf(q.z)){S.tx=clamp(q.x,-RX,RX);S.tz=clamp(q.z,-RZ,RZ)}
+      if(nf(q.jy))S.tjy=clamp(q.jy,0,2);
       if(nf(q.yw))S.tyaw=clamp(q.yw,-7,7);
       if(nf(q.pt))S.tpitch=clamp(q.pt,-1.2,1.2);
       if(Number.isInteger(q.am)&&q.am>=-1&&q.am<5)S.aim=q.am;
@@ -698,7 +703,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
   // you stand in the back room of a one-way mirror; the timeline (seconds) is fixed, only the smashing and your choice move
   const MIR0={ENTER:17,K:[19,20.9,22.7],STOP:23.7,HEAD:24.4,BODY:26.6,WALK:28.2,SMASH:30.6,CAN:31.2,CHOICE:32.2,NB:13,BREAK:14,SZ:-4.1,LOOK:0.8};
   function mirror(seed){
-    const LOW=!!o.low,TAU=Math.PI*2,S={held:false,ht:-9,aim:false,splats:[],sn:0,spj:-1,spc:0,spt:[0,1.5,-1],btn:['USE',false],t:0,yaw:0,pitch:0.02,said:0,ch:0,ct:-1,bt:-1,sm:0,sel:-1,prev:null,lk:0,shk:0,leaveT:-1,want:null,touch:false,nb:0,blind:0,ph:'watch',px:0,pz:0.1,ux:0,uz:0,bobP:0,bob:0,eyeY:1.6,fr:false,fb:0,gb:-1,st:false,tg:'',tx:0,tz:0.1,tyaw:0,tpit:0.02,hasPose:false,fs2:0,jy:0,jv:0,dip:0,inAir:false,airS:2.7,tjy:0,lamp:1,lampK:1,lockT:-9,lockC:0,locks:0};
+    const LOW=!!o.low,TAU=Math.PI*2,S={held:false,ht:-9,aim:false,splats:[],sn:0,spj:-1,spc:0,spt:[0,1.5,-1],btn:['USE',false],t:0,yaw:0,pitch:0.02,said:0,ch:0,ct:-1,bt:-1,sm:0,sel:-1,prev:null,lk:0,shk:0,leaveT:-1,want:null,touch:false,nb:0,blind:0,ph:'watch',eyeY:1.6,fr:false,fb:0,gb:-1,st:false,tg:'',tx:0,tz:0.1,tyaw:0,tpit:0.02,hasPose:false,dip:0,tjy:0,lamp:1,lampK:1,lockT:-9,lockC:0,locks:0};
     cam.fov=66;cam.near=0.05;cam.far=60;
     const wrap=a=>{a%=TAU;return a>Math.PI?a-TAU:a<-Math.PI?a+TAU:a},ang=(dx,dz)=>Math.atan2(dx,dz),nrm=(x,z)=>{const l=Math.hypot(x,z)||1;return[x/l,z/l]};
     const CC=c=>Array.isArray(c)?new THREE.Color().setRGB(c[0],c[1],c[2]):new THREE.Color(c);
@@ -780,7 +785,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     // ---- the two rooms ----
     const WZ=-1.9,PW=1.55,PY0=0.36,PY1=2.55,SILL=PY0+0.025;   // glass wall plane, half width of the pane, bottom and top of the pane; the sill is a knee wall you can only jump (apex of a jump is 0.56 m)
     const plas=lit(0x59595c,{pat:1,rim:0.25,rc:[0.1,0.14,0.22],wrap:0.5}),flo=lit(0x454750,{pat:2,rim:0.2,rc:[0.1,0.14,0.22],wrap:0.5,sp:0.05}),ceil=lit(0x3a3b40,{pat:1,wrap:0.5});
-    const BX=2.3,BZ=2.8,BH=2.9;
+    const BX=2.3,BZ=2.8,BH=3.4;
     plane(group,flo,0,0,(BZ+WZ)/2,BX*2,BZ-WZ,-Math.PI/2);plane(group,ceil,0,BH,(BZ+WZ)/2,BX*2,BZ-WZ,Math.PI/2);
     plane(group,plas,-BX,BH/2,(BZ+WZ)/2,BZ-WZ,BH,0,Math.PI/2);plane(group,plas,BX,BH/2,(BZ+WZ)/2,BZ-WZ,BH,0,-Math.PI/2);plane(group,plas,0,BH/2,BZ,BX*2,BH,0,Math.PI);
     // front wall with the opening
@@ -1061,34 +1066,30 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
         for(const c of cs){const ex=S.px-c[0],ez=S.pz-c[1],d=Math.hypot(ex,ez),r=c[2]+RAD;if(d<r){if(d>1e-6){S.px=c[0]+ex/d*r;S.pz=c[1]+ez/d*r}else S.px=c[0]+r}}
       }
     };
-    // the walk bob follows how fast the view is really moving, for you and for a watcher alike
-    const view=(dt,sp)=>{if(dt<=0)return;const a=clamp(sp/SPEED,0,1)*(S.inAir?0:1);S.bobP+=sp*dt*2.9;S.bob+=(Math.sin(S.bobP)*0.026*a-S.bob)*Math.min(1,dt*20);S.eyeY=1.6+S.bob+S.jy-S.dip;
-      const n=Math.floor(S.bobP/Math.PI);if(n!==S.fs2){S.fs2=n;if(a>0.35&&!A.watching)o.noise(0.07,0.03,170+(n&1)*30,1)}};
     // how shut your eyes are after you spray yourself: it slows you down too
     const veilK=h=>h<0?0:ss(0.85,1.5,h)*(1-0.82*ss(4.4,8.0,h))*(1-0.5*ss(8.0,11.5,h))*(1-ss(11.5,15,h));
-    const walk=(dt,inp,hold)=>{
-      const mx=nf(inp.mx)?clamp(inp.mx,-1,1):0,my=nf(inp.my)?clamp(inp.my,-1,1):0,sy=Math.sin(S.yaw),cy=Math.cos(S.yaw);let dx=cy*mx-sy*my,dz=sy*mx+cy*my;const l=Math.hypot(dx,dz);if(l>1){dx/=l;dz/=l}
-      const sp=SPEED*(1-0.65*veilK(hold)),k=Math.min(1,dt*12);if(S.inAir){if(l>0.05){const ka=Math.min(1,7*dt);S.ux+=(dx*S.airS-S.ux)*ka;S.uz+=(dz*S.airS-S.uz)*ka}}else{S.ux+=(dx*sp-S.ux)*k;S.uz+=(dz*sp-S.uz)*k}
-      const ox=S.px,oz=S.pz;S.px+=S.ux*dt;S.pz+=S.uz*dt;collide();view(dt,Math.hypot(S.px-ox,S.pz-oz)/Math.max(dt,1e-4));
+    // the sill of the broken frame is a ledge you can stand on but never walk onto; the pane-top and the ceiling stop your head
+    const sillG=(x,z)=>S.gb>=0&&Math.abs(x)<PW&&z>SB[2]&&z<SB[3]?SILL:0;
+    let holdNow=-1;
+    // walking, sprinting and jumping are the shared walker (src/movement.js); this room adds its sill, ceiling, veil slowdown and sounds
+    const WK=createRoomWalker({o,eye:1.6,x:0,z:0.1,collide:()=>collide(),groundAt:sillG,speedMul:()=>1-0.65*veilK(holdNow),
+      ceilingAt:(x,z)=>(S.gb>=0&&Math.abs(x)<PW+0.1&&z>WZ-0.5&&z<WZ+0.25?PY1-0.12:(z<WZ-0.3?PH:BH)-0.15)-1.6,
+      sound:e=>{
+        if(e.jumped)o.sfx('jump');
+        if(e.landed>0.8){S.dip=Math.min(0.1,0.03+0.02*e.landed);o.sfx('step');o.noise(0.1,0.16,150,0.9);o.tone(58,0.12,'sine',0.12)}
+        else if(e.step&&!A.watching)o.noise(0.07,0.03,170+(WK.b.stepPh&1)*30,1);
+      }});
+    Object.defineProperty(S,'px',{get:()=>WK.b.x,set:v=>{WK.b.x=v}});Object.defineProperty(S,'pz',{get:()=>WK.b.z,set:v=>{WK.b.z=v}});Object.defineProperty(S,'jy',{get:()=>WK.b.y,set:v=>{WK.b.y=v}});
+    // the eye: standing height, the jump, the footstep bob, and a dip when you land
+    const view=dt=>{S.dip*=Math.exp(-dt*11);S.eyeY=1.6+bobY(WK.b,WK.scale)+S.jy-S.dip};
+    const walk=(dt,inp,hold,ok)=>{
+      holdNow=hold;
+      // not while it breaks through, not when you spray it: you stand still (and a jump already begun keeps going)
+      const ci=ok?{mx:inp.mx,my:inp.my,sprint:inp.sprint,jump:!!inp.jump&&!(S.live&&inp.touch)}:{mx:0,my:0,jump:false};
+      if(!ok){WK.b.vx=WK.b.vz=0}
+      WK.step(dt,ci,S.yaw);view(dt);
     };
-    // jumping: the maze's jump (up at 3.5, gravity 11, momentum kept in the air). The sill of the broken frame is a ledge you can stand on but never walk onto
-    const sillG=()=>S.gb>=0&&Math.abs(S.px)<PW&&S.pz>SB[2]&&S.pz<SB[3]?SILL:0;
-    const vert=(dt,want,hold)=>{
-      if(dt<=0)return;
-      const g=sillG();
-      if(S.jy<=g+0.001&&S.jv<=0&&want){S.jv=3.5;S.jy=g+0.0002;S.airS=SPEED*1.23*(1-0.65*veilK(hold));o.sfx('jump')}
-      if(S.jy>g+0.001||S.jv>0){
-        S.jv-=11*dt;S.jy+=S.jv*dt;
-        if(S.gb>=0&&Math.abs(S.px)<PW+0.1&&S.pz>WZ-0.5&&S.pz<WZ+0.25&&1.6+S.jy>PY1-0.12){S.jy=PY1-0.12-1.6;if(S.jv>0)S.jv=0}
-        const g2=sillG();if(S.jy<=g2&&S.jv<=0){const vi=-S.jv;S.jy=g2;S.jv=0;if(vi>0.8){S.dip=Math.min(0.1,0.03+0.02*vi);o.sfx('step');o.noise(0.1,0.16,150,0.9);o.tone(58,0.12,'sine',0.12)}}
-      }else{S.jy=g;S.jv=0}
-      S.dip*=Math.exp(-dt*11);S.inAir=S.jy>sillG()+0.002;
-    };
-    const watchWalk=dt=>{
-      S.jy+=(S.tjy-S.jy)*Math.min(1,dt*14);S.inAir=S.jy>0.01;
-      if(!S.hasPose||Math.hypot(S.tx-S.px,S.tz-S.pz)>3){S.px=S.tx;S.pz=S.tz;S.hasPose=true;return}
-      const k=Math.min(1,dt*10),ox=S.px,oz=S.pz;S.px+=(S.tx-S.px)*k;S.pz+=(S.tz-S.pz)*k;view(dt,Math.hypot(S.px-ox,S.pz-oz)/Math.max(dt,1e-4));
-    };
+    const watchWalk=dt=>{WK.watch(dt,S.tx,S.tz,S.tjy);view(dt)};
     // stepping through the frame: the bodies are gone, one chair is pulled out and the other lies on its side, a cup is on the floor
     const stepIn=()=>{
       S.st=true;for(const e of cast)e.p.R.visible=false;mon.R.visible=false;
@@ -1177,12 +1178,11 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     let T0=0;const at=x=>T0<x&&S.t>=x;
     S.update=(dt,inp)=>{
       T0=S.t;S.t+=dt;const t=S.t,W=A.watching,hold=S.ch===2?t-S.ct:-1;
-      S.yaw=wrap(S.yaw+inp.lx*1.6*dt);S.pitch=clamp(S.pitch-inp.ly*1.4*dt,-1.25,1.0);S.touch=!!inp.touch;
+      lookStep(S,dt,inp.lx,inp.ly,[-1.25,1.0]);S.yaw=wrap(S.yaw);S.touch=!!inp.touch;
       S.fr=S.ch===2&&hold>=LK.PROMPT&&S.bt<0;
       // walking: not while it breaks through, not when you spray it, not while you lean in to the little glass
-      const mxw=nf(inp.mx)?inp.mx:0,myw=nf(inp.my)?inp.my:0;
       const wOk=S.bt<0&&S.ch!==1&&S.leaveT<0;
-      if(W)watchWalk(dt);else{vert(dt,wOk&&!!inp.jump&&!(S.live&&inp.touch),hold);if(wOk)walk(dt,inp,hold);else{S.ux=S.uz=0;view(dt,0)}}
+      if(W)watchWalk(dt);else walk(dt,inp,hold,wOk);
       S.lampK+=clamp(S.lamp-S.lampK,-dt/0.35,dt/0.35);
       if(S.gb>=0&&!S.st&&S.pz<WZ-0.32)stepIn();
       // sound of the parlor
@@ -1239,7 +1239,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
         else if(S.tg==='lamp')toggleLamp();
         else if(S.tg==='mdoor')lockedDoor();
         else if(S.tg==='book')emB.toggle()}
-      if(emB.st===1&&Math.abs(mxw)+Math.abs(myw)>0.3)emB.st=2;
+      if(emB.st===1&&Math.abs(nf(inp.mx)?inp.mx:0)+Math.abs(nf(inp.my)?inp.my:0)>0.3)emB.st=2;
       emM.update(dt);
       if(S.leaveT>=0&&t-S.leaveT>=0.7)finish({k:'win',why:'mirror'});
       // after it gives
@@ -1411,7 +1411,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       if(d>0.25){A.mute++;try{for(let n=0;n<4200&&!held&&S.t<to-0.001;n++)S.update(Math.min(0.1,to-S.t),Z)}finally{A.mute--}}else if(d<-0.25)S.t=to;
       if(nf(q.sm)&&S.bt<0)S.sm=clamp(q.sm,0,q.bt>=0?1:0.995);
       if(Number.isInteger(q.fb)&&q.fb>=0&&q.fb<=3)while(S.fb<q.fb)fblow();
-      if((q.lo===0||q.lo===1)&&q.lo!==S.lamp)setLamp(q.lo);if(nf(q.jy))S.tjy=clamp(q.jy,0,1.2);
+      if((q.lo===0||q.lo===1)&&q.lo!==S.lamp)setLamp(q.lo);if(nf(q.jy))S.tjy=clamp(q.jy,0,2);
       emM.apply(q);emB.apply(q);
     };
     S.bloom=0.55;
@@ -1420,8 +1420,18 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     return S;
   }
 
-  const theater=createTheater({renderer,scene,cam,o,A,canvasTex,glow,clamp,ss,lerp,nf,rnd,getGroup:()=>group,onClear:fn=>clearHooks.push(fn),finish:r=>finish(r)});
+  const theater=createTheater({renderer,scene,cam,o,A,canvasTex,glow,clamp,ss,lerp,nf,rnd,getGroup:()=>group,onClear:fn=>clearHooks.push(fn),finish:r=>finish(r),createRoomWalker,MOVE,lookStep,bobAdvance,bobY});
   const KINDS={galaxy,fall,kiln,mirror,theater},FADE_IN={fall:0.18,mirror:1.4};
+  // How you move in each room. Anything not listed WALKS: the full maze movement (walk, sprint, jump, stamina, boots, cold) from src/movement.js.
+  // Only a room that truly cannot walk is listed here, with its reason. A new room needs no entry.
+  const MODES={
+    galaxy:'look',   // you float among the stars with no floor to stand on: turning your head is all you get
+    fall:'none',     // a cinematic fall; there is nothing to control
+  };
+  const modeOf=k=>MODES[k]||'walk';
+  A.mode=modeOf;
+  // a room only ever sees the controls its mode allows
+  const gate=(k,inp)=>{const m=modeOf(k);return m==='walk'?inp:m==='look'?Object.assign({},inp,{mx:0,my:0,jump:false,sprint:false}):Object.assign({},inp,{mx:0,my:0,jump:false,sprint:false,lx:0,ly:0,press:0})};
   const build=(kind,seed)=>{
     setup();A.active=true;A.kind=kind;held=false;
     cur=(KINDS[kind]||kiln)(seed);
@@ -1448,14 +1458,14 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     cur.update(0,Z);
   };
   A.abort=()=>{done=null;A.active=false;A.kind='';A.watching=false;held=false;cur=null;clear();o.hud('')};
-  A.update=(dt,inp)=>{if(!cur||held)return;cur.in+=dt;cur.update(dt,inp)};
+  A.update=(dt,inp)=>{if(!cur||held)return;cur.in+=dt;cur.update(dt,A.watching?inp:gate(A.kind,inp))};
   A.tap=(x,y)=>!!(cur&&!A.watching&&cur.tap&&cur.tap(x,y));
   A.untap=()=>{if(cur&&cur.untap)cur.untap()};
   A.aimed=()=>!!(cur&&cur.aimed&&cur.aimed());
   A.cam=cam;
   // test hooks for the picture house: inject a mic level or recognised words, force the house reel
   A.theaterTest=q=>cur&&cur.test&&cur.test.api?cur.test.api(q):null;
-  A.look=(dx,dy)=>{if(cur&&!A.watching&&cur.yaw!==undefined){cur.yaw+=dx;cur.pitch=clamp(cur.pitch-dy,-1.2,1.2)}};
+  A.look=(dx,dy)=>{if(cur&&!A.watching&&cur.yaw!==undefined)lookBy(cur,dx,dy,MOVE.roomPitch)};
   // how black the screen overlay should be: fades in at the start, out at the end
   A.fade=()=>cur?Math.max(cur.fade||0,1-ss(0,FADE_IN[A.kind]||0.7,cur.in)):0;
   A.state=()=>cur;

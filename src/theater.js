@@ -81,18 +81,18 @@ function ensureStyle(){
 }
 
 export function createTheater(env){
-  const {renderer,scene,cam,o,A,canvasTex,glow,clamp,ss,lerp,nf,rnd,onClear,getGroup,finish}=env;
+  const {renderer,scene,cam,o,A,canvasTex,glow,clamp,ss,lerp,nf,rnd,onClear,getGroup,finish,createRoomWalker,lookStep,bobAdvance,bobY}=env;
   const opts=A.theaterOpts;
   const FY=z=>0.15*clamp(z+5,0,9);               // the floor rises toward the back
-  const RX=6,ZF=-9,ZB=8,RH=8.4,EYE=1.6,RAD=0.32;
-  const SCR={w:7.1,h:4.0,cy:5.6,z:ZF+0.31};         // the screen: its lower edge (3.6 m) is above any standing head, even on the back landing
+  const RX=6,ZF=-9,ZB=8,RH=9.6,EYE=1.6,RAD=0.32;
+  const SCR={w:7.1,h:4.0,cy:6.7,z:ZF+0.31};         // the screen: its lower edge (4.7 m) is above the head at the top of a jump from the back landing
   const SPAWN={x:-3.5,z:7.15},ENT={x:-3.5},EXIT={z:-6.5};
   const ROWZ=[-3.5,-2,-0.5,1,2.5,4],BLOCKS=[[-4.9,-4.1,-3.3,-2.5],[-0.8,0,0.8],[2.5,3.3,4.1,4.9]];
 
   return function theater(seed){
     const group=getGroup();
     const rng=(()=>{let a=(seed>>>0)||1;return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}})();
-    const S={t:0,st:'calm',stT:0,px:SPAWN.x,pz:SPAWN.z,yaw:0,pitch:-0.02,ux:0,uz:0,vx:SPAWN.x,vz:SPAWN.z,vyaw:0,vpitch:-0.02,tx:SPAWN.x,tz:SPAWN.z,tyaw:0,tpitch:-0.02,hasPose:false,
+    const S={t:0,st:'calm',stT:0,px:SPAWN.x,pz:SPAWN.z,yaw:0,pitch:-0.02,ux:0,uz:0,vx:SPAWN.x,vz:SPAWN.z,vyaw:0,vpitch:-0.02,tx:SPAWN.x,tz:SPAWN.z,tjy:0,wjy:0,tyaw:0,tpitch:-0.02,hasPose:false,
       bob:0,bobP:0,eyeY:EYE+FY(SPAWN.z),shake:0,fade:0,over:null,overT:0,
       tv:'reel',np:null,mic:'idle',lvl:0,speechT:0,yellT:0,insults:0,hits:0,insT:0,lastIns:-1,hint:'',hintT:0,unlocked:false,rattleT:0,entLocked:false,
       keyHold:0,teens:[],bubbles:[],test:{level:null},heard:[],watching:A.watching};
@@ -561,25 +561,29 @@ export function createTheater(env){
     S.heardNow=heard;
 
     /* ---------- walking ---------- */
-    const walk=(dt,inp)=>{
-      const mx=nf(inp.mx)?clamp(inp.mx,-1,1):0,my=nf(inp.my)?clamp(inp.my,-1,1):0,lx=nf(inp.lx)?inp.lx:0,ly=nf(inp.ly)?inp.ly:0;
-      S.yaw+=lx*1.6*dt;S.pitch=clamp(S.pitch-ly*1.4*dt,-1.2,1.2);S.yaw=((S.yaw+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;
-      const sy=Math.sin(S.yaw),cy=Math.cos(S.yaw);let dx=cy*mx-sy*my,dz=sy*mx+cy*my;const l=Math.hypot(dx,dz);if(l>1){dx/=l;dz/=l}
-      const k=Math.min(1,dt*12);S.ux+=(dx*3.0-S.ux)*k;S.uz+=(dz*3.0-S.uz)*k;
-      const ox=S.px,oz=S.pz;S.px+=S.ux*dt;S.pz+=S.uz*dt;
+    // walking, sprinting and jumping are the shared walker (src/movement.js): the same speeds as the maze, scaled to eye height. The room adds its stepped floor, its seats and walls, and a ceiling.
+    const collide=b=>{
       for(let it=0;it<2;it++){
-        for(const b of BOXES){const qx=clamp(S.px,b[0],b[1]),qz=clamp(S.pz,b[2],b[3]),ex=S.px-qx,ez=S.pz-qz,d=Math.hypot(ex,ez);
-          if(d<RAD){if(d>1e-6){S.px=qx+ex/d*RAD;S.pz=qz+ez/d*RAD}else{const m=[S.px-b[0],b[1]-S.px,S.pz-b[2],b[3]-S.pz],i=m.indexOf(Math.min(...m));if(i===0)S.px=b[0]-RAD;else if(i===1)S.px=b[1]+RAD;else if(i===2)S.pz=b[2]-RAD;else S.pz=b[3]+RAD}}}
-        S.px=clamp(S.px,-RX+RAD,RX-RAD);S.pz=clamp(S.pz,ZF+RAD,ZB-RAD);
+        for(const bx of BOXES){const qx=clamp(b.x,bx[0],bx[1]),qz=clamp(b.z,bx[2],bx[3]),ex=b.x-qx,ez=b.z-qz,d=Math.hypot(ex,ez);
+          if(d<RAD){if(d>1e-6){b.x=qx+ex/d*RAD;b.z=qz+ez/d*RAD}else{const m=[b.x-bx[0],bx[1]-b.x,b.z-bx[2],bx[3]-b.z],i=m.indexOf(Math.min(...m));if(i===0)b.x=bx[0]-RAD;else if(i===1)b.x=bx[1]+RAD;else if(i===2)b.z=bx[2]-RAD;else b.z=bx[3]+RAD}}}
+        b.x=clamp(b.x,-RX+RAD,RX-RAD);b.z=clamp(b.z,ZF+RAD,ZB-RAD);
       }
-      view(dt,Math.hypot(S.px-ox,S.pz-oz)/Math.max(dt,1e-4));S.vx=S.px;S.vz=S.pz;S.vyaw=S.yaw;S.vpitch=S.pitch;
     };
-    const view=(dt,sp)=>{if(dt<=0)return;const a=clamp(sp/3,0,1);S.bobP+=sp*dt*2.3;S.bob+=(Math.sin(S.bobP)*0.028*a-S.bob)*Math.min(1,dt*20);S.eyeY=EYE+FY(S.vz)+S.bob};
+    const WK=createRoomWalker({o,eye:EYE,x:SPAWN.x,z:SPAWN.z,collide,groundAt:(x,z)=>FY(z),snap:0.35,ceilingAt:()=>RH-0.3-EYE,
+      sound:e=>{if(e.jumped)o.sfx('jump');if(e.landed>0.8){S.dip=Math.min(0.1,0.03+0.02*e.landed);o.sfx('step')}else if(e.step&&!A.watching)o.noise(0.07,0.03,170+(WK.b.stepPh&1)*30,1)}});
+    Object.defineProperty(S,'px',{get:()=>WK.b.x,set:v=>{WK.b.x=v}});Object.defineProperty(S,'pz',{get:()=>WK.b.z,set:v=>{WK.b.z=v}});
+    S.WK=WK;S.dip=0;
+    const view=dt=>{S.dip*=Math.exp(-dt*11);S.eyeY=EYE+WK.b.y+bobY(WK.b,WK.scale)-S.dip};
+    const walk=(dt,inp)=>{
+      lookStep(S,dt,nf(inp.lx)?inp.lx:0,nf(inp.ly)?inp.ly:0,[-1.2,1.2]);S.yaw=((S.yaw+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;
+      WK.step(dt,{mx:inp.mx,my:inp.my,sprint:inp.sprint,jump:inp.jump},S.yaw);
+      view(dt);S.vx=S.px;S.vz=S.pz;S.vyaw=S.yaw;S.vpitch=S.pitch;
+    };
     const wr=a=>((a+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;
     const watchView=dt=>{
       if(!S.hasPose||Math.hypot(S.tx-S.vx,S.tz-S.vz)>4){S.vx=S.tx;S.vz=S.tz;S.vyaw=S.tyaw;S.vpitch=S.tpitch;S.hasPose=true;S.eyeY=EYE+FY(S.vz);return}
       const k=Math.min(1,dt*12),ox=S.vx,oz=S.vz;S.vx+=(S.tx-S.vx)*k;S.vz+=(S.tz-S.vz)*k;S.vyaw=wr(S.vyaw+wr(S.tyaw-S.vyaw)*k);S.vpitch+=(S.tpitch-S.vpitch)*k;
-      view(dt,Math.hypot(S.vx-ox,S.vz-oz)/dt);S.px=S.vx;S.pz=S.vz;
+      S.px=S.vx;S.pz=S.vz;S.wjy+=(S.tjy-S.wjy)*k;if(S.wjy<0.02)bobAdvance(WK.b,Math.hypot(S.vx-ox,S.vz-oz),WK.scale);WK.b.y=FY(S.vz)+S.wjy;view(dt);
     };
 
     /* ---------- the HUD ---------- */
@@ -655,10 +659,10 @@ export function createTheater(env){
       hud();
     };
     // a friend watching: the pose and the story, nothing else runs on their side
-    S.snap=()=>({x:+S.px.toFixed(2),z:+S.pz.toFixed(2),yw:+S.yaw.toFixed(2),pt:+S.pitch.toFixed(2),st:S.st,tv:S.tv});
+    S.snap=()=>({x:+S.px.toFixed(2),z:+S.pz.toFixed(2),jy:+Math.max(0,WK.b.y-FY(S.pz)).toFixed(2),yw:+S.yaw.toFixed(2),pt:+S.pitch.toFixed(2),st:S.st,tv:S.tv});
     S.apply=q=>{
       if(nf(q.x)&&nf(q.z)){S.tx=clamp(q.x,-RX,RX);S.tz=clamp(q.z,ZF,ZB)}
-      if(nf(q.yw))S.tyaw=clamp(q.yw,-7,7);if(nf(q.pt))S.tpitch=clamp(q.pt,-1.2,1.2);
+      if(nf(q.jy))S.tjy=clamp(q.jy,0,3);if(nf(q.yw))S.tyaw=clamp(q.yw,-7,7);if(nf(q.pt))S.tpitch=clamp(q.pt,-1.2,1.2);
       if(q.st==='calm'||q.st==='huh'||q.st==='attack'||q.st==='crying'){
         if(q.st!==S.st){const prev=S.st;S.st=q.st;S.stT=0;S.unlocked=q.st==='crying';if(q.st==='huh'){for(const T of S.teens)say(T,'huh?','','head')}if(q.st==='crying'&&prev!=='crying')for(const T of S.teens)say(T,'waaah','cry','stay')}
       }

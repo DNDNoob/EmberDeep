@@ -53,7 +53,7 @@ const sm=await pg.evaluate(async()=>{
   const G=window.__game,res={};
   for(const kind of ['galaxy','kiln','fall','mirror','theater']){
     let found=null;
-    for(let s=0;s<40&&!found;s++)for(let d=1;d<=6&&!found;d++){const f=G.genFloor('smoke'+s,d);if(f.sdoors.length&&f.sdoors[0].kind===kind)found=['smoke'+s,d]}
+    for(let s=0;s<40&&!found;s++)for(let d=1;d<=6&&!found;d++){const f=G.genFloor('SMOKE'+s,d);if(f.sdoors.length&&f.sdoors[0].kind===kind)found=['SMOKE'+s,d]}
     if(!found){res[kind]='no floor';continue}
     G.startRun(found[0],found[1],true);
     const D=G.F.sdoors[0];if(!D||D.kind!==kind){res[kind]='startRun floor mismatch';continue}
