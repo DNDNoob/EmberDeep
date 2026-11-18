@@ -285,6 +285,8 @@ export function clothDress(B, o) {
     for (const sg of o.sleeves) {
       const L = layoutSleeve(sg), cs = new Cloth(L.P, L.nuS, L.nvS, {gather: () => 1 + (sg.gather ?? 0), bend: 0.1});
       for (let r = 0; r < 2; r++) for (let i = 0; i < L.nuS; i++) { const q = (i + r * L.nuS) * 3; cs.pin(i + r * L.nuS, [L.P[q], L.P[q + 1], L.P[q + 2]]); }
+      // the cuff rim is held at the wrist along its upper side (the hand carries it), so the mouth keeps facing along the arm instead of the bell dropping and tilting it
+      if (sg.holdRim !== false) for (let j = L.nvS - 2; j < L.nvS; j++) for (let k = -3; k <= 3; k++) { const i = (L.nuS / 2 + k + L.nuS) % L.nuS, q = (i + j * L.nuS) * 3; cs.pin(i + j * L.nuS, [L.P[q], L.P[q + 1], L.P[q + 2]]); }
       // diameter springs keep the rings open (cloth would otherwise flatten into a hanging sheet)
       const ci = [], cj = [], cr = [], ck = [], half = L.nuS / 2;
       for (let j = 2; j < L.nvS; j++) for (let i = 0; i < half; i++) { const a = i + j * L.nuS, b = i + half + j * L.nuS; ci.push(a); cj.push(b); cr.push(Math.hypot(L.P[a * 3] - L.P[b * 3], L.P[a * 3 + 1] - L.P[b * 3 + 1], L.P[a * 3 + 2] - L.P[b * 3 + 2]) * 0.8); ck.push(0.06); }
