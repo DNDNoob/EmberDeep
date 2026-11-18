@@ -77,7 +77,7 @@ export function stepMove(b,dt,it,w){
   }else{b.x+=b.vx*dt;b.z+=b.vz*dt}
   if(w.collide)w.collide(b);
   // walking down a slope or steps: stay on the floor instead of drifting off it (only for rooms that ask, with the largest drop to follow)
-  if(w.snap&&ground&&!ev.jumped&&b.vy<=0&&w.groundAt){const g1=w.groundAt(b.x,b.z);if(b.y>g1&&b.y-g1<=w.snap*sc){b.y=g1;b.vy=0}}
+  if(w.snap&&(ground||ev.landed>0)&&!ev.jumped&&b.vy<=0&&w.groundAt){const g1=w.groundAt(b.x,b.z);if(b.y>g1&&b.y-g1<=w.snap*sc){b.y=g1;b.vy=0}}
   if(moving&&b.y<=g0&&bobAdvance(b,speed*dt,sc))ev.step=true;
   ev.moving=moving;ev.sprint=wantSprint;ev.speed=speed;ev.ground=b.y<=g0;
   return ev;

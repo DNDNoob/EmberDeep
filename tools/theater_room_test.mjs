@@ -22,7 +22,7 @@ await pg.evaluate(()=>{
   T.S=()=>R.state();
   T.open=(seed)=>{G.startRun(seed||'th1',1,true);R.theaterOpts.noMic=true;G.P.hp=9;const D=G.F.sdoors[0];D.kind='theater';G.sdoorOpen(D);return T.S()};
   T.run=(n,inp)=>{for(let i=0;i<n&&G.state==='room';i++)R.update(1/60,Object.assign({},Z,inp||{}))};
-  T.tp=(x,z)=>{const S=T.S();S.px=S.vx=x;S.pz=S.vz=z;S.ux=S.uz=0};
+  T.tp=(x,z)=>{const S=T.S();S.px=S.vx=x;S.pz=S.vz=z;S.WK.b.vx=S.WK.b.vz=S.WK.b.vy=0;S.WK.b.y=0.15*Math.min(9,Math.max(0,z+5))};
   T.nearTeen=(i)=>{const t=T.S().teens[i];T.tp(t.x,t.z+0.75)};   // the gap just behind a seat
 });
 const ev=(f,...a)=>pg.evaluate(f,...a);
@@ -137,6 +137,38 @@ ok(r.before>0&&r.after===0&&!r.on&&!r.have,'the perk is gone on the next floor')
 r=await ev(()=>{const G=T.G;let o={tested:0,bad:0};for(let s=0;s<40;s++){G.startRun('gate'+s,2+(s%4),true);const F=G.F;if(!F.door)continue;G.R.guide=G.R.depth;G.GD.have=false;G.guideCompute();const gi=G.guideInfo();if(!gi.have)continue;o.tested++;
   const d=G.bfs(F.g,F.W,F.H,G.P.tx,G.P.ty);if(d[gi.target.ty*F.W+gi.target.tx]<0)o.bad++}return o});
 ok(r.tested>0&&r.bad===0,'with a gate shut the light only targets what is reachable ('+r.tested+' floors)');
+// 12b. jumping and walking speed: the same shared walker as the maze and the other rooms (src/movement.js)
+r=await ev(()=>{const o={};const FY=z=>0.15*Math.min(9,Math.max(0,z+5));
+  // the bindings: Space and pad A jump and are never "press"; E presses
+  const G=T.G;T.open('th7');G.keys.Space=true;let i=G.roomInput();o.space=[!!i.press,!!i.jump,!!i.talk];G.keys.Space=false;G.keys.KeyE=true;i=G.roomInput();o.e=[!!i.press,!!i.jump];G.keys.KeyE=false;G.keys.KeyV=true;i=G.roomInput();o.v=[!!i.talk,!!i.jump,!!i.press];G.keys.KeyV=false;
+  // a jump from the back landing: rises, lands on the floor it is over, never reaches the screen
+  T.open('th7');let S=T.S();T.tp(-3.5,7.0);T.run(5,{});const y0=S.WK.b.y;let hi=0,eyeHi=0,air=0;
+  T.run(1,{jump:true});for(let k=0;k<120;k++){T.run(1,{});const h=S.WK.b.y-FY(S.WK.b.z);hi=Math.max(hi,h);eyeHi=Math.max(eyeHi,S.eyeY);if(h>0.01)air++}
+  o.y0=y0;o.apex=hi;o.air=air;o.land=S.WK.b.y-FY(S.WK.b.z);o.eyeHi=eyeHi;o.screenBottom=S.screen.position.y-S.screen.geometry.parameters.height/2;o.state=S.st;
+  // a jump carries its momentum, cannot pass a seat block, and a jump on the slope lands at the floor height there
+  T.tp(-1.65,7.5);T.run(3,{});T.run(1,{jump:true,my:-1});for(let k=0;k<20;k++)T.run(1,{my:-1});o.jz=S.WK.b.z;T.run(60,{my:-1});o.slope=S.WK.b.y-FY(S.WK.b.z);
+  T.tp(-3.5,6.2);T.run(1,{jump:true,my:-1});for(let k=0;k<80;k++)T.run(1,{my:-1});o.seatZ=S.WK.b.z;o.seatOk=!S.test||true;
+  // jumping is not talking, and not interacting: no mic, 60 jumps beside a teen and at the locked exit
+  T.open('th8');S=T.S();T.nearTeen(0);for(let k=0;k<180;k++)T.run(1,{jump:k%30<2});o.stCalm=S.st;o.hold=S.keyHold;
+  T.open('th9');S=T.S();T.tp(-1.65,2);const hp=T.G.P.hp;for(let k=0;k<90;k++)T.run(1,{jump:true});o.noRattle=!S.over&&S.rattleT<=0&&T.G.P.hp===hp&&S.st==='calm';o.stillIn=T.G.state==='room';o.rattle=true;
+  // the walk down the aisle stays on the floor
+  T.open('th7');S=T.S();T.tp(-1.65,7.6);T.run(3,{});let worst=0,airF=0,z0=S.WK.b.z;for(let k=0;k<75;k++){T.run(1,{my:-1});const h=Math.abs(S.WK.b.y-FY(S.WK.b.z));worst=Math.max(worst,h);if(!S.WK.ev.ground)airF++}
+  o.aisle={worst,airF,dz:z0-S.WK.b.z,x:S.WK.b.x,z:S.WK.b.z};
+  // walking and sprinting speed equal the shared walker's (the maze's 2.7 and 4.3 per second, scaled by eye height 1.6 / 0.62)
+  T.tp(-1.65,7.6);T.run(5,{my:-1});let a=S.WK.b.z;T.run(30,{my:-1});o.walk=(a-S.WK.b.z)/0.5;
+  T.tp(-1.65,7.6);T.run(5,{my:-1,sprint:true});a=S.WK.b.z;T.run(30,{my:-1,sprint:true});o.sprint=(a-S.WK.b.z)/0.5;
+  T.tp(-1.65,7.6);T.run(5,{});o.eyeStand=S.eyeY-FY(7.6);return o});
+console.log('12b',JSON.stringify(r));
+ok(!r.space[0]&&r.space[1]&&!r.space[2],'Space jumps: it is not press and not talk');ok(r.e[0]&&!r.e[1],'E presses and does not jump');ok(r.v[0]&&!r.v[1]&&!r.v[2],'V talks and does not jump or press');
+ok(r.apex>1.3&&r.apex<1.55&&r.air>=30&&r.air<=45,'Space makes the player rise ('+r.apex.toFixed(2)+' m, '+r.air+' frames) like the maze jump scaled by eye height');
+ok(Math.abs(r.land)<0.02,'and land on the floor ('+r.land.toFixed(3)+')');
+ok(r.eyeHi+0.2<r.screenBottom,'the screen bottom ('+r.screenBottom.toFixed(2)+') stays above the head at the top of a jump from the back landing ('+r.eyeHi.toFixed(2)+')');
+ok(Math.abs(r.slope)<0.02,'a jump on the sloped rows lands at the floor height there ('+r.slope.toFixed(3)+')');
+ok(r.seatZ>3.55,'a jump does not carry you through a seat block (z '+r.seatZ.toFixed(2)+')');
+ok(r.stCalm==='calm'&&r.hold===0,'jumping beside a teen is not talking');ok(r.noRattle&&r.stillIn&&r.rattle,'jumping does nothing else: no exit, no damage, no story change');
+ok(r.aisle.worst<0.001&&r.aisle.airF===0&&r.aisle.dz>6,'walking down the aisle stays on the floor (worst '+r.aisle.worst.toFixed(4)+' m off it, '+r.aisle.airF+' airborne frames, '+r.aisle.dz.toFixed(1)+' m walked)');
+{const walk=2.7*1.6/0.62,sprint=4.3*1.6/0.62;ok(Math.abs(r.walk-walk)/walk<0.05,'walk speed '+r.walk.toFixed(2)+' m/s equals the shared walker ('+walk.toFixed(2)+')');ok(Math.abs(r.sprint-sprint)/sprint<0.05,'sprint speed '+r.sprint.toFixed(2)+' m/s equals the shared walker ('+sprint.toFixed(2)+')');}
+ok(Math.abs(r.eyeStand-1.6)<0.03,'standing eye height is 1.6 m over the floor ('+r.eyeStand.toFixed(2)+')');
 // 13. the YouTube path, against a stub of the IFrame API served over http
 {
   const html=readFileSync(root+'/index.html'),srv=http.createServer((q,s)=>{s.setHeader('content-type','text/html');s.end(html)});await new Promise(res=>srv.listen(0,'127.0.0.1',res));
