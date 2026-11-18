@@ -359,17 +359,19 @@ export function beard(H, p = {}) {
       }
     };
     const nA = Math.round(p.locks ?? 28);
-    layer(nA, {off: 0.0008, rowOff: 0.0009, len: 0.12, end0: 0.7, end1: 0.3, amp: 0.013, W: 0.0036, ao: 0.66, variant: 3, tipVariant: 0, keep: 0, lift: 0.0003, drift: 0.12});
-    layer(Math.round(nA * 1.2), {off: 0.0026, rowOff: 0.0009, len: 0.1, end0: 0.6, end1: 0.25, amp: 0.015, W: 0.0034, ao: 0.82, variant: 0, tipVariant: 1, keep: 1, lift: 0.0006, top: 0.006, span: 0.92, jit: 0.1, drift: 0.14, splay: 0.004});
+    layer(nA, {off: 0.0006, rowOff: 0.0005, len: 0.12, end0: 0.7, end1: 0.3, amp: 0.013, W: 0.0064, ao: 0.7, variant: 3, tipVariant: 0, keep: 0, lift: 0.0002, drift: 0.12});
+    layer(Math.round(nA * 1.2), {off: 0.0014, rowOff: 0.0006, len: 0.1, end0: 0.6, end1: 0.25, amp: 0.015, W: 0.006, ao: 0.85, variant: 0, tipVariant: 1, keep: 1, lift: 0.0004, top: 0.006, span: 0.92, jit: 0.1, drift: 0.14, splay: 0.004});
     // fill layer: dense cards close to the mass in the lower half so the envelope never shows
     for (let i = 0; i < (p.fill ?? 70); i++) {
       const zeta = (rr() * 2 - 1) * 0.8, y0 = -0.05 - rr() * 0.12 * L / 0.3, len = 0.09 + 0.06 * rr();
-      addCard(zeta, y0, Math.max(-L * 0.98, y0 - len), {off: 0.0015 + 0.001 * rr(), amp: 0.012, wl: 0.08 + 0.08 * rr(), phase: rr() * 6.28, variant: 0, W: 0.0034 + 0.0012 * rr(), ao: 0.78, keep: 1, lift: 0.0006, shear: (rr() - 0.5) * 0.03, drift: 0.2});
+      addCard(zeta, y0, Math.max(-L * 0.98, y0 - len), {off: 0.0015 + 0.001 * rr(), amp: 0.012, wl: 0.08 + 0.08 * rr(), phase: rr() * 6.28, variant: 0, W: 0.0058 + 0.0016 * rr(), ao: 0.8, keep: 1, lift: 0.0004, shear: (rr() - 0.5) * 0.03, drift: 0.2});
     }
+    // mouth corners: cards rooted at the corner of the mouth run down into the beard, so the moustache flows into it
+    for (const sd of [-1, 1]) for (let k = 0; k < 6; k++) addCard(sd * (0.5 + 0.09 * k), m[1] - 0.013, m[1] - 0.013 - 0.08 - 0.03 * rr(), {off: 0.0012 + 0.0004 * k, amp: 0.004, wl: 0.07, phase: rr() * 6.28, variant: k % 2 ? 0 : 3, W: 0.005, ao: 0.9, keep: 1, lift: 0.0006, root: 0.35, drift: 0.1});
     // layer C: loose wisps standing off the mass, narrow and wispy; layer D: sparse strands near the tip
     for (let i = 0; i < (p.wisps ?? 46); i++) {
-      const zeta = (rr() * 2 - 1) * 0.85, y0 = -0.01 - rr() * 0.17 * L / 0.3, len = 0.075 + 0.07 * rr();
-      addCard(zeta, y0, y0 - len, {off: 0.0042 + 0.002 * rr(), amp: 0.004, wl: 0.05 + 0.03 * rr(), phase: rr() * 6.28, variant: i % 3 ? 1 : 2, W: 0.0026 + 0.0012 * rr(), ao: 0.95, keep: 1, lift: 0.002, splay: 0.008, root: 0.4, round: 0.4});
+      const zeta = (rr() < 0.5 ? -1 : 1) * (0.72 + 0.28 * rr()), y0 = -0.01 - rr() * 0.17 * L / 0.3, len = 0.075 + 0.07 * rr();
+      addCard(zeta, y0, y0 - len, {off: 0.0022 + 0.0014 * rr(), amp: 0.004, wl: 0.05 + 0.03 * rr(), phase: rr() * 6.28, variant: i % 3 ? 1 : 2, W: 0.0034 + 0.0014 * rr(), ao: 0.95, keep: 1, lift: 0.0014, splay: 0.008, root: 0.4, round: 0.4});
     }
     for (let i = 0; i < (p.strays ?? 18); i++) {
       const zeta = (rr() * 2 - 1) * 0.55, y0 = -L * (0.55 + 0.3 * rr()), len = 0.05 + 0.05 * rr();
@@ -382,7 +384,7 @@ export function beard(H, p = {}) {
     cull: (x, y, z) => H.sdf(x, y, z) < -0.002, project: 0.003, cardsPart: {cardsDirect: direct},
     ao: 0.006, aoFloor: 0.5,
     band: (x, y, z, o) => { o[0] = -y; o[1] = z / Math.max(0.004, halfW(y)) * 0.045; o[2] = 1 - smoothstep(0.0005, 0.007, skinD(x, y, z)); },
-    paint: (x, y, z, o) => { o[0] = 1.0; }};
+    paint: (x, y, z, o) => { o[0] = 0.4; }};
 }
 
 /* =====================================================================================

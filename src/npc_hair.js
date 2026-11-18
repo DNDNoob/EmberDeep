@@ -135,18 +135,18 @@ export function tipWisps(lock, r, o = {}) {
 export const ATLAS_TILES = 4;
 export function hairAtlas(size = 512, seed = 7) {
   const W = size, H = size, tw = W / ATLAS_TILES, data = new Uint8Array(W * H * 4), r = rng(seed);
-  const TONES = [[0.94, 0.93, 0.89, 0.5], [0.76, 0.76, 0.74, 0.2], [0.56, 0.56, 0.55, 0.1], [0.93, 0.84, 0.62, 0.2]];
+  const TONES = [[0.94, 0.93, 0.89, 0.36], [0.76, 0.76, 0.74, 0.25], [0.56, 0.56, 0.55, 0.14], [0.93, 0.84, 0.62, 0.14], [0.42, 0.42, 0.42, 0.11]];
   const tone = () => { let t = r(), a = 0; for (const c of TONES) { a += c[3]; if (t <= a) return c; } return TONES[0]; };
   for (let i = 0; i < W * H; i++) { data[i * 4] = 205; data[i * 4 + 1] = 203; data[i * 4 + 2] = 196; data[i * 4 + 3] = 0; }
   const spec = [
-    {n: 40, hw: 1.0, x0: () => 0.06 + 0.88 * r(), len: x0 => 0.97 - 0.5 * Math.pow(Math.abs(x0 - 0.5) * 2, 1.8) - 0.03 * r(), conv: 0.6, wob: 0.025},
-    {n: 20, hw: 0.9, x0: () => 0.22 + 0.56 * r(), len: () => 0.5 + 0.5 * r(), conv: -0.55, wob: 0.045},
-    {n: 9, hw: 0.8, x0: () => 0.12 + 0.76 * r(), len: () => 0.55 + 0.45 * r(), conv: -0.1, wob: 0.07},
-    {n: 30, hw: 1.0, x0: () => 0.05 + 0.9 * r(), len: () => 0.68 + 0.3 * r(), conv: 0.15, wob: 0.03}
+    {n: 64, hw: 1.25, x0: () => 0.5 + (r() + r() - 1) * 0.47, len: x0 => 0.97 - 0.55 * Math.pow(Math.abs(x0 - 0.5) * 2, 1.4) - 0.04 * r(), conv: 0.6, wob: 0.025},
+    {n: 30, hw: 0.9, x0: () => 0.22 + 0.56 * r(), len: () => 0.5 + 0.5 * r(), conv: -0.55, wob: 0.045},
+    {n: 12, hw: 0.8, x0: () => 0.12 + 0.76 * r(), len: () => 0.55 + 0.45 * r(), conv: -0.1, wob: 0.07},
+    {n: 52, hw: 1.3, x0: () => 0.5 + (r() + r() - 1) * 0.47, len: () => 0.6 + 0.38 * r(), conv: 0.15, wob: 0.03}
   ];
   spec.forEach((sp, ti) => {
     const ox = ti * tw, strands = [];
-    for (let k = 0; k < sp.n; k++) strands.push({x0: sp.x0(), ph: r() * 6.28, f: 2 + 4 * r(), len: 0, t: tone(), hwK: 0.8 + 0.5 * r(), bri: 0.88 + 0.2 * r(), drift: (r() - 0.5) * 0.1});
+    for (let k = 0; k < sp.n; k++) strands.push({x0: sp.x0(), ph: r() * 6.28, f: 2 + 4 * r(), len: 0, t: tone(), hwK: 0.8 + 0.5 * r(), bri: 0.72 + 0.36 * r(), drift: (r() - 0.5) * 0.1});
     for (const s of strands) s.len = sp.len(s.x0);
     strands.sort((a, b) => a.bri - b.bri);
     for (const s of strands) {
