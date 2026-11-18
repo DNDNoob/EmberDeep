@@ -110,7 +110,7 @@ export const KEEPER = {
     const [e0, e1] = D.ends;
     return {
       parts: {skirt, hem, ...D.parts, brooch: bro, pouch, keys,
-        head: H, ears: K.ears(H, {tris: [1000, 560, 90], cell: 0.0015}), hair: K.hairCap(H, {crown: 0.128, tris: [450, 260, 60], cell: 0.0065}), brows: K.brows(H, {size: 1.15, droop: 1.1, tris: [300, 150, 60], cell: 0.0014}), moustache: K.moustache(H, {size: 1.1, tris: [420, 220, 60], cell: 0.0023}),
+        head: H, ears: K.ears(H, {tris: [1000, 560, 90], cell: 0.0015}), hair: K.hairCap(H, {crown: 0.128, tris: [450, 260, 60], cell: 0.0065}), brows: K.brows(H, {size: 1.15, droop: 1.1, tris: [450, 200, 60], cell: 0.0013}), moustache: K.moustache(H, {size: 1.1, tris: [750, 300, 70], cell: 0.0017}),
         neck: K.neck(H, {tris: [260, 150, 40], cell: 0.0035}), beard: K.beard(H, {length: 0.3, width: 1.25, thick: 0.009, fork: 0, tris: [4500, 1200, 200], cell: 0.0022, chest: robeInBeard}), gripHand: sleeveCull(grip), restHand: sleeveCull(rest)},
       eyes: {r: H.eye.r, iris: 0.5, open: 12, low: -24, arch: 9, lidT: 0.0021},
       anchors: {

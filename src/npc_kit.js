@@ -204,38 +204,58 @@ export function hairCap(H, p = {}) {
     paint: (x, y, z, o) => { o[0] = smoothstep(0.06, 0.12, y) * 0.5; }};
 }
 
-/* ---------- eyebrows: bushy tufts that sit on the brow ridge and droop at the outer end ---------- */
+/* ---------- eyebrows: bushy tufts that sit on the brow ridge and droop at the outer end (locks, see npc_hair.js) ---------- */
+// p: {size, droop, lift, tufts (per brow), seed}
 export function brows(H, p = {}) {
-  const E = H.eye, s = p.size ?? 1, droop = p.droop ?? 0.6, lift = p.lift ?? 0;
+  const E = H.eye, s = p.size ?? 1, droop = p.droop ?? 0.6, lift = p.lift ?? 0, rr = rng(p.seed ?? 5), n = p.tufts ?? 13;
   // the chain runs just in front of the brow ridge, so about half of each tuft stands proud of the skin
   const pts = [[E.x + 0.0235, E.y + 0.02 + lift, 0.008], [E.x + 0.021, E.y + 0.0245 + lift, E.z - 0.007], [E.x + 0.016, E.y + 0.026 + lift, E.z + 0.007], [E.x + 0.006, E.y + 0.021 + lift - 0.009 * droop, E.z + 0.021]];
-  function sdf(x, y, z) {
-    const zs = Math.abs(z);
-    let d = chain(x, y, zs, pts, 0.0062 * s, 0.0058 * s, 0.006);
-    if (d < 0.01) {
-      // hairs sweep outwards and down: shallow ridges along that direction, and a slightly ragged edge
-      const u = zs * 0.9 - y * 0.4;
-      d += 0.0006 * Math.sin(u * 1500 + 6 * fbm(x * 90, y * 90, z * 90, 1)) + 0.0009 * fbm(x * 180, y * 140, zs * 110, 2);
-    }
-    return d;
+  const base = c => { const f = c * (pts.length - 1), i = Math.min(pts.length - 2, Math.floor(f)); return lerp3(pts[i], pts[i + 1], f - i); };
+  const locks = [];
+  for (const side of [-1, 1]) for (let j = 0; j < n; j++) {
+    const c = (j + 0.2 + 0.6 * rr()) / n, P = base(c), len = (0.0085 + 0.006 * Math.sin(Math.PI * Math.min(1, c * 1.1 + 0.1)) + 0.004 * rr()) * s;
+    // inner hairs grow up and out, the outer ones sweep out and down
+    const a = (0.25 + 1.45 * c + 0.2 * (rr() - 0.5)) , up = Math.cos(a) - 0.55 * Math.max(0, c - 0.55) * 1.2 * droop, out = Math.sin(a), fw = 0.25 + 0.2 * rr();
+    const R = (0.0013 + 0.0004 * rr()) * s, ph = rr() * 6.28;
+    locks.push(lockFromPath(t => [P[0] + fw * len * t * 0.5 - 0.0004 * (1 - t) - 0.0008 * s * (1 - t), P[1] + up * len * t + 0.0016 * Math.sin(t * 3 + ph) * t - 0.0008 * (1 - t), side * (P[2] + out * len * t + 0.0008 * Math.sin(t * 4 + ph) * t)], {n: 7, R, tip: 0.0002, root: 0.9, taper: 0.35}));
   }
-  return {sdf, bounds: [E.x - 0.015, E.y, -E.z - 0.035, E.x + 0.035, E.y + 0.04, E.z + 0.035], cell: p.cell || 0.0018, tris: p.tris || [200, 80],
-    cull: (x, y, z) => H.sdf(x, y, z) < -0.0015, project: 0.0015};
+  const LS = lockSet(locks, {k: 0.0008, pad: 0.002, ref: [1, 0, 0]}), skinD = H.sdf, tmp = [0, 0, 0];
+  const inner = (x, y, z) => { const zs = Math.abs(z); return chain(x, y, zs, pts, 0.0034 * s, 0.003 * s, 0.006) + 0.0005; };   // a low base so the tufts grow from a dense bed
+  const fat = f => (x, y, z) => smin(inner(x, y, z), LS.eval(x, y, z) - f, 0.002);
+  const sdf = (x, y, z) => smin(inner(x, y, z), LS.eval(x, y, z), 0.0012);
+  const bounds = [E.x - 0.015, E.y, -E.z - 0.035, E.x + 0.035, E.y + 0.045, E.z + 0.035];
+  return {sdf, bounds, cell: p.cell || 0.0013, tris: [(p.tris || [450, 200, 60])[0]], lods: (p.tris || [450, 200, 60]).slice(1).map((t, i) => ({sdf: fat(0.0006 + 0.0008 * i), cell: 0.0022 + 0.0008 * i, tris: [t]})),
+    cull: (x, y, z) => H.sdf(x, y, z) < -0.0015, project: 0.0008, ao: 0.004, aoFloor: 0.6, locks: LS,
+    band: (x, y, z, o) => { const zs = Math.abs(z); o[0] = zs * 0.9 - y * 0.4; o[1] = y * 0.9 + zs * 0.4; o[2] = 1 - smoothstep(0.0003, 0.0035, skinD(x, y, z)); },
+    paint: (x, y, z, o) => { LS.info(x, y, z, tmp); o[0] = cl(0.35 * (1 - smoothstep(0, 0.25, tmp.t ?? 0)) + 0.1 * smoothstep(0.0003, 0.0015, tmp.d) + 0.12 * (tmp[2] - 0.5), 0, 1); }};
 }
 
 /* ---------- moustache: grows from the upper lip, droops past the mouth corners into the beard ---------- */
+// Locks fan out from the philtrum (parted there, a gap under the nose) and sweep over the lip corners, tips hanging separately.
+// p: {size, droop, locks (per side), seed}
 export function moustache(H, p = {}) {
-  const nt = H.noseTip, m = H.mouth, s = p.size ?? 1, droop = p.droop ?? 1;
+  const nt = H.noseTip, m = H.mouth, s = p.size ?? 1, droop = p.droop ?? 1, rr = rng(p.seed ?? 9), n = p.locks ?? 7;
   // starts ~4 mm below the nose base (a philtrum gap), rides on the upper lip, droops over the mouth corners; the mouth slit and lower lip stay free
   const pts = [[m[0] + 0.005, m[1] + 0.0085, 0.0035], [m[0] + 0.004, m[1] + 0.0055, 0.015], [m[0] - 0.002, m[1] - 0.003 * droop, 0.027], [m[0] - 0.01, m[1] - 0.019 * droop, 0.034]];
-  function sdf(x, y, z) {
-    const zs = Math.abs(z);
-    let d = chain(x, y, zs, pts, 0.0066 * s, 0.0032 * s, 0.004);
-    if (d < 0.01) d += 0.0014 * Math.sin((zs * 0.8 - y * 0.6) * 420 + 6 * fbm(x * 40, y * 40, z * 40, 2)) + 0.0006 * fbm(x * 120, y * 120, zs * 100, 1);
-    return d;
+  const ext = [pts[3][0] - 0.004, pts[3][1] - 0.01 * droop, pts[3][2] + 0.002], P5 = [...pts, ext];
+  const base = c => { const f = c * (P5.length - 1), i = Math.min(P5.length - 2, Math.floor(f)); return lerp3(P5[i], P5[i + 1], f - i); };
+  const locks = [];
+  for (const side of [-1, 1]) for (let i = 0; i < n; i++) {
+    const u = (i + 0.15 + 0.7 * rr()) / n, len = 0.62 + 0.38 * Math.pow(u, 0.7) + 0.06 * rr(), ph = rr() * 6.28, R = (0.0021 + 0.0007 * Math.sin(Math.PI * u) + 0.0005 * rr()) * s;
+    locks.push(lockFromPath(t => {
+      const b = base(t * len), g = Math.pow(t, 1.2), sm = t * t * (3 - 2 * t);
+      return [b[0] + 0.0014 * s * (u - 0.5) * 2 * sm + 0.0006 * s * Math.sin(t * 5 + ph), b[1] + (0.0032 - 0.0068 * u) * s * sm - 0.0075 * u * u * g * droop, side * (b[2] + 0.0012 * Math.sin(t * 7 + ph) * sm + 0.003 * (u - 0.5) * g)];
+    }, {n: 11, R, tip: 0.0002, root: 0.85, taper: 0.5}));
   }
-  return {sdf, bounds: [m[0] - 0.035, m[1] - 0.04, -0.055, nt[0] + 0.01, nt[1] - 0.008, 0.055], cell: p.cell || 0.0022, tris: p.tris || [300, 110],
-    cull: (x, y, z) => H.sdf(x, y, z) < -0.002, project: 0.002};
+  const LS = lockSet(locks, {k: 0.0011, pad: 0.002}), skinD = H.sdf, tmp = [0, 0, 0];
+  const bed = (x, y, z) => chain(x, y, Math.abs(z), pts, 0.0036 * s, 0.002 * s, 0.003) + 0.0006;
+  const fat = f => (x, y, z) => smin(bed(x, y, z), LS.eval(x, y, z) - f, 0.002);
+  const sdf = (x, y, z) => smin(bed(x, y, z), LS.eval(x, y, z), 0.0014);
+  const T = p.tris || [750, 300, 70];
+  return {sdf, bounds: [m[0] - 0.035, m[1] - 0.04, -0.055, nt[0] + 0.01, nt[1] - 0.008, 0.055], cell: p.cell || 0.0017, tris: [T[0]], lods: T.slice(1).map((t, i) => ({sdf: fat(0.0008 + 0.0012 * i), cell: 0.0028 + 0.001 * i, tris: [t]})),
+    cull: (x, y, z) => H.sdf(x, y, z) < -0.002, project: 0.001, ao: 0.005, aoFloor: 0.6, locks: LS,
+    band: (x, y, z, o) => { const zs = Math.abs(z); o[0] = zs * 0.9 - y * 0.6; o[1] = y * 0.9 + zs * 0.6; o[2] = 1 - smoothstep(0.0003, 0.004, skinD(x, y, z)); },
+    paint: (x, y, z, o) => { LS.info(x, y, z, tmp); o[0] = cl(0.3 * (1 - smoothstep(0, 0.2, tmp.t ?? 0)) + 0.12 * smoothstep(0.0004, 0.002, tmp.d) + 0.12 * (tmp[2] - 0.5), 0, 1); }};
 }
 
 /* ---------- beard: hugs the jaw and cheeks (grows out of the face), then falls in tapered locks ---------- */
@@ -324,7 +344,7 @@ export function beard(H, p = {}) {
   }
   const LS = lockSet(locks, {k: 0.0014, pad: 0.003});
   function sdf(x, y, z) {
-    let d = smin(core(x, y, z) + inset, LS.eval(x, y, z), 0.002);
+    let d = smin(core(x, y, z) + inset * (1 - smoothstep(cheekY - 0.05, cheekY - 0.012, y)), LS.eval(x, y, z), 0.002);   // the inset fades out on the cheek, so a thin stubble shell remains there
     if (chest) d = smax(d, -(chest(x, y, z) - gap * 0.5), 0.004);
     return d;
   }
