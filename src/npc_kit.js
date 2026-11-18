@@ -135,13 +135,13 @@ export function neck(H, p = {}) {
   const sdf = (x, y, z) => {
     const az = Math.abs(z);
     let d = sdRoundCone(x, y, z, -0.004, 0.02, 0, -0.008, -0.07, 0, 0.034 * nk * r, 0.04 * nk * r);
-    d = smin(d, sdRoundCone(x, y, z, -0.008, -0.07, 0, -0.034, -len, 0, 0.04 * nk * r, 0.056 * nk * r), 0.02);
+    d = smin(d, sdRoundCone(x, y, z, -0.008, -0.07, 0, -0.05, -len, 0, 0.04 * nk * r, 0.072 * nk * r), 0.02);
     // sternocleidomastoid cords from behind the ear to the collarbones, and the Adam's apple
-    d = smin(d, sdCapsule(x, y, az, -0.026, -0.03, 0.03 * nk, 0.022, -0.15, 0.02, 0.0155), 0.012);
+    d = smin(d, sdCapsule(x, y, az, -0.03, -0.03, 0.036 * nk, 0.014, -0.15, 0.03 * nk, 0.012 * nk), 0.012);
     d = smin(d, sdSphere(x - 0.036 * nk, y + 0.07, z, 0.011), 0.014);
     return d + 0.0004 * fbm(x * 45, y * 45, z * 45, 2);
   };
-  return {sdf, bounds: [-0.09, -len - 0.02, -0.09, 0.09, -0.03, 0.09], cell: p.cell || 0.0045, tris: p.tris || [220, 90],
+  return {sdf, bounds: [-0.11, -len - 0.02, -0.11, 0.11, -0.03, 0.11], cell: p.cell || 0.0045, tris: p.tris || [220, 90], ao: 0.02, aoFloor: 0.45, aoSdf: H.sdf,
     cull: (x, y, z) => y > -0.035 || H.sdf(x, y, z) < -0.002, project: 0.002,
     paint: (x, y, z, o) => { o[0] = 0.5 * smoothstep(-0.07, -len, y); o[1] = 0.6; }};
 }
@@ -708,7 +708,7 @@ export function body(p = {}) {
   const Y = {chest: 0.235, ribs: 0.135, belly: 0.03, pelvis: -0.05, shoulder: 0.335, neck: 0.4, ...(p.y || {})};
   const stoop = p.stoop ?? 0, belly = p.belly ?? 0, nx = 0.005;
   const cw = g('chestBreadth') / 2 * (p.narrow ?? 1), cd = g('chestDepth') / 2, ww = g('waistBreadth') / 2 * (p.waistNarrow ?? p.narrow ?? 1), wd = g('waistDepth') / 2, hw = g('hipBreadth') / 2;
-  const sw = Math.max(...p.arms.map(a => Math.abs(a.S[2]))), nr = g('neckRadius') * 0.6;   // neck circumference is taken at the Adam's apple; the neck column is ~0.6 of that radius
+  const sw = Math.max(...p.arms.map(a => Math.abs(a.S[2]))), nr = g('neckRadius') * 0.95;   // neck circumference is taken at the Adam's apple; the neck column is ~0.6 of that radius
   const torso = (x, y, z, noNeck) => { // ribcage, belly, pelvis, neck and trapezius slopes; no arms (noNeck: the clothed torso, trapezius starts at the neck base)
     const xs = x - stoop * Math.max(0, y - 0.03), az = Math.abs(z);
     let d = sdEllipsoid(xs, y - Y.chest, z, cd, 0.095, cw);

@@ -83,7 +83,7 @@ export const KEEPER = {
   eyes: {frame: 'H', sclera: 'sclera', iris: 'iris', pupil: 'pupil', lid: 'skin', lid2: 'skinDeep'},
   build() {
     const U = {off: this.rig.waist, R: K.rotZ(this.rig.lean)};
-    const H = K.head({age: 0.9, brow: 1.25, jaw: 1.0, ears: 1.05, nose: {len: 1.1, width: 1.05, droop: 0.9, bulb: 1.15}, tris: [1650, 700, 190], cell: 0.0038});
+    const H = K.head({age: 0.9, brow: 1.25, jaw: 1.0, ears: 1.05, neck: 1.5, nose: {len: 1.1, width: 1.05, droop: 0.9, bulb: 1.15}, tris: [1650, 700, 190], cell: 0.0038});
     const skirt = K.robeSkirt({height: 0.57, waist: 0.097, aspect: 1.12, cell: 0.0058, tris: [1100, 450, 120], rag: RAG});
     skirt.paint = (x, y, z, o) => { o[0] = WEAR_SKIRT(x, y, z); };
     const lowerInU = K.inParent(skirt.base, U.off, U.R);
@@ -128,7 +128,7 @@ export const KEEPER = {
     return {
       parts: {...cloth, ...Drest, brooch: bro, pouch, keys,
         head: H, ears: K.ears(H, {tris: [650, 400, 60], cell: 0.0015}), hair: hcap, hairShells: hcap.shells, brows: brw, moustache: mou, browCards: {cardsDirect: brw.cardsPart.cardsDirect}, mousCards: {cardsDirect: mou.cardsPart.cardsDirect}, beardCards: {cardsDirect: brd.cardsPart.cardsDirect},
-        neck: K.neck(H, {tris: [260, 150, 40], cell: 0.0035}), beard: brd, beardShells: brd.shells, gripHand: sleeveCull(grip), restHand: sleeveCull(rest)},
+        neck: K.neck(H, {tris: [320, 180, 50], cell: 0.0035, neck: 1.5}), beard: brd, beardShells: brd.shells, gripHand: sleeveCull(grip), restHand: sleeveCull(rest)},
       eyes: {r: H.eye.r, iris: 0.5, open: 12, low: -24, arch: 9, lidT: 0.0021},
       anchors: {
         eye: [H.eye.x, H.eye.y, H.eye.z],
