@@ -25,7 +25,7 @@ const ARMS = [
 const WEAR_TOP = K.wearPaint({vary: 0.28, freq: 8, seed: 11}), WEAR_STOLE = K.wearPaint({vary: 0.35, freq: 9, seed: 5}), WEAR_SKIRT = K.wearPaint({vary: 0.28, freq: 6, dirt: 0.85, dirtY: 0.16, seed: 3});
 const RAG = {amp: 0.005, notches: 6, depth: 0.016, width: 0.07, seed: 2};   // frayed hem: noise on the edge height plus a few V-shaped notches
 export const KEEPER = {
-  id: 'keeper-v9c', seed: 4242,
+  id: 'keeper-v10', seed: 4242,
   // Human proportions (see docs/npc-kit.md): the head is built at its natural size and drawn at headScale; the torso is
   // stretched (len) and the skirt (legs) raised so the figure is ~7.25 heads tall with shoulders about 2.7 head widths wide.
   proportions: {headScale: 0.6, frames: ['H', 'J'], height: 0.93},   // height: uniform scale of the whole figure and its props (crown 1.03 m * 0.93 = 0.96 m)
@@ -111,7 +111,7 @@ export const KEEPER = {
     return {
       parts: {skirt, hem, ...D.parts, brooch: bro, pouch, keys,
         head: H, ears: K.ears(H, {tris: [1000, 560, 90], cell: 0.0015}), hair: K.hairCap(H, {crown: 0.128, tris: [450, 260, 60], cell: 0.0065}), brows: K.brows(H, {size: 1.15, droop: 1.1, tris: [300, 150, 60], cell: 0.0014}), moustache: K.moustache(H, {size: 1.1, tris: [420, 220, 60], cell: 0.0023}),
-        neck: K.neck(H, {tris: [260, 150, 40], cell: 0.0035}), beard: K.beard(H, {length: 0.3, width: 1.25, thick: 0.009, fork: 0, tris: [1500, 560, 140], cell: 0.0027, chest: robeInBeard}), gripHand: sleeveCull(grip), restHand: sleeveCull(rest)},
+        neck: K.neck(H, {tris: [260, 150, 40], cell: 0.0035}), beard: K.beard(H, {length: 0.3, width: 1.25, thick: 0.009, fork: 0, tris: [4500, 1200, 200], cell: 0.0022, chest: robeInBeard}), gripHand: sleeveCull(grip), restHand: sleeveCull(rest)},
       eyes: {r: H.eye.r, iris: 0.5, open: 12, low: -24, arch: 9, lidT: 0.0021},
       anchors: {
         eye: [H.eye.x, H.eye.y, H.eye.z],

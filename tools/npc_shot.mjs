@@ -46,6 +46,8 @@ const VIEWS = {
   ear:      {dist: 0.2,  turn: 90,  aimY: seated ? 0.62 : 0.93, camY: seated ? 0.62 : 0.93, headLock: true},
   ear34:    {dist: 0.24, turn: 55,  aimY: seated ? 0.62 : 0.94, camY: seated ? 0.62 : 0.94, headLock: true},
   closeup:  {dist: 0.2,  turn: 0,   aimY: 0.9, camY: 0.9},
+  beard:    {dist: 0.3, turn: 0,   aimY: 0.86, camY: 0.88},   // close-up of the beard and moustache (aim is divided by 0.93 for the Keeper)
+  beard34:  {dist: 0.3, turn: 35,  aimY: 0.86, camY: 0.88, headLock: true},
   chest:    {dist: 0.55, turn: 0,   aimY: 0.88, camY: 0.88},
   chest34:  {dist: 0.55, turn: 40,  aimY: 0.88, camY: 0.88, headLock: true},
   chestside:{dist: 0.55, turn: 90,  aimY: 0.88, camY: 0.88, headLock: true},

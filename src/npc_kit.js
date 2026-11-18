@@ -14,6 +14,7 @@
 // detail mask (0..1, drives wrinkles / fine bump in the shader), baked ambient occlusion (1 = open).
 // game.js poses these with emitS().
 import {ANTHRO, HEAD_H} from './anthro.js';
+import {rng, lockSet, traceSurface, lockFromTrace, lockFromPath, tipWisps} from './npc_hair.js';
 import {sculptGen, simplifyGen, flattenGen, smin, smax, ssub, smoothstep, sdSphere, sdEllipsoid, sdRoundCone, sdCapsule, sdBox, fbm, noise, worley, setSeed} from './sculpt.js';
 
 const D2R = Math.PI / 180, cl = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -252,7 +253,7 @@ export function beard(H, p = {}) {
     for (let i = 0; i < PY.length; i++) PY[i] = mx[i]; }
   const chestX = y => { const f = cl((0.02 - y) / PS, 0, PY.length - 1.001), i = Math.floor(f), t = f - i; return PY[i] * (1 - t) + PY[i + 1] * t; };
   const lockPh = (x, y, z, a, t) => Math.sin(a * 3 + t * 5 + 6.5 * (fbm(x * 9, y * 6, z * 9, 2) - 0.5) + 6 * z);   // 3-4 big wavy locks, domain-warped
-  function sdf(x, y, z) {
+  function core(x, y, z) {
     const zs = Math.abs(z);
     // shell over the lower face: offset of the head surface, kept below the cheek line and in front of the ears
     // thickness fades to nothing towards the cheek line (the shell sinks into the skin: sparse, soft edge); full thickness under the chin
@@ -283,11 +284,61 @@ export function beard(H, p = {}) {
     }
     return d;
   }
-  return {sdf, bounds: [-0.02, -L - 0.03, -0.1, chest ? 0.24 : 0.14, cheekY + 0.01, 0.1], cell: p.cell || 0.0055, tris: p.tris || [540, 200],
-    cull: (x, y, z) => H.sdf(x, y, z) < -0.002, project: 0.003,
+  // ---- locks (npc_hair.js): the smooth envelope above is the inner mass (inset by `inset`); layered locks lie on its surface ----
+  const inset = p.inset ?? 0.0032, rr = rng(p.seed ?? 17), zMax = 0.06 * W, locks = [];
+  const root = (z0, y0) => surfacePoint(core, [0.3, y0, z0], [-1, 0, 0], 0, 0.36);
+  // half width of the beard at each height (rows of 5 mm), so a lock can keep its relative position across the mass while it narrows
+  const ZY0 = cheekY + 0.004, ZS = 0.005, zExt = [];
+  for (let y = ZY0; y > -L - 0.03; y -= ZS) {
+    let w = 0.004; for (let z = 0.1; z > 0.004; z -= 0.003) { let hit = false; for (let x = 0.04; x < 0.14 && !hit; x += 0.004) hit = core(x, y, z) < 0; if (hit) { w = z; break; } }
+    zExt.push(w);
+  }
+  for (let r = 0; r < 2; r++) for (let i = 1; i < zExt.length - 1; i++) zExt[i] = (zExt[i - 1] + 2 * zExt[i] + zExt[i + 1]) / 4;
+  const halfW = y => { const f = cl((ZY0 - y) / ZS, 0, zExt.length - 1.001), i = Math.floor(f); return zExt[i] + (zExt[i + 1] - zExt[i]) * (f - i); };
+  const yRoot = z0 => { const a = Math.abs(z0); return m[1] - 0.022 + (cheekY - 0.014 - (m[1] - 0.022)) * smoothstep(0.02, 0.046, a); };
+  // one lock: relative position zeta (-1..1) across the beard, root height y0 down to yEnd, S-curve of amplitude amp (m) and wavelength wl
+  const addLock = (zeta, y0, yEnd, o, wisps) => {
+    const yz = []; const st = o.step ?? 0.006;
+    for (let y = y0; y > yEnd; y -= st) { const s = (y0 - y) / (y0 - yEnd); yz.push([y, zeta * (1 - (o.drift ?? 0.1) * s) * halfW(y) * (o.fill ?? 0.94) + o.amp * Math.sin((y0 - y) / o.wl * 2 * Math.PI + o.phase) * smoothstep(0, 0.25, s)]); }
+    const tr = traceSurface(core, yz); if (tr.pts.length < 4) return;
+    const lk = lockFromTrace(tr, o); locks.push(lk); if (wisps) for (const q of tipWisps(lk, rr, wisps)) locks.push(q);
+  };
+  // layer 1: the full-length under-layer, one lock per ~8 mm across the jaw, centre longest (defines the silhouette)
+  const nA = Math.round(p.locks ?? 14);
+  for (let i = 0; i < nA; i++) {
+    const zeta = (i + 0.5) / nA * 2 - 1 + (rr() - 0.5) * 0.04, y0 = yRoot(zeta * zMax) - rr() * 0.006;
+    const yEnd = -L * (0.78 + 0.22 * (1 - zeta * zeta) * (0.85 + 0.3 * rr()));
+    addLock(zeta, y0, yEnd, {amp: 0.005 + 0.004 * rr(), wl: 0.06 + 0.05 * rr(), phase: rr() * 6.28, off: 0, R: (0.0052 + 0.0012 * rr()) * (0.8 + 0.2 * W), taper: 0.5, tip: 0.0005}, {s0: 0.7, count: 1 + (rr() < 0.5 ? 1 : 0), spread: 0.01, extend: 0.1, R: 0.0017});
+  }
+  // layer 2: shorter tufts that start lower on the chin and lie over the first layer (their blunt ends step over it)
+  const nB = Math.round(p.tufts ?? 15);
+  for (let i = 0; i < nB; i++) {
+    const zeta = ((i + rr() * 0.8) / nB * 2 - 1) * 0.8, y0 = -0.004 - rr() * 0.07 * L / 0.3 - (Math.abs(zeta) > 0.5 ? 0.01 : 0);
+    const yEnd = y0 - L * (0.22 + 0.3 * rr()) * (1 - 0.35 * Math.abs(zeta));
+    addLock(zeta, y0, yEnd, {step: 0.005, amp: 0.004 + 0.004 * rr(), wl: 0.05 + 0.05 * rr(), phase: rr() * 6.28, off: 0.0022, R: (0.0043 + 0.0012 * rr()) * (0.8 + 0.2 * W), root: 0.8, taper: 0.4, tip: 0.0004}, {s0: 0.62, count: 2, spread: 0.009, extend: 0.14, R: 0.0014});
+  }
+  // layer 3: a few loose wisps near the edge and the tip, standing a little off the mass
+  for (let i = 0; i < (p.wisps ?? 8); i++) {
+    const zeta = (i % 2 ? 1 : -1) * (0.3 + 0.6 * rr()) * 0.8, y0 = -0.02 - rr() * 0.12 * L / 0.3;
+    addLock(zeta, y0, y0 - L * (0.25 + 0.25 * rr()), {step: 0.005, amp: 0.004, wl: 0.05 + 0.03 * rr(), phase: rr() * 6.28, off: 0.004, R: 0.0022 + 0.0008 * rr(), root: 0.6, taper: 0.3, tip: 0.0003});
+  }
+  const LS = lockSet(locks, {k: 0.0014, pad: 0.003});
+  function sdf(x, y, z) {
+    let d = smin(core(x, y, z) + inset, LS.eval(x, y, z), 0.002);
+    if (chest) d = smax(d, -(chest(x, y, z) - gap * 0.5), 0.004);
+    return d;
+  }
+  const skinD = H.sdf, tmp = [0, 0, 0], fat = f => (x, y, z) => { let d = smin(core(x, y, z) + inset, LS.eval(x, y, z) - f, 0.004); if (chest) d = smax(d, -(chest(x, y, z) - gap * 0.5), 0.004); return d; };
+  return {sdf, bounds: [-0.02, -L - 0.04, -0.1, chest ? 0.24 : 0.14, cheekY + 0.01, 0.1], cell: p.cell || 0.0055, tris: [(p.tris || [4500, 1200, 200])[0]],
+    lods: (p.tris || [4500, 1200, 200]).slice(1).map((t, i) => ({sdf: fat(0.0012 + 0.003 * i), cell: 0.0034 + 0.0018 * i, tris: [t]})),
+    cull: (x, y, z) => H.sdf(x, y, z) < -0.002, project: 0.003, locks: LS,
+    // band = (u along the hair, v across the lock + per-lock offset, skin proximity 0..1 for the root fade)
+    ao: 0.006, aoFloor: 0.62,
+    // continuous flow coordinates: u runs down the beard, v across it relative to the beard's width (locks follow lines of constant v, so strands converge towards the tip like real hair)
+    band: (x, y, z, o) => { o[0] = -y; o[1] = z / Math.max(0.004, halfW(y)) * 0.045; o[2] = 1 - smoothstep(0.0005, 0.007, skinD(x, y, z)); },
     paint: (x, y, z, o) => {
-      const t = cl(-y / L, 0, 1), cx = m[0] - 0.024 + 0.035 * Math.pow(t, 1.25) + 0.005 * Math.sin(t * 5 + 0.6), a = Math.atan2(z, (x - cx) / (0.040 * Math.pow(1 - t, 0.75) + 0.004) * (0.058 * Math.pow(1 - t, 0.85) + 0.006));
-      o[0] = cl(0.35 * smoothstep(-0.02, -L, y) + 0.5 * (0.5 - 0.5 * lockPh(x, y, z, a, t)), 0, 1);   // darker in the valleys between locks and towards the tip
+      LS.info(x, y, z, tmp); const t = tmp.t ?? 0, valley = smoothstep(0.0008, 0.0035, tmp.d);
+      o[0] = cl(0.4 * (1 - smoothstep(0, 0.1, t)) + 0.14 * valley + 0.14 * (tmp[2] - 0.5), 0, 1);   // darker roots and valleys, a little variation per lock
     }};
 }
 
@@ -973,10 +1024,16 @@ export function* bakePartGen(spec, seed = 1) {
   setSeed(seed);
   const guard = function* (g) { let r; while (!(r = g.next()).done) { yield; setSeed(seed); } return r.value; }; // noise seed is global: restore it after every pause
   const raw = yield* guard(sculptGen(spec.sdf, spec.bounds, spec.cell, {cull: spec.cull}));
-  const fo = {paint: spec.paint || (() => {}), project: spec.project ?? spec.cell * 0.5, normalSdf: spec.normalSdf, aoSdf: spec.aoSdf, band: spec.band, bandWrap: spec.bandWrap, eps: 0.0006, ao: spec.ao ?? 0.012};
+  const fo = {paint: spec.paint || (() => {}), project: spec.project ?? spec.cell * 0.5, normalSdf: spec.normalSdf, aoSdf: spec.aoSdf, band: spec.band, bandWrap: spec.bandWrap, eps: 0.0006, ao: spec.ao ?? 0.012, aoFloor: spec.aoFloor};
   const out = []; let m = raw;
   for (const t of spec.tris) { m = yield* guard(simplifyGen(m, t)); out.push(sanitize(yield* guard(flattenGen(m, spec.sdf, fo)))); }
   out.raw = raw.T.length / 3;
+  // spec.lods: [{sdf?, cell?, tris:[n]}, ...] LODs that are meshed from their own (coarser, thicker) field instead of simplifying the previous one.
+  // Thin tubes (hair locks) cannot be simplified below a floor (every collapse breaks the link condition), so hair gets fatter fields for mid/far.
+  if (spec.lods) for (const ls of spec.lods) {
+    const sub = {...spec, ...ls, lods: null}, rawL = yield* guard(sculptGen(sub.sdf, sub.bounds, sub.cell, {cull: sub.cull}));
+    let mL = rawL; for (const t of sub.tris) { mL = yield* guard(simplifyGen(mL, t)); out.push(sanitize(yield* guard(flattenGen(mL, sub.sdf, {...fo, normalSdf: sub.normalSdf, aoSdf: sub.aoSdf})))); }
+  }
   return out;
 }
 export function bakePart(spec, seed = 1) {

@@ -323,7 +323,7 @@ export function* flattenGen(mesh, sdf, opts = {}) {
       pp[0] = 0; pp[1] = 0; opts.paint(x, y, z, pp); V[o + 6] = pp[0]; V[o + 7] = pp[1];
       let occ = 0, w = 1;
       if (aoR > 0) for (let i = 1; i <= 5; i++) { const h = aoR * i / 5, q = af(x + V[o + 3] * h, y + V[o + 4] * h, z + V[o + 5] * h); occ += w * Math.max(0, h - q) / aoR; w *= 0.7; }
-      V[o + 8] = Math.max(0.25, 1 - 0.9 * occ);
+      V[o + 8] = Math.max(opts.aoFloor ?? 0.25, 1 - 0.9 * occ);
     }
   }
   const out = new Float32Array(T.length * stride);

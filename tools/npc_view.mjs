@@ -1,7 +1,7 @@
 // node tools/npc_view.mjs OUT.png yaw elev dist tx ty tz [parts,comma]  -- quick software rasteriser (no browser, ~1 s) for baked parts of KEEPER, flat colours per part.
 // Parts are drawn in their own frame (U for robe/sleeves/sash/cuffs, H for head/ears/neck), hands at their anchors. yaw 0 = camera at +x (front), 90 = +z. Env: W, H, FOV (deg).
 // Needs ImageMagick `convert` for the PNG. Example (ear): FOV=12 node tools/npc_view.mjs ear.png 50 8 0.5 0.012 0.075 0.085 head,ears
-import * as R from '../src/npc_recipes.js';
+const R = await import(process.env.RECIPE || '../src/npc_recipes.js');   // RECIPE=path/to/recipe.mjs: a reduced recipe (head + one part) bakes in a second instead of ten
 import {bakeRecipe} from '../src/npc_kit.js';
 import {writeFileSync} from 'node:fs';
 import {execSync} from 'node:child_process';

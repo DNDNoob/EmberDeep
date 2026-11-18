@@ -560,16 +560,19 @@ function paintedMaterial(glowBase){
     sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nattribute vec4 aLoc;varying vec4 vLoc;attribute vec3 aBand;varying vec3 vBand;')
       .replace('#include <begin_vertex>','#include <begin_vertex>\nvLoc=aLoc;vBand=aBand;');
     sh.fragmentShader=sh.fragmentShader
-      .replace('#include <common>','#include <common>\nvarying vec4 vLoc;varying vec3 vBand;uniform float uGlowBase;float mRough=0.7;float mMetal=0.0;float mGlow=0.0;float mRim=0.0;float mSss=0.0;float mRimK=0.0;float mBump=0.0;float mAux=0.0;float mCh=0.0;float mWeave=1.0;float mEmb=0.0;'+MAT_GLSL)
+      .replace('#include <common>','#include <common>\nvarying vec4 vLoc;varying vec3 vBand;uniform float uGlowBase;float mRough=0.7;float mMetal=0.0;float mGlow=0.0;float mRim=0.0;float mSss=0.0;float mRimK=0.0;float mBump=0.0;float mAux=0.0;float mCh=0.0;float mWeave=1.0;float mEmb=0.0;vec3 mTan=vec3(0.0);float mKK=0.0;float mHairH=0.0;'+MAT_GLSL)
       .replace('#include <lights_physical_pars_fragment>',()=>THREE.ShaderChunk.lights_physical_pars_fragment.replace('vec3 irradiance = dotNL * directLight.color;',
         // cheap subsurface look: wrapped diffuse that lets light bleed past the terminator, tinted red where it fades
         `float nlS=dot(geometryNormal,directLight.direction);
-	vec3 irradiance=directLight.color*(mSss>0.001?pow(saturate((nlS+mSss)/(1.0+mSss)),2.0)*mix(vec3(1.0),vec3(1.0,0.5,0.34),mSss*(1.0-saturate(nlS*3.0))):vec3(dotNL));`))
+	vec3 irradiance=directLight.color*(mSss>0.001?pow(saturate((nlS+mSss)/(1.0+mSss)),2.0)*mix(vec3(1.0),vec3(1.0,0.5,0.34),mSss*(1.0-saturate(nlS*3.0))):vec3(dotNL));`).replace('reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseColor );',
+        // hair: dim Kajiya-Kay anisotropic highlight, a streak across the strands (tangent mTan from the flow coordinates)
+        `if(mKK>0.0){vec3 Hh=normalize(directLight.direction+geometryViewDir);float th=dot(mTan,Hh),sn=sqrt(max(1.0-th*th,0.0));reflectedLight.directSpecular+=min(directLight.color,vec3(4.0))*pow(sn,40.0)*saturate(dotNL*3.0)*mKK*0.035*vec3(1.0,0.94,0.82);}
+	reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseColor );`))
       .replace('#include <color_fragment>',`
   {vec3 alb=vColor.rgb,q=vLoc.xyz;int m=int(floor(vLoc.w+0.002));mAux=fract(vLoc.w+0.002)*1.1;
     float fine=clamp(1.6-vViewPosition.z*0.45,0.0,1.0); // vViewPosition.z is the distance: fade fine detail out with it
     float mott=fbm3(q*34.0);
-    float mo=floor(vBand.z+0.5);vec2 emb=vec2(0.0);{float fwB=max(fwidth(vBand.x),fwidth(vBand.y))*0.9;if(mo>0.5&&mo<3.5)emb=embroidery(vBand.xy,mo,max(fwB,0.004))*step(-0.001,vBand.y)*step(vBand.y,1.001);}
+    float mo=floor(vBand.z+0.5);vec2 emb=vec2(0.0);{float fwB=max(fwidth(vBand.x),fwidth(vBand.y))*0.9;if((m==13||m==15)&&mo>0.5&&mo<3.5)emb=embroidery(vBand.xy,mo,max(fwB,0.004))*step(-0.001,vBand.y)*step(vBand.y,1.001);}
     // weave: fade by how many radians of the 1500 rad/m pattern fall in one pixel; above ~1 rad/px it aliases into moire, so it dissolves into plain cloth
     float wPh1=q.y*1500.0,wPh2=(q.x+q.z)*1500.0,wFade=1.0-smoothstep(0.7,1.5,max(fwidth(wPh1),fwidth(wPh2)));
     mWeave=wFade;
@@ -598,8 +601,24 @@ function paintedMaterial(glowBase){
         }
       }
       mBump=1.0;
-    }else if(m==14){ // sculpted hair and beard
-      float st=n3(vec3(q.x*60.0,q.y*7.0,q.z*60.0));alb=min(alb*(0.8+0.3*st),vec3(0.56));mRough=0.8;mRimK=0.01;mBump=1.0;
+    }else if(m==14){ // sculpted hair (npc_hair.js): fine strands from the baked flow coordinates vBand = (u along the hair, v across the lock, skin proximity)
+      vec2 fl=vBand.xy;float sk=clamp(vBand.z,0.0,1.0);
+      float fwv=max(fwidth(fl.y),1e-6),fwu=max(fwidth(fl.x),1e-6);
+      // cycles per pixel of the two strand layers: fade each out before it aliases, towards its mean (no shimmer or moire at range)
+      float f1=1.0/0.0017,f2=1.0/0.00065;
+      float fd1=1.0-smoothstep(0.25,0.75,fwv*f1),fd2=1.0-smoothstep(0.25,0.75,fwv*f2);
+      float vw=fl.y+0.0011*(n3(vec3(fl.x*55.0,fl.y*140.0,2.0))-0.5)*fd1;      // strands wander a little along their length
+      float s1=n3(vec3(vw*f1,fl.x*f1*0.07,3.1)),s2=n3(vec3(vw*f2,fl.x*f2*0.055,7.7));
+      float strand=clamp(0.5+(mix(0.5,s1,fd1)*0.55+mix(0.5,s2,fd2)*0.45-0.5)*2.6,0.0,1.0); // 0..1, mean 0.5, stretched (value noise is low contrast)
+      mHairH=(strand-0.5)*(0.35+0.65*fd1);
+      float yel=smoothstep(0.5,0.85,n3(vec3(fl.y*f1*0.3,fl.x*24.0,11.0))),dk=smoothstep(0.78,0.97,mix(0.5,s2,fd2));
+      alb*=(0.74+0.5*strand)*(1.0-0.22*dk);
+      alb*=mix(vec3(1.0),vec3(1.05,0.97,0.78),yel*0.7);                          // yellowed strands among the white
+      alb=mix(alb,vec3(0.52,0.42,0.38)*(0.8+0.4*strand),sk*0.55);                 // roots: stubble grey-brown where the hair meets skin
+      alb=min(alb,vec3(0.6));mRough=0.78;mRimK=0.008;mBump=1.0;
+      // flow direction in view space (dP/du from the screen derivatives of u and v) for the anisotropic highlight
+      vec3 dpx=dFdx(-vViewPosition),dpy=dFdy(-vViewPosition);float ux=dFdx(fl.x),uy=dFdy(fl.x),vx=dFdx(fl.y),vy=dFdy(fl.y),det=ux*vy-uy*vx;
+      if(abs(det)>1e-12){vec3 tt=(dpx*vy-dpy*vx)/det;float tl=length(tt);if(tl>1e-9){mTan=tt/tl;mKK=(1.0-sk)*(1.0-smoothstep(0.3,0.8,fwv*f1));}}
     }
     else if(m==2){
       float folds=n3(vec3(q.x*55.0,q.y*5.0,q.z*55.0));
@@ -633,7 +652,7 @@ function paintedMaterial(glowBase){
     vec3 q=vLoc.xyz;int m=int(floor(vLoc.w+0.002));float fn=clamp(1.6-vViewPosition.z*0.45,0.0,1.0);float hh=0.0;
     if(m==12){hh=0.00012*n3(q*380.0)+mAux*0.0005*(1.0-abs(n3(vec3(q.x*70.0,q.y*330.0,q.z*70.0))*2.0-1.0));} // pores, and creases where the mesh asks for them
     else if(m==13||m==15){hh=0.0006*(n3(q*160.0)-0.5)+0.0003*fn*mWeave*sin(q.y*1500.0)*sin((q.x+q.z)*1500.0)+0.0005*mEmb;}
-    else if(m==14){hh=0.00022*n3(vec3(q.x*160.0,q.y*12.0,q.z*160.0));}
+    else if(m==14){hh=0.00045*mHairH;}
     vec2 dh=vec2(dFdx(hh),dFdy(hh))*fn;
     vec3 sX=dFdx(-vViewPosition),sY=dFdy(-vViewPosition),R1=cross(sY,normal),R2=cross(normal,sX);
     float fDet=dot(sX,R1)*faceDirection;
