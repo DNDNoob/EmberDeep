@@ -618,8 +618,8 @@ function paintedMaterial(glowBase){
         float tile=floor(vBand.z-1.5);vec2 auv=vec2((tile+0.03+vBand.x*0.94)*0.25,vBand.y);
         vec4 st=texture2D(uStrand,auv);vec2 dxa=dFdx(auv)*512.0,dya=dFdy(auv)*512.0;float lod=0.5*log2(max(max(dot(dxa,dxa),dot(dya,dya)),1.0));
         float ca=st.a*(1.0+0.3*lod);float hs=fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453);
-        if(ca<mix(0.3,0.5,smoothstep(0.6,0.95,vBand.y))+(hs-0.5)*0.12)discard;
-        alb*=st.rgb*1.05;alb=min(alb,vec3(0.5));mRough=0.7;mRimK=0.006;mBump=0.0;mHairH=0.0;
+        float ed=abs(vBand.x*2.0-1.0);if(ca<mix(0.3,0.5,smoothstep(0.6,0.95,vBand.y))+0.14*smoothstep(0.55,1.0,ed)+(hs-0.5)*0.16)discard;
+        alb*=st.rgb*0.78;alb=min(alb,vec3(0.62));mRough=0.7;mRimK=0.006;mBump=0.0;mHairH=0.0;
       }else{
       float vw=fl.y+0.0011*(n3(vec3(fl.x*55.0,fl.y*140.0,2.0))-0.5)*fd1;      // strands wander a little along their length
       float s1=n3(vec3(vw*f1,fl.x*f1*0.07,3.1)),s2=n3(vec3(vw*f2,fl.x*f2*0.055,7.7));
@@ -978,7 +978,8 @@ function emitS(mesh,f,c,col,col2,mat,R2,sc,dr){
         X+=(X2-X)*k;Y+=(Y2-Y)*k;Z+=(Z2-Z)*k;NX+=(A-NX)*k;NY+=(B-NY)*k;NZ+=(C-NZ)*k;
         const il=1/(Math.hypot(NX,NY,NZ)||1);NX*=il;NY*=il;NZ*=il}}
     b[o++]=X;b[o++]=Y;b[o++]=Z;b[o++]=NX;b[o++]=NY;b[o++]=NZ;
-    b[o++]=(c0+d0*w)*ao;b[o++]=(c1+d1*w)*ao;b[o++]=(c2+d2*w)*ao;b[o++]=l0+x;b[o++]=l1+y;b[o++]=l2+z;b[o++]=mat+0.82*mesh[i+7];
+    let ao2=ao;if(Q===0&&mat===14&&bnd){const k=i/9*3,sv=0.5+0.5*Math.sin(bnd[k+1]*5200+3*Math.sin(bnd[k]*30+bnd[k+1]*900));ao2=ao*(0.78+0.34*sv)}
+    b[o++]=(c0+d0*w)*ao2;b[o++]=(c1+d1*w)*ao2;b[o++]=(c2+d2*w)*ao2;b[o++]=l0+x;b[o++]=l1+y;b[o++]=l2+z;b[o++]=mat+0.82*mesh[i+7];
     if(W===16){const k=i/9*3;b[o++]=bnd?bnd[k]:0;b[o++]=bnd?bnd[k+1]:0;b[o++]=bnd?bnd[k+2]:0}
   }
   T.n+=cnt;

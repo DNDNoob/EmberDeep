@@ -135,18 +135,18 @@ export function tipWisps(lock, r, o = {}) {
 export const ATLAS_TILES = 4;
 export function hairAtlas(size = 512, seed = 7) {
   const W = size, H = size, tw = W / ATLAS_TILES, data = new Uint8Array(W * H * 4), r = rng(seed);
-  const TONES = [[0.94, 0.93, 0.89, 0.36], [0.76, 0.76, 0.74, 0.25], [0.56, 0.56, 0.55, 0.14], [0.93, 0.84, 0.62, 0.14], [0.42, 0.42, 0.42, 0.11]];
+  const TONES = [[0.94, 0.93, 0.89, 0.36], [0.76, 0.76, 0.74, 0.25], [0.56, 0.56, 0.55, 0.16], [0.93, 0.84, 0.62, 0.12], [0.38, 0.38, 0.38, 0.12]];
   const tone = () => { let t = r(), a = 0; for (const c of TONES) { a += c[3]; if (t <= a) return c; } return TONES[0]; };
   for (let i = 0; i < W * H; i++) { data[i * 4] = 205; data[i * 4 + 1] = 203; data[i * 4 + 2] = 196; data[i * 4 + 3] = 0; }
   const spec = [
-    {n: 64, hw: 1.25, x0: () => 0.5 + (r() + r() - 1) * 0.47, len: x0 => 0.97 - 0.55 * Math.pow(Math.abs(x0 - 0.5) * 2, 1.4) - 0.04 * r(), conv: 0.6, wob: 0.025},
+    {n: 80, hw: 0.85, x0: () => 0.5 + (r() + r() - 1) * 0.47, len: x0 => 0.97 - 0.55 * Math.pow(Math.abs(x0 - 0.5) * 2, 1.4) - 0.04 * r(), conv: 0.6, wob: 0.025},
     {n: 30, hw: 0.9, x0: () => 0.22 + 0.56 * r(), len: () => 0.5 + 0.5 * r(), conv: -0.55, wob: 0.045},
     {n: 12, hw: 0.8, x0: () => 0.12 + 0.76 * r(), len: () => 0.55 + 0.45 * r(), conv: -0.1, wob: 0.07},
-    {n: 52, hw: 1.3, x0: () => 0.5 + (r() + r() - 1) * 0.47, len: () => 0.6 + 0.38 * r(), conv: 0.15, wob: 0.03}
+    {n: 66, hw: 0.9, x0: () => 0.5 + (r() + r() - 1) * 0.47, len: () => 0.6 + 0.38 * r(), conv: 0.15, wob: 0.03}
   ];
   spec.forEach((sp, ti) => {
     const ox = ti * tw, strands = [];
-    for (let k = 0; k < sp.n; k++) strands.push({x0: sp.x0(), ph: r() * 6.28, f: 2 + 4 * r(), len: 0, t: tone(), hwK: 0.8 + 0.5 * r(), bri: 0.72 + 0.36 * r(), drift: (r() - 0.5) * 0.1});
+    for (let k = 0; k < sp.n; k++) strands.push({x0: sp.x0(), ph: r() * 6.28, f: 2 + 4 * r(), len: 0, t: tone(), hwK: 0.8 + 0.5 * r(), bri: 0.58 + 0.52 * r(), drift: (r() - 0.5) * 0.1});
     for (const s of strands) s.len = sp.len(s.x0);
     strands.sort((a, b) => a.bri - b.bri);
     for (const s of strands) {
@@ -174,7 +174,7 @@ export function hairAtlas(size = 512, seed = 7) {
 //     round (0..1: how much the shading normal bends across the card so it reads as a lock, default 0.55), keep (LOD level 0: always kept, 1: dropped first)}
 // build(lods): [{keep, segStep, wScale}] -> one mesh per LOD (stride 9 + .band = (u across 0..1, v along 0..1, 2 + variant)).
 export class Cards {
-  constructor() { this.list = []; }
+  constructor() { this.list = []; this.volN = null; }   // volN(x,y,z) -> unit outward normal of the underlying hair volume: cards are lit with it (soft, one-mass shading)
   ribbon(pts, nor, o = {}) { if (pts.length >= 2) this.list.push({pts, nor, o}); }
   get count() { return this.list.length; }
   build(lods = [{keep: 1, segStep: 1, wScale: 1}], seed = 3) {
@@ -194,11 +194,12 @@ export class Cards {
           const nn = N[k]; let bx = ty * nn[2] - tz * nn[1], by = tz * nn[0] - tx * nn[2], bz = tx * nn[1] - ty * nn[0]; const bl = Math.hypot(bx, by, bz) || 1; bx /= bl; by /= bl; bz /= bl;
           const sk = s[k], hw = (typeof c.o.w === 'function' ? c.o.w(sk) : (c.o.w ?? 0.004)) * L.wScale, lf = (c.o.lift ?? 0) * sk * sk, p = P[k];
           const q = [p[0] + nn[0] * lf, p[1] + nn[1] * lf, p[2] + nn[2] * lf], rd = c.o.round ?? 0.55;
-          const nl = norm(nn[0] - bx * rd, nn[1] - by * rd, nn[2] - bz * rd), nr = norm(nn[0] + bx * rd, nn[1] + by * rd, nn[2] + bz * rd);
+          let nl = norm(nn[0] - bx * rd, nn[1] - by * rd, nn[2] - bz * rd), nr = norm(nn[0] + bx * rd, nn[1] + by * rd, nn[2] + bz * rd);
+          if (this.volN) { const vn = this.volN(p[0], p[1], p[2]), kv = c.o.vol ?? 0.78, bl = (a, b) => norm(a[0] * (1 - kv) + b[0] * kv, a[1] * (1 - kv) + b[1] * kv, a[2] * (1 - kv) + b[2] * kv); nl = bl(nl, vn); nr = bl(nr, vn); }
           Lf.push({p: [q[0] - bx * hw, q[1] - by * hw, q[2] - bz * hw], n: nl}); Rt.push({p: [q[0] + bx * hw, q[1] + by * hw, q[2] + bz * hw], n: nr});
         }
         const pr = c.o.root ?? 0.5, pt = c.o.tip ?? 0.1, ao = c.o.ao ?? 1, vz = 2 + (c.o.variant ?? 0);
-        const push = (v, u, sk) => { const t = Math.min(1, sk * 1.6); V.push(v.p[0], v.p[1], v.p[2], v.n[0], v.n[1], v.n[2], pr + (pt - pr) * t, 0, ao); B.push(u, sk, vz); };
+        const push = (v, u, sk) => { const t = Math.min(1, sk * 1.6), ad = ao * (0.62 + 0.38 * smoothstep(0, 0.5, sk)); V.push(v.p[0], v.p[1], v.p[2], v.n[0], v.n[1], v.n[2], pr + (pt - pr) * t, 0, ad); B.push(u, sk, vz); };
         for (let k = 0; k < m - 1; k++) {
           push(Lf[k], 0, s[k]); push(Rt[k], 1, s[k]); push(Rt[k + 1], 1, s[k + 1]);
           push(Lf[k], 0, s[k]); push(Rt[k + 1], 1, s[k + 1]); push(Lf[k + 1], 0, s[k + 1]);

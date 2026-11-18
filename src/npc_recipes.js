@@ -27,7 +27,7 @@ const ARMS = [
 const WEAR_TOP = K.wearPaint({vary: 0.28, freq: 8, seed: 11}), WEAR_STOLE = K.wearPaint({vary: 0.35, freq: 9, seed: 5}), WEAR_SKIRT = K.wearPaint({vary: 0.28, freq: 6, dirt: 0.85, dirtY: 0.16, seed: 3});
 const RAG = {amp: 0.005, notches: 6, depth: 0.016, width: 0.07, seed: 2};   // frayed hem: noise on the edge height plus a few V-shaped notches
 export const KEEPER = {
-  id: 'keeper-v12', seed: 4242,
+  id: 'keeper-v13', seed: 4242,
   // Human proportions (see docs/npc-kit.md): the head is built at its natural size and drawn at headScale; the torso is
   // stretched (len) and the skirt (legs) raised so the figure is ~7.25 heads tall with shoulders about 2.7 head widths wide.
   proportions: {headScale: 0.6, frames: ['H', 'J'], height: 0.93},   // height: uniform scale of the whole figure and its props (crown 1.03 m * 0.93 = 0.96 m)
