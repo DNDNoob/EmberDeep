@@ -10,6 +10,7 @@ import {RoomEnvironment} from 'three/addons/environments/RoomEnvironment.js';
 import {makeSurfaces} from './textures.js';
 import {openRoom,newRoomCode,cleanCode} from './net.js';
 import {createVoice} from './voice.js';
+import {guidePath,guideBeacon,GUIDE_RANGE} from './guide.js';
 import {createRooms,kilnGame,KILN} from './rooms.js';
 import {createBabyFace,createFallVoid} from './babyface.js';
 import {pickVariant,VARIANTS} from './variants.js';
@@ -1296,9 +1297,22 @@ const DOOR_LOOKS={
       doorKnob(f,[0.6,0.62,0.68,4]);
     },
     glow(D,t){return[0.85,0.92,1.0,0.32+0.2*Math.sin(t*1.3+D.ph)*Math.sin(t*0.6+D.ph*2)]}
+  },
+  theater:{
+    // red velvet, padded in buttons, a marquee of bulbs over a ticket-stub keyhole
+    leaf(f,D,c){
+      slab(f,[0.02,0.515,0],[0.03,1.03,0.5],[0.34,0.04,0.07,0]);
+      for(let row=0;row<4;row++)for(let col=0;col<3;col++){const y=0.1+row*0.2,z=(col-1)*0.15,odd=(row&1)?0.075:0;
+        ball(f,[0.04,y+0.02,z+odd*(col===2?-1:1)],[0.014,0.075,0.07],[0.5,0.06,0.1,0],true)}
+      slab(f,[0.04,0.93,0],[0.012,0.1,0.46],[0.06,0.045,0.04,4]);
+      for(let i=0;i<7;i++)ball(f,[0.049,0.93,-0.2+i*0.0667],[0.005,0.014,0.014],[1,0.82,0.4,7],true);
+      slab(f,[0.043,0.4,0.17],[0.006,0.07,0.04],[0.9,0.75,0.4,4]);
+      doorKnob(f,[0.8,0.65,0.25,4]);
+    },
+    glow(D,t){return[1.0,0.32,0.4,0.42+0.22*Math.sin(t*4+D.ph)]}
   }
 };
-const DOOR_KINDS={galaxy:{look:'galaxy'},kiln:{look:'kiln'},fall:{disguise:true},mirror:{look:'mirror'}};
+const DOOR_KINDS={galaxy:{look:'galaxy'},kiln:{look:'kiln'},fall:{disguise:true},mirror:{look:'mirror'},theater:{look:'theater'}};
 const DOOR_EXPLORE_PER_MIN=150;
 const doorOrder=()=>Object.keys(DOOR_KINDS);
 // doors on a floor: k doors spread over a floor mean a runner must uncover ~1/(k+1) of it to meet one, and a minute of running uncovers ~DOOR_EXPLORE_PER_MIN new tiles
@@ -1383,7 +1397,7 @@ const DUST=[];{const dr=mulberry32(99);for(let i=0;i<(Q>=2?90:Q>=1?45:0);i++)DUS
 let state='title';           // title | play | pause | trans | dead
 let F=null;                  // current floor
 const P={pick:0,y:0,vy:0,vx:0,vz:0,airSpeed:2.7,jumpQ:0,keys:0,x:0,z:0,yaw:0,pitch:0,hp:3,fuel:100,stam:100,winded:false,flash:1,ward:0,shards:0,inv:0,bob:0,tx:-1,ty:-1,stepPh:0};
-const R={seed:'',depth:1,score:0,time:0,gems:0,wind:false,pk:{}};
+const R={seed:'',depth:1,score:0,time:0,gems:0,wind:false,pk:{},guide:0};
 /* ---------- lasting upgrades, bought from the Keeper with gems ---------- */
 const UPG=[
   {k:'heart',name:'Vitality',desc:'One more heart',cost:[15,30,50]},
@@ -1478,13 +1492,18 @@ const ROOMS=createRooms(renderer,{post:POST,low:Q===0,
   say:(t,s)=>say(t,s),tone:(...a)=>tone(...a),noise:(...a)=>noise(...a),rumble:(...a)=>rumble(...a),
   hud:h=>{const el=$('roomHud');if(el.innerHTML!==h)el.innerHTML=h},
   hurtFx:()=>{const h=$('hurt');h.style.transition='none';h.style.opacity=1;requestAnimationFrame(()=>{h.style.transition='opacity .9s';h.style.opacity=0})},
+  audio:()=>{initAudio();return ac?{ac,master,noise:noiseBuf}:null},
+  // one blow from the room: true when it would be the killing one (the caller then ends the room with a death), otherwise it costs a heart as any creature's hit does
+  damage:()=>{if(!P.ward&&P.hp<=1&&!(up.wind&&!R.wind))return true;hurt(null);return false},
+  hearts:()=>'♥'.repeat(Math.max(0,P.hp))+'<span style="opacity:.4">'+'♥'.repeat(Math.max(0,maxHp()-P.hp))+'</span>',
   gems:n=>{wallet+=n;R.gems+=n;store.set('wallet',wallet)},sfx:n=>sfx(n),
   sta:P,speedMul:()=>moveMul(),lungs:()=>up.lungs|0,   // rooms share the player's stamina and the boots / cold modifiers
 
   hint:k=>k==='mpick'||k==='mspray'?(touch.on?'tap '+(k==='mpick'?'PICK UP':'SPRAY'):pad.id?'X':'E or click'):k==='muse'?(touch.on?'tap USE':pad.id?'X':'E or click'):
     k==='mirror'?(touch.on?'Left stick walks · drag to look · tap SPRAY or THUMB':pad.id?'Left stick walks · right stick looks · A jumps · D-pad left or right chooses · X confirms':'WASD walk · Shift sprints · Space jumps · mouse or left / right arrows look · 1 / 2, Tab or wheel picks · E or click confirms'):
+    k==='theater'?(touch.on?'Left stick walks · drag to look · JUMP jumps · tap TALK to speak':pad.id?'Left stick walks · right stick looks · A jumps · V speaks':'WASD walk · Shift sprints · Space jumps · mouse look · V or the mic speaks'):
     touch.on?'Left stick walk · drag to look · JUMP jumps · aim at a button and tap PRESS, or tap a button':pad.id?'Left stick walk · right stick look · A jumps · aim at a button and press X':'WASD walk · Shift sprints · Space jumps · mouse look · aim at a button and click or press E'});
-const ROOM_NAME={galaxy:'a door full of stars',kiln:'the glass kiln',fall:'a door with no floor behind it',mirror:'a room behind a mirror'};
+const ROOM_NAME={galaxy:'a door full of stars',kiln:'the glass kiln',fall:'a door with no floor behind it',mirror:'a room behind a mirror',theater:'the picture house'};
 // a fallen player rides along with the friend they follow, into that friend's strange door too
 let RW=null,rvT=0;const NOIN={mx:0,my:0,press:0,lx:0,ly:0};let mouseL=false;
 function roomWatch(){
@@ -1506,9 +1525,10 @@ function sdoorOpen(D){
   sfx('door');
   state='room';P.away=true;P.vx=P.vz=0;mapBig=false;
   document.body.classList.add('inroom');const kl=D.kind==='kiln';$('tFlash').textContent=kl?'PRESS':D.kind==='mirror'?'USE':'FLASH';$('tJump').textContent='JUMP';$('tJump').style.display='';
+  if(D.kind==='theater')$('tFlash').textContent='TALK';
   if(kl)document.body.classList.add('kilnroom');if(D.kind==='mirror')document.body.classList.add('mirroom');
   $('fade').style.transition='none';$('fade').style.opacity=1;
-  ROOMS.start(D.kind,roomEnd);
+  ROOMS.start(D.kind,roomEnd,hashStr(R.seed+'#theater'+R.depth+','+D.tx+','+D.ty));
 }
 // leave whatever room we are in without its ending, because the floor itself is changing
 function roomLeave(){
@@ -1568,6 +1588,20 @@ function roomEnd(res){
     return;
   }
   roomClose();
+  if(res.why==='theater'){
+    if(res.k==='win'){
+      R.score+=60*R.depth;P.inv=2;R.guide=R.depth;GD.have=false;GD.key='';sfx('shard');
+      achieve('knowledge','Knowledge is power','Silenced the peasants of the picture house');
+      say('A light shines at the end of the tunnel. It will guide you for the rest of this floor.',5);
+      mpSend({k:'sdr',r:'theater'});mpSys(myName()+' silenced the picture house');
+    }else if(res.k==='leave')say('You slip back out. The door swings shut behind you.',3);
+    else{
+      mpSend({k:'sdr',r:'theater-dead'});mpSys(myName()+' was roasted to death by teenagers');
+      P.hp=0;$('deadTitle').textContent='YOU ARE COOKED';die();
+      if(MP.on)say('The picture house was merciless. Your friends can still bring you back on the next floor.',5);
+    }
+    return;
+  }
   if(res.k==='win'&&res.why==='mirror'){
     const g=2+R.depth;wallet+=g;R.gems+=g;R.score+=40*R.depth;store.set('wallet',wallet);
     R.xray=R.depth;XR.t=0;say('You got lucky son.',4.5);sfx('shard');setTimeout(()=>{if(R.xray>0&&R.xray===R.depth&&state==='play')say('Your eyes still burn. Something about the dark looks thinner.',4.5)},4700);
@@ -1590,14 +1624,15 @@ function roomEnd(res){
 // the mirror room's touch buttons say nothing about the can until you are looking at it or holding it
 function mirrorBtns(){const S=ROOMS.kind==='mirror'&&ROOMS.state(),b=S&&S.btn;if(!b)return;const a=$('tFlash'),j=$('tJump'),t=b[1]?'THUMB':'JUMP';if(a.textContent!==b[0])a.textContent=b[0];if(j.textContent!==t)j.textContent=t;if(j.style.display)j.style.display=''}
 function roomInput(){
-  const mir=ROOMS.kind==='mirror',ax=(a,b)=>(a?1:0)-(b?1:0);
+  const mir=ROOMS.kind==='mirror',th=ROOMS.kind==='theater',ax=(a,b)=>(a?1:0)-(b?1:0);
   // the same bindings as the maze in every room (WASD / arrows walk and turn, Space jumps, Shift sprints); pressing is one thing for every device.
   // The mirror also reads which touch button was hit (spray / thumb) and the pad d-pad / 1 2 keys, which choose
   const wh=roomWheel;roomWheel=0;
   return {mx:clamp(ax(keys.KeyD,keys.KeyA)+pad.mx+touch.mx,-1,1),
     my:clamp(ax(keys.KeyS||keys.ArrowDown,keys.KeyW||keys.ArrowUp)+pad.my+touch.my,-1,1),
     sl:!!pad.dl,sr:!!pad.dr,k1:!!(keys.Digit1||keys.Numpad1),k2:!!(keys.Digit2||keys.Numpad2),tab:!!keys.Tab,wh,
-    press:!!(mouseL||keys.KeyE||(keys.Enter&&!MP.on)||pad.b2||touch.act),jump:!!(keys.Space||pad.b0||touch.jump),
+    press:!!(mouseL||keys.KeyE||(keys.Enter&&!MP.on)||pad.b2||(!th&&touch.act)),jump:!!(keys.Space||pad.b0||touch.jump),
+    talk:th&&!!(keys.KeyV||touch.act),
     sprint:!!(keys.ShiftLeft||keys.ShiftRight||pad.sprint||Math.hypot(touch.mx,touch.my)>0.94),
     touch:touch.on,spray:!!touch.act,thumb:!!touch.jump,
     lx:ax(keys.ArrowRight,keys.ArrowLeft)+pad.lx*MOVE.padTurn,ly:pad.ly};
@@ -1629,7 +1664,7 @@ function los(x0,z0,x1,z1){
 function loadFloor(depth,look){
   R.depth=depth;
   if(depth>deepest&&!(URL_DEPTH&&depth===R.startDepth)){deepest=depth;store.set('deepest',deepest)}
-  R.xray=0;F=genFloor(R.seed,depth,look);panelLvl=1;P.grab=null;if(typeof MIM!=='undefined')mimicReset();
+  R.xray=0;R.guide=0;GD.have=false;GD.key='';F=genFloor(R.seed,depth,look);panelLvl=1;P.grab=null;if(typeof MIM!=='undefined')mimicReset();
   buildMesh(F);buildStatic(F);buildSdf(F);sweepWorld();
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
   P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;P.inSafe=false;nearNpc=null;
@@ -1719,7 +1754,7 @@ let toastTimer=0;
 function say(t,secs){const el=$('toast');el.textContent=t;el.style.opacity=1;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.style.opacity=0,(secs||2.5)*1000)}
 
 function die(){
-  roomLeave();GL.queued=null;R.xray=0;
+  roomLeave();GL.queued=null;R.xray=0;R.guide=0;
   if(MP.on&&!MP.wiping){mpDown();return}
   state='dead';clearPrompt();
   mpDeadPanel();
@@ -1774,6 +1809,46 @@ function openDoor(quiet){
   P.keys=Math.max(0,P.keys-1);F.doorOpen=true;F.g[F.door.ty*F.W+F.door.tx]=0;F.frames.push(F.door);F.door=null;buildMesh(F);buildSdf(F);onTileChange();F.pkMemo=null;pkReapply();
   if(!quiet){sfx('door');say('The gate grinds open',2.5)}
 }
+/* ---------- achievements: a tiny generic list, kept in localStorage (emberdeep.ach: id -> time first earned) ---------- */
+const ACH_DEFS={knowledge:{title:'Knowledge is power',desc:'Silence the peasants of the picture house'}};
+const ACH=(()=>{const a=store.get('ach',{});return a&&typeof a==='object'&&!Array.isArray(a)?a:{}})();
+function achLine(){const got=Object.keys(ACH_DEFS).filter(k=>ACH[k]);$('achLine').textContent=got.length?'Achievements: '+got.map(k=>ACH_DEFS[k].title).join(' · '):''}
+// the toast shows every time it is earned; the time it was first earned is kept
+function achieve(id,title,desc){
+  if(!ACH[id]){ACH[id]=Date.now();store.set('ach',ACH)}
+  const el=$('achToast');el.innerHTML='<small>ACHIEVEMENT</small><b>'+title+'</b>'+(desc?'<span>'+desc+'</span>':'');el.classList.add('on');
+  clearTimeout(achTimer);achTimer=setTimeout(()=>el.classList.remove('on'),5200);achLine();
+}
+let achTimer=0;
+/* ---------- the guiding light: after the picture house, for the rest of that floor, a light at the end of the tunnel ----------
+   It points down the shortest walkable route (the shut gate counts as a wall, unless you hold its key) to the nearest shard, or to the
+   way down once every shard is yours, and rests at the farthest tile of that route you can see in a straight line. It glides on as you approach. */
+const GD={have:false,x:0,z:0,gx:0,gz:0,key:'',t:0,target:null,beacon:null,len:0};
+function guideCompute(){
+  const W=F.W,H=F.H;let g=F.g;
+  if(F.door&&P.keys>0){g=F.g.slice();g[F.door.ty*W+F.door.tx]=0}
+  const dp=bfs(g,W,H,P.tx,P.ty);
+  let cand=P.shards>=3?[{tx:F.exit.tx,ty:F.exit.ty,k:'exit'}]:F.items.filter(it=>!it.got&&it.type==='shard').map(it=>({tx:it.tx,ty:it.ty,k:'shard'}));
+  let reach=cand.filter(c=>dp[c.ty*W+c.tx]>=0);
+  // the shards may all lie behind the gate: then the key is the next thing to find
+  if(!reach.length&&F.door&&P.keys<1){reach=F.items.filter(it=>!it.got&&it.type==='key'&&dp[it.ty*W+it.tx]>=0).map(it=>({tx:it.tx,ty:it.ty,k:'key'}))}
+  if(!reach.length){GD.have=false;GD.target=GD.beacon=null;return}
+  reach.sort((a,b)=>dp[a.ty*W+a.tx]-dp[b.ty*W+b.tx]);
+  const tg=reach[0],path=guidePath(bfs,g,W,H,P.tx,P.ty,tg.tx,tg.ty);
+  if(!path){GD.have=false;return}
+  const b=guideBeacon(path,P.x,P.z,los,GUIDE_RANGE);
+  GD.target=tg;GD.beacon={tx:b[0],ty:b[1]};GD.len=path.length-1;GD.gx=b[0]+0.5;GD.gz=b[1]+0.5;
+  if(!GD.have){GD.x=GD.gx;GD.z=GD.gz;GD.have=true}
+}
+const guideOn=()=>R.guide>0&&R.guide===R.depth&&!!F&&state!=='title';
+function guideTick(dt){
+  if(!guideOn()||P.down){GD.have=false;GD.key='';return}
+  GD.t-=dt;
+  const key=P.tx+','+P.ty+','+P.shards+','+P.keys+','+(F.door?1:0)+','+F.items.reduce((n,i)=>n+(i.got?1:0),0);
+  if(key!==GD.key||GD.t<=0){GD.key=key;GD.t=0.3;guideCompute()}
+  if(GD.have){const k=1-Math.exp(-dt/0.13);GD.x+=(GD.gx-GD.x)*k;GD.z+=(GD.gz-GD.z)*k}   // glides over about 0.4 s
+}
+function guideInfo(){return {on:guideOn(),have:GD.have,target:GD.target&&{tx:GD.target.tx,ty:GD.target.ty,k:GD.target.k},beacon:GD.beacon&&{tx:GD.beacon.tx,ty:GD.beacon.ty},x:GD.x,z:GD.z,gx:GD.gx,gz:GD.gz,len:GD.len}}
 /* ---------- the kiln pickaxe: one swing, one wall, for good ---------- */
 let pkShake=0;const pkFx=[];
 // why a wall tile may not be broken: '' when it may. The outer border, the gate (and its stone frame), strange doors, the sanctuary,
@@ -2039,8 +2114,8 @@ function mpRecv(m,from){
       D.used=true;if(nearDoor===D)nearDoor=null;buildStatic(F);
       say(p.name+' opened a strange door',2.5);mpSys(p.name+' opened '+(ROOM_NAME[m.w]||'a strange door'));
       break;}
-    case 'rv':if(m.q&&typeof m.q==='object'&&(m.w==='galaxy'||m.w==='kiln'||m.w==='fall'||m.w==='mirror')){p.rv={w:m.w,q:m.q,d:m.d,at:performance.now()};if(RW&&RW.id===from&&RW.w===m.w)ROOMS.sync(m.q)}break;
-    case 'sdr':if(inRun)say(m.r==='esc'?p.name+' beat the glass kiln':m.r==='fall'?p.name+' fell to their death':m.r==='lucky'?p.name+' hid behind a mirror and got lucky':m.r==='mirror'?p.name+' was eaten by the thing behind the mirror':p.name+' was buried in the glass kiln',3);break;
+    case 'rv':if(m.q&&typeof m.q==='object'&&(m.w==='galaxy'||m.w==='kiln'||m.w==='fall'||m.w==='mirror'||m.w==='theater')){p.rv={w:m.w,q:m.q,d:m.d,at:performance.now()};if(RW&&RW.id===from&&RW.w===m.w)ROOMS.sync(m.q)}break;
+    case 'sdr':if(inRun)say(m.r==='theater'?p.name+' silenced the picture house':m.r==='theater-dead'?p.name+' was roasted to death by teenagers':m.r==='esc'?p.name+' beat the glass kiln':m.r==='fall'?p.name+' fell to their death':m.r==='lucky'?p.name+' hid behind a mirror and got lucky':m.r==='mirror'?p.name+' was eaten by the thing behind the mirror':p.name+' was buried in the glass kiln',3);break;
     case 'warp':{
       const n=(m.d|0)-R.depth;
       if(inRun&&state!=='trans'&&n>=1&&n<=3)mpDescend(n,p.name+' woke a black hole. It throws you all '+n+(n>1?' floors':' floor')+' down');
@@ -2558,7 +2633,7 @@ addEventListener('keydown',e=>{
   keys[e.code]=true;
   initAudio();
   if(e.code==='KeyF'){if(document.fullscreenElement)document.exitFullscreen();else document.documentElement.requestFullscreen().catch(()=>{})}
-  if(e.code==='KeyV')toggleMute();
+  if(e.code==='KeyV'&&!(state==='room'&&ROOMS.kind==='theater'))toggleMute();   // in the picture house V is your voice when there is no microphone
   if(e.code==='BracketRight')setBright(bright+0.15);
   if(e.code==='BracketLeft')setBright(bright-0.15);
   if(state==='title'){if(e.code==='Enter')startRun($('seedIn').value.trim())}
@@ -2848,7 +2923,7 @@ function watcher(s,dt,pfx,pfz){
 // speed modifiers shared by the maze and the rooms: the cold slows you, boots speed you up
 const moveMul=()=>(P.chill>0?0.55:1)*(1+0.06*(up.boots|0));
 function update(dt){
-  R.time+=dt;xrayTick(dt);
+  R.time+=dt;xrayTick(dt);guideTick(dt);
   // in a shared game the world keeps going while you pause or talk, but you stand still
   if(P.grab)mimicGrabTick(dt);
   const ctl=state==='play'&&!P.grab&&!GL.fall&&!(GL.rb&&!GL.rb.fwd);
@@ -3599,6 +3674,7 @@ function render(t){
     const fl=1+Math.sin(t*8.3)*0.08+Math.sin(t*19.1)*0.05;F.safe.fl=fl;
     lights.push([d-30,F.safe.x,0.85,F.safe.z,[1.0,0.56,0.2],2.3*fl,7.5,'safe'])}}
   for(const n of F.npcs){if(n.type==='keeper')continue;const d=(n.x-ex)**2+(n.z-ez)**2;if(d<140)lights.push([d-3,n.x,n.type==='delver'?0.5:0.95,n.z,[1.0,0.85,0.6],0.75,2.8])}
+  if(GD.have&&guideOn()&&!title){const gd=(GD.x-ex)**2+(GD.z-ez)**2;lights.push([gd-10,GD.x,0.65,GD.z,[1.0,0.93,0.8],1.9,6.5])}
   mpLights(lights,ex,ez,B);
   lights.sort((a,b)=>a[0]-b[0]);
   // the nearest fixed flames get real shadows; everything else shares a pool of plain lights
@@ -3696,6 +3772,12 @@ function render(t){
   { const pulse=0.75+Math.sin(t*3)*0.25;
     spr(F.exit.x,WALL_H/2,F.exit.z,0.8,WALL_H,6,exCol[0],exCol[1],exCol[2],pulse,1);
     spr(F.exit.x,0.25,F.exit.z,1.3,0.9,7,exCol[0],exCol[1],exCol[2],0.6,1); }
+  if(GD.have&&guideOn()&&!title){const pu=0.85+0.15*Math.sin(t*2.1),gd=Math.hypot(GD.x-ex,GD.z-ez);
+    // a soft shaft and halo that carry down a long corridor, a small bright core; it dims a little as you walk into it
+    const near=clamp(gd/2.5,0.25,1);
+    spr(GD.x,WALL_H/2,GD.z,0.9,WALL_H,6,1.0,0.94,0.8,0.38*pu*near,1);
+    spr(GD.x,0.62,GD.z,1.5,1.5,7,1.0,0.93,0.78,0.5*pu*near,1);
+    spr(GD.x,0.62,GD.z,0.34,0.34,7,1.0,0.98,0.9,0.95*near,1);}
   for(const s of F.shades){
     if(s.type!==2||(s.x-ex)**2+(s.z-ez)**2>18*18)continue;
     const y=0.56+Math.sin(s.ph)*0.03,a=s.stun>0?0.35:1;
@@ -3863,7 +3945,7 @@ function frame(now){
 }
 setInterval(()=>{if(MP.host&&document.hidden&&performance.now()-last>200)step(performance.now())},100);
 // a backdrop maze behind the title screen
-R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
+R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();achLine();
 {const rc=cleanCode(new URLSearchParams(location.search).get('room'));if(rc)mpPrepareJoin(rc)}
-window.__game={amb,roomInput,XR,xrayTick,wallsBetween,update,render,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);

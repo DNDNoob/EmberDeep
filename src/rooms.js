@@ -1,4 +1,4 @@
-// Strange doors: four rooms that are somewhere else entirely.
+// Strange doors (the picture house is in src/theater.js): five rooms that are somewhere else entirely.
 //   galaxy  you float among stars until the sun collapses and spits you back out, floors deeper
 //   kiln    a stone hall with an arcade console: walk up, press its buttons to steer the falling stones in the glass, burn enough rows and the door lets you go
 //   fall    there is no floor behind the door
@@ -10,6 +10,7 @@ import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
 import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
 import {ShaderPass} from 'three/addons/postprocessing/ShaderPass.js';
 import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
+import {createTheater} from './theater.js';
 import {MOVE,lookStep,lookBy,bobAdvance,bobY,createRoomWalker} from './movement.js';
 
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
@@ -208,7 +209,8 @@ export function createRooms(renderer,o0){
   const scene=new THREE.Scene(),cam=new THREE.PerspectiveCamera(72,1,0.05,2000);
   scene.background=new THREE.Color(0x000000);
   let composer=null,bloom=null,blurPass=null,viewKey='',cur=null,group=null,done=null,held=false;
-  const A={active:false,kind:'',watching:false,label:'',mute:0};
+  const A={active:false,kind:'',watching:false,label:'',mute:0,theaterOpts:{}};
+  const clearHooks=[];
   const glowTex=canvasTex(128,128,(c,w)=>{const g=c.createRadialGradient(w/2,w/2,0,w/2,w/2,w/2);
     g.addColorStop(0,'rgba(255,255,255,1)');g.addColorStop(0.25,'rgba(255,255,255,0.45)');g.addColorStop(0.6,'rgba(255,255,255,0.08)');g.addColorStop(1,'rgba(255,255,255,0)');
     c.fillStyle=g;c.fillRect(0,0,w,w)});
@@ -227,6 +229,7 @@ export function createRooms(renderer,o0){
     group=new THREE.Group();scene.add(group);
   }
   function clear(){
+    while(clearHooks.length){try{clearHooks.pop()()}catch(e){}}
     if(!group)return;
     group.traverse(m=>{if(m.geometry)m.geometry.dispose();if(m.material){const L=Array.isArray(m.material)?m.material:[m.material];for(const q of L){if(q.map&&q.map!==glowTex)q.map.dispose();q.dispose()}}});
     scene.remove(group);group=null;scene.fog=null;
@@ -1417,7 +1420,8 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     return S;
   }
 
-  const KINDS={galaxy,fall,kiln,mirror},FADE_IN={fall:0.18,mirror:1.4};
+  const theater=createTheater({renderer,scene,cam,o,A,canvasTex,glow,clamp,ss,lerp,nf,rnd,getGroup:()=>group,onClear:fn=>clearHooks.push(fn),finish:r=>finish(r),createRoomWalker,MOVE,lookStep,bobAdvance,bobY});
+  const KINDS={galaxy,fall,kiln,mirror,theater},FADE_IN={fall:0.18,mirror:1.4};
   // How you move in each room. Anything not listed WALKS: the full maze movement (walk, sprint, jump, stamina, boots, cold) from src/movement.js.
   // Only a room that truly cannot walk is listed here, with its reason. A new room needs no entry.
   const MODES={
@@ -1459,6 +1463,8 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
   A.untap=()=>{if(cur&&cur.untap)cur.untap()};
   A.aimed=()=>!!(cur&&cur.aimed&&cur.aimed());
   A.cam=cam;
+  // test hooks for the picture house: inject a mic level or recognised words, force the house reel
+  A.theaterTest=q=>cur&&cur.test&&cur.test.api?cur.test.api(q):null;
   A.look=(dx,dy)=>{if(cur&&!A.watching&&cur.yaw!==undefined)lookBy(cur,dx,dy,MOVE.roomPitch)};
   // how black the screen overlay should be: fades in at the start, out at the end
   A.fade=()=>cur?Math.max(cur.fade||0,1-ss(0,FADE_IN[A.kind]||0.7,cur.in)):0;

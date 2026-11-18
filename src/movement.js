@@ -42,7 +42,7 @@ export function lookBy(o,dyaw,dpitch,lim){
 // One step of a body. it = {fwd,str} local axes (-1..1), {fx,fz} the world direction "forward" points,
 // {jump,sprint} held buttons, {ctl:false} to forbid starting a jump (the maze uses this while a menu or grab has you).
 // w = {scale, speedMul, sta (object with stam/winded, default the body), lungs, blocked(x,z) per-axis (maze),
-//      collide(b) push-out after the move (rooms), groundAt(x,z), ceilingAt(x,z) (max body height)}.
+//      collide(b) push-out after the move (rooms), snap (max drop followed on stairs/slopes, rooms only), groundAt(x,z), ceilingAt(x,z) (max body height)}.
 // Returns {jumped, landed (impact speed in maze units, 0 if none), step, moving, sprint, speed, ground}.
 export function stepMove(b,dt,it,w){
   const sc=w.scale||1,ev={jumped:false,landed:0,step:false,moving:false,sprint:false,speed:0,ground:false};
@@ -76,6 +76,8 @@ export function stepMove(b,dt,it,w){
     const nz=b.z+b.vz*dt;if(!w.blocked(b.x,nz))b.z=nz;else if(ground)b.vz=0;
   }else{b.x+=b.vx*dt;b.z+=b.vz*dt}
   if(w.collide)w.collide(b);
+  // walking down a slope or steps: stay on the floor instead of drifting off it (only for rooms that ask, with the largest drop to follow)
+  if(w.snap&&(ground||ev.landed>0)&&!ev.jumped&&b.vy<=0&&w.groundAt){const g1=w.groundAt(b.x,b.z);if(b.y>g1&&b.y-g1<=w.snap*sc){b.y=g1;b.vy=0}}
   if(moving&&b.y<=g0&&bobAdvance(b,speed*dt,sc))ev.step=true;
   ev.moving=moving;ev.sprint=wantSprint;ev.speed=speed;ev.ground=b.y<=g0;
   return ev;
@@ -91,7 +93,7 @@ const num=v=>typeof v==='number'&&isFinite(v)?clamp(v,-1,1):0;
 export function createRoomWalker(c){
   const o=c.o||{},sc=scaleFor(c.eye),b=newBody({x:c.x||0,z:c.z||0});
   const W={b,scale:sc,ev:null,pj:false};
-  const world={scale:sc,sta:o.sta||b,collide:c.collide?()=>c.collide(b):null,groundAt:c.groundAt,ceilingAt:c.ceilingAt};
+  const world={scale:sc,snap:c.snap,sta:o.sta||b,collide:c.collide?()=>c.collide(b):null,groundAt:c.groundAt,ceilingAt:c.ceilingAt};
   const sound=c.sound||(e=>{if(!o.sfx)return;if(e.jumped)o.sfx('jump');else if(e.landed>0.8||e.step)o.sfx('step')});
   W.step=(dt,inp,yaw)=>{
     const mx=num(inp.mx),my=num(inp.my);
