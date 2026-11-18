@@ -12,6 +12,10 @@ import {openRoom,newRoomCode,cleanCode} from './net.js';
 import {createVoice} from './voice.js';
 import {guidePath,guideBeacon,GUIDE_RANGE} from './guide.js';
 import {createRooms,kilnGame,KILN} from './rooms.js';
+import {bakeRecipe,bakeRecipeIdle,bakeIsDone,bakeStarted,bakeExport,bakePrime,KIT_HASH} from './npc_kit.js';
+import {loadBake,saveBake,cacheStats} from './npc_cache.js';
+import {hairAtlas,ATLAS_TILES} from './npc_hair.js';
+import {KEEPER} from './npc_recipes.js';
 import {createBabyFace,createFallVoid} from './babyface.js';
 import {pickVariant,VARIANTS} from './variants.js';
 import {createForest,coreFaces,INSET,CORE_H} from './forest.js';
@@ -46,7 +50,11 @@ const store={
 };
 
 /* ---------- constants ---------- */
-const WALL_H=1.25, EYE=0.62, PR=0.22;
+// World scale: a 1.75 m man is ~0.956 m tall here (the Keeper), i.e. 0.546 world metres per real metre. A human eye sits at ~0.93 of
+// stature, so the player's eye height is the Keeper's eye height (0.9 m). It used to be 0.62 m: the camera was at the Keeper's
+// chest, which made every NPC look a head taller than the player. Single source for the camera, NPC head tracking and avatars.
+const WALL_H=1.25, EYE=0.9, PR=0.22, CAM_TOP=WALL_H-0.09;   // CAM_TOP: the camera never rises into the ceiling (a jump peaks at 0.56 m)
+const AV=EYE/0.84;   // scale of the humanoid player avatars: the avatar's eyes are at 0.84*scale, so they sit at EYE
 const BIOMES=[
   {base:0,name:'The Old Stonework', wall:[1.0,0.92,0.82], floor:[0.9,0.85,0.8],  ceil:[0.7,0.65,0.6],   torch:[1.0,0.72,0.42], amb:[0.012,0.012,0.02], stone:[0.44,0.4,0.34], spec:[0.12,0.2,0.05], wet:0.5},
   {base:3,name:'Mossgrown Halls',   wall:[0.7,0.95,0.7],  floor:[0.65,0.85,0.6], ceil:[0.5,0.65,0.5],   torch:[1.0,0.8,0.5],   amb:[0.008,0.02,0.012], stone:[0.3,0.36,0.27], spec:[0.08,0.16,0.05], wet:0.9},
@@ -557,25 +565,128 @@ float n3(vec3 p){vec3 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);
   return mix(mix(mix(h3(i),h3(i+vec3(1,0,0)),f.x),mix(h3(i+vec3(0,1,0)),h3(i+vec3(1,1,0)),f.x),f.y),
              mix(mix(h3(i+vec3(0,0,1)),h3(i+vec3(1,0,1)),f.x),mix(h3(i+vec3(0,1,1)),h3(i+vec3(1,1,1)),f.x),f.y),f.z);}
 float fbm3(vec3 p){return n3(p)*0.6+n3(p*2.3)*0.3+n3(p*5.1)*0.1;}
+// Embroidery motifs from a per-vertex band coordinate (npc_kit trimBand 'band', stole borders): b.x = cell coordinate along the band
+// (one motif per unit, an integer count round a closed loop), b.y = 2*motif + v with v 0..1 across the band. Pattern only, no textures.
+float sdSegE(vec2 p,vec2 a,vec2 b){vec2 pa=p-a,ba=b-a;return length(pa-ba*clamp(dot(pa,ba)/dot(ba,ba),0.0,1.0));}
+float covE(float d,float aa){return clamp(0.5-d/aa,0.0,1.0);}
+// returns (ink, border line). motif 1 = rows of ember flames with a bright core, 2 and 3 = Greek key (meander); aa = one pixel in cell units
+vec2 embroidery(vec2 b,float motif,float aa){
+  float v=b.y,fu=fract(b.x),x=fu-0.5;vec2 r=vec2(0.0);
+  r.y=covE(min(abs(v-0.075),abs(v-0.925))-0.03,aa);
+  if(motif<1.5){
+    float t=clamp((v-0.16)/0.68,0.0,1.0),w=0.36*sin(3.14159*pow(t,0.6))*(1.0-0.45*t),c=0.12*sin(t*2.6+1.0)*t;
+    float d=max(abs(x-c)-w,max(0.16-v,v-0.84));
+    float t2=clamp((t-0.08)/0.55,0.0,1.0),w2=0.5*0.36*sin(3.14159*pow(t2,0.6))*(1.0-0.45*t2),dc=max(abs(x-c*0.9)-w2,max(0.2-v,v-0.55));
+    r.x=covE(d,aa)*(1.0-covE(dc,aa));
+    float xe=fu<0.5?fu:fu-1.0;r.x=max(r.x,covE(abs(xe)+abs(v-0.5)*1.2-0.085,aa)); // a bead between flames
+  }else{
+    vec2 g=vec2(fu,clamp((v-0.17)/0.66,0.0,1.0));float d=sdSegE(g,vec2(0.0,0.1),vec2(1.0,0.1));
+    d=min(d,sdSegE(g,vec2(0.1,0.1),vec2(0.1,0.9)));d=min(d,sdSegE(g,vec2(0.1,0.9),vec2(0.9,0.9)));d=min(d,sdSegE(g,vec2(0.9,0.9),vec2(0.9,0.3)));
+    d=min(d,sdSegE(g,vec2(0.9,0.3),vec2(0.4,0.3)));d=min(d,sdSegE(g,vec2(0.4,0.3),vec2(0.4,0.65)));d=min(d,sdSegE(g,vec2(0.4,0.65),vec2(0.65,0.65)));
+    r.x=covE((d-0.06)*0.66,aa)*step(0.17,v)*step(v,0.83);
+  }
+  return r;
+}
 `;
+let HAIR_TEX=null;
+function hairTex(){ // procedural strand atlas for hair cards (npc_hair.js), generated once at load
+  if(HAIR_TEX)return HAIR_TEX;const a=hairAtlas(512);
+  const t=new THREE.DataTexture(a.data,a.w,a.h,THREE.RGBAFormat,THREE.UnsignedByteType);t.generateMipmaps=true;t.minFilter=THREE.LinearMipmapLinearFilter;t.magFilter=THREE.LinearFilter;t.anisotropy=4;t.needsUpdate=true;return HAIR_TEX=t}
 function paintedMaterial(glowBase){
   if(Q===0)return new THREE.MeshLambertMaterial({vertexColors:true,side:THREE.DoubleSide,emissive:new THREE.Color(glowBase,glowBase,glowBase)});
   const m=new THREE.MeshStandardMaterial({vertexColors:true,roughness:0.7,metalness:0,side:THREE.DoubleSide});
   m.onBeforeCompile=sh=>{
-    sh.uniforms.uGlowBase={value:glowBase};
-    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nattribute vec4 aLoc;varying vec4 vLoc;')
-      .replace('#include <begin_vertex>','#include <begin_vertex>\nvLoc=aLoc;');
+    sh.uniforms.uGlowBase={value:glowBase};sh.uniforms.uStrand={value:hairTex()};
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nattribute vec4 aLoc;varying vec4 vLoc;attribute vec3 aBand;varying vec3 vBand;')
+      .replace('#include <begin_vertex>','#include <begin_vertex>\nvLoc=aLoc;vBand=aBand;');
     sh.fragmentShader=sh.fragmentShader
-      .replace('#include <common>','#include <common>\nvarying vec4 vLoc;uniform float uGlowBase;float mRough=0.7;float mMetal=0.0;float mGlow=0.0;float mRim=0.0;'+MAT_GLSL)
+      .replace('#include <common>','#include <common>\nvarying vec4 vLoc;varying vec3 vBand;uniform float uGlowBase;uniform sampler2D uStrand;float hh1(float x){return fract(sin(x*12.9898)*43758.5453);}float mRough=0.7;float mMetal=0.0;float mGlow=0.0;float mRim=0.0;float mSss=0.0;float mRimK=0.0;float mBump=0.0;float mAux=0.0;float mCh=0.0;float mWeave=1.0;float mEmb=0.0;vec3 mTan=vec3(0.0);float mKK=0.0;float mHairH=0.0;'+MAT_GLSL)
+      .replace('#include <lights_physical_pars_fragment>',()=>THREE.ShaderChunk.lights_physical_pars_fragment.replace('vec3 irradiance = dotNL * directLight.color;',
+        // cheap subsurface look: wrapped diffuse that lets light bleed past the terminator, tinted red where it fades
+        `float nlS=dot(geometryNormal,directLight.direction);
+	vec3 irradiance=directLight.color*(mSss>0.001?pow(saturate((nlS+mSss)/(1.0+mSss)),2.0)*mix(vec3(1.0),vec3(1.0,0.5,0.34),mSss*(1.0-saturate(nlS*3.0))):vec3(dotNL));`).replace('reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseColor );',
+        // hair: dim Kajiya-Kay anisotropic highlight, a streak across the strands (tangent mTan from the flow coordinates)
+        `if(mKK>0.0){vec3 Hh=normalize(directLight.direction+geometryViewDir);float th=dot(mTan,Hh),sn=sqrt(max(1.0-th*th,0.0));reflectedLight.directSpecular+=min(directLight.color,vec3(4.0))*pow(sn,40.0)*saturate(dotNL*3.0)*mKK*0.035*vec3(1.0,0.94,0.82);}
+	reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseColor );`))
       .replace('#include <color_fragment>',`
-  {vec3 alb=vColor.rgb,q=vLoc.xyz;int m=int(vLoc.w+0.5);
-    float fine=clamp(1.6+vViewPosition.z*0.45,0.0,1.0);
+  {vec3 alb=vColor.rgb,q=vLoc.xyz;int m=int(floor(vLoc.w+0.002));mAux=fract(vLoc.w+0.002)*1.1;
+    float fine=clamp(1.6-vViewPosition.z*0.45,0.0,1.0); // vViewPosition.z is the distance: fade fine detail out with it
     float mott=fbm3(q*34.0);
-    if(m==1){alb*=0.92+0.16*mott;mRough=0.55;}
+    float mo=floor(vBand.z+0.5);vec2 emb=vec2(0.0);{float fwB=max(fwidth(vBand.x),fwidth(vBand.y))*0.9;if((m==13||m==15)&&mo>0.5&&mo<3.5)emb=embroidery(vBand.xy,mo,max(fwB,0.004))*step(-0.001,vBand.y)*step(vBand.y,1.001);}
+    // weave: fade by how many radians of the 1500 rad/m pattern fall in one pixel; above ~1 rad/px it aliases into moire, so it dissolves into plain cloth
+    float wPh1=q.y*1500.0,wPh2=(q.x+q.z)*1500.0,wFade=1.0-smoothstep(0.7,1.5,max(fwidth(wPh1),fwidth(wPh2)));
+    mWeave=wFade;
+    if(m==1){alb*=0.92+0.16*mott;mRough=0.55;mSss=0.2;mRimK=0.02;}
+    else if(m==12){ // sculpted skin (npc_kit): colour variation comes painted per vertex, mAux marks wrinkle areas
+      alb*=0.9+0.2*mott;
+      alb=mix(alb,alb*vec3(1.06,0.9,0.86),smoothstep(0.45,0.75,fbm3(q*90.0))*0.5); // blotches and age spots
+      mRough=0.66;mSss=0.28;mRimK=0.015;mBump=1.0;
+    }else if(m==13){ // sculpted cloth: folds are in the geometry, so the shader only adds weave, nap and sheen
+      float folds=n3(vec3(q.x*55.0,q.y*5.0,q.z*55.0));
+      float weave=sin(q.y*1500.0)*sin((q.x+q.z)*1500.0);
+      alb*=(0.88+0.2*folds)*(0.93+0.14*mott)*(1.0+0.06*weave*fine*wFade);mRough=0.88;mRimK=0.09;mBump=1.0;
+      if(!gl_FrontFacing)alb*=0.5; // simulated cloth is a single sheet: its inside (sleeve mouths, hem) is darker
+      if(mo>2.5&&mo<3.5){ // stole: gold meander border worked into the cloth
+        float th=max(emb.x,emb.y);mEmb=th;alb=mix(alb,vec3(0.82,0.6,0.2)*(0.78+0.3*n3(q*400.0)),th);mRough=mix(0.9,0.45,th);mMetal=0.3*th;
+      }else if(mo>4.5){ // leather: grain, no weave
+        float gr=fbm3(q*210.0);alb*=0.8+0.4*gr;alb*=1.0-0.35*smoothstep(0.55,0.75,n3(q*520.0));mRough=0.55;mRimK=0.02;mSss=0.0;
+      }
+    }else if(m==15){ // sculpted trim: gold thread embroidery, a running pattern of stitched diamonds
+      float a=atan(q.z,q.x)*40.0,st=abs(fract(a+q.y*120.0)-0.5)+abs(fract(q.y*160.0)-0.5);
+      if(mo>3.5){ // polished metal (brooch, keys): flat colour, faint wear
+        alb*=0.85+0.3*fbm3(q*300.0);mRough=0.32;mMetal=0.75;mRimK=0.03;
+      }else{
+        alb*=(0.82+0.3*smoothstep(0.35,0.45,st*(mo>0.5?0.0:1.0)+(mo>0.5?0.4:0.0)))*(0.9+0.2*mott);mRough=0.42;mMetal=0.35;mRimK=0.03;
+        if(mo>0.5){ // embroidered band: dark ember ink over gold thread, border lines and beads
+          float ink=max(emb.x,emb.y);mEmb=ink;alb=mix(alb,vec3(0.36,0.05,0.03)*(0.8+0.4*n3(q*300.0)),ink*0.93);mMetal=0.35*(1.0-0.75*ink);mRough=mix(0.42,0.8,ink);
+        }
+      }
+      mBump=1.0;
+    }else if(m==14){ // sculpted hair (npc_hair.js): fine strands from the baked flow coordinates vBand = (u along the hair, v across the lock, skin proximity)
+      bool shell=vBand.z>5.5;bool card=vBand.z>1.5&&!shell;
+      vec2 fl=card?vec2(vBand.y,vBand.x):vBand.xy;if(shell){float vv0=-vLoc.y;fl=vec2(vv0,vLoc.z+0.35*vLoc.x);}float sk=(card||shell)?0.0:clamp(vBand.z,0.0,1.0);
+      float fwv=max(fwidth(fl.y),1e-6),fwu=max(fwidth(fl.x),1e-6);
+      // cycles per pixel of the two strand layers: fade each out before it aliases, towards its mean (no shimmer or moire at range)
+      float f1=1.0/0.0017,f2=1.0/0.00065;
+      float fd1=1.0-smoothstep(0.25,0.75,fwv*f1),fd2=1.0-smoothstep(0.25,0.75,fwv*f2);
+      if(shell){ // shell hair: strands carved out of stacked offset shells (h = shell height 0..1), thinner and fewer towards the outer shells
+        float h=vBand.z-6.0,vv=-vLoc.y;
+        float uu=vLoc.z+0.35*vLoc.x+0.0024*sin(vv*23.0+vLoc.z*70.0)+0.0016*sin(vv*61.0+vLoc.x*55.0);
+        float xs=uu*1150.0,id=floor(xs),fr=fract(xs)-0.5,fw=fwidth(xs);
+        float r1=hh1(id),r2=hh1(id+17.3),r3=hh1(id+41.7),hs2=fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453);
+        float len=(0.4+0.6*r1)*(0.82+0.18*sin(vv*31.0+r3*6.28));
+        float rad=(0.36+0.18*r2)*(1.0-0.8*clamp(h/max(len,0.15),0.0,1.0));
+        float tone=r3;
+        if(fw>0.9){float cv=clamp((1.0-h)/0.6,0.0,1.0)*0.62*(1.0-0.5*h);if(hs2>cv)discard;tone=0.4;}
+        else{if(h>len||abs(fr)>rad+(hs2-0.5)*0.06)discard;}
+        vec3 tc=tone<0.42?vec3(0.95,0.94,0.9):tone<0.68?vec3(0.78):tone<0.84?vec3(0.56):tone<0.93?vec3(0.93,0.82,0.58):vec3(0.4);
+        alb*=tc*(0.62+0.6*h)*1.05;alb=min(alb,vec3(0.62));mRough=0.7;mRimK=0.006;mBump=0.0;mHairH=0.0;
+      }else
+      if(card){ // hair card: strand atlas (4 tiles of 128x512: u across the card, v along it), alpha tested, mip-compensated so distant cards do not vanish
+        float tile=floor(vBand.z-1.5);vec2 auv=vec2((tile+0.03+vBand.x*0.94)*0.25,vBand.y);
+        vec4 st=texture2D(uStrand,auv);vec2 dxa=dFdx(auv)*512.0,dya=dFdy(auv)*512.0;float lod=0.5*log2(max(max(dot(dxa,dxa),dot(dya,dya)),1.0));
+        float ca=st.a*(1.0+0.3*lod);float hs=fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453);
+        float ed=abs(vBand.x*2.0-1.0);if(ca<mix(0.3,0.5,smoothstep(0.6,0.95,vBand.y))+0.16*smoothstep(0.55,1.0,ed)+0.22*smoothstep(0.75,1.0,vBand.y)+(hs-0.5)*0.16)discard;
+        alb*=st.rgb*0.78;alb=min(alb,vec3(0.62));mRough=0.7;mRimK=0.006;mBump=0.0;mHairH=0.0;
+      }else{
+      float vw=fl.y+0.0011*(n3(vec3(fl.x*55.0,fl.y*140.0,2.0))-0.5)*fd1;      // strands wander a little along their length
+      float s1=n3(vec3(vw*f1,fl.x*f1*0.07,3.1)),s2=n3(vec3(vw*f2,fl.x*f2*0.055,7.7));
+      float strand=clamp(0.5+(mix(0.5,s1,fd1)*0.55+mix(0.5,s2,fd2)*0.45-0.5)*2.6,0.0,1.0); // 0..1, mean 0.5, stretched (value noise is low contrast)
+      mHairH=(strand-0.5)*(0.35+0.65*fd1);
+      float yel=smoothstep(0.5,0.85,n3(vec3(fl.y*f1*0.3,fl.x*24.0,11.0))),dk=smoothstep(0.78,0.97,mix(0.5,s2,fd2));
+      alb*=(0.74+0.5*strand)*(1.0-0.22*dk);
+      alb*=mix(vec3(1.0),vec3(1.05,0.97,0.78),yel*0.7);                          // yellowed strands among the white
+      alb=mix(alb,vec3(0.52,0.42,0.38)*(0.8+0.4*strand),sk*0.55);                 // roots: stubble grey-brown where the hair meets skin
+      alb=min(alb,vec3(0.54));mRough=0.78;mRimK=0.008;mBump=1.0;
+      }
+      // flow direction in view space (dP/du from the screen derivatives of u and v) for the anisotropic highlight
+      vec3 dpx=dFdx(-vViewPosition),dpy=dFdy(-vViewPosition);float ux=dFdx(fl.x),uy=dFdy(fl.x),vx=dFdx(fl.y),vy=dFdy(fl.y),det=ux*vy-uy*vx;
+      if(abs(det)>1e-12){vec3 tt=(dpx*vy-dpy*vx)/det;float tl=length(tt);if(tl>1e-9){mTan=tt/tl;mKK=(card||shell)?1.0:(1.0-sk)*(1.0-smoothstep(0.3,0.8,fwv*f1));}}
+    }
     else if(m==2){
       float folds=n3(vec3(q.x*55.0,q.y*5.0,q.z*55.0));
       float weave=sin(q.y*1500.0)*sin((q.x+q.z)*1500.0);
-      alb*=(0.8+0.26*folds)*(0.93+0.14*mott)*(1.0+0.07*weave*fine);mRough=0.95;
+      alb*=(0.8+0.26*folds)*(0.93+0.14*mott)*(1.0+0.07*weave*fine);mRough=0.95;mRimK=0.03;
     }else if(m==3){
       float bl=fbm3(q*50.0),scr=smoothstep(0.78,0.84,n3(vec3(q.x*260.0,q.y*22.0,q.z*260.0)));
       alb*=0.72+0.45*bl;alb=mix(alb,alb*1.5+0.03,scr*0.5*fine);mRough=0.5;
@@ -588,22 +699,38 @@ function paintedMaterial(glowBase){
       float gr=n3(vec3(q.x*80.0,q.y*6.0,q.z*80.0)),pl=smoothstep(0.42,0.5,abs(fract(atan(q.z,q.x)*1.9+0.5)-0.5));
       alb*=(0.7+0.36*gr)*(0.72+0.28*pl);mRough=0.78;
     }else if(m==7){mGlow=1.0;}
-    else if(m==8){mRough=0.07;}
+    else if(m==8){mRough=0.12;}
     else if(m==9){
       float sp=fbm3(q*60.0),cr=smoothstep(0.035,0.0,abs(n3(q*13.0)-0.5));
       alb*=0.72+0.45*sp;alb*=1.0-cr*0.5;mRough=0.88;
     }else if(m==10){
       float wv=n3(vec3(q.x*40.0,q.y*9.0,q.z*40.0));alb*=0.7+0.5*wv;mRough=1.0;mRim=1.0;
     }else if(m==11){mRough=0.1;mGlow=0.55;}
+    mCh=m==12?0.9:(m>=13&&m<=15)?1.0:(m==8?0.5:0.0);
     diffuseColor.rgb=pow(max(alb,vec3(0.0)),vec3(2.2));
     if(m==7)diffuseColor.rgb*=0.1;
   }`)
+      .replace('#include <normal_fragment_maps>',`#include <normal_fragment_maps>
+  if(mBump>0.5){ // real bump from a procedural height (metres), so pores, weave and strands catch the light without any triangles
+    vec3 q=vLoc.xyz;int m=int(floor(vLoc.w+0.002));float fn=clamp(1.6-vViewPosition.z*0.45,0.0,1.0);float hh=0.0;
+    if(m==12){hh=0.00012*n3(q*380.0)+mAux*0.0005*(1.0-abs(n3(vec3(q.x*70.0,q.y*330.0,q.z*70.0))*2.0-1.0));} // pores, and creases where the mesh asks for them
+    else if(m==13||m==15){hh=0.0006*(n3(q*160.0)-0.5)+0.0003*fn*mWeave*sin(q.y*1500.0)*sin((q.x+q.z)*1500.0)+0.0005*mEmb;}
+    else if(m==14){hh=0.00045*mHairH;}
+    vec2 dh=vec2(dFdx(hh),dFdy(hh))*fn;
+    vec3 sX=dFdx(-vViewPosition),sY=dFdy(-vViewPosition),R1=cross(sY,normal),R2=cross(normal,sX);
+    float fDet=dot(sX,R1)*faceDirection;
+    vec3 pb=dh.x*R1+dh.y*R2;float pl=length(pb),pm=0.6*abs(fDet);if(pl>pm)pb*=pm/pl; // bound the tilt: derivatives on sub-pixel triangles and silhouettes are huge
+    vec3 nb=abs(fDet)*normal-sign(fDet)*pb;if(dot(nb,nb)>0.1*fDet*fDet&&fDet*fDet>1e-30)normal=normalize(nb); // never normalize a (near) zero vector: NaN would bloom into white squares
+  }`)
+      .replace('#include <lights_physical_fragment>','#include <lights_physical_fragment>\nif(mCh>0.75||(mMetal<0.1&&mRough>0.7))material.specularF90=0.1; // sculpted characters: no grazing-angle Fresnel at silhouettes (silver slivers on fingertips and rims that bloom into white glints)')
       .replace('#include <roughnessmap_fragment>','float roughnessFactor=mRough;')
       .replace('#include <metalnessmap_fragment>','float metalnessFactor=mMetal;')
       .replace('#include <emissivemap_fragment>',`#include <emissivemap_fragment>
   {vec3 ec=pow(max(vColor.rgb,vec3(0.0)),vec3(2.2));
-    totalEmissiveRadiance+=ec*(mGlow*1.6+uGlowBase);
-    if(mRim>0.5){float rim=pow(1.0-abs(dot(normalize(normal),normalize(vViewPosition))),3.0);totalEmissiveRadiance+=ec*rim*rim*1.6;}}`);
+    totalEmissiveRadiance+=ec*(mGlow*1.6+uGlowBase+(mCh>0.75?0.3:0.0)); // 0.2: faint fill so a hand's torch shadow on the robe is dark red, not black holes
+    if(mRimK>0.0){float fr=pow(saturate(1.0-abs(dot(normalize(normal),normalize(vViewPosition)))),3.0);totalEmissiveRadiance+=ec*fr*mRimK;} // soft fresnel rim / cloth sheen
+    if(mRim>0.5){float rim=pow(saturate(1.0-abs(dot(normalize(normal),normalize(vViewPosition)))),3.0);totalEmissiveRadiance+=ec*rim*rim*1.6;}}`);
+    sh.fragmentShader=sh.fragmentShader.replace('#include <dithering_fragment>','#include <dithering_fragment>\n  {uvec3 nb3=floatBitsToUint(gl_FragColor.rgb);bvec3 bad=equal(nb3&uvec3(0x7f800000u),uvec3(0x7f800000u));gl_FragColor.rgb=any(bad)?vec3(0.0):clamp(gl_FragColor.rgb,vec3(0.0),vec3(mCh>0.95?3.0:mCh>0.75?2.0:mCh>0.25?5.0:12.0));} // isnan() can be optimised away on ANGLE/D3D; test the exponent bits (NaN and Inf) instead. // firefly clamp: specular spikes on slivers and silhouettes bloom into squares (see docs/npc-kit.md); sculpted characters (12-15) are held to 3.0, eyes 5.0');
   };
   m.customProgramCacheKey=()=>'painted';
   return m;
@@ -888,6 +1015,185 @@ function face(H,o){
   ball(H,[0.089,ey-0.027,0],o.nose||[0.015,0.017,0.013],[sk[0]*0.93,sk[1]*0.88,sk[2]*0.86,1],true);
   if(o.mouth)slab(H,[0.08,0.034,0],[0.008,0.006+(o.talk||0),o.mouthW||0.03],o.mouth);
 }
+let PROBE_SYNC=false;const NPC_CLASSIC=new URLSearchParams(location.search).get('npc')==='classic',ONE3=[1,1,1];
+let KEEPER_WARM=false,KEEPER_SAVED=false;const KEEPER_CACHE_KEY=KEEPER.id+':'+KIT_HASH,KT0=performance.now(),KEEPER_T={load:-1,hit:false},KEEPER_LOAD=NPC_CLASSIC?null:loadBake(KEEPER_CACHE_KEY).then(pl=>{try{const t1=performance.now();if(pl)KEEPER_T.hit=bakePrime(KEEPER,pl);KEEPER_T.load=performance.now()-t1;KEEPER_T.readMs=cacheStats.readMs}catch(e){console.error(e)}});
+let STUDIO=null; // set by __game.studio(): fixed camera, frozen gameplay, for NPC screenshots
+/* ---------- sculpted NPCs (src/npc_kit.js + src/npc_recipes.js) ---------- */
+// material names used by recipes -> shader material ids in paintedMaterial()
+const MAT={skin:12,cloth:13,hair:14,trim:15,eye:8,wood:6,metal:4,glow:7};
+// emit() for kit meshes (stride 9): the paint channel blends col -> col2 per vertex, baked occlusion darkens it,
+// the detail mask rides in the fraction of the material id (wrinkles, fine bump). R2 rotates the mesh inside the
+// frame, c places it.
+function emitS(mesh,f,c,col,col2,mat,R2,sc,dr){
+  const cnt=mesh.length/9,T=TB;if(T.n+cnt>T.cap)return;
+  const W=T.w||13,bnd=mesh.band;
+  sc=sc||1;const R=R2?m3(f.R,R2):f.R,cs=sc===1?c:[c[0]*sc,c[1]*sc,c[2]*sc],p=fpt(f,cs),b=T.buf,lo=f.lo||ZERO3;let o=T.n*W;
+  const c0=col[0],c1=col[1],c2=col[2],d0=col2[0]-c0,d1=col2[1]-c1,d2=col2[2]-c2;
+  const l0=c[0]+lo[0],l1=c[1]+lo[1],l2=c[2]+lo[2];
+  // drape: vertices below dr.y0 blend towards a second frame (dr.f) that follows the head only partly, so a long beard
+  // keeps hanging on the chest instead of swinging with the head (linear blend skinning, full weight at dr.y1)
+  let R3=null,p3=null,y0=0,iy=0;
+  if(dr){R3=R2?m3(dr.f.R,R2):dr.f.R;p3=fpt(dr.f,cs);y0=dr.y0;iy=1/(dr.y1-dr.y0)}
+  for(let i=0;i<mesh.length;i+=9){
+    const x=mesh[i],y=mesh[i+1],z=mesh[i+2],nx=mesh[i+3],ny=mesh[i+4],nz=mesh[i+5],w=mesh[i+6],ao=mesh[i+8];
+    let X=p[0]+sc*(R[0]*x+R[1]*y+R[2]*z),Y=p[1]+sc*(R[3]*x+R[4]*y+R[5]*z),Z=p[2]+sc*(R[6]*x+R[7]*y+R[8]*z);
+    let NX=R[0]*nx+R[1]*ny+R[2]*nz,NY=R[3]*nx+R[4]*ny+R[5]*nz,NZ=R[6]*nx+R[7]*ny+R[8]*nz;
+    if(dr){let k=(y-y0)*iy;k=k<0?0:k>1?1:k;k=k*k*(3-2*k);
+      if(k>0){const X2=p3[0]+sc*(R3[0]*x+R3[1]*y+R3[2]*z),Y2=p3[1]+sc*(R3[3]*x+R3[4]*y+R3[5]*z),Z2=p3[2]+sc*(R3[6]*x+R3[7]*y+R3[8]*z);
+        const A=R3[0]*nx+R3[1]*ny+R3[2]*nz,B=R3[3]*nx+R3[4]*ny+R3[5]*nz,C=R3[6]*nx+R3[7]*ny+R3[8]*nz;
+        X+=(X2-X)*k;Y+=(Y2-Y)*k;Z+=(Z2-Z)*k;NX+=(A-NX)*k;NY+=(B-NY)*k;NZ+=(C-NZ)*k;
+        const il=1/(Math.hypot(NX,NY,NZ)||1);NX*=il;NY*=il;NZ*=il}}
+    b[o++]=X;b[o++]=Y;b[o++]=Z;b[o++]=NX;b[o++]=NY;b[o++]=NZ;
+    const ao2=ao;
+    b[o++]=(c0+d0*w)*ao2;b[o++]=(c1+d1*w)*ao2;b[o++]=(c2+d2*w)*ao2;b[o++]=l0+x;b[o++]=l1+y;b[o++]=l2+z;b[o++]=mat+0.82*mesh[i+7];
+    if(W===16){const k=i/9*3;b[o++]=bnd?bnd[k]:0;b[o++]=bnd?bnd[k+1]:0;b[o++]=bnd?bnd[k+2]:0}
+  }
+  T.n+=cnt;
+}
+// Standard humanoid frames for a recipe: B at the feet, U at the waist (lean + breathing), H at the neck
+// (tracks the player, nods, idles), J = H moved down by the jaw while talking.
+function humanoidFrames(rec,n,B,t,ph,breath,nod,jaw){
+  const rig=rec.rig,S=rec.proportions&&rec.proportions.height||1,wa=rig.waist,ne=rig.neck; // S: overall figure scale (proportions.height)
+  const U=subF(B,[wa[0]*S,wa[1]*S,wa[2]*S],rZ(rig.lean));
+  const H=subF(U,[ne[0]*S,(ne[1]+breath)*S,ne[2]*S],m3(m3(rYaw(n.hy),rZ(n.hp+(rig.headTilt??0.12)+nod)),rX(Math.sin(t*0.5+ph)*0.03)));
+  const fr={B,U:{p:fpt(U,[0,breath*S,0]),R:U.R},U0:U,H,J:subF(H,[0,-jaw*(rig.jaw/0.006)*S,0])};
+  // D: head origin, but turning and nodding only a fraction as much as the head (what a hanging beard follows)
+  if(rig.drape){const k=rig.drape.follow;fr.D=subF(U,[(ne[0]+rig.drape.push)*S,(ne[1]+breath)*S,ne[2]*S],m3(rYaw(n.hy*k),rZ((n.hp+(rig.headTilt??0.12)+nod)*k)))}
+  return fr;
+}
+// ---- GPU posing for sculpted recipes ----
+// Each baked rigid part is uploaded once as a static BufferGeometry (same 13-float layout and the same emitS maths as the old CPU
+// path, written with an identity frame) and drawn with a per-group model matrix built from the frame {p,R} and the figure scale.
+// Parts that share a frame are merged into one geometry (B: skirt, hem; U: torso, sleeves, sash, cuffs; H: head, ears, hair, brows,
+// eyeballs, irises, lower lids; ...). Eyelids get their own group (matrix = H * rotate about the eye axis). Drape parts (neck, beard)
+// blend between two frames per vertex, so they run a small vertex-shader blend (uRel = frame1^-1 * frame2) with a private material.
+const GPU_RIGS=new Set();
+const NPC_T={ms:0,n:0,tris:0,draws:0}; // CPU time spent in buildNpc, and what the sculpted characters submit to the GPU
+function gpuGroups(baked){
+  if(baked.groups)return baked.groups;
+  const rec=baked.recipe,pal=rec.palette,G=new Map(),ec=rec.eyes,E=baked.eyes;
+  const grp=(key,frame,drape,cards)=>{let g=G.get(key);if(!g)G.set(key,g=({key,frame,drape:drape||null,items:[],lid:false,cards:!!cards}));return g};
+  for(const q of rec.parts){const m=baked.parts[q.part];if(!m)continue;
+    const dr=q.drape&&rec.rig.drape;
+    grp(q.cards?'c:'+(dr?q.part:q.frame):dr?'d:'+q.part:q.frame,q.frame,dr?{y0:q.drape[0],y1:q.drape[1]}:null,q.cards).items.push({m,c:q.at||ZERO3,col:pal[q.col],col2:pal[q.col2||q.col],mat:MAT[q.mat],R:q.R||null})}
+  if(E&&ec){const a=baked.anchors.eye;
+    for(const [key,fields,lid] of[[ec.frame,['ball','iris','lower'],false],['lid:'+ec.frame,['lid'],true]]){const g=grp(key,ec.frame);g.lid=lid;
+      for(const z of[-a[2],a[2]])for(const fl of fields){
+        const mat=fl==='lid'||fl==='lower'?MAT.skin:MAT.eye,c1=fl==='ball'?ec.sclera:fl==='iris'?ec.iris:ec.lid,c2=fl==='ball'?ec.sclera:fl==='iris'?ec.pupil:ec.lid2;
+        g.items.push({m:[E[fl],E.lo[fl],E.lo[fl]],c:[a[0],a[1],z],col:pal[c1],col2:pal[c2],mat,R:null})}}}
+  return baked.groups=[...G.values()];
+}
+function gpuGeo(baked,g,lod){
+  const key=g.key+':'+lod;baked.geo=baked.geo||{};if(baked.geo[key])return baked.geo[key];
+  // parts are arrays of LOD meshes; eye meshes are single meshes
+  let n=0;const items=g.items.map(it=>{const mesh=Array.isArray(it.m)?it.m[Math.min(lod,it.m.length-1)]:it.m;n+=mesh.length/9;return {...it,mesh}});
+  const tmp={buf:new Float32Array(16*n),n:0,cap:n,w:16},keep=TB,F0={p:[0,0,0],R:ID3,lo:ZERO3};TB=tmp;
+  for(const it of items)emitS(it.mesh,F0,it.c,it.col,it.col2,it.mat,it.R,1,null);
+  TB=keep;
+  const ib=new THREE.InterleavedBuffer(tmp.buf,16),geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.InterleavedBufferAttribute(ib,3,0));geo.setAttribute('normal',new THREE.InterleavedBufferAttribute(ib,3,3));
+  geo.setAttribute('color',new THREE.InterleavedBufferAttribute(ib,3,6));geo.setAttribute('aLoc',new THREE.InterleavedBufferAttribute(ib,4,9));geo.setAttribute('aBand',new THREE.InterleavedBufferAttribute(ib,3,13));
+  geo.computeBoundingSphere();geo.boundingSphere.radius=geo.boundingSphere.radius*1.25+0.1; // drape parts and lids move
+  geo.userData.tris=n/3;return baked.geo[key]=geo;
+}
+// vertex-shader blend between the part's frame and a second frame (see drape in emitS): u.uRel = inverse(frame1) * frame2, u.uDr = (y0, y1, 1/(y1-y0))
+function drapeMaterials(){
+  const u={uRel:{value:new THREE.Matrix4()},uDr:{value:new THREE.Vector3()}},m=paintedMaterial(0.012),prev=m.onBeforeCompile;
+  const dk=nm=>`float ${nm}=clamp((position.y-uDr.x)*uDr.z,0.0,1.0);${nm}=${nm}*${nm}*(3.0-2.0*${nm});`;
+  const patch=(sh,withN)=>{sh.uniforms.uRel=u.uRel;sh.uniforms.uDr=u.uDr;
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nuniform mat4 uRel;uniform vec3 uDr;')
+      .replace('#include <begin_vertex>','#include <begin_vertex>\n'+dk('dkP')+'transformed=mix(transformed,(uRel*vec4(transformed,1.0)).xyz,dkP);');
+    if(withN)sh.vertexShader=sh.vertexShader.replace('#include <beginnormal_vertex>','#include <beginnormal_vertex>\n'+dk('dkN')+'objectNormal=normalize(mix(objectNormal,mat3(uRel)*objectNormal,dkN));')};
+  m.onBeforeCompile=sh=>{if(prev)prev(sh);patch(sh,true)};m.customProgramCacheKey=()=>'painted-drape'+Q;
+  const dm=new THREE.MeshDepthMaterial({depthPacking:THREE.RGBADepthPacking}),ds=new THREE.MeshDistanceMaterial();
+  dm.onBeforeCompile=sh=>patch(sh,false);ds.onBeforeCompile=sh=>patch(sh,false);dm.customProgramCacheKey=()=>'dr-depth';ds.customProgramCacheKey=()=>'dr-dist';
+  return {u,m,dm,ds};
+}
+function disposeGpuRig(owner){
+  const rig=owner.gpuRig;if(!rig)return;
+  for(const x of rig.groups){
+    for(const mesh of x.meshes)if(mesh)scene.remove(mesh);
+    if(x.mat){x.mat.m.dispose();x.mat.dm.dispose();x.mat.ds.dispose()}
+  }
+  GPU_RIGS.delete(rig);delete owner.gpuRig;
+}
+function gpuRig(owner,baked){
+  let R=owner.gpuRig;if(R&&R.baked===baked)return R;
+  disposeGpuRig(owner);
+  R={baked,groups:baked.recipe&&gpuGroups(baked).map(g=>({g,meshes:[],mat:null})),hide(){for(const x of this.groups)for(const m of x.meshes)if(m)m.visible=false}};
+  for(const x of R.groups)if(x.g.drape)x.mat=drapeMaterials();
+  owner.gpuRig=R;GPU_RIGS.add(R);return R;
+}
+function setMat4(M,f,sc,R2){ // M = [sc*R | p] for frame f, optionally with R2 applied inside (lid rotation about the eye axis)
+  const R=R2?m3(f.R,R2):f.R,e=M.elements;
+  e[0]=R[0]*sc;e[1]=R[3]*sc;e[2]=R[6]*sc;e[3]=0;e[4]=R[1]*sc;e[5]=R[4]*sc;e[6]=R[7]*sc;e[7]=0;e[8]=R[2]*sc;e[9]=R[5]*sc;e[10]=R[8]*sc;e[11]=0;e[12]=f.p[0];e[13]=f.p[1];e[14]=f.p[2];e[15]=1;
+}
+// Draw every part of a baked recipe into its frame, then the eyes (upper lids rotate to blink).
+// Scale: proportions.height scales the whole figure; proportions.headScale additionally scales the head frames.
+function drawRecipe(baked,lod,fr,blink,owner){
+  const rec=baked.recipe,pr=rec.proportions,hs=pr?pr.headScale:1,S=pr&&pr.height||1,scOf=fn=>S*(pr&&pr.frames.includes(fn)?hs:1);
+  const rig=gpuRig(owner,baked),E=baked.eyes;
+  for(const x of rig.groups){const g=x.g,f=fr[g.frame];if(!f)continue;
+    if(g.cards&&Q===0)continue; // low quality: no alpha cards, the solid mass carries the hair
+    const l=Math.min(lod,baked.nLod-1);let mesh=x.meshes[l];
+    if(!mesh){mesh=new THREE.Mesh(gpuGeo(baked,g,l),x.mat?x.mat.m:charMesh.material);
+      mesh.matrixAutoUpdate=false;mesh.matrixWorldAutoUpdate=false;mesh.castShadow=!g.cards;mesh.receiveShadow=true;
+      if(x.mat){mesh.customDepthMaterial=x.mat.dm;mesh.customDistanceMaterial=x.mat.ds}
+      scene.add(mesh);x.meshes[l]=mesh}
+    const sc=scOf(g.frame);
+    if(g.lid){const a=baked.anchors.eye,ang=E.lidAngle(blink),c=Math.cos(ang),s=Math.sin(ang);
+      // rotate about the axis through the eye centre: R = Rz(ang), pivot (a0,a1): matrix = H * T(pivot) * Rz * T(-pivot)
+      setMat4(mesh.matrixWorld,f,sc,[c,-s,0,s,c,0,0,0,1]);
+      const e=mesh.matrixWorld.elements,tx=a[0]-(c*a[0]-s*a[1]),ty=a[1]-(s*a[0]+c*a[1]);
+      // translation of T(pivot)*Rz*T(-pivot) is (tx,ty,0) in frame units, i.e. scaled by sc along the frame axes
+      const R=f.R;e[12]=f.p[0]+sc*(R[0]*tx+R[1]*ty);e[13]=f.p[1]+sc*(R[3]*tx+R[4]*ty);e[14]=f.p[2]+sc*(R[6]*tx+R[7]*ty)}
+    else setMat4(mesh.matrixWorld,f,sc,null);
+    if(x.mat&&fr.D){const f1=f,f2=fr.D,R1=f1.R,R2=f2.R,u=x.mat.u,e=u.uRel.value.elements,d=g.drape;
+      const rel=[R1[0]*R2[0]+R1[3]*R2[3]+R1[6]*R2[6],R1[0]*R2[1]+R1[3]*R2[4]+R1[6]*R2[7],R1[0]*R2[2]+R1[3]*R2[5]+R1[6]*R2[8],
+                 R1[1]*R2[0]+R1[4]*R2[3]+R1[7]*R2[6],R1[1]*R2[1]+R1[4]*R2[4]+R1[7]*R2[7],R1[1]*R2[2]+R1[4]*R2[5]+R1[7]*R2[8],
+                 R1[2]*R2[0]+R1[5]*R2[3]+R1[8]*R2[6],R1[2]*R2[1]+R1[5]*R2[4]+R1[8]*R2[7],R1[2]*R2[2]+R1[5]*R2[5]+R1[8]*R2[8]];
+      const dx=(f2.p[0]-f1.p[0])/sc,dy=(f2.p[1]-f1.p[1])/sc,dz=(f2.p[2]-f1.p[2])/sc;
+      e[0]=rel[0];e[1]=rel[3];e[2]=rel[6];e[3]=0;e[4]=rel[1];e[5]=rel[4];e[6]=rel[7];e[7]=0;e[8]=rel[2];e[9]=rel[5];e[10]=rel[8];e[11]=0;
+      e[12]=R1[0]*dx+R1[3]*dy+R1[6]*dz;e[13]=R1[1]*dx+R1[4]*dy+R1[7]*dz;e[14]=R1[2]*dx+R1[5]*dy+R1[8]*dz;e[15]=1;
+      u.uDr.value.set(d.y0,d.y1,1/(d.y1-d.y0))}
+    else if(x.mat)x.mat.u.uDr.value.set(1e9,1e9+1,1); // no second frame: stay rigid
+    mesh.visible=true;NPC_T.tris+=mesh.geometry.userData.tris;NPC_T.draws++}
+}
+// ?npc=classic keeps the old primitive Keeper for comparison
+// The Keeper: recipe KEEPER in src/npc_recipes.js, posed here; the staff and lantern stay primitive.
+let GRIP_DBG=null;
+function buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,lod){
+  const K=bakeRecipe(KEEPER),A=K.anchors,fr=humanoidFrames(KEEPER,n,B,t,ph,breath,nod,jaw),U=fr.U0;
+  const S=KEEPER.proportions.height||1,q3=(x,y,z)=>[x*S,y*S,z*S]; // props are authored at 1:1 and scaled with the figure
+  const wood=[0.3,0.2,0.12,6];
+  // The grip is locked: the staff stands on the floor and the hand sits at a fixed point of the figure's base frame (U0 has no breathing),
+  // so the hand never slides along the rod. The arm absorbs the torso's breathing instead: the sleeve/arm frame 'arm0' is U turned about
+  // the shoulder so the wrist stays on the hand (one-bone aim, an error of a mm or two at the cuff).
+  const g=A.gripAt,hw=fpt(U,q3(g[0],g[1],g[2]));
+  fr.grip={p:hw,R:m3(B.R,A.gripR)};
+  {const s0=fpt(fr.U,q3(...A.shoulder0)),w0=fpt(fr.U,q3(g[0],g[1],g[2])),a=[w0[0]-s0[0],w0[1]-s0[1],w0[2]-s0[2]],b=[hw[0]-s0[0],hw[1]-s0[1],hw[2]-s0[2]],la=Math.hypot(...a),lb=Math.hypot(...b);
+    const ax=[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],sn=Math.hypot(...ax)/(la*lb),cs=(a[0]*b[0]+a[1]*b[1]+a[2]*b[2])/(la*lb);
+    let Q=ID3;if(sn>1e-9){const k=[ax[0]/(sn*la*lb),ax[1]/(sn*la*lb),ax[2]/(sn*la*lb)],C=1-cs;
+      Q=[cs+k[0]*k[0]*C,k[0]*k[1]*C-k[2]*sn,k[0]*k[2]*C+k[1]*sn,k[1]*k[0]*C+k[2]*sn,cs+k[1]*k[1]*C,k[1]*k[2]*C-k[0]*sn,k[2]*k[0]*C-k[1]*sn,k[2]*k[1]*C+k[0]*sn,cs+k[2]*k[2]*C]}
+    const d=[fr.U.p[0]-s0[0],fr.U.p[1]-s0[1],fr.U.p[2]-s0[2]];
+    fr.arm0={p:[s0[0]+Q[0]*d[0]+Q[1]*d[1]+Q[2]*d[2],s0[1]+Q[3]*d[0]+Q[4]*d[1]+Q[5]*d[2],s0[2]+Q[6]*d[0]+Q[7]*d[1]+Q[8]*d[2]],R:m3(Q,fr.U.R)};
+    // wrist drift of the sleeve mouth relative to the hand, for tools/npc_grip.mjs
+    const wc=fpt(fr.arm0,q3(g[0],g[1],g[2]));GRIP_DBG={hand:hw,wrist:wc,staffY:0,cuffErr:Math.hypot(wc[0]-hw[0],wc[1]-hw[1],wc[2]-hw[2])}}
+  fr.rest=subF(fr.U,q3(...A.restAt),A.restR);
+  drawRecipe(K,lod,fr,blink,n);
+  ball(fr.U,q3(...A.gem),0.012*S,[0.7,0.28,0.08,7],true); // belt gem: a faint warm glint, no light of its own
+  const sp=fpt(fr.grip,[A.gripAxis[0]*S,A.gripAxis[1]*S,(A.gripAxis[2]||0)*S]),SB={p:[sp[0],0,sp[2]],R:B.R};GRIP_DBG.rodPoint=sp;GRIP_DBG.rodBase=SB.p;
+  const sg=(a,b,r0,r1,col)=>seg(SB,q3(...a),q3(...b),r0*S,r1*S,col),sb=(c,r,col)=>ball(SB,q3(...c),typeof r==='number'?r*S:r.map(v=>v*S),col,true),sl=(c,z,col)=>slab(SB,q3(...c),q3(...z),col);
+  sg([0,0,0],[0.003,0.34,-0.002],0.0092,0.0086,wood);sg([0.003,0.34,-0.002],[-0.002,0.68,0.003],0.0086,0.0079,wood);sg([-0.002,0.68,0.003],[0,1.0,0],0.0079,0.0075,wood);   // staff radius = KEEPER grip hand gripR
+  sb([0.003,0.34,-0.002],[0.011,0.02,0.011],wood);sb([-0.002,0.68,0.003],[0.0098,0.018,0.0098],wood);
+  sg([0,1.0,0],[0.07,1.06,0],0.0095,0.008,wood);
+  sg([0.07,1.06,0],[0.07,1.0,0],0.004,0.004,[0.15,0.14,0.13,4]);
+  sl([0.07,0.955,0],[0.05,0.012,0.05],[0.16,0.15,0.14,4]);sl([0.07,0.885,0],[0.05,0.012,0.05],[0.16,0.15,0.14,4]);
+  for(const q of[[-1,-1],[1,-1],[-1,1],[1,1]])sl([0.07+q[0]*0.021,0.92,q[1]*0.021],[0.006,0.07,0.006],[0.16,0.15,0.14,4]);
+  sb([0.07,0.918,0],0.018,[3.0,1.5,0.4,7]);
+  out.lantern=fpt(SB,q3(0.07,0.918,0));
+  out.top=1.05*S;
+}
 function buildNpc(n,t,ex,ey,ez,dtR){
   const dxp=ex-n.x,dzp=ez-n.z,dist=Math.hypot(dxp,dzp),toP=Math.atan2(dzp,dxp);
   const seated=n.type==='delver';
@@ -898,18 +1204,21 @@ function buildNpc(n,t,ex,ey,ez,dtR){
     }else n.yaw=n.type==='keeper'&&F.safe?Math.atan2(F.safe.z-n.z,F.safe.x-n.x):toP;
   }
   const wrap=a=>{while(a>Math.PI)a-=Math.PI*2;while(a<-Math.PI)a+=Math.PI*2;return a};
+  if(n.type==='keeper'&&dist<30)keeperWarm();
   const talking=talk&&talk.npc===n;
   let diff=wrap(toP-n.yaw);
-  if(!seated&&dist<5&&(Math.abs(diff)>0.45||talking)){const st=Math.sign(diff)*Math.min(Math.abs(diff),2.6*dtR);n.yaw+=st;diff-=st}
-  const lim=seated?1.25:1.0,wantY=dist<6?clamp(diff,-lim,lim):Math.sin(t*0.4+n.ph)*0.35;
-  const headY0=seated?0.62:0.84,wantP=dist<6?clamp(Math.atan2(ey-headY0,Math.max(dist,0.3)),-0.45,0.4):0;
+  if(!seated&&!n.lock&&dist<5&&(Math.abs(diff)>0.45||talking)){const st=Math.sign(diff)*Math.min(Math.abs(diff),2.6*dtR);n.yaw+=st;diff-=st}
+  const lim=seated?1.25:1.0,wantY=n.lockHead?0:dist<6?clamp(diff,-lim,lim):Math.sin(t*0.4+n.ph)*0.35;
+  const headY0=seated?0.62:n.type==='keeper'?0.968*(KEEPER.proportions.height||1):0.84,wantP=dist<6?clamp(Math.atan2(ey-headY0,Math.max(dist,0.3)),-0.45,0.4):0;
   const k=Math.min(1,dtR*6);n.hy+=(wantY-n.hy)*k;n.hp+=(wantP-n.hp)*k;
+  if(n.pose){n.hy=n.pose[0];n.hp=n.pose[1]}
   const ph=n.ph,br=Math.sin(t*1.7+ph),breath=br*0.004;
-  const blink=((t*0.23+ph)%1)<0.035?0.12:1;
+  const blink=STUDIO&&STUDIO.blink!=null?STUDIO.blink:STUDIO&&STUDIO.open?1:((t*0.23+ph)%1)<0.035?0.12:1;
   const nod=talking?Math.sin(t*5.5)*0.05:0,jaw=talking?Math.max(0,Math.sin(t*9))*0.006:0;
   const B={p:[n.x+(n.ox||0),0,n.z+(n.oz||0)],R:rYaw(n.yaw)};
   const out={top:1,lantern:null};
-  if(n.type==='keeper'){
+  if(n.type==='keeper'&&!NPC_CLASSIC&&dist<14&&keeperReady())buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,STUDIO&&STUDIO.lod!=null?STUDIO.lod:Q>=1?(dist<6?0:dist<9.5?1:2):(dist<8?1:2)); // near / mid / far; low quality never uses the near LOD
+  else if(n.type==='keeper'){
     const robe=[0.36,0.1,0.07,2],robeD=[0.24,0.07,0.06,2],gold=[0.8,0.58,0.18,2],skin=[0.8,0.6,0.47,1],white=[0.9,0.9,0.86,5],wood=[0.3,0.2,0.12,6];
     seg(B,[0,0,0],[0,0.05,0],0.178,0.172,gold);
     seg(B,[0,0.05,0],[0,0.5,0],0.172,0.092,robe);
@@ -1664,8 +1973,10 @@ function los(x0,z0,x1,z1){
 function loadFloor(depth,look){
   R.depth=depth;
   if(depth>deepest&&!(URL_DEPTH&&depth===R.startDepth)){deepest=depth;store.set('deepest',deepest)}
-  R.xray=0;R.guide=0;GD.have=false;GD.key='';F=genFloor(R.seed,depth,look);panelLvl=1;P.grab=null;if(typeof MIM!=='undefined')mimicReset();
-  buildMesh(F);buildStatic(F);buildSdf(F);sweepWorld();
+  const nextFloor=genFloor(R.seed,depth,look);
+  if(F?.npcs)for(const npc of F.npcs)disposeGpuRig(npc);
+  R.xray=0;R.guide=0;GD.have=false;GD.key='';F=nextFloor;panelLvl=1;P.grab=null;if(typeof MIM!=='undefined')mimicReset();
+  buildMesh(F);buildStatic(F);buildSdf(F);sweepWorld();if(F.npcs&&F.npcs.some(q=>q.type==='keeper'))keeperWarm();
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
   P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;P.inSafe=false;nearNpc=null;
   sealMsgT=0;doorMsgT=0;
@@ -2234,7 +2545,7 @@ function buildPlayer(p,t,rev,et){
   rev=rev||0;et=et||0;
   const c=p.col,cloak=[c[0]*0.72,c[1]*0.72,c[2]*0.72,2],cloakD=[c[0]*0.42,c[1]*0.42,c[2]*0.42,2];
   const leg=[0.22,0.17,0.13,2],boot=[0.3,0.19,0.1,3],belt=[0.3,0.17,0.08,3],skin=[0.86,0.65,0.5,1],wood=[0.36,0.23,0.12,6],rag=[0.13,0.1,0.08,2];
-  const S=0.94,v=(x,y,z)=>[x*S,y*S,z*S],ph=hashStr(p.id)%100;
+  const S=AV,v=(x,y,z)=>[x*S,y*S,z*S],ph=hashStr(p.id)%100;
   const mv=Math.min(1,p.spd/2.7),w=p.walk,sw=Math.sin(w)*mv,bob=Math.abs(Math.cos(w))*0.018*mv,breath=Math.sin(t*1.7+ph)*0.004;
   const B={p:[p.rx,Math.max(0,p.ry),p.rz],R:rYaw(p.ryaw)};
   for(const z of[-1,1]){
@@ -2315,7 +2626,7 @@ function mpTags(){
   {let el=tagEls.get('~m');if(!el){el=document.createElement('div');el.className='ptag';document.body.appendChild(el);tagEls.set('~m',el)}
     const nm=MP.on&&state==='play'?mimicTagName():null;let vis=!!nm;
     if(vis){const dd=Math.hypot(MIM.rx-P.x,MIM.rz-P.z);if(dd>14||(dd>1.2&&!los(P.x,P.z,MIM.rx,MIM.rz)))vis=false}
-    if(vis){tagV.set(MIM.rx,1.08,MIM.rz).project(camera);if(tagV.z>1||Math.abs(tagV.x)>1.1||Math.abs(tagV.y)>1.1)vis=false}
+    if(vis){tagV.set(MIM.rx,1.08*AV/0.94,MIM.rz).project(camera);if(tagV.z>1||Math.abs(tagV.x)>1.1||Math.abs(tagV.y)>1.1)vis=false}
     if(!vis)el.style.display='none';
     else{el.style.display='';const lb=(MIM.voice&&!MIM.voice.done?'🔊 ':'')+nm;if(el.textContent!==lb)el.textContent=lb;
       const as=MP.peers.get(MIM.as);el.style.color=as?as.hex:toHex(MP_COLS[hashStr(MIM.as||'')%MP_COLS.length]);
@@ -2326,7 +2637,7 @@ function mpTags(){
     if(!el){el=document.createElement('div');el.className='ptag';document.body.appendChild(el);tagEls.set(p.id,el)}
     let vis=show&&mpDrawn(p);
     if(vis){const dd=Math.hypot(p.rx-P.x,p.rz-P.z);if(dd>14||(dd>1.2&&!los(P.x,P.z,p.rx,p.rz)))vis=false}
-    if(vis){tagV.set(p.rx,1.08+p.ry,p.rz).project(camera);if(tagV.z>1||Math.abs(tagV.x)>1.1||Math.abs(tagV.y)>1.1)vis=false}
+    if(vis){tagV.set(p.rx,1.08*AV/0.94+p.ry,p.rz).project(camera);if(tagV.z>1||Math.abs(tagV.x)>1.1||Math.abs(tagV.y)>1.1)vis=false}
     if(!vis){if(el.style.display!=='none')el.style.display='none';continue}
     el.style.display='';
     const label=(VOX.speaking(p.id)?'🔊 ':'')+p.name;
@@ -3351,7 +3662,7 @@ function buildTpose(f,t){
   // drawn 'fullbright', evenly lit from nowhere, like a model whose lighting never loaded
   const c=f.col,k=f.kind==='pale'?0.32:0.4,FB=11,cloak=[c[0]*k,c[1]*k,c[2]*k,FB],cloakD=[c[0]*k*0.6,c[1]*k*0.6,c[2]*k*0.6,FB];
   const pale=f.kind==='pale',leg=pale?cloakD:[0.13,0.1,0.08,FB],boot=pale?cloakD:[0.16,0.1,0.05,FB],skin=pale?[0.36,0.35,0.33,FB]:[0.42,0.32,0.25,FB];
-  const S=0.94,v=(x,y,z)=>[x*S,y*S,z*S];
+  const S=AV,v=(x,y,z)=>[x*S,y*S,z*S];
   const B={p:[f.x,0,f.z],R:rYaw(f.yaw)};
   for(const z of[-1,1]){
     const hip=v(0,0.45,z*0.052),knee=v(0.012,0.25,z*0.058),ank=v(0,0.05,z*0.062);
@@ -3628,8 +3939,9 @@ function render(t){
   if(!F){renderer.clear();return}
   UT.value=t;
   const title=state==='title';
-  const yaw=title?titleYaw:P.yaw, pitch=title?0:P.pitch;
-  const ex=P.x, ez=P.z, ey=EYE+(title?0:P.y+bobY(P,1));
+  const SC=STUDIO&&STUDIO.cam;
+  const yaw=SC?SC.yaw:title?titleYaw:P.yaw, pitch=SC?SC.pitch:title?0:P.pitch;
+  const ex=SC?SC.x:P.x, ez=SC?SC.z:P.z, ey=SC?SC.y:Math.min(CAM_TOP,EYE+(title?0:P.y+bobY(P,1)));
   {const cp=Math.cos(pitch);camera.position.set(ex,ey,ez);camera.lookAt(ex+cp*Math.cos(yaw),ey+Math.sin(pitch),ez+cp*Math.sin(yaw))}
   if(pkShake>0){const k=0.05*pkShake;camera.position.x+=(Math.random()-0.5)*k;camera.position.y+=(Math.random()-0.5)*k;camera.position.z+=(Math.random()-0.5)*k;pkShake=Math.max(0,pkShake-0.03)}
   if(P.grab){const k=0.012+0.02*Math.min(1,P.grab.t);camera.position.x+=(Math.random()-0.5)*k;camera.position.y+=(Math.random()-0.5)*k;camera.position.z+=(Math.random()-0.5)*k}
@@ -3698,7 +4010,7 @@ function render(t){
   // traps and crystals are posed into the same buffer as the characters
   const flat={p:[0,0,0],R:ID3,lo:ZERO3};
   sprList.length=0;
-  CH.n=0;
+  CH.n=0;for(const r of GPU_RIGS)r.hide();NPC_T.tris=0;NPC_T.draws=0;
   for(const tr of F.traps){
     if((tr.x-ex)**2+(tr.z-ez)**2>16*16)continue;
     const h=0.04+trapExt(tr,R.time)*0.44;
@@ -3714,7 +4026,7 @@ function render(t){
   for(const n of F.npcs){
     const d2=(n.x-ex)**2+(n.z-ez)**2;if(d2>16*16)continue;
     if((n.x-ex)*fwx+(n.z-ez)*fwz<-1.5)continue;
-    const o=buildNpc(n,t,ex,ey,ez,dtR);
+    const tN=performance.now();const o=buildNpc(n,t,ex,ey,ez,dtR);NPC_T.ms+=performance.now()-tN;NPC_T.n++;
     if(o.lantern){const q=o.lantern,fl=1+Math.sin(t*10+n.ph)*0.1;spr(q[0],q[1]+0.012,q[2],0.045*fl,0.07*fl,11,1.0,0.6,0.2,1,1);spr(q[0],q[1],q[2],0.5,0.5,7,1.0,0.5,0.15,0.3,1)}
     if(o.lamp){const q=o.lamp;spr(q[0],q[1],q[2],0.22,0.22,7,1.0,0.75,0.3,0.4,1)}
     if(!n.used&&n.type!=='keeper'){const y=o.top+0.08+Math.sin(t*3+n.ph)*0.03,X=n.x+(n.ox||0),Z=n.z+(n.oz||0);spr(X,y,Z,0.08,0.08,7,1.0,0.85,0.4,1,1);spr(X,y,Z,0.32,0.32,7,1.0,0.7,0.2,0.3,1)}
@@ -3922,7 +4234,7 @@ function step(now){
   const live=()=>state==='play'||(MP.on&&(state==='pause'||state==='talk'||state==='room'));
   // a fake hang: nothing moves for you, though the room carries on
   if(GL.frz>0){GL.frz-=raw;if(GL.frz<=0)glUnfreeze();mpTick(raw);return raw}
-  if(live()){
+  if(live()&&!STUDIO){
     // a host whose tab is in the background still runs the creatures, in catch-up steps
     if(raw>0.1&&MP.host&&document.hidden){let left=Math.min(raw,1);while(left>0&&live()){const s=Math.min(left,0.05);update(s);left-=s}}
     else update(dt);
@@ -3934,7 +4246,7 @@ function step(now){
 function frame(now){
   const raw=step(now);
   mpVoiceTick(Math.min(raw,0.1));chatTick();
-  if(state==='play')adapt(raw);
+  if(state==='play'&&!STUDIO)adapt(raw);
   setHum();updateAmbience(Math.min(raw,0.1),{F,state,hold:GL.frz>0||!!GL.fall||P.away});
   if(GL.frz<=0){
     if(!window.__norender){if((state==='room'||ROOMS.watching)&&ROOMS.active){resize();renderer.toneMappingExposure=1;ROOMS.render()}else render(now/1000)}
@@ -3947,5 +4259,51 @@ setInterval(()=>{if(MP.host&&document.hidden&&performance.now()-last>200)step(pe
 // a backdrop maze behind the title screen
 R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();achLine();
 {const rc=cleanCode(new URLSearchParams(location.search).get('room'));if(rc)mpPrepareJoin(rc)}
-window.__game={guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+// NPC photo studio for tools/npc_shot.mjs. Moves (or spawns) one NPC into a straight corridor far from
+// braziers, sconces and glowing items, freezes gameplay, and fixes the camera. Lit only by the player's
+// torch and the floor's ambient light, which is what the player sees in most of the maze.
+// o: {type:'keeper'|'map'|'delver', seed, depth, dist (m, camera to NPC), turn (deg, NPC yaw away from camera),
+//     target [along, side] (look at this corridor point instead of straight along it), camY (camera height, default the game's eye height), aimY (height to look at), headLock, open (no blink), lat (sideways shift of the camera, m)}
+function studio(o){
+  o=Object.assign({type:'keeper',seed:'STUDIO1',depth:2,dist:1.1,turn:0,camY:EYE,aimY:null,headLock:false,open:true},o||{});
+  const key=o.seed+'/'+o.depth;
+  if(!STUDIO||STUDIO.key!==key||state!=='play'){STUDIO=null;startRun(o.seed,o.depth,true);
+    F.shades.length=0;for(const id of['title','pause','dead','talk'])$(id).classList.add('hidden');STUDIO={key,spot:null}}
+  rs=1;rsCeil=1;
+  if(!STUDIO.spot){ // a straight run of open floor, dim and empty
+    const W=F.W,g=F.g,free=(x,y)=>x>0&&y>0&&x<W-1&&y<F.H-1&&g[y*W+x]===0&&!F.safeMask[y*W+x]&&!F.traps.some(q=>q.tx===x&&q.ty===y)&&!F.props.some(q=>Math.floor(q.x)===x&&Math.floor(q.z)===y)&&!F.items.some(q=>!q.got&&Math.floor(q.x)===x&&Math.floor(q.z)===y);
+    const far=(x,z)=>F.sconces.every(q=>Math.hypot(q.lx-x,q.lz-z)>4.5)&&(!F.safe||Math.hypot(F.safe.x-x,F.safe.z-z)>9)&&Math.hypot(F.exit.x-x,F.exit.z-z)>6&&F.items.every(q=>q.got||q.type==='chest'||Math.hypot(q.x-x,q.z-z)>3.5);
+    let best=null,bs=-1;
+    for(let y=1;y<F.H-1;y++)for(let x=1;x<W-1;x++)for(const d of DIRS){
+      let ok=true;for(let k=-1;k<=4&&ok;k++)ok=free(x+d[0]*k,y+d[1]*k);if(!ok)continue;
+      const X=x+0.5,Z=y+0.5,sc=Math.min(9,...F.sconces.map(q=>Math.hypot(q.lx-X,q.lz-Z)))+Math.min(9,F.safe?Math.hypot(F.safe.x-X,F.safe.z-Z)-4:9)+(far(X,Z)?20:0);
+      if(sc>bs){bs=sc;best={x:X,z:Z,dx:d[0],dz:d[1]}}}
+    if(!best)throw new Error('studio: no quiet corridor on '+key+', try another seed');
+    STUDIO.spot=best;
+  }
+  const S=STUDIO.spot;
+  let n=F.npcs.find(q=>q.type===o.type);
+  if(!n){n={type:o.type,ph:1.3,used:true,gift:0,tip:0};F.npcs.push(n)}
+  for(const q of F.npcs)if(q!==n){q.x=-50;q.z=-50}
+  n.x=S.x;n.z=S.z;n.ox=0;n.oz=0;n.lock=true;n.lockHead=!!o.headLock;n.hy=0;n.hp=0;n.pose=o.pose||null; // pose [yaw,pitch]: fixed head angles for checking extremes
+  n.yaw=Math.atan2(S.dz,S.dx)+o.turn*Math.PI/180;
+  const lat=o.lat||0,cx=S.x+S.dx*o.dist-S.dz*lat,cz=S.z+S.dz*o.dist+S.dx*lat,aim=o.level?o.camY:o.aimY==null?(o.type==='delver'?0.55:0.8):o.aimY;
+  STUDIO.cam={x:cx,z:cz,y:o.camY,yaw:Math.atan2(-S.dz,-S.dx),pitch:Math.atan2(aim-o.camY,o.dist)};
+  if(o.target){ // look at a point given in corridor coordinates [along, side] (aimY = its height), e.g. the staff hand
+    const tx=S.x+S.dx*o.target[0]-S.dz*o.target[1],tz=S.z+S.dz*o.target[0]+S.dx*o.target[1];
+    STUDIO.cam.yaw=Math.atan2(tz-cz,tx-cx);STUDIO.cam.pitch=Math.atan2(aim-o.camY,Math.hypot(tx-cx,tz-cz))}
+  STUDIO.open=o.open;STUDIO.blink=o.blink;STUDIO.lod=o.lod;P.x=cx;P.z=cz;
+  return {spot:S,cam:STUDIO.cam,Q};
+}
+// The sculpted Keeper: baked lazily (keeperWarm, called when a floor with the Keeper loads and when the player is within 30 m) in idle slices; until it is done the
+// classic Keeper is drawn. A finished bake is stored in IndexedDB (src/npc_cache.js, keyed by recipe id + kit source hash) and primed from there on later loads.
+function keeperSave(){if(KEEPER_SAVED||!bakeIsDone(KEEPER))return;KEEPER_SAVED=true;if(bakeRecipe(KEEPER).cached)return;const pl=bakeExport(KEEPER);if(pl)saveBake(KEEPER_CACHE_KEY,pl)}
+function keeperWarm(){if(NPC_CLASSIC||KEEPER_WARM)return;KEEPER_WARM=true;(KEEPER_LOAD||Promise.resolve()).then(()=>{if(bakeIsDone(KEEPER))return;try{bakeRecipeIdle(KEEPER,()=>keeperSave())}catch(e){console.error(e)}})}
+function keeperReady(){if(bakeIsDone(KEEPER))return true;if(STUDIO||PROBE_SYNC){bakeRecipe(KEEPER);keeperSave();return true}keeperWarm();return false}
+// grip locking check for tools/npc_grip.mjs: builds the Keeper at the given times (optionally talking) and reports where the hand holds the rod
+function gripProbe(ts,talking){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='keeper'),save=talk,res=[];if(talking)talk={npc:n};
+  for(const t of ts){buildNpc(n,t,P.x,0.7,P.z,0.016);res.push({t,...GRIP_DBG})}talk=save;return res}
+function benchNpc(iters){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='keeper');const e=[P.x,0.7,P.z];buildNpc(n,1,e[0],e[1],e[2],0.016);let t0=performance.now();
+  for(let i=0;i<iters;i++){CH.n=0;buildNpc(n,1+i*0.016,e[0],e[1],e[2],0.016)}return (performance.now()-t0)/iters}
+window.__game={keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);
