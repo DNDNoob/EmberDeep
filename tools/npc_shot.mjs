@@ -53,9 +53,11 @@ const VIEWS = {
   chestclose:{dist: 0.34, turn: 25, aimY: 0.86, camY: 0.88},
   robe:     {dist: 0.8,  turn: 25,  aimY: 0.5,  camY: 0.5},
   hem:      {dist: 0.6,  turn: 30,  aimY: 0.12, camY: 0.2},
-  gripF:    {dist: 0.38, turn: 25,  aimY: 0.58, camY: 0.62, lat: 0.15},
-  gripB:    {dist: 0.3,  turn: 160, aimY: 0.6,  camY: 0.62, lat: -0.17},
-  gripT:    {dist: 0.12, turn: 0,   aimY: 0.6,  camY: 0.9,  lat: 0.17},
+  // the staff hand (hand: camera at azimuth az / elevation el / radius r round it; az 0 = camera on the corridor side the NPC looks to). F: from the front, B: from outside, behind the hand (turn -90 shows the NPC's staff side), T: from above, P: from below
+  gripF:    {turn: 20,  hand: {az: 0, el: 8, r: 0.32}},
+  gripB:    {turn: -90, hand: {az: 0, el: 8, r: 0.3}},
+  gripT:    {turn: 20,  hand: {az: 0, el: 72, r: 0.24}},
+  gripP:    {turn: 20,  hand: {az: 0, el: -60, r: 0.26}},
   gripclose:{dist: 0.28, turn: 0,   aimY: 0.58, camY: 0.6},
   restclose:{dist: 0.28, turn: 0,   aimY: 0.48, camY: 0.5},
   cam:      {dist: 1.3,  turn: 20,  level: true},   // the player's own camera height (camY defaults to EYE) looking straight ahead
@@ -76,8 +78,14 @@ await pg.goto(pathToFileURL(resolve(A.file)).href + (A.query ? '?' + A.query : '
 await pg.waitForFunction(() => window.__game && window.__game.studio, null, {timeout: 120000});
 if (!flags.has('hud')) await pg.addStyleTag({content: '#hud,#map,#prompt,#toast,#chat,#touch,#fps,#roomHud{display:none!important}'});
 const frames = n => pg.evaluate(n => new Promise(r => { let k = 0; const f = () => (++k >= n ? r() : requestAnimationFrame(f)); requestAnimationFrame(f); }), n);
+// the Keeper's staff hand in the corridor frame (B: x forward, z to the staff side; grip anchor (0.225, 0.15, 0.18) x figure height 0.93)
+function handView(o) {
+  const t = o.turn * Math.PI / 180, S = 0.93, hx = 0.225 * S, hz = 0.18 * S, hy = 0.67 * S, h = o.hand, az = h.az * Math.PI / 180, el = h.el * Math.PI / 180;
+  const along = hx * Math.cos(t) - hz * Math.sin(t), side = hx * Math.sin(t) + hz * Math.cos(t);
+  return {...o, hand: undefined, dist: along + h.r * Math.cos(el) * Math.cos(az), lat: side + h.r * Math.cos(el) * Math.sin(az), camY: hy + h.r * Math.sin(el), aimY: hy, target: [along, side]};
+}
 for (const v of A.views.split(',')) {
-  const o = VIEWS[v];
+  const o = VIEWS[v] && VIEWS[v].hand ? handView(VIEWS[v]) : VIEWS[v];
   if (!o) { console.log('unknown view', v); continue; }
   const t0 = Date.now();
   const r = await pg.evaluate(o => window.__game.studio(o), {type: A.npc, seed: A.seed, depth: +A.depth, ...o, ...(A.lod != null ? {lod: +A.lod} : {}), ...(A.blink != null ? {blink: +A.blink} : {}), ...(A.pose ? {pose: A.pose.split(',').map(Number), headLock: true} : {})});

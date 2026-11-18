@@ -665,6 +665,14 @@ export function dress(B, list) {
       const ang = Math.atan2(rz - 0.3 * ry * a.F[2], -ry), wv = 3 * fbm(x * 9, y * 9, z * 9, 2);   // angle round the arm measured from straight down
       const toEnd = (a.end[0] - x) * a.F[0] + (a.end[1] - y) * a.F[1] + (a.end[2] - z) * a.F[2];
       d += nf * (0.0022 + 0.09 * (rw - a.r[2] - e)) * smoothstep(0.03, 0.05, toEnd) * (Math.pow(0.5 + 0.5 * Math.cos(5 * ang + wv + 10 * t), 0.8) * 2 - 1) * smoothstep(0.02, 0.5, tn) * (0.3 + 0.7 * tn) * (0.3 + 0.7 * smoothstep(-0.3, 0.9, under));
+      // upper sleeve: looser, non-cylindrical volume (cloth hangs off the back/underside) and diagonal drag folds running shoulder -> elbow
+      const LU = Math.hypot(a.S[0] - a.E[0], a.S[1] - a.E[1], a.S[2] - a.E[2]), us = cl(-t / LU, 0, 1), uw = smoothstep(0.05, 0.25, us) * (1 - smoothstep(0.85, 1.0, us));
+      if (t < 0 && uw > 0) {
+        const sag = smoothstep(-0.2, 0.9, under) * (0.6 + 0.4 * Math.sin(2 * ang + 1.3));
+        d -= nf * 0.007 * uw * sag * (0.5 + 0.5 * Math.sin(3.1 * us * Math.PI));
+        const dg = ang * 3 - us * 9 + 2.2 * fbm(x * 7, y * 7, z * 7, 2);                                       // helical phase: folds slope from the shoulder down to the elbow
+        d += nf * 0.0042 * uw * (Math.pow(0.5 + 0.5 * Math.cos(dg), 1.4) * 2 - 1) * (0.5 + 0.5 * smoothstep(-0.5, 0.8, under));
+      }
       return d;
     };
     // the mouth: a clean flat cut across the tube (along the last segment's axis Fm, which tilts down with the hang) and a hollow with a

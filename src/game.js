@@ -1062,9 +1062,9 @@ function buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,lod){
   ball(fr.U,q3(...A.gem),0.012*S,[0.7,0.28,0.08,7],true); // belt gem: a faint warm glint, no light of its own
   const sp=fpt(fr.grip,[A.gripAxis[0]*S,A.gripAxis[1]*S,(A.gripAxis[2]||0)*S]),SB={p:[sp[0],0,sp[2]],R:B.R};
   const sg=(a,b,r0,r1,col)=>seg(SB,q3(...a),q3(...b),r0*S,r1*S,col),sb=(c,r,col)=>ball(SB,q3(...c),typeof r==='number'?r*S:r.map(v=>v*S),col,true),sl=(c,z,col)=>slab(SB,q3(...c),q3(...z),col);
-  sg([0,0,0],[0.003,0.34,-0.002],0.0105,0.0098,wood);sg([0.003,0.34,-0.002],[-0.002,0.68,0.003],0.0098,0.009,wood);sg([-0.002,0.68,0.003],[0,1.0,0],0.009,0.0086,wood);   // staff radius = KEEPER grip hand gripR
-  sb([0.003,0.34,-0.002],[0.0125,0.02,0.0125],wood);sb([-0.002,0.68,0.003],[0.0112,0.018,0.0112],wood);
-  sg([0,1.0,0],[0.07,1.06,0],0.011,0.009,wood);
+  sg([0,0,0],[0.003,0.34,-0.002],0.0092,0.0086,wood);sg([0.003,0.34,-0.002],[-0.002,0.68,0.003],0.0086,0.0079,wood);sg([-0.002,0.68,0.003],[0,1.0,0],0.0079,0.0075,wood);   // staff radius = KEEPER grip hand gripR
+  sb([0.003,0.34,-0.002],[0.011,0.02,0.011],wood);sb([-0.002,0.68,0.003],[0.0098,0.018,0.0098],wood);
+  sg([0,1.0,0],[0.07,1.06,0],0.0095,0.008,wood);
   sg([0.07,1.06,0],[0.07,1.0,0],0.004,0.004,[0.15,0.14,0.13,4]);
   sl([0.07,0.955,0],[0.05,0.012,0.05],[0.16,0.15,0.14,4]);sl([0.07,0.885,0],[0.05,0.012,0.05],[0.16,0.15,0.14,4]);
   for(const q of[[-1,-1],[1,-1],[-1,1],[1,1]])sl([0.07+q[0]*0.021,0.92,q[1]*0.021],[0.006,0.07,0.006],[0.16,0.15,0.14,4]);
@@ -3791,7 +3791,7 @@ R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();
 // braziers, sconces and glowing items, freezes gameplay, and fixes the camera. Lit only by the player's
 // torch and the floor's ambient light, which is what the player sees in most of the maze.
 // o: {type:'keeper'|'map'|'delver', seed, depth, dist (m, camera to NPC), turn (deg, NPC yaw away from camera),
-//     camY (camera height, default the game's eye height), aimY (height to look at), headLock, open (no blink), lat (sideways shift of the camera, m)}
+//     target [along, side] (look at this corridor point instead of straight along it), camY (camera height, default the game's eye height), aimY (height to look at), headLock, open (no blink), lat (sideways shift of the camera, m)}
 function studio(o){
   o=Object.assign({type:'keeper',seed:'STUDIO1',depth:2,dist:1.1,turn:0,camY:EYE,aimY:null,headLock:false,open:true},o||{});
   const key=o.seed+'/'+o.depth;
@@ -3817,6 +3817,9 @@ function studio(o){
   n.yaw=Math.atan2(S.dz,S.dx)+o.turn*Math.PI/180;
   const lat=o.lat||0,cx=S.x+S.dx*o.dist-S.dz*lat,cz=S.z+S.dz*o.dist+S.dx*lat,aim=o.level?o.camY:o.aimY==null?(o.type==='delver'?0.55:0.8):o.aimY;
   STUDIO.cam={x:cx,z:cz,y:o.camY,yaw:Math.atan2(-S.dz,-S.dx),pitch:Math.atan2(aim-o.camY,o.dist)};
+  if(o.target){ // look at a point given in corridor coordinates [along, side] (aimY = its height), e.g. the staff hand
+    const tx=S.x+S.dx*o.target[0]-S.dz*o.target[1],tz=S.z+S.dz*o.target[0]+S.dx*o.target[1];
+    STUDIO.cam.yaw=Math.atan2(tz-cz,tx-cx);STUDIO.cam.pitch=Math.atan2(aim-o.camY,Math.hypot(tx-cx,tz-cz))}
   STUDIO.open=o.open;STUDIO.blink=o.blink;STUDIO.lod=o.lod;P.x=cx;P.z=cz;
   return {spot:S,cam:STUDIO.cam,Q};
 }

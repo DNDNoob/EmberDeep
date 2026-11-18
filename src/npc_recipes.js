@@ -94,7 +94,7 @@ export const KEEPER = {
     const nxy = [this.rig.neck[0] + this.rig.drape.push, this.rig.neck[1], this.rig.neck[2]];
     const torsoSolidAll = (x, y, z) => Math.min(D.torsoSolid(x, y, z), D.stoleSolid(x, y, z));
     const robeInBeard = (x, y, z) => torsoSolidAll(nxy[0] + hs * (cD * x - sD * y), nxy[1] + hs * (sD * x + cD * y), nxy[2] + hs * z) / hs;
-    const grip = K.hand({pose: 'grip', side: -1, gripR: 0.0105, age: 1.2, tris: [1700, 700, 240], cell: 0.0017});
+    const grip = K.hand({pose: 'grip', side: -1, gripR: this.gripR ?? 0.0092, age: 1.2, tris: [1700, 700, 240], cell: 0.0017});
     const rest = K.hand({pose: 'rest', side: 1, age: 1.2, curl: 1.15, tris: [1700, 700, 240], cell: 0.0017});
     const sleeveCull = sp => { const c = sp.cull; sp.cull = (x, y, z) => (c && c(x, y, z)) || x < -0.032; return sp; };
     // pinned-on props (frame U): brooch on the stole's lappet, pouch and key ring on the belt. up = world up in U coordinates (U leans by rig.lean).
