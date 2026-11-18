@@ -59,6 +59,8 @@ const VIEWS = {
   gripF:    {turn: 20,  hand: {az: 0, el: 8, r: 0.32}},
   gripB:    {turn: -90, hand: {az: 0, el: 8, r: 0.3}},
   gripT:    {turn: 20,  hand: {az: 0, el: 72, r: 0.24}},
+  sleeve:   {turn: 25,  hand: {az: 32, el: 8, r: 0.3}},    // the staff arm's hanging sleeve and cuff from the front-left
+  sleeveS:  {turn: -50, hand: {az: 10, el: 4, r: 0.42}},   // the same from the staff side
   gripP:    {turn: 20,  hand: {az: 0, el: -60, r: 0.26}},
   gripclose:{dist: 0.28, turn: 0,   aimY: 0.58, camY: 0.6},
   restclose:{dist: 0.28, turn: 0,   aimY: 0.48, camY: 0.5},

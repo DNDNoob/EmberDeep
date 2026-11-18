@@ -13,8 +13,10 @@ Files:
 | `tools/npc_stats.mjs` | Bake a recipe in Node; prints triangles per part and LOD, and bake time |
 | `tools/npc_measure.mjs` | Head height, head width, crown height and heads-tall ratio of a recipe |
 | `tools/npc_mesh_check.mjs` | Scans baked meshes for NaN, zero normals and degenerate triangles (what makes white squares on real GPUs) |
-| `tools/npc_view.mjs` | Software rasteriser, no browser: flat-shaded baked parts from any angle in ~1 s (iterate on hands, sleeves, ears with it, then check in the game) |
-| `tools/npc_shot.mjs` | Headless screenshots of one NPC at standard angles under the same light |
+| `tools/npc_view.mjs` | Software rasteriser, no browser: flat-shaded baked parts from any angle in ~1 s (iterate on hands, sleeves, ears with it, then check in the game). `RECIPE=file.mjs` bakes a reduced recipe (head + the one part you work on) in a second or two |
+| `tools/npc_shot.mjs` | Headless screenshots of one NPC at standard angles under the same light (views include `beard`, `beard34`, `sleeve`, `sleeveS`) |
+| `src/npc_hair.js` | Hair locks: `lockSet`, `traceSurface`, `lockFromTrace`, `lockFromPath`, `tipWisps` (see Keeper v10) |
+| `tools/npc_grip.mjs` | Checks that the staff hand stays locked on the rod over the animation (idle and talking); exits 1 above 1 mm |
 
 ## Inspect in Blender
 
@@ -264,3 +266,46 @@ All procedural: geometry for what changes the silhouette, shader patterns for th
 - **Stole / mantle**: `garments: [{type: 'stole', gap, thick, yoke, zc, w, y0, border, motif, lower, wear, tris, cell}]` builds a separate shell (part `stole`) at `gap` above the robe and sleeve caps: a yoke over the shoulders (front dips into a V, lower at the back and over the arms) and two lappets of width `w` at `±zc` ending at `y0`. It follows `min(robe, sleeves, lower)` (`lower` = the skirt's smooth field in U coordinates, for lappets that hang below the waist), is restricted to where the torso (not a forearm) is the nearest body, leaves the neckline open wider than the collar, and carries its border as band coordinates (`v` = distance to the free edge over `border`). `dress()` also returns `stoleSolid` (put it in the beard's `chest` field so the beard rests on the stole) and `stoleOuter` (a field whose zero is the outer surface, to pin things on). Pitfall: do not simplify a patterned band into huge triangles with a *clamped* v; the pattern then smears over whole triangles.
 - **Props on a surface**: `surfacePoint(field, origin, dir)` marches to a zero crossing and returns `{P, n}`; `brooch(P, n, up, {r})` (round clasp with a raised rim, boss paint 1 = `col2` garnet and six beads), `pouch(P, n, up, surf, {size})` (leather sack, gathered neck with drawstring, scalloped flap, back clipped flat to `surf`), `keyRing(P, n, up, surf, {size})` (ring with three keys fanned out, interlocked bows, notched bits). `up` is world up in the part's frame (`[sin(lean), cos(lean), 0]` for U); the frame at P tilts `up` into the surface so hanging things follow the skirt's slope. All are rigid parts on frame U, so they breathe and lean with the torso.
 - **Keeper layout**: gold hem with flames (25 cells), gold cuffs with flames (8 cells), gold sash with a Greek key (10 cells), indigo stole with a gold key border and a brass brooch with a garnet boss on the left lappet, leather pouch on the staff-side hip, three brass keys on a ring on the front hip.
+
+
+## Keeper v10: hair as locks, wizard sleeves, locked grip
+
+### Hair (`src/npc_hair.js`, reusable)
+
+Hair is no longer one smooth slab. Beard, moustache, brows (and the fringe cap's shading) are built from **locks**: tapered tubes (round cones along a polyline) that overlap like layered tufts, follow S-shaped paths along the growth direction, and thin to a point at the tip. Geometry carries the clumps (3 to 10 mm), the shader carries the strands (0.5 to 2 mm).
+
+Geometry (`npc_hair.js`):
+
+| Function | What it does |
+|---|---|
+| `lockSet(list, {k, pad, ref})` | Union of locks `{pts, rad, id}`; per-lock padded bounding boxes keep `eval(x,y,z)` cheap (about 100 locks cost little more than one SDF). `info(x,y,z,o)` gives the nearest lock's `[u along, v across, id]`; `rootT` 0 root .. 1 tip (for paint) |
+| `traceSurface(field, [[y,z]...])` | Marches along -X to find the surface of a field at each (y, z) and returns points and normals; each sample brackets the previous x, so a path costs about 12 evaluations per point |
+| `lockFromTrace(trace, {R, off, root, taper, tip, sink})` | Lock lying on that surface: `off` pushes it outwards (overlay layers), the root is buried (`sink`) so nothing stubby sticks out of the skin, radius profile `lockRadius` (thin root, full third, long taper to `tip`) |
+| `lockFromPath(fn, {n, R, tip})` | Lock along a free curve `fn(s)`, for moustache and brows |
+| `tipWisps(lock, rng, {s0, count, spread, extend})` | Thin locks leaving the parent near its end and fanning out sideways: the separated, wispy tips |
+| `rng(seed)` | Small deterministic generator, so a recipe bakes identically every time |
+
+How the beard is built (`K.beard`): the old smooth envelope (broad at the jaw, taper, chest-aware cut) stays as the inner mass, inset by 3 mm. On its surface lie three layers of locks: a full-length under-layer (14 across the jaw, centre longest, defines the silhouette), shorter overlay tufts that start lower and sit 2 mm proud (their blunt ends step over the layer below), and loose wisps near the edge and tip. Lock positions are given relative to the beard's width at each height (`zeta`), so they converge towards the tip like real hair. The inset fades out on the cheek, so there a thin stubble shell grows out of the skin. Options: `locks`, `tufts`, `wisps`, `inset`, `seed`; `length`, `width`, `thick`, `chest` as before. The moustache fans 7 locks per side out of the philtrum (a gap under the nose, parted in the middle) over the lip corners; the brows are 13 tufts per side that grow up and out at the inner end and out and down at the outer end.
+
+Per-vertex flow coordinates: a part spec may carry `band(x,y,z,o)` (the same `aBand` attribute the embroidery uses). Hair uses `o = [u, v, skinProximity]`: `u` along the growth direction, `v` across it, and 0..1 closeness to the skin. They must be **continuous over the surface** (beard: `u = -y`, `v = z / halfWidth(y) * 0.045`; moustache and brows: rotated `|z|`, `y`). A first attempt took them from the nearest lock, which jumps at every seam between locks; the shader fades strands where the coordinate jumps (`fwidth`), so they vanished almost everywhere.
+
+Shader (`paintedMaterial`, material 14):
+
+- Strands: two layers of value noise stretched along `u` (period 1.7 mm and 0.65 mm across `v`, wandering a little along the length), stretched in contrast (value noise alone is flat), modulate albedo and a procedural bump (`mHairH`). Each layer fades to its mean by cycles per pixel (`fwidth(v) * freq` from 0.25 to 0.75), so nothing shimmers or moires at range.
+- Colour: grey/white strands, occasional dark strands, yellowed strands (`yel`), roots darkened by the paint channel, and a grey-brown stubble tint within 7 mm of the skin (the third band value), which is the root blend on the cheeks and under the lip. Albedo is capped at 0.54 (gamma), so the torch cannot turn it flat white.
+- Highlight: a dim Kajiya-Kay streak across the strands. The flow tangent is rebuilt from the screen derivatives of `u` and `v` (`dP/du`), exposed as `mTan`, and added to `directSpecular` in `RE_Direct_Physical` (`pow(sin, 40) * 0.035`, light colour clamped to 4). The clamp at the end of the fragment shader (3.0 for sculpted materials) is unchanged, so bloom still cannot firefly.
+- `flatten` got an `aoFloor` option and hair parts use `ao: 0.006, aoFloor: 0.6`: deep valleys between locks were black holes at the default 0.25.
+
+LODs: thin tubes cannot be simplified below a floor (every collapse breaks the link condition, so a 4500-triangle beard stalled at 2250). A part spec may therefore carry `lods: [{sdf, cell, tris:[n]}, ...]`: those LODs are meshed from their own field (locks inflated by 1.2 and 4.2 mm, coarser cell) instead of simplifying the previous one. The beard, moustache and brows use it; the clumps are what a viewer sees at range anyway.
+
+Triangle budget: locks need triangles: near beard 3800 (was 1500), moustache 750, brows 450. To stay at about 54k near vertices the hands (1300), ears (650), skirt, head, stole, keys and torso were trimmed.
+
+### Wizard sleeves (`dress()`, sleeve garment)
+
+A sleeve is the smooth union of two shapes: **A** hugs the arm (shoulder cap to wrist, ease 6 mm, so the top of the shoulder and forearm stay close) and **B**, a pouch of cloth that hangs straight down in world space (`up`, pass `UP` = world up in U coordinates) from the mid forearm: its centre line drops by `drop` at the cuff and its radius grows to `pouch`. The cuff opening is the section of A and B, a teardrop with the wrist in its upper part and the cloth edge `drop + pouch` (Keeper: 100 mm and 85 mm) below it, whatever the arm angle. The inside is a hollow whose wall follows the folded outer surface (8 mm), 7 cm deep, painted with the deep colour. The cuff band uses the same field and follows the opening. Options: `pouch`, `drop`, `up`, `ease`, `wristEase`, `hangElbow`, `pouchBlend`, `folds`; the two Keeper sleeves differ (staff arm 50/50 mm, resting arm 43/40 mm). Folds: compression creases at the inner elbow, long drape folds from the forearm top over the pouch (7 around, amplitude growing with the pouch), sagging cloth under the elbow.
+
+The whole sleeve is one rigid mesh, so there is no elbow junction to blend. Arms are not meshed (hands carry a wrist stub that shows inside the cuff).
+
+### Locked grip (`buildKeeperSculpt`)
+
+The staff foot stands on the floor and the staff hand sits at a **fixed point of the figure's base frame** (`U0`, no breathing, no sway), so the hand cannot slide along the rod. The torso still breathes; the arm absorbs it: the sleeve and cuff are drawn in a frame `arm0` = `U` rotated about the shoulder (`anchors.shoulder0`) so that the wrist stays on the hand (one-bone aim; residual at the cuff 2 mm). Any recipe can use this: give the part `frame: 'arm0'`, and add `shoulder0` and `gripAt` to the anchors. `node tools/npc_grip.mjs` checks it in the browser: grip height on the rod over 40 animation times, idle and talking, must vary by less than 1 mm (v9: 18.1 mm).

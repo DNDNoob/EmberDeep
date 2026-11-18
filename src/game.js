@@ -615,7 +615,7 @@ function paintedMaterial(glowBase){
       alb*=(0.74+0.5*strand)*(1.0-0.22*dk);
       alb*=mix(vec3(1.0),vec3(1.05,0.97,0.78),yel*0.7);                          // yellowed strands among the white
       alb=mix(alb,vec3(0.52,0.42,0.38)*(0.8+0.4*strand),sk*0.55);                 // roots: stubble grey-brown where the hair meets skin
-      alb=min(alb,vec3(0.6));mRough=0.78;mRimK=0.008;mBump=1.0;
+      alb=min(alb,vec3(0.54));mRough=0.78;mRimK=0.008;mBump=1.0;
       // flow direction in view space (dP/du from the screen derivatives of u and v) for the anisotropic highlight
       vec3 dpx=dFdx(-vViewPosition),dpy=dFdy(-vViewPosition);float ux=dFdx(fl.x),uy=dFdy(fl.x),vx=dFdx(fl.y),vy=dFdy(fl.y),det=ux*vy-uy*vx;
       if(abs(det)>1e-12){vec3 tt=(dpx*vy-dpy*vx)/det;float tl=length(tt);if(tl>1e-9){mTan=tt/tl;mKK=(1.0-sk)*(1.0-smoothstep(0.3,0.8,fwv*f1));}}

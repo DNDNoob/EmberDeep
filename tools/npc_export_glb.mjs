@@ -34,7 +34,7 @@ const Bf = {p: [0, 0, 0], R: ID};
 const U = subF(Bf, [wa[0] * S, wa[1] * S, wa[2] * S], rZ(rig.lean));
 const tilt = rig.headTilt ?? 0.12;
 const H = subF(U, [ne[0] * S, ne[1] * S, ne[2] * S], rZ(tilt));
-const fr = {B: Bf, U, H, J: H};
+const fr = {B: Bf, U, H, J: H, arm0: U};   // arm0: the staff arm's frame (U turned about the shoulder at runtime; in the rest pose it is U)
 if (rig.drape) fr.D = subF(U, [(ne[0] + rig.drape.push) * S, ne[1] * S, ne[2] * S], rZ(tilt * rig.drape.follow));
 if (A.gripAt) { const g = A.gripAt; fr.grip = {p: fpt(U, [g[0] * S, g[1] * S, g[2] * S]), R: m3(Bf.R, A.gripR)}; }
 if (A.restAt) fr.rest = subF(U, A.restAt.map(v => v * S), A.restR);

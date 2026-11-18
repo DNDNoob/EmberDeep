@@ -201,6 +201,8 @@ export function hairCap(H, p = {}) {
     return d;
   }
   return {sdf, bounds: [-0.13, -0.06, -0.1, 0.07, 0.17, 0.1], cell: p.cell || 0.007, tris: p.tris || [340, 120], cull: (x, y, z) => H.sdf(x, y, z) < -0.001, project: 0.003,
+    ao: 0.006, aoFloor: 0.6,
+    band: (x, y, z, o) => { o[0] = -y; o[1] = Math.atan2(z, x + 0.02) * 0.05; o[2] = 1 - smoothstep(0.0004, 0.006, H.sdf(x, y, z)); },   // strands run down the head: u = -y, v round the head
     paint: (x, y, z, o) => { o[0] = smoothstep(0.06, 0.12, y) * 0.5; }};
 }
 
