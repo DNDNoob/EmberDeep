@@ -15,7 +15,7 @@ const eye=[tgt[0]+D*Math.cos(el)*Math.cos(ya),tgt[1]+D*Math.sin(el),tgt[2]+D*Mat
 const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],cr=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2],nz=a=>{const l=Math.hypot(...a);return a.map(v=>v/l)};
 const f=nz(sub(tgt,eye)),r=nz(cr(f,[0,1,0])),u=cr(r,f),fov=Math.tan(+(process.env.FOV||25)*Math.PI/180);
 const proj=p=>{const d=sub(p,eye),z=dot(d,f);return [W/2+(dot(d,r)/z/fov)*H/2,H/2-(dot(d,u)/z/fov)*H/2,z]};
-const COL={torso:[200,60,50],sleeve0:[230,110,60],sleeve1:[210,90,110],sash:[230,190,60],cuff0:[240,200,70],cuff1:[240,200,70],gripHand:[225,170,135],restHand:[225,170,135],neck:[225,170,135],skirt:[170,50,45],hem:[230,190,60],stole:[40,140,110],brooch:[240,200,80],pouch:[150,90,45],keys:[200,170,80]};
+const COL={placket:[240,200,70],torso:[200,60,50],sleeve0:[230,110,60],sleeve1:[210,90,110],sash:[230,190,60],cuff0:[240,200,70],cuff1:[240,200,70],gripHand:[225,170,135],restHand:[225,170,135],neck:[225,170,135],skirt:[170,50,45],hem:[230,190,60],stole:[40,140,110],brooch:[240,200,80],pouch:[150,90,45],keys:[200,170,80]};
 const L1=nz([0.5,0.8,0.6]),L2=nz([-0.5,0.1,-0.6]);
 function draw(m,off,Mx,col){const n=m.length/9;
   const Pw=[],Nw=[];for(let i=0;i<n;i++){const p=mv(Mx,m[i*9],m[i*9+1],m[i*9+2]);Pw.push([p[0]+off[0],p[1]+off[1],p[2]+off[2]]);Nw.push(mv(Mx,m[i*9+3],m[i*9+4],m[i*9+5]))}
@@ -27,8 +27,10 @@ function draw(m,off,Mx,col){const n=m.length/9;
     for(let y=mny;y<=mxy;y++)for(let x=mnx;x<=mxx;x++){const l0=((b.p[1]-c.p[1])*(x-c.p[0])+(c.p[0]-b.p[0])*(y-c.p[1]))/den,l1=((c.p[1]-a.p[1])*(x-c.p[0])+(a.p[0]-c.p[0])*(y-c.p[1]))/den,l2=1-l0-l1;if(l0<0||l1<0||l2<0)continue;
       const z=l0*a.p[2]+l1*b.p[2]+l2*c.p[2];if(z>=zb[y*W+x])continue;zb[y*W+x]=z;const li=l0*a.l+l1*b.l+l2*c.l;for(let k=0;k<3;k++)img[(y*W+x)*3+k]=Math.min(255,col[k]*li)}}}
 const I=[1,0,0,0,1,0,0,0,1];
+// everything is drawn in the feet frame B (env BFRAME=1): U parts (torso, sleeves, sash, cuffs, stole...) are moved to B by the waist offset and lean
+const rg=K.recipe.rig,cz=Math.cos(rg.lean),sz=Math.sin(rg.lean),RU=[cz,-sz,0,sz,cz,0,0,0,1],isB=nm=>['skirt','hem','placket'].includes(nm);
 const want=(pl||'torso,sleeve0,sleeve1,sash,cuff0,cuff1,gripHand,restHand').split(',');
 for(const nm of want){const m=P[nm]&&P[nm][0];if(!m)continue;
-  if(nm==='gripHand')draw(m,A.gripAt,A.gripR,COL[nm]);else if(nm==='restHand')draw(m,A.restAt,A.restR,COL[nm]);else draw(m,[0,0,0],I,COL[nm]||[200,200,200]);}
+  if(nm==='gripHand')draw(m,A.gripAt,A.gripR,COL[nm]);else if(nm==='restHand')draw(m,A.restAt,A.restR,COL[nm]);else if(process.env.BFRAME)isB(nm)?draw(m,[0,0,0],I,COL[nm]||[200,200,200]):draw(m,rg.waist,RU,COL[nm]||[200,200,200]);else draw(m,[0,0,0],I,COL[nm]||[200,200,200]);}
 writeFileSync((process.env.TMPDIR||'/tmp')+'/npc_view.ppm',Buffer.concat([Buffer.from(`P6 ${W} ${H} 255\n`),Buffer.from(img)]));
 execSync(`convert ${(process.env.TMPDIR||'/tmp')}/npc_view.ppm ${out}`);

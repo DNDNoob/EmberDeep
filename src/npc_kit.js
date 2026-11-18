@@ -1071,6 +1071,7 @@ export function sanitize(M, minArea = 1e-10) {
 // each LOD is simplified from the previous one, so the cheaper LODs are decimated versions of the finest.
 export function* bakePartGen(spec, seed = 1) {
   setSeed(seed);
+  if (spec.gen) { const out = (yield* spec.gen()).map(m => sanitize(m)); out.raw = 0; return out; }   // direct meshes (cloth simulation)
   if (spec.cardsDirect) { yield; const out = spec.cardsDirect().map(m => sanitize(m)); out.raw = 0; return out; }   // hair cards: meshes built directly, no sculpting
   const guard = function* (g) { let r; while (!(r = g.next()).done) { yield; setSeed(seed); } return r.value; }; // noise seed is global: restore it after every pause
   const raw = yield* guard(sculptGen(spec.sdf, spec.bounds, spec.cell, {cull: spec.cull}));

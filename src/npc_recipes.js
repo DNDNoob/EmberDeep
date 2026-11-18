@@ -14,6 +14,7 @@
 //   build()   returns {parts: {name: partSpec}, eyes: eyeRig params, anchors: {...}} using the kit builders.
 //             Runs once (cached), at load, in plain JS: no THREE, no DOM, so `node tools/npc_stats.mjs` can bake it.
 import * as K from './npc_kit.js';
+import {clothDress, clothParts} from './npc_cloth.js';
 
 /* ---------- The Keeper: old robed shopkeeper, white beard, lantern staff ---------- */
 // Arm joint centres in U coords (waist origin): shoulder, elbow, wrist, and radii of the bare arm [deltoid, elbow, wrist].
@@ -32,10 +33,10 @@ export const KEEPER = {
   proportions: {headScale: 0.6, frames: ['H', 'J'], height: 0.93},   // height: uniform scale of the whole figure and its props (crown 1.03 m * 0.93 = 0.96 m)
   palette: {
     skin: [0.8, 0.6, 0.47], skinDeep: [0.66, 0.34, 0.28],
-    robe: [0.36, 0.1, 0.07], robeDeep: [0.24, 0.06, 0.05],
+    robe: [0.33, 0.06, 0.055], robeDeep: [0.2, 0.035, 0.04],
     gold: [0.8, 0.58, 0.18], goldDeep: [0.55, 0.36, 0.1],
     white: [0.74, 0.73, 0.69], whiteDeep: [0.36, 0.35, 0.34],
-    robeDirt: [0.17, 0.075, 0.05], stole: [0.085, 0.10, 0.27], stoleDeep: [0.035, 0.045, 0.14],
+    robeDirt: [0.17, 0.075, 0.05], stole: [0.04, 0.05, 0.13], stoleDeep: [0.015, 0.02, 0.06],
     brass: [0.62, 0.47, 0.2], brassDeep: [0.36, 0.25, 0.1], garnet: [0.55, 0.04, 0.06], leather: [0.34, 0.19, 0.09], leatherDeep: [0.16, 0.085, 0.045],
     nail: [0.84, 0.66, 0.58], nailDeep: [0.74, 0.52, 0.46], sclera: [0.86, 0.82, 0.74], iris: [0.42, 0.26, 0.12], pupil: [0.02, 0.015, 0.012]
   },
@@ -43,6 +44,7 @@ export const KEEPER = {
   parts: [
     {part: 'skirt', frame: 'B', mat: 'cloth', col: 'robe', col2: 'robeDirt'},
     {part: 'hem', frame: 'B', mat: 'trim', col: 'gold', col2: 'goldDeep'},
+    {part: 'placket', frame: 'B', mat: 'trim', col: 'gold', col2: 'goldDeep'},
     {part: 'torso', frame: 'U', mat: 'cloth', col: 'robe', col2: 'robeDeep'},
     {part: 'sleeve0', frame: 'arm0', mat: 'cloth', col: 'robe', col2: 'robeDeep'},
     {part: 'sleeve1', frame: 'U', mat: 'cloth', col: 'robe', col2: 'robeDeep'},
@@ -113,8 +115,13 @@ export const KEEPER = {
     const pouch = K.pouch(pk.P, pk.n, upU, bodySurf, {size: 1.25}), keys = K.keyRing(kk.P, kk.n, upU, bodySurf, {size: 1.5, tris: [280, 160, 40]});
     const [e0, e1] = D.ends;
     const brw = K.brows(H, {size: 1.15, droop: 1.1}), mou = K.moustache(H, {size: 1.1}), brd = K.beard(H, {length: 0.34, width: 1.12, thick: 0.009, fork: 0, chest: robeInBeard});
+    // v11: robe and sleeves are cloth simulations (src/npc_cloth.js) laid out loose round the body SDF; the SDF garments above stay as fields (stole, beard, props rest on them)
+    const cd = clothDress(B, {off: this.rig.waist, R: K.rotZ(this.rig.lean), skirtBase: skirt.base, ease: 0.012, hang: 0.03, nu: 72, rowsUp: 18, rowsLow: 32, folds: 12, gather: 0.1, bend: 0.25, rag: skirt.lift, seed: 3,
+      sleeves: [{arm: 0, pouch: 0.044, nu: 24, rows: 26}, {arm: 1, pouch: 0.038, nu: 24, rows: 26}]});
+    const cloth = clothParts(cd, {wearTop: WEAR_TOP, wearSkirt: WEAR_SKIRT, rag: skirt.lift, hem: {cells: 25, rows: 6}, cuff: {cells: 8, rows: 3}, placket: {motif: 2}});
+    const {torso: _t, sleeve0: _s0, sleeve1: _s1, cuff0: _c0, cuff1: _c1, ...Drest} = D.parts;
     return {
-      parts: {skirt, hem, ...D.parts, brooch: bro, pouch, keys,
+      parts: {...cloth, ...Drest, brooch: bro, pouch, keys,
         head: H, ears: K.ears(H, {tris: [650, 400, 60], cell: 0.0015}), hair: K.hairCap(H, {crown: 0.128, tris: [450, 260, 60], cell: 0.0065}), brows: brw, moustache: mou, browCards: {cardsDirect: brw.cardsPart.cardsDirect}, mousCards: {cardsDirect: mou.cardsPart.cardsDirect}, beardCards: {cardsDirect: brd.cardsPart.cardsDirect},
         neck: K.neck(H, {tris: [260, 150, 40], cell: 0.0035}), beard: brd, gripHand: sleeveCull(grip), restHand: sleeveCull(rest)},
       eyes: {r: H.eye.r, iris: 0.5, open: 12, low: -24, arch: 9, lidT: 0.0021},

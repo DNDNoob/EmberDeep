@@ -589,7 +589,8 @@ function paintedMaterial(glowBase){
     }else if(m==13){ // sculpted cloth: folds are in the geometry, so the shader only adds weave, nap and sheen
       float folds=n3(vec3(q.x*55.0,q.y*5.0,q.z*55.0));
       float weave=sin(q.y*1500.0)*sin((q.x+q.z)*1500.0);
-      alb*=(0.88+0.2*folds)*(0.93+0.14*mott)*(1.0+0.06*weave*fine*wFade);mRough=0.9;mRimK=0.04;mBump=1.0;
+      alb*=(0.88+0.2*folds)*(0.93+0.14*mott)*(1.0+0.06*weave*fine*wFade);mRough=0.88;mRimK=0.09;mBump=1.0;
+      if(!gl_FrontFacing)alb*=0.5; // simulated cloth is a single sheet: its inside (sleeve mouths, hem) is darker
       if(mo>2.5&&mo<3.5){ // stole: gold meander border worked into the cloth
         float th=max(emb.x,emb.y);mEmb=th;alb=mix(alb,vec3(0.82,0.6,0.2)*(0.78+0.3*n3(q*400.0)),th);mRough=mix(0.9,0.45,th);mMetal=0.3*th;
       }else if(mo>4.5){ // leather: grain, no weave
