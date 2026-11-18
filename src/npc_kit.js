@@ -199,7 +199,7 @@ export function ears(H, p = {}) {
 /* ---------- hair on the head: a fringe round the back and sides, bald crown (horseshoe) ---------- */
 // p: {thick, crown (height of the bald line), front (x where the hair stops), hang (hair below the skull at the back)}
 export function hairCap(H, p = {}) {
-  const thick = p.thick ?? 0.009, crown = p.crown ?? 0.128, front = p.front ?? 0.03, hang = p.hang ?? 0.03;
+  const thick = p.thick ?? 0.005, crown = p.crown ?? 0.128, front = p.front ?? 0.03, hang = p.hang ?? 0.012;
   function sdf(x, y, z) {
     let d = H.skull(x, y, z) - thick;
     d = smin(d, sdRoundCone(x, y, z, -0.055, 0.04, 0, -0.06, 0.03 - hang * 2, 0, 0.045, 0.03 + hang * 0.2), 0.03);
@@ -210,10 +210,11 @@ export function hairCap(H, p = {}) {
     if (d < 0.015) d += 0.0028 * Math.sin(55 * Math.atan2(z, x + 0.02) + 30 * y + 4 * fbm(x * 30, y * 30, z * 30, 2)) + 0.002 * fbm(x * 60, y * 20, z * 60, 2);
     return d;
   }
-  return {sdf, bounds: [-0.13, -0.06, -0.1, 0.07, 0.17, 0.1], cell: p.cell || 0.007, tris: p.tris || [340, 120], cull: (x, y, z) => H.sdf(x, y, z) < -0.001, project: 0.003,
+  const held = {}, shells = {gen: function* () { yield; if (!held.m) throw new Error('hair shells need the cap baked first'); const NS = p.shells || [6, 3, 1]; return held.m.map((m, i) => shellStack(m, {n: NS[Math.min(i, NS.length - 1)], T: p.shellT ?? 0.007, inset: 0.002, bend: 0.002, paint: 0.3, ao0: 0.85})); }};
+  return {shells, onBaked: o => { held.m = o; }, sdf, bounds: [-0.13, -0.06, -0.1, 0.07, 0.17, 0.1], cell: p.cell || 0.007, tris: p.tris || [340, 120], cull: (x, y, z) => H.sdf(x, y, z) < -0.001, project: 0.003,
     ao: 0.006, aoFloor: 0.6,
     band: (x, y, z, o) => { o[0] = -y; o[1] = Math.atan2(z, x + 0.02) * 0.05; o[2] = 1 - smoothstep(0.0004, 0.006, H.sdf(x, y, z)); },   // strands run down the head: u = -y, v round the head
-    paint: (x, y, z, o) => { o[0] = smoothstep(0.06, 0.12, y) * 0.5; }};
+    paint: (x, y, z, o) => { o[0] = 0.25; }};
 }
 
 /* ---------- eyebrows: a low bed plus short cards growing up and out from the brow ridge (npc_hair.js cards) ---------- */
@@ -388,7 +389,7 @@ export function beard(H, p = {}) {
   const T = p.tris || [650, 300, 110], held = {};
   const shells = {gen: function* () {
     yield; if (!held.m) throw new Error('beard shells need the beard mass baked first');
-    const NS = p.shells || [14, 7, 3];
+    const NS = p.shells || [12, 6, 3];
     return held.m.map((m, i) => shellStack(m, {n: NS[Math.min(i, NS.length - 1)], T: p.shellT ?? 0.011, inset: 0.0035, bend: p.shellBend ?? 0.008}));
   }};
   return {shells, onBaked: o => { held.m = o; }, sdf: mass(inset), bounds: [-0.02, -L - 0.04, -0.1, chest ? 0.24 : 0.14, cheekY + 0.01, 0.1], cell: p.cell || 0.0048, tris: T,
