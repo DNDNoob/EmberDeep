@@ -722,14 +722,19 @@ export function dress(B, list) {
     // below the arm hangs down (the centre line of the tube drops by `hang(t)` along world up, the radius grows by the same amount), most
     // at the bell mouth. So the underside is much lower than the top, instead of a tube concentric with the arm.
     const a = B.arms[sg.arm], e = sg.ease ?? 0.006, bell = sg.bell ?? 0.034, nf = sg.folds ?? 1, up = norm3(sg.up || [0, 1, 0]);
-    const rw = a.r[2] + bell, LF = Math.hypot(a.W[0] - a.E[0], a.W[1] - a.E[1], a.W[2] - a.E[2]);
-    const dE = sg.hangElbow ?? 0.013, dEnd = (rw - a.r[2] - e) * (sg.hang ?? 0.8), dM = dE + (dEnd - dE) * 0.35;
+    const pr = sg.pouch ?? (a.r[2] + bell), rw = pr, LF = Math.hypot(a.W[0] - a.E[0], a.W[1] - a.E[1], a.W[2] - a.E[2]);
+    // Wizard sleeve = two shapes smooth-united: A hugs the arm (top of shoulder and forearm stay close, ease `e`), B is a pouch of cloth that
+    // hangs straight down (world up, gravity) from the mid forearm: its centre drops by `drop` at the cuff and its radius grows to `pouch`.
+    // The cuff opening is the section of A + B: a teardrop with the wrist in its upper part and the cloth bottom `drop + pouch` below it.
+    const dE = sg.hangElbow ?? 0.013, pdE = sg.drop ?? 0.03, wristEase = sg.wristEase ?? 0.006;
     const lp = (p, q, t) => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t], drop = (p, d) => [p[0] - up[0] * d, p[1] - up[1] * d, p[2] - up[2] * d];
-    const Mp = lp(a.E, a.end, 0.55), nS = a.S, nE = drop(a.E, dE), nM = drop(Mp, dM), nEnd = drop(a.end, dEnd), dS = 0.004;
-    const rS = a.r[0] + e * 1.6, rE = a.r[1] + e * 1.3 + dE, rM = lp([a.r[1]], [a.r[2]], 0.55)[0] + e * 1.3 + dM + bell * 0.25, rEnd = rw;
-    const nS2 = drop(nS, dS);
-    const sb = (x, y, z) => smin(smin(sdRoundCone(x, y, z, nS2[0], nS2[1], nS2[2], nE[0], nE[1], nE[2], rS + dS, rE), sdRoundCone(x, y, z, nE[0], nE[1], nE[2], nM[0], nM[1], nM[2], rE, rM), 0.03),
+    const Mp = lp(a.E, a.end, 0.5), nS = a.S, nE = drop(a.E, dE), nM = drop(Mp, 0.005), nEnd = drop(a.end, 0.006), dS = 0.004, nS2 = drop(nS, dS);
+    const rS = a.r[0] + e * 1.6, rE = a.r[1] + e * 1.3 + dE, rM = (a.r[1] + a.r[2]) / 2 + e * 1.3 + 0.006, rEnd = a.r[2] + e + wristEase;
+    const pb0 = drop(lp(a.E, a.end, 0.22), 0.004), pbM = drop(lp(a.E, a.end, 0.6), pdE * 0.5), pbE = drop(a.end, pdE), rp0 = a.r[1] + e + 0.004, rpM = rp0 + (pr - rp0) * 0.62;
+    const sbA = (x, y, z) => smin(smin(sdRoundCone(x, y, z, nS2[0], nS2[1], nS2[2], nE[0], nE[1], nE[2], rS + dS, rE), sdRoundCone(x, y, z, nE[0], nE[1], nE[2], nM[0], nM[1], nM[2], rE, rM), 0.03),
       sdRoundCone(x, y, z, nM[0], nM[1], nM[2], nEnd[0], nEnd[1], nEnd[2], rM, rEnd), 0.03);
+    const sbB = (x, y, z) => smin(sdRoundCone(x, y, z, pb0[0], pb0[1], pb0[2], pbM[0], pbM[1], pbM[2], rp0, rpM), sdRoundCone(x, y, z, pbM[0], pbM[1], pbM[2], pbE[0], pbE[1], pbE[2], rpM, pr), 0.03);
+    const sb = (x, y, z) => smin(sbA(x, y, z), sbB(x, y, z), sg.pouchBlend ?? 0.02);
     const bis = norm3([(a.S[0] - a.E[0]) / Math.hypot(a.S[0] - a.E[0], a.S[1] - a.E[1], a.S[2] - a.E[2]) + a.F[0], (a.S[1] - a.E[1]) / Math.hypot(a.S[0] - a.E[0], a.S[1] - a.E[1], a.S[2] - a.E[2]) + a.F[1], (a.S[2] - a.E[2]) / Math.hypot(a.S[0] - a.E[0], a.S[1] - a.E[1], a.S[2] - a.E[2]) + a.F[2]]);   // into the bend of the elbow
     const fold = (x, y, z, d) => { // folds: soft noise, compression creases on the inner elbow, cloth gathered under it, hanging folds along the underside that open into the bell
       if (d > 0.03) return d;
@@ -744,7 +749,7 @@ export function dress(B, list) {
       d -= nf * 0.011 * Math.exp(-((x - a.E[0] + 0.01) ** 2 + (y - a.E[1] + 0.03) ** 2 + (z - a.E[2]) ** 2) / 0.0012);   // cloth sagging under the elbow
       const ang = Math.atan2(rz - 0.3 * ry * a.F[2], -ry), wv = 3 * fbm(x * 9, y * 9, z * 9, 2);   // angle round the arm measured from straight down
       const toEnd = (a.end[0] - x) * a.F[0] + (a.end[1] - y) * a.F[1] + (a.end[2] - z) * a.F[2];
-      d += nf * (0.0022 + 0.09 * (rw - a.r[2] - e)) * smoothstep(0.03, 0.05, toEnd) * (Math.pow(0.5 + 0.5 * Math.cos(5 * ang + wv + 10 * t), 0.8) * 2 - 1) * smoothstep(0.02, 0.5, tn) * (0.3 + 0.7 * tn) * (0.3 + 0.7 * smoothstep(-0.3, 0.9, under));
+      d += nf * (0.003 + 0.17 * (rw - a.r[2] - e)) * smoothstep(0.03, 0.05, toEnd) * (Math.pow(0.5 + 0.5 * Math.cos(7 * ang + wv + 3 * t), 0.8) * 2 - 1) * smoothstep(0.02, 0.5, tn) * (0.3 + 0.7 * tn) * (0.3 + 0.7 * smoothstep(-0.3, 0.9, under));
       // upper sleeve: looser, non-cylindrical volume (cloth hangs off the back/underside) and diagonal drag folds running shoulder -> elbow
       const LU = Math.hypot(a.S[0] - a.E[0], a.S[1] - a.E[1], a.S[2] - a.E[2]), us = cl(-t / LU, 0, 1), uw = smoothstep(0.05, 0.25, us) * (1 - smoothstep(0.85, 1.0, us));
       if (t < 0 && uw > 0) {
@@ -757,12 +762,17 @@ export function dress(B, list) {
     };
     // the mouth: a clean flat cut across the tube (along the last segment's axis Fm, which tilts down with the hang) and a hollow with a
     // ~6 mm wall; the gold cuff band sits over the cut edge. (A sphere carve left ragged shards that showed as black marks.)
-    const cEnd = nEnd, Fm = norm3([nEnd[0] - nM[0], nEnd[1] - nM[1], nEnd[2] - nM[2]]);
+    const cEnd = pbE, Fm = norm3([pbE[0] - pbM[0], pbE[1] - pbM[1], pbE[2] - pbM[2]]);
+    const cloth = (x, y, z) => fold(x, y, z, sb(x, y, z));
     const mouth = (x, y, z, d) => {
-      const vx = x - cEnd[0], vy = y - cEnd[1], vz = z - cEnd[2], t = vx * Fm[0] + vy * Fm[1] + vz * Fm[2], rad = Math.sqrt(Math.max(0, vx * vx + vy * vy + vz * vz - t * t));
-      return smax(smax(d, t - 0.012, 0.002), -Math.max(rad - (rw - 0.006), -(t + 0.07)), 0.003);
+      const t = (x - cEnd[0]) * Fm[0] + (y - cEnd[1]) * Fm[1] + (z - cEnd[2]) * Fm[2];
+      if (t < -0.08) return d;
+      d = smax(d, t - 0.012, 0.002);
+      // hollow: the cloth surface moved in by the wall (8 mm), from the mouth plane 7 cm up the sleeve, so the opening follows the teardrop and has an inside
+      if (t > -0.075) d = smax(d, -Math.max(cloth(x, y, z) + 0.008, -(t + 0.07)), 0.003);
+      return d;
     };
-    const cloth = (x, y, z) => fold(x, y, z, sb(x, y, z)), sdf = (x, y, z) => mouth(x, y, z, cloth(x, y, z));
+    const sdf = (x, y, z) => mouth(x, y, z, cloth(x, y, z));
     return {sg, a, sb, sdf, cloth, rw, cEnd, Fm};
   });
   const sleeveMin = (x, y, z) => { let d = 9; for (const s of sl) d = Math.min(d, s.sb(x, y, z)); return d; };
@@ -800,7 +810,8 @@ export function dress(B, list) {
     const seam = (x, y, z) => Math.exp(-(((base(x, y, z) - 0.003) / 0.0026) ** 2)), sdf = (x, y, z) => { const d = sdf0(x, y, z); return d < 0.012 ? d - 0.0015 * seam(x, y, z) : d; };
     parts['sleeve' + i] = {sdf, bounds: [Math.min(a.S[0], a.E[0], a.W[0]) - 0.11, Math.min(a.S[1], a.E[1], a.W[1]) - 0.11, Math.min(a.S[2], a.E[2], a.W[2]) - 0.11,
       Math.max(a.S[0], a.E[0], a.W[0]) + 0.11, Math.max(a.S[1], a.E[1], a.W[1]) + 0.11, Math.max(a.S[2], a.E[2], a.W[2]) + 0.11], cell: sg.cell || 0.0075, tris: sg.tris || [380, 150], project: 0.004,
-      aoSdf: (x, y, z) => Math.min(sdf(x, y, z), base(x, y, z) + 0.002), paint: (x, y, z, o) => { o[0] = cl(Math.max(0.85 * crease(x, y, z, base), 0.95 * seam(x, y, z)) + (sg.wear ? sg.wear(x, y, z) : 0), 0, 1); },
+      aoSdf: (x, y, z) => Math.min(sdf(x, y, z), base(x, y, z) + 0.002), paint: (x, y, z, o) => { o[0] = cl(Math.max(0.85 * crease(x, y, z, base), 0.95 * seam(x, y, z)) + (sg.wear ? sg.wear(x, y, z) : 0), 0, 1);
+        const t = (x - cEnd[0]) * Fm[0] + (y - cEnd[1]) * Fm[1] + (z - cEnd[2]) * Fm[2]; if (t > -0.08 && t < 0.02 && cloth(x, y, z) < -0.004) o[0] = 0.97; },   // the inside of the cuff is the deep colour
       cull: (x, y, z) => base(x, y, z) < -0.004};
     if (cf) {
       // cuff band coordinates: angle round the mouth axis, position along it
