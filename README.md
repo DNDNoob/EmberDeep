@@ -64,3 +64,26 @@ From depth 2, every minute or two, something goes wrong on purpose. It only happ
 - **A hall that loops** (the Humming Rooms only): you are quietly put back at the start of a long hall. On the third pass a light is dead. On the fourth, something is standing at the far end.
 
 For testing, `__game.glitch('freeze' | 'rubber' | 'rubberfwd' | 'replay' | 'hud' | 'tpose' | 'hole' | 'fall' | 'loop')` in the console forces one.
+
+## Movement
+
+One movement system drives the maze and every strange-door room: `src/movement.js`.
+
+- The tunables are in `MOVE` (walk 2.7, sprint 4.3, jump 3.5, gravity 11, air control 7, stamina, turn rates, mouse and touch look, pitch limits, footstep and bob numbers). They are in maze units (eye height 0.62). To change how the whole game moves, change them there.
+- `stepMove(body, dt, intent, world)` is the one step function. The maze calls it from `update()` in `src/game.js`; rooms call it through `createRoomWalker`. A room is in human scale (eye 1.6), so the walker multiplies every length, speed and gravity by `scale = eye / 0.62` (about 2.58). Walking and jumping then take the same time and feel the same relative to your height as in the maze. Do not retune per room.
+- Stamina, boots, lungs and the cold slowdown are shared: `game.js` passes the player's stamina and modifiers to rooms in the options of `createRooms`.
+- `roomInput()` in `game.js` gives every room the maze bindings: WASD / arrows move and turn, Space / pad A / touch JUMP jumps, Shift / pad sprint sprints. `press` (click, E, Enter, pad X, touch action) is separate from jump.
+
+A new room that walks needs only this (see the kiln and mirror for full examples):
+
+```js
+const WK=createRoomWalker({o, eye:1.6, x:0, z:5, collide:b=>{/* push b.x, b.z out of walls */}, groundAt, ceilingAt, speedMul});
+// every frame
+lookStep(S,dt,inp.lx,inp.ly);                       // shared turning and pitch
+WK.step(dt,inp,S.yaw);                              // walk, sprint, jump, sounds
+eyeY = 1.6 + WK.b.y + bobY(WK.b,WK.scale);          // camera height
+```
+
+`groundAt(x,z)` gives floor height (a ledge, a slope), `ceilingAt(x,z)` the highest the body may rise, `speedMul()` a room's own slowdown.
+
+Declaring an exception: `MODES` next to `KINDS` in `createRooms` (`src/rooms.js`). A room that is not listed walks. `'look'` allows turning only (galaxy: floating), `'none'` allows no control (fall: a cinematic). Give every exception a one-line reason. `tools/movement_test.mjs` checks the maze numbers, that rooms match the maze in eye-heights, and the exceptions.
