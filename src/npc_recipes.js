@@ -63,6 +63,7 @@ export const KEEPER = {
     {part: 'brows', frame: 'H', mat: 'hair', col: 'white', col2: 'whiteDeep'},
     {part: 'moustache', frame: 'H', mat: 'hair', col: 'white', col2: 'whiteDeep'},
     {part: 'beard', frame: 'J', mat: 'hair', col: 'white', col2: 'whiteDeep', drape: [-0.015, -0.13]},
+    {part: 'beardShells', frame: 'J', mat: 'hair', col: 'white', col2: 'whiteDeep', drape: [-0.015, -0.13], cards: true},
     {part: 'browCards', frame: 'H', mat: 'hair', col: 'white', col2: 'whiteDeep', cards: true},
     {part: 'mousCards', frame: 'H', mat: 'hair', col: 'white', col2: 'whiteDeep', cards: true},
     {part: 'beardCards', frame: 'J', mat: 'hair', col: 'white', col2: 'whiteDeep', drape: [-0.015, -0.13], cards: true},
@@ -115,7 +116,7 @@ export const KEEPER = {
     const pk = onBody(bodySurf, 1.31, -0.012, -0.04), kk = onBody(bodySurf, 0.42, -0.012, -0.04);
     const pouch = K.pouch(pk.P, pk.n, upU, bodySurf, {size: 1.25, cell: 0.0025}), keys = K.keyRing(kk.P, kk.n, upU, bodySurf, {size: 1.5, tris: [280, 160, 40], cell: 0.002});
     const [e0, e1] = D.ends;
-    const brw = K.brows(H, {size: 1.15, droop: 1.1}), mou = K.moustache(H, {size: 1.2, droop: 1.35}), brd = K.beard(H, {length: 0.34, width: 1.12, thick: 0.009, fork: 0, chest: robeInBeard});
+    const brw = K.brows(H, {size: 1.15, droop: 1.1}), mou = K.moustache(H, {size: 1.2, droop: 1.35}), brd = K.beard(H, {length: 0.34, width: 1.12, thick: 0.009, fork: 0, chest: robeInBeard, tipsOnly: true});
     // v11: robe and sleeves are cloth simulations (src/npc_cloth.js) laid out loose round the body SDF; the SDF garments above stay as fields (stole, beard, props rest on them)
     const cd = clothDress(B, {off: this.rig.waist, R: K.rotZ(this.rig.lean), skirtBase: skirt.base, ease: 0.012, hang: 0.03, nu: 72, rowsUp: 18, rowsLow: 32, folds: 12, gather: 0.1, bend: 0.25, rag: skirt.lift, seed: 3,
       sleeves: [{arm: 0, pouch: 0.044, nu: 24, rows: 26}, {arm: 1, pouch: 0.038, nu: 24, rows: 26}],
@@ -125,7 +126,7 @@ export const KEEPER = {
     return {
       parts: {...cloth, ...Drest, brooch: bro, pouch, keys,
         head: H, ears: K.ears(H, {tris: [650, 400, 60], cell: 0.0015}), hair: K.hairCap(H, {crown: 0.128, tris: [450, 260, 60], cell: 0.0065}), brows: brw, moustache: mou, browCards: {cardsDirect: brw.cardsPart.cardsDirect}, mousCards: {cardsDirect: mou.cardsPart.cardsDirect}, beardCards: {cardsDirect: brd.cardsPart.cardsDirect},
-        neck: K.neck(H, {tris: [260, 150, 40], cell: 0.0035}), beard: brd, gripHand: sleeveCull(grip), restHand: sleeveCull(rest)},
+        neck: K.neck(H, {tris: [260, 150, 40], cell: 0.0035}), beard: brd, beardShells: brd.shells, gripHand: sleeveCull(grip), restHand: sleeveCull(rest)},
       eyes: {r: H.eye.r, iris: 0.5, open: 12, low: -24, arch: 9, lidT: 0.0021},
       anchors: {
         eye: [H.eye.x, H.eye.y, H.eye.z],

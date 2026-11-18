@@ -212,3 +212,21 @@ export class Cards {
   }
 }
 const norm = (x, y, z) => { const l = Math.hypot(x, y, z) || 1; return [x / l, y / l, z / l]; };
+
+// Shell hair (v15): the solid mass drawn as n stacked copies pushed out along the normal, each bent a little more down the tangent plane (gravity);
+// the hair shader (game.js, band.z = 6 + h with h the shell height 0..1) carves strands out of every shell, so strands taper to the outer shells.
+// m: stride-9 mesh. o: {n, T (outer shell height, m), inset (innermost shell sits this far inside), bend (m of droop at the top shell), ao0, paint}
+export function shellStack(m, o) {
+  const n = o.n, T = o.T, ins = o.inset ?? 0.003, bend = o.bend ?? 0.006, nv = m.length / 9, V = new Float32Array(nv * 9 * n), B = new Float32Array(nv * 3 * n);
+  for (let k = 0; k < n; k++) {
+    const h = (k + 1) / n, off = -ins + (T + ins) * h, dr = bend * Math.pow(h, 1.6);
+    for (let i = 0; i < nv; i++) {
+      const a = i * 9, d = (k * nv + i) * 9, nx = m[a + 3], ny = m[a + 4], nz = m[a + 5];
+      V[d] = m[a] + nx * off + nx * ny * dr; V[d + 1] = m[a + 1] + ny * off + (ny * ny - 1) * dr; V[d + 2] = m[a + 2] + nz * off + nz * ny * dr;
+      V[d + 3] = nx; V[d + 4] = ny; V[d + 5] = nz;
+      V[d + 6] = (o.paint ?? 0.85) * Math.pow(1 - h, 1.2); V[d + 7] = 0; V[d + 8] = m[a + 8] * ((o.ao0 ?? 0.55) + (1 - (o.ao0 ?? 0.55)) * h);
+      const b = (k * nv + i) * 3; B[b] = 0; B[b + 1] = 0; B[b + 2] = 6 + h * 0.99;
+    }
+  }
+  V.stride = 9; V.band = B; V.cards = true; return V;
+}

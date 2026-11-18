@@ -566,7 +566,7 @@ function paintedMaterial(glowBase){
     sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nattribute vec4 aLoc;varying vec4 vLoc;attribute vec3 aBand;varying vec3 vBand;')
       .replace('#include <begin_vertex>','#include <begin_vertex>\nvLoc=aLoc;vBand=aBand;');
     sh.fragmentShader=sh.fragmentShader
-      .replace('#include <common>','#include <common>\nvarying vec4 vLoc;varying vec3 vBand;uniform float uGlowBase;uniform sampler2D uStrand;float mRough=0.7;float mMetal=0.0;float mGlow=0.0;float mRim=0.0;float mSss=0.0;float mRimK=0.0;float mBump=0.0;float mAux=0.0;float mCh=0.0;float mWeave=1.0;float mEmb=0.0;vec3 mTan=vec3(0.0);float mKK=0.0;float mHairH=0.0;'+MAT_GLSL)
+      .replace('#include <common>','#include <common>\nvarying vec4 vLoc;varying vec3 vBand;uniform float uGlowBase;uniform sampler2D uStrand;float hh1(float x){return fract(sin(x*12.9898)*43758.5453);}float mRough=0.7;float mMetal=0.0;float mGlow=0.0;float mRim=0.0;float mSss=0.0;float mRimK=0.0;float mBump=0.0;float mAux=0.0;float mCh=0.0;float mWeave=1.0;float mEmb=0.0;vec3 mTan=vec3(0.0);float mKK=0.0;float mHairH=0.0;'+MAT_GLSL)
       .replace('#include <lights_physical_pars_fragment>',()=>THREE.ShaderChunk.lights_physical_pars_fragment.replace('vec3 irradiance = dotNL * directLight.color;',
         // cheap subsurface look: wrapped diffuse that lets light bleed past the terminator, tinted red where it fades
         `float nlS=dot(geometryNormal,directLight.direction);
@@ -609,12 +609,25 @@ function paintedMaterial(glowBase){
       }
       mBump=1.0;
     }else if(m==14){ // sculpted hair (npc_hair.js): fine strands from the baked flow coordinates vBand = (u along the hair, v across the lock, skin proximity)
-      bool card=vBand.z>1.5;
-      vec2 fl=card?vec2(vBand.y,vBand.x):vBand.xy;float sk=card?0.0:clamp(vBand.z,0.0,1.0);
+      bool shell=vBand.z>5.5;bool card=vBand.z>1.5&&!shell;
+      vec2 fl=card?vec2(vBand.y,vBand.x):vBand.xy;if(shell){float vv0=-vLoc.y;fl=vec2(vv0,vLoc.z+0.35*vLoc.x);}float sk=(card||shell)?0.0:clamp(vBand.z,0.0,1.0);
       float fwv=max(fwidth(fl.y),1e-6),fwu=max(fwidth(fl.x),1e-6);
       // cycles per pixel of the two strand layers: fade each out before it aliases, towards its mean (no shimmer or moire at range)
       float f1=1.0/0.0017,f2=1.0/0.00065;
       float fd1=1.0-smoothstep(0.25,0.75,fwv*f1),fd2=1.0-smoothstep(0.25,0.75,fwv*f2);
+      if(shell){ // shell hair: strands carved out of stacked offset shells (h = shell height 0..1), thinner and fewer towards the outer shells
+        float h=vBand.z-6.0,vv=-vLoc.y;
+        float uu=vLoc.z+0.35*vLoc.x+0.0024*sin(vv*23.0+vLoc.z*70.0)+0.0016*sin(vv*61.0+vLoc.x*55.0);
+        float xs=uu*1150.0,id=floor(xs),fr=fract(xs)-0.5,fw=fwidth(xs);
+        float r1=hh1(id),r2=hh1(id+17.3),r3=hh1(id+41.7),hs2=fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453);
+        float len=(0.4+0.6*r1)*(0.82+0.18*sin(vv*31.0+r3*6.28));
+        float rad=(0.36+0.18*r2)*(1.0-0.8*clamp(h/max(len,0.15),0.0,1.0));
+        float tone=r3;
+        if(fw>0.9){float cv=clamp((1.0-h)/0.6,0.0,1.0)*0.62*(1.0-0.5*h);if(hs2>cv)discard;tone=0.4;}
+        else{if(h>len||abs(fr)>rad+(hs2-0.5)*0.06)discard;}
+        vec3 tc=tone<0.42?vec3(0.95,0.94,0.9):tone<0.68?vec3(0.78):tone<0.84?vec3(0.56):tone<0.93?vec3(0.93,0.82,0.58):vec3(0.4);
+        alb*=tc*(0.62+0.6*h)*1.05;alb=min(alb,vec3(0.62));mRough=0.7;mRimK=0.006;mBump=0.0;mHairH=0.0;
+      }else
       if(card){ // hair card: strand atlas (4 tiles of 128x512: u across the card, v along it), alpha tested, mip-compensated so distant cards do not vanish
         float tile=floor(vBand.z-1.5);vec2 auv=vec2((tile+0.03+vBand.x*0.94)*0.25,vBand.y);
         vec4 st=texture2D(uStrand,auv);vec2 dxa=dFdx(auv)*512.0,dya=dFdy(auv)*512.0;float lod=0.5*log2(max(max(dot(dxa,dxa),dot(dya,dya)),1.0));
@@ -634,7 +647,7 @@ function paintedMaterial(glowBase){
       }
       // flow direction in view space (dP/du from the screen derivatives of u and v) for the anisotropic highlight
       vec3 dpx=dFdx(-vViewPosition),dpy=dFdy(-vViewPosition);float ux=dFdx(fl.x),uy=dFdy(fl.x),vx=dFdx(fl.y),vy=dFdy(fl.y),det=ux*vy-uy*vx;
-      if(abs(det)>1e-12){vec3 tt=(dpx*vy-dpy*vx)/det;float tl=length(tt);if(tl>1e-9){mTan=tt/tl;mKK=card?1.0:(1.0-sk)*(1.0-smoothstep(0.3,0.8,fwv*f1));}}
+      if(abs(det)>1e-12){vec3 tt=(dpx*vy-dpy*vx)/det;float tl=length(tt);if(tl>1e-9){mTan=tt/tl;mKK=(card||shell)?1.0:(1.0-sk)*(1.0-smoothstep(0.3,0.8,fwv*f1));}}
     }
     else if(m==2){
       float folds=n3(vec3(q.x*55.0,q.y*5.0,q.z*55.0));

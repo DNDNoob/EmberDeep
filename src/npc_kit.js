@@ -14,7 +14,7 @@
 // detail mask (0..1, drives wrinkles / fine bump in the shader), baked ambient occlusion (1 = open).
 // game.js poses these with emitS().
 import {ANTHRO, HEAD_H} from './anthro.js';
-import {rng, traceSurface, Cards} from './npc_hair.js';
+import {rng, traceSurface, Cards, shellStack} from './npc_hair.js';
 import {sculptGen, simplifyGen, flattenGen, smin, smax, ssub, smoothstep, sdSphere, sdEllipsoid, sdRoundCone, sdCapsule, sdBox, fbm, noise, worley, setSeed} from './sculpt.js';
 
 const D2R = Math.PI / 180, cl = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -135,9 +135,9 @@ export function neck(H, p = {}) {
   const sdf = (x, y, z) => {
     const az = Math.abs(z);
     let d = sdRoundCone(x, y, z, -0.004, 0.02, 0, -0.008, -0.07, 0, 0.034 * nk * r, 0.04 * nk * r);
-    d = smin(d, sdRoundCone(x, y, z, -0.008, -0.07, 0, -0.016, -len, 0, 0.04 * nk * r, 0.056 * nk * r), 0.02);
+    d = smin(d, sdRoundCone(x, y, z, -0.008, -0.07, 0, -0.034, -len, 0, 0.04 * nk * r, 0.056 * nk * r), 0.02);
     // sternocleidomastoid cords from behind the ear to the collarbones, and the Adam's apple
-    d = smin(d, sdCapsule(x, y, az, -0.026, -0.03, 0.03 * nk, 0.016, -0.15, 0.015, 0.012), 0.012);
+    d = smin(d, sdCapsule(x, y, az, -0.026, -0.03, 0.03 * nk, 0.022, -0.15, 0.02, 0.0155), 0.012);
     d = smin(d, sdSphere(x - 0.036 * nk, y + 0.07, z, 0.011), 0.014);
     return d + 0.0004 * fbm(x * 45, y * 45, z * 45, 2);
   };
@@ -359,16 +359,16 @@ export function beard(H, p = {}) {
         }
       }
     };
-    const nA = Math.round(p.locks ?? 24);
+    const tipsOnly = !!p.tipsOnly, nA = tipsOnly ? 0 : Math.round(p.locks ?? 24);
     layer(nA, {off: 0.0006, rowOff: 0.0005, len: 0.14, end0: 0.7, end1: 0.3, amp: 0.02, W: 0.0078, ao: 0.8, variant: 3, tipVariant: 0, keep: 0, lift: 0.0002, drift: 0.3});
-    layer(Math.round(nA * 1.25), {off: 0.0014, rowOff: 0.0006, len: 0.12, end0: 0.6, end1: 0.25, amp: 0.02, W: 0.0072, ao: 0.9, variant: 0, tipVariant: 1, keep: 1, lift: 0.0004, top: 0.006, span: 0.92, jit: 0.1, drift: 0.32, splay: 0.004});
+    if (!tipsOnly) layer(Math.round(nA * 1.25), {off: 0.0014, rowOff: 0.0006, len: 0.12, end0: 0.6, end1: 0.25, amp: 0.02, W: 0.0072, ao: 0.9, variant: 0, tipVariant: 1, keep: 1, lift: 0.0004, top: 0.006, span: 0.92, jit: 0.1, drift: 0.32, splay: 0.004});
     // big locks: ~10 wide twisted cards run most of the beard's length and converge to the tip, so the beard reads as a few clumps
     for (let i = 0; i < (p.bigLocks ?? 0); i++) {
       const zeta = ((i + 0.5) / (p.bigLocks ?? 0) * 2 - 1) * 0.85 + (rr() - 0.5) * 0.06, y0 = yRoot(zeta * zMax) - 0.02 - rr() * 0.02, len = L * (0.8 + 0.15 * rr());
       addCard(zeta, y0, Math.max(-L * 1.0, y0 - len), {off: 0.0026, seg: 6, amp: 0.016 * (0.7 + 0.6 * rr()), wl: 0.14 + 0.08 * rr(), phase: rr() * 6.28, variant: 0, W: 0.0085 * (1 - 0.35 * zeta * zeta), ao: 1.1, keep: 1, lift: 0.0006, drift: 0.55, twist: (rr() < 0.5 ? -1 : 1) * (0.1 + 0.15 * rr()), vol: 0.9, shear: 0});
     }
     // fill layer: dense cards close to the mass in the lower half so the envelope never shows
-    for (let i = 0; i < (p.fill ?? 60); i++) {
+    for (let i = 0; i < (tipsOnly ? 0 : (p.fill ?? 60)); i++) {
       const zeta = (rr() * 2 - 1) * 0.8, y0 = -0.05 - rr() * 0.12 * L / 0.3, len = 0.09 + 0.06 * rr();
       addCard(zeta, y0, Math.max(-L * 0.98, y0 - len), {off: 0.0015 + 0.001 * rr(), amp: 0.012, wl: 0.08 + 0.08 * rr(), phase: rr() * 6.28, variant: 0, W: 0.0066 + 0.002 * rr(), ao: 0.8, keep: 1, lift: 0.0004, shear: (rr() - 0.5) * 0.03, drift: 0.2});
     }
@@ -385,8 +385,13 @@ export function beard(H, p = {}) {
     }
     return cards.build([{keep: 1, segStep: 1, wScale: 1}, {keep: 0.55, segStep: 1, wScale: 1.25}, {keep: 0.25, segStep: 2, wScale: 1.7}], 13);
   };
-  const T = p.tris || [650, 300, 110];
-  return {sdf: mass(inset), bounds: [-0.02, -L - 0.04, -0.1, chest ? 0.24 : 0.14, cheekY + 0.01, 0.1], cell: p.cell || 0.0048, tris: T,
+  const T = p.tris || [650, 300, 110], held = {};
+  const shells = {gen: function* () {
+    yield; if (!held.m) throw new Error('beard shells need the beard mass baked first');
+    const NS = p.shells || [14, 7, 3];
+    return held.m.map((m, i) => shellStack(m, {n: NS[Math.min(i, NS.length - 1)], T: p.shellT ?? 0.011, inset: 0.0035, bend: p.shellBend ?? 0.008}));
+  }};
+  return {shells, onBaked: o => { held.m = o; }, sdf: mass(inset), bounds: [-0.02, -L - 0.04, -0.1, chest ? 0.24 : 0.14, cheekY + 0.01, 0.1], cell: p.cell || 0.0048, tris: T,
     cull: (x, y, z) => H.sdf(x, y, z) < -0.002, project: 0.003, cardsPart: {cardsDirect: direct},
     ao: 0.006, aoFloor: 0.5,
     band: (x, y, z, o) => { o[0] = -y; o[1] = z / Math.max(0.004, halfW(y)) * 0.045; o[2] = 1 - smoothstep(0.0005, 0.007, skinD(x, y, z)); },
@@ -1098,6 +1103,7 @@ export function* bakePartGen(spec, seed = 1) {
     const sub = {...spec, ...ls, lods: null}, rawL = yield* guard(sculptGen(sub.sdf, sub.bounds, sub.cell, {cull: sub.cull}));
     let mL = rawL; for (const t of sub.tris) { mL = yield* guard(simplifyGen(mL, t)); out.push(sanitize(yield* guard(flattenGen(mL, sub.sdf, {...fo, normalSdf: sub.normalSdf, aoSdf: sub.aoSdf})))); }
   }
+  if (spec.onBaked) spec.onBaked(out);
   return out;
 }
 export function bakePart(spec, seed = 1) {
