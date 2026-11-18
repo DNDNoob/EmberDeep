@@ -782,7 +782,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     // ---- the two rooms ----
     const WZ=-1.9,PW=1.55,PY0=0.36,PY1=2.55,SILL=PY0+0.025;   // glass wall plane, half width of the pane, bottom and top of the pane; the sill is a knee wall you can only jump (apex of a jump is 0.56 m)
     const plas=lit(0x59595c,{pat:1,rim:0.25,rc:[0.1,0.14,0.22],wrap:0.5}),flo=lit(0x454750,{pat:2,rim:0.2,rc:[0.1,0.14,0.22],wrap:0.5,sp:0.05}),ceil=lit(0x3a3b40,{pat:1,wrap:0.5});
-    const BX=2.3,BZ=2.8,BH=2.9;
+    const BX=2.3,BZ=2.8,BH=3.4;
     plane(group,flo,0,0,(BZ+WZ)/2,BX*2,BZ-WZ,-Math.PI/2);plane(group,ceil,0,BH,(BZ+WZ)/2,BX*2,BZ-WZ,Math.PI/2);
     plane(group,plas,-BX,BH/2,(BZ+WZ)/2,BZ-WZ,BH,0,Math.PI/2);plane(group,plas,BX,BH/2,(BZ+WZ)/2,BZ-WZ,BH,0,-Math.PI/2);plane(group,plas,0,BH/2,BZ,BX*2,BH,0,Math.PI);
     // front wall with the opening
@@ -1070,7 +1070,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     let holdNow=-1;
     // walking, sprinting and jumping are the shared walker (src/movement.js); this room adds its sill, ceiling, veil slowdown and sounds
     const WK=createRoomWalker({o,eye:1.6,x:0,z:0.1,collide:()=>collide(),groundAt:sillG,speedMul:()=>1-0.65*veilK(holdNow),
-      ceilingAt:(x,z)=>(S.gb>=0&&Math.abs(x)<PW+0.1&&z>WZ-0.5&&z<WZ+0.25?PY1-0.12:BH-0.15)-1.6,
+      ceilingAt:(x,z)=>(S.gb>=0&&Math.abs(x)<PW+0.1&&z>WZ-0.5&&z<WZ+0.25?PY1-0.12:(z<WZ-0.3?PH:BH)-0.15)-1.6,
       sound:e=>{
         if(e.jumped)o.sfx('jump');
         if(e.landed>0.8){S.dip=Math.min(0.1,0.03+0.02*e.landed);o.sfx('step');o.noise(0.1,0.16,150,0.9);o.tone(58,0.12,'sine',0.12)}
@@ -1236,7 +1236,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
         else if(S.tg==='lamp')toggleLamp();
         else if(S.tg==='mdoor')lockedDoor();
         else if(S.tg==='book')emB.toggle()}
-      if(emB.st===1&&Math.abs(mxw)+Math.abs(myw)>0.3)emB.st=2;
+      if(emB.st===1&&Math.abs(nf(inp.mx)?inp.mx:0)+Math.abs(nf(inp.my)?inp.my:0)>0.3)emB.st=2;
       emM.update(dt);
       if(S.leaveT>=0&&t-S.leaveT>=0.7)finish({k:'win',why:'mirror'});
       // after it gives
@@ -1408,7 +1408,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       if(d>0.25){A.mute++;try{for(let n=0;n<4200&&!held&&S.t<to-0.001;n++)S.update(Math.min(0.1,to-S.t),Z)}finally{A.mute--}}else if(d<-0.25)S.t=to;
       if(nf(q.sm)&&S.bt<0)S.sm=clamp(q.sm,0,q.bt>=0?1:0.995);
       if(Number.isInteger(q.fb)&&q.fb>=0&&q.fb<=3)while(S.fb<q.fb)fblow();
-      if((q.lo===0||q.lo===1)&&q.lo!==S.lamp)setLamp(q.lo);if(nf(q.jy))S.tjy=clamp(q.jy,0,1.2);
+      if((q.lo===0||q.lo===1)&&q.lo!==S.lamp)setLamp(q.lo);if(nf(q.jy))S.tjy=clamp(q.jy,0,2);
       emM.apply(q);emB.apply(q);
     };
     S.bloom=0.55;
