@@ -12,6 +12,7 @@ import {openRoom,newRoomCode,cleanCode} from './net.js';
 import {createVoice} from './voice.js';
 import {createRooms,kilnGame,KILN} from './rooms.js';
 import {bakeRecipe,bakeRecipeIdle} from './npc_kit.js';
+import {hairAtlas,ATLAS_TILES} from './npc_hair.js';
 import {KEEPER} from './npc_recipes.js';
 
 const $ = id => document.getElementById(id);
@@ -552,15 +553,19 @@ vec2 embroidery(vec2 b,float motif,float aa){
   return r;
 }
 `;
+let HAIR_TEX=null;
+function hairTex(){ // procedural strand atlas for hair cards (npc_hair.js), generated once at load
+  if(HAIR_TEX)return HAIR_TEX;const a=hairAtlas(512);
+  const t=new THREE.DataTexture(a.data,a.w,a.h,THREE.RGBAFormat,THREE.UnsignedByteType);t.generateMipmaps=true;t.minFilter=THREE.LinearMipmapLinearFilter;t.magFilter=THREE.LinearFilter;t.anisotropy=4;t.needsUpdate=true;return HAIR_TEX=t}
 function paintedMaterial(glowBase){
   if(Q===0)return new THREE.MeshLambertMaterial({vertexColors:true,side:THREE.DoubleSide,emissive:new THREE.Color(glowBase,glowBase,glowBase)});
   const m=new THREE.MeshStandardMaterial({vertexColors:true,roughness:0.7,metalness:0,side:THREE.DoubleSide});
   m.onBeforeCompile=sh=>{
-    sh.uniforms.uGlowBase={value:glowBase};
+    sh.uniforms.uGlowBase={value:glowBase};sh.uniforms.uStrand={value:hairTex()};
     sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nattribute vec4 aLoc;varying vec4 vLoc;attribute vec3 aBand;varying vec3 vBand;')
       .replace('#include <begin_vertex>','#include <begin_vertex>\nvLoc=aLoc;vBand=aBand;');
     sh.fragmentShader=sh.fragmentShader
-      .replace('#include <common>','#include <common>\nvarying vec4 vLoc;varying vec3 vBand;uniform float uGlowBase;float mRough=0.7;float mMetal=0.0;float mGlow=0.0;float mRim=0.0;float mSss=0.0;float mRimK=0.0;float mBump=0.0;float mAux=0.0;float mCh=0.0;float mWeave=1.0;float mEmb=0.0;vec3 mTan=vec3(0.0);float mKK=0.0;float mHairH=0.0;'+MAT_GLSL)
+      .replace('#include <common>','#include <common>\nvarying vec4 vLoc;varying vec3 vBand;uniform float uGlowBase;uniform sampler2D uStrand;float mRough=0.7;float mMetal=0.0;float mGlow=0.0;float mRim=0.0;float mSss=0.0;float mRimK=0.0;float mBump=0.0;float mAux=0.0;float mCh=0.0;float mWeave=1.0;float mEmb=0.0;vec3 mTan=vec3(0.0);float mKK=0.0;float mHairH=0.0;'+MAT_GLSL)
       .replace('#include <lights_physical_pars_fragment>',()=>THREE.ShaderChunk.lights_physical_pars_fragment.replace('vec3 irradiance = dotNL * directLight.color;',
         // cheap subsurface look: wrapped diffuse that lets light bleed past the terminator, tinted red where it fades
         `float nlS=dot(geometryNormal,directLight.direction);
@@ -602,11 +607,19 @@ function paintedMaterial(glowBase){
       }
       mBump=1.0;
     }else if(m==14){ // sculpted hair (npc_hair.js): fine strands from the baked flow coordinates vBand = (u along the hair, v across the lock, skin proximity)
-      vec2 fl=vBand.xy;float sk=clamp(vBand.z,0.0,1.0);
+      bool card=vBand.z>1.5;
+      vec2 fl=card?vec2(vBand.y,vBand.x):vBand.xy;float sk=card?0.0:clamp(vBand.z,0.0,1.0);
       float fwv=max(fwidth(fl.y),1e-6),fwu=max(fwidth(fl.x),1e-6);
       // cycles per pixel of the two strand layers: fade each out before it aliases, towards its mean (no shimmer or moire at range)
       float f1=1.0/0.0017,f2=1.0/0.00065;
       float fd1=1.0-smoothstep(0.25,0.75,fwv*f1),fd2=1.0-smoothstep(0.25,0.75,fwv*f2);
+      if(card){ // hair card: strand atlas (4 tiles of 128x512: u across the card, v along it), alpha tested, mip-compensated so distant cards do not vanish
+        float tile=floor(vBand.z-1.5);vec2 auv=vec2((tile+0.03+vBand.x*0.94)*0.25,vBand.y);
+        vec4 st=texture2D(uStrand,auv);vec2 dxa=dFdx(auv)*512.0,dya=dFdy(auv)*512.0;float lod=0.5*log2(max(max(dot(dxa,dxa),dot(dya,dya)),1.0));
+        float ca=st.a*(1.0+0.3*lod);float hs=fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453);
+        if(ca<0.5+(hs-0.5)*0.16)discard;
+        alb*=st.rgb*1.05;alb=min(alb,vec3(0.56));mRough=0.7;mRimK=0.006;mBump=0.0;mHairH=0.0;
+      }else{
       float vw=fl.y+0.0011*(n3(vec3(fl.x*55.0,fl.y*140.0,2.0))-0.5)*fd1;      // strands wander a little along their length
       float s1=n3(vec3(vw*f1,fl.x*f1*0.07,3.1)),s2=n3(vec3(vw*f2,fl.x*f2*0.055,7.7));
       float strand=clamp(0.5+(mix(0.5,s1,fd1)*0.55+mix(0.5,s2,fd2)*0.45-0.5)*2.6,0.0,1.0); // 0..1, mean 0.5, stretched (value noise is low contrast)
@@ -616,9 +629,10 @@ function paintedMaterial(glowBase){
       alb*=mix(vec3(1.0),vec3(1.05,0.97,0.78),yel*0.7);                          // yellowed strands among the white
       alb=mix(alb,vec3(0.52,0.42,0.38)*(0.8+0.4*strand),sk*0.55);                 // roots: stubble grey-brown where the hair meets skin
       alb=min(alb,vec3(0.54));mRough=0.78;mRimK=0.008;mBump=1.0;
+      }
       // flow direction in view space (dP/du from the screen derivatives of u and v) for the anisotropic highlight
       vec3 dpx=dFdx(-vViewPosition),dpy=dFdy(-vViewPosition);float ux=dFdx(fl.x),uy=dFdy(fl.x),vx=dFdx(fl.y),vy=dFdy(fl.y),det=ux*vy-uy*vx;
-      if(abs(det)>1e-12){vec3 tt=(dpx*vy-dpy*vx)/det;float tl=length(tt);if(tl>1e-9){mTan=tt/tl;mKK=(1.0-sk)*(1.0-smoothstep(0.3,0.8,fwv*f1));}}
+      if(abs(det)>1e-12){vec3 tt=(dpx*vy-dpy*vx)/det;float tl=length(tt);if(tl>1e-9){mTan=tt/tl;mKK=card?1.0:(1.0-sk)*(1.0-smoothstep(0.3,0.8,fwv*f1));}}
     }
     else if(m==2){
       float folds=n3(vec3(q.x*55.0,q.y*5.0,q.z*55.0));
@@ -990,10 +1004,10 @@ const NPC_T={ms:0,n:0,tris:0,draws:0}; // CPU time spent in buildNpc, and what t
 function gpuGroups(baked){
   if(baked.groups)return baked.groups;
   const rec=baked.recipe,pal=rec.palette,G=new Map(),ec=rec.eyes,E=baked.eyes;
-  const grp=(key,frame,drape)=>{let g=G.get(key);if(!g)G.set(key,g=({key,frame,drape:drape||null,items:[],lid:false}));return g};
+  const grp=(key,frame,drape,cards)=>{let g=G.get(key);if(!g)G.set(key,g=({key,frame,drape:drape||null,items:[],lid:false,cards:!!cards}));return g};
   for(const q of rec.parts){const m=baked.parts[q.part];if(!m)continue;
     const dr=q.drape&&rec.rig.drape;
-    grp(dr?'d:'+q.part:q.frame,q.frame,dr?{y0:q.drape[0],y1:q.drape[1]}:null).items.push({m,c:q.at||ZERO3,col:pal[q.col],col2:pal[q.col2||q.col],mat:MAT[q.mat],R:q.R||null})}
+    grp(q.cards?'c:'+(dr?q.part:q.frame):dr?'d:'+q.part:q.frame,q.frame,dr?{y0:q.drape[0],y1:q.drape[1]}:null,q.cards).items.push({m,c:q.at||ZERO3,col:pal[q.col],col2:pal[q.col2||q.col],mat:MAT[q.mat],R:q.R||null})}
   if(E&&ec){const a=baked.anchors.eye;
     for(const [key,fields,lid] of[[ec.frame,['ball','iris','lower'],false],['lid:'+ec.frame,['lid'],true]]){const g=grp(key,ec.frame);g.lid=lid;
       for(const z of[-a[2],a[2]])for(const fl of fields){
@@ -1043,9 +1057,10 @@ function drawRecipe(baked,lod,fr,blink,owner){
   const rec=baked.recipe,pr=rec.proportions,hs=pr?pr.headScale:1,S=pr&&pr.height||1,scOf=fn=>S*(pr&&pr.frames.includes(fn)?hs:1);
   const rig=gpuRig(owner,baked),E=baked.eyes;
   for(const x of rig.groups){const g=x.g,f=fr[g.frame];if(!f)continue;
+    if(g.cards&&Q===0)continue; // low quality: no alpha cards, the solid mass carries the hair
     const l=Math.min(lod,baked.nLod-1);let mesh=x.meshes[l];
     if(!mesh){mesh=new THREE.Mesh(gpuGeo(baked,g,l),x.mat?x.mat.m:charMesh.material);
-      mesh.matrixAutoUpdate=false;mesh.matrixWorldAutoUpdate=false;mesh.castShadow=true;mesh.receiveShadow=true;
+      mesh.matrixAutoUpdate=false;mesh.matrixWorldAutoUpdate=false;mesh.castShadow=!g.cards;mesh.receiveShadow=true;
       if(x.mat){mesh.customDepthMaterial=x.mat.dm;mesh.customDistanceMaterial=x.mat.ds}
       scene.add(mesh);x.meshes[l]=mesh}
     const sc=scOf(g.frame);

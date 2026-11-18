@@ -26,7 +26,7 @@ const ARMS = [
 const WEAR_TOP = K.wearPaint({vary: 0.28, freq: 8, seed: 11}), WEAR_STOLE = K.wearPaint({vary: 0.35, freq: 9, seed: 5}), WEAR_SKIRT = K.wearPaint({vary: 0.28, freq: 6, dirt: 0.85, dirtY: 0.16, seed: 3});
 const RAG = {amp: 0.005, notches: 6, depth: 0.016, width: 0.07, seed: 2};   // frayed hem: noise on the edge height plus a few V-shaped notches
 export const KEEPER = {
-  id: 'keeper-v10', seed: 4242,
+  id: 'keeper-v11', seed: 4242,
   // Human proportions (see docs/npc-kit.md): the head is built at its natural size and drawn at headScale; the torso is
   // stretched (len) and the skirt (legs) raised so the figure is ~7.25 heads tall with shoulders about 2.7 head widths wide.
   proportions: {headScale: 0.6, frames: ['H', 'J'], height: 0.93},   // height: uniform scale of the whole figure and its props (crown 1.03 m * 0.93 = 0.96 m)
@@ -34,7 +34,7 @@ export const KEEPER = {
     skin: [0.8, 0.6, 0.47], skinDeep: [0.66, 0.34, 0.28],
     robe: [0.36, 0.1, 0.07], robeDeep: [0.24, 0.06, 0.05],
     gold: [0.8, 0.58, 0.18], goldDeep: [0.55, 0.36, 0.1],
-    white: [0.78, 0.77, 0.72], whiteDeep: [0.42, 0.4, 0.38],
+    white: [0.74, 0.73, 0.69], whiteDeep: [0.36, 0.35, 0.34],
     robeDirt: [0.17, 0.075, 0.05], stole: [0.085, 0.10, 0.27], stoleDeep: [0.035, 0.045, 0.14],
     brass: [0.62, 0.47, 0.2], brassDeep: [0.36, 0.25, 0.1], garnet: [0.55, 0.04, 0.06], leather: [0.34, 0.19, 0.09], leatherDeep: [0.16, 0.085, 0.045],
     nail: [0.84, 0.66, 0.58], nailDeep: [0.74, 0.52, 0.46], sclera: [0.86, 0.82, 0.74], iris: [0.42, 0.26, 0.12], pupil: [0.02, 0.015, 0.012]
@@ -60,6 +60,9 @@ export const KEEPER = {
     {part: 'brows', frame: 'H', mat: 'hair', col: 'white', col2: 'whiteDeep'},
     {part: 'moustache', frame: 'H', mat: 'hair', col: 'white', col2: 'whiteDeep'},
     {part: 'beard', frame: 'J', mat: 'hair', col: 'white', col2: 'whiteDeep', drape: [-0.015, -0.13]},
+    {part: 'browCards', frame: 'H', mat: 'hair', col: 'white', col2: 'whiteDeep', cards: true},
+    {part: 'mousCards', frame: 'H', mat: 'hair', col: 'white', col2: 'whiteDeep', cards: true},
+    {part: 'beardCards', frame: 'J', mat: 'hair', col: 'white', col2: 'whiteDeep', drape: [-0.015, -0.13], cards: true},
     {part: 'gripHand', frame: 'grip', mat: 'skin', col: 'skin', col2: 'skinDeep'},
     {part: 'restHand', frame: 'rest', mat: 'skin', col: 'skin', col2: 'skinDeep'}
   ],
@@ -109,10 +112,11 @@ export const KEEPER = {
     const pk = onBody(bodySurf, 1.31, -0.012, -0.04), kk = onBody(bodySurf, 0.42, -0.012, -0.04);
     const pouch = K.pouch(pk.P, pk.n, upU, bodySurf, {size: 1.25}), keys = K.keyRing(kk.P, kk.n, upU, bodySurf, {size: 1.5, tris: [280, 160, 40]});
     const [e0, e1] = D.ends;
+    const brw = K.brows(H, {size: 1.15, droop: 1.1}), mou = K.moustache(H, {size: 1.1}), brd = K.beard(H, {length: 0.34, width: 1.12, thick: 0.009, fork: 0, chest: robeInBeard});
     return {
       parts: {skirt, hem, ...D.parts, brooch: bro, pouch, keys,
-        head: H, ears: K.ears(H, {tris: [650, 400, 60], cell: 0.0015}), hair: K.hairCap(H, {crown: 0.128, tris: [450, 260, 60], cell: 0.0065}), brows: K.brows(H, {size: 1.15, droop: 1.1, tris: [450, 200, 60], cell: 0.0013}), moustache: K.moustache(H, {size: 1.1, tris: [750, 300, 70], cell: 0.0017}),
-        neck: K.neck(H, {tris: [260, 150, 40], cell: 0.0035}), beard: K.beard(H, {length: 0.3, width: 1.25, thick: 0.009, fork: 0, tris: [3800, 1100, 150], cell: 0.0024, chest: robeInBeard}), gripHand: sleeveCull(grip), restHand: sleeveCull(rest)},
+        head: H, ears: K.ears(H, {tris: [650, 400, 60], cell: 0.0015}), hair: K.hairCap(H, {crown: 0.128, tris: [450, 260, 60], cell: 0.0065}), brows: brw, moustache: mou, browCards: {cardsDirect: brw.cardsPart.cardsDirect}, mousCards: {cardsDirect: mou.cardsPart.cardsDirect}, beardCards: {cardsDirect: brd.cardsPart.cardsDirect},
+        neck: K.neck(H, {tris: [260, 150, 40], cell: 0.0035}), beard: brd, gripHand: sleeveCull(grip), restHand: sleeveCull(rest)},
       eyes: {r: H.eye.r, iris: 0.5, open: 12, low: -24, arch: 9, lidT: 0.0021},
       anchors: {
         eye: [H.eye.x, H.eye.y, H.eye.z],

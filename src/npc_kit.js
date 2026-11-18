@@ -14,7 +14,7 @@
 // detail mask (0..1, drives wrinkles / fine bump in the shader), baked ambient occlusion (1 = open).
 // game.js poses these with emitS().
 import {ANTHRO, HEAD_H} from './anthro.js';
-import {rng, lockSet, traceSurface, lockFromTrace, lockFromPath, tipWisps} from './npc_hair.js';
+import {rng, traceSurface, Cards} from './npc_hair.js';
 import {sculptGen, simplifyGen, flattenGen, smin, smax, ssub, smoothstep, sdSphere, sdEllipsoid, sdRoundCone, sdCapsule, sdBox, fbm, noise, worley, setSeed} from './sculpt.js';
 
 const D2R = Math.PI / 180, cl = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -22,6 +22,16 @@ const norm3 = v => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] /
 const lerp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
 const gauss = (x, y, z, c, r) => Math.exp(-(((x - c[0]) ** 2 + (y - c[1]) ** 2 + (z - c[2]) ** 2) / (r * r)));
 export {norm3};
+// Place a point on the skin: move p along the gradient of the field f so that f = off (m above the surface); returns {p, n} (n = outward unit gradient)
+export function onSkin(f, p, off = 0, e = 0.0006) {
+  let x = p[0], y = p[1], z = p[2], n = [0, 1, 0];
+  for (let i = 0; i < 3; i++) {
+    const d = f(x, y, z), gx = f(x + e, y, z) - f(x - e, y, z), gy = f(x, y + e, z) - f(x, y - e, z), gz = f(x, y, z + e) - f(x, y, z - e), gl = Math.hypot(gx, gy, gz) || 1;
+    n = [gx / gl, gy / gl, gz / gl]; const k = cl((d - off) / (gl / (2 * e)) * 1, -0.01, 0.01) / (gl / (2 * e)) * (gl / (2 * e));
+    x -= n[0] * cl(d - off, -0.01, 0.01); y -= n[1] * cl(d - off, -0.01, 0.01); z -= n[2] * cl(d - off, -0.01, 0.01); void k;
+  }
+  return {p: [x, y, z], n};
+}
 // Evaluate a field that lives in another frame. A child frame sits at `off` with rotation R (row-major 3x3,
 // columns = child axes in parent coords), exactly like subF(parent, off, R) in game.js.
 //   inChild(childSdf, off, R)  -> field of the child, in parent coordinates
@@ -206,58 +216,63 @@ export function hairCap(H, p = {}) {
     paint: (x, y, z, o) => { o[0] = smoothstep(0.06, 0.12, y) * 0.5; }};
 }
 
-/* ---------- eyebrows: bushy tufts that sit on the brow ridge and droop at the outer end (locks, see npc_hair.js) ---------- */
-// p: {size, droop, lift, tufts (per brow), seed}
+/* ---------- eyebrows: a low bed plus short cards growing up and out from the brow ridge (npc_hair.js cards) ---------- */
+// p: {size, droop, lift, tufts (cards per brow), seed}
 export function brows(H, p = {}) {
-  const E = H.eye, s = p.size ?? 1, droop = p.droop ?? 0.6, lift = p.lift ?? 0, rr = rng(p.seed ?? 5), n = p.tufts ?? 13;
-  // the chain runs just in front of the brow ridge, so about half of each tuft stands proud of the skin
+  const E = H.eye, s = p.size ?? 1, droop = p.droop ?? 0.6, lift = p.lift ?? 0, rr = rng(p.seed ?? 5), n = p.tufts ?? 12;
   const pts = [[E.x + 0.0235, E.y + 0.02 + lift, 0.008], [E.x + 0.021, E.y + 0.0245 + lift, E.z - 0.007], [E.x + 0.016, E.y + 0.026 + lift, E.z + 0.007], [E.x + 0.006, E.y + 0.021 + lift - 0.009 * droop, E.z + 0.021]];
   const base = c => { const f = c * (pts.length - 1), i = Math.min(pts.length - 2, Math.floor(f)); return lerp3(pts[i], pts[i + 1], f - i); };
-  const locks = [];
-  for (const side of [-1, 1]) for (let j = 0; j < n; j++) {
-    const c = (j + 0.2 + 0.6 * rr()) / n, P = base(c), len = (0.0085 + 0.006 * Math.sin(Math.PI * Math.min(1, c * 1.1 + 0.1)) + 0.004 * rr()) * s;
-    // inner hairs grow up and out, the outer ones sweep out and down
-    const a = (0.25 + 1.45 * c + 0.2 * (rr() - 0.5)) , up = Math.cos(a) - 0.55 * Math.max(0, c - 0.55) * 1.2 * droop, out = Math.sin(a), fw = 0.25 + 0.2 * rr();
-    const R = (0.0013 + 0.0004 * rr()) * s, ph = rr() * 6.28;
-    locks.push(lockFromPath(t => [P[0] + fw * len * t * 0.5 - 0.0004 * (1 - t) - 0.0008 * s * (1 - t), P[1] + up * len * t + 0.0016 * Math.sin(t * 3 + ph) * t - 0.0008 * (1 - t), side * (P[2] + out * len * t + 0.0008 * Math.sin(t * 4 + ph) * t)], {n: 7, R, tip: 0.0002, root: 0.9, taper: 0.35}));
-  }
-  const LS = lockSet(locks, {k: 0.0008, pad: 0.002, ref: [1, 0, 0]}), skinD = H.sdf, tmp = [0, 0, 0];
-  const inner = (x, y, z) => { const zs = Math.abs(z); return chain(x, y, zs, pts, 0.0034 * s, 0.003 * s, 0.006) + 0.0005; };   // a low base so the tufts grow from a dense bed
-  const fat = f => (x, y, z) => smin(inner(x, y, z), LS.eval(x, y, z) - f, 0.002);
-  const sdf = (x, y, z) => smin(inner(x, y, z), LS.eval(x, y, z), 0.0012);
+  const inner = (x, y, z) => { const zs = Math.abs(z); return chain(x, y, zs, pts, 0.0034 * s, 0.003 * s, 0.006) + 0.0004; };   // the bed the cards grow from
+  const skinD = H.sdf;
+  const direct = () => {
+    const cards = new Cards();
+    for (const side of [-1, 1]) for (let j = 0; j < n; j++) for (let layer = 0; layer < 2; layer++) {
+      const c = (j + 0.2 + 0.6 * rr()) / n, P = base(c), len = (0.0105 + 0.007 * Math.sin(Math.PI * Math.min(1, c * 1.1 + 0.1)) + 0.005 * rr()) * s * (layer ? 0.75 : 1);
+      const a = 0.25 + 1.45 * c + 0.2 * (rr() - 0.5), up = Math.cos(a) - 0.55 * Math.max(0, c - 0.55) * 1.2 * droop, out = Math.sin(a), ph = rr() * 6.28;
+      const pts3 = [], nor3 = [];
+      for (let k = 0; k <= 2; k++) {
+        const t = k / 2, q = [P[0] + 0.3 * len * t, P[1] + up * len * t + 0.0012 * Math.sin(t * 3 + ph) * t, side * (P[2] + out * len * t)];
+        const sk = onSkin(skinD, q, 0.0005 + 0.0012 * t + 0.0007 * layer); pts3.push(sk.p); nor3.push(sk.n);
+      }
+      cards.ribbon(pts3, nor3, {w: t => (0.0017 + 0.0006 * rr()) * s * (1 - 0.8 * t * t), variant: layer ? 1 : 3, lift: 0.0025 * s, root: 0.55, tip: 0.1, ao: 0.78 + 0.22 * layer, keep: layer ? 1 : 0, round: 0.5});
+    }
+    return cards.build([{keep: 1, segStep: 1, wScale: 1}, {keep: 0.6, segStep: 1, wScale: 1.3}, {keep: 0.3, segStep: 2, wScale: 1.6}], 11);
+  };
   const bounds = [E.x - 0.015, E.y, -E.z - 0.035, E.x + 0.035, E.y + 0.045, E.z + 0.035];
-  return {sdf, bounds, cell: p.cell || 0.0013, tris: [(p.tris || [450, 200, 60])[0]], lods: (p.tris || [450, 200, 60]).slice(1).map((t, i) => ({sdf: fat(0.0006 + 0.0008 * i), cell: 0.0022 + 0.0008 * i, tris: [t]})),
-    cull: (x, y, z) => H.sdf(x, y, z) < -0.0015, project: 0.0008, ao: 0.004, aoFloor: 0.6, locks: LS,
+  const T = p.tris || [150, 90, 40];
+  return {sdf: inner, bounds, cell: p.cell || 0.0016, tris: T, cull: (x, y, z) => H.sdf(x, y, z) < -0.0015, project: 0.0008, ao: 0.004, aoFloor: 0.6,
     band: (x, y, z, o) => { const zs = Math.abs(z); o[0] = zs * 0.9 - y * 0.4; o[1] = y * 0.9 + zs * 0.4; o[2] = 1 - smoothstep(0.0003, 0.0035, skinD(x, y, z)); },
-    paint: (x, y, z, o) => { LS.info(x, y, z, tmp); o[0] = cl(0.35 * (1 - smoothstep(0, 0.25, tmp.t ?? 0)) + 0.1 * smoothstep(0.0003, 0.0015, tmp.d) + 0.12 * (tmp[2] - 0.5), 0, 1); }};
+    paint: (x, y, z, o) => { o[0] = 0.45; }, cardsPart: {cardsDirect: direct}};
 }
 
 /* ---------- moustache: grows from the upper lip, droops past the mouth corners into the beard ---------- */
-// Locks fan out from the philtrum (parted there, a gap under the nose) and sweep over the lip corners, tips hanging separately.
-// p: {size, droop, locks (per side), seed}
+// Cards fan out from the philtrum (parted there, a gap under the nose) and sweep over the lip corners, tips hanging separately. A low bed keeps skin from showing.
+// p: {size, droop, locks (cards per side and layer), seed}
 export function moustache(H, p = {}) {
-  const nt = H.noseTip, m = H.mouth, s = p.size ?? 1, droop = p.droop ?? 1, rr = rng(p.seed ?? 9), n = p.locks ?? 7;
-  // starts ~4 mm below the nose base (a philtrum gap), rides on the upper lip, droops over the mouth corners; the mouth slit and lower lip stay free
+  const nt = H.noseTip, m = H.mouth, s = p.size ?? 1, droop = p.droop ?? 1, rr = rng(p.seed ?? 9), n = p.locks ?? 8;
   const pts = [[m[0] + 0.005, m[1] + 0.0085, 0.0035], [m[0] + 0.004, m[1] + 0.0055, 0.015], [m[0] - 0.002, m[1] - 0.003 * droop, 0.027], [m[0] - 0.01, m[1] - 0.019 * droop, 0.034]];
   const ext = [pts[3][0] - 0.004, pts[3][1] - 0.01 * droop, pts[3][2] + 0.002], P5 = [...pts, ext];
   const base = c => { const f = c * (P5.length - 1), i = Math.min(P5.length - 2, Math.floor(f)); return lerp3(P5[i], P5[i + 1], f - i); };
-  const locks = [];
-  for (const side of [-1, 1]) for (let i = 0; i < n; i++) {
-    const u = (i + 0.15 + 0.7 * rr()) / n, len = 0.62 + 0.38 * Math.pow(u, 0.7) + 0.06 * rr(), ph = rr() * 6.28, R = (0.0021 + 0.0007 * Math.sin(Math.PI * u) + 0.0005 * rr()) * s;
-    locks.push(lockFromPath(t => {
-      const b = base(t * len), g = Math.pow(t, 1.2), sm = t * t * (3 - 2 * t);
-      return [b[0] + 0.0014 * s * (u - 0.5) * 2 * sm + 0.0006 * s * Math.sin(t * 5 + ph), b[1] + (0.0032 - 0.0068 * u) * s * sm - 0.0075 * u * u * g * droop, side * (b[2] + 0.0012 * Math.sin(t * 7 + ph) * sm + 0.003 * (u - 0.5) * g)];
-    }, {n: 11, R, tip: 0.0002, root: 0.85, taper: 0.5}));
-  }
-  const LS = lockSet(locks, {k: 0.0011, pad: 0.002}), skinD = H.sdf, tmp = [0, 0, 0];
-  const bed = (x, y, z) => chain(x, y, Math.abs(z), pts, 0.0036 * s, 0.002 * s, 0.003) + 0.0006;
-  const fat = f => (x, y, z) => smin(bed(x, y, z), LS.eval(x, y, z) - f, 0.002);
-  const sdf = (x, y, z) => smin(bed(x, y, z), LS.eval(x, y, z), 0.0014);
-  const T = p.tris || [750, 300, 70];
-  return {sdf, bounds: [m[0] - 0.035, m[1] - 0.04, -0.055, nt[0] + 0.01, nt[1] - 0.008, 0.055], cell: p.cell || 0.0017, tris: [T[0]], lods: T.slice(1).map((t, i) => ({sdf: fat(0.0008 + 0.0012 * i), cell: 0.0028 + 0.001 * i, tris: [t]})),
-    cull: (x, y, z) => H.sdf(x, y, z) < -0.002, project: 0.001, ao: 0.005, aoFloor: 0.6, locks: LS,
+  const skinD = H.sdf, bed = (x, y, z) => chain(x, y, Math.abs(z), pts, 0.0032 * s, 0.0018 * s, 0.003) + 0.0006;
+  const direct = () => {
+    const cards = new Cards();
+    for (const side of [-1, 1]) for (let layer = 0; layer < 2; layer++) for (let i = 0; i < n; i++) {
+      const u = (i + 0.15 + 0.7 * rr()) / n, len = (0.62 + 0.38 * Math.pow(u, 0.7) + 0.06 * rr()) * (layer ? 0.72 : 1), ph = rr() * 6.28, hw = (0.0022 + 0.0008 * Math.sin(Math.PI * u) + 0.0005 * rr()) * s;
+      const pp = [], nn = [], ns = 4;
+      for (let k = 0; k <= ns; k++) {
+        const t = k / ns, b = base(t * len), g = Math.pow(t, 1.2), sm = t * t * (3 - 2 * t);
+        const q = [b[0] + 0.0014 * s * (u - 0.5) * 2 * sm + 0.0006 * s * Math.sin(t * 5 + ph), b[1] + (0.0032 - 0.0068 * u) * s * sm - 0.0075 * u * u * g * droop, side * (b[2] + 0.0012 * Math.sin(t * 7 + ph) * sm + 0.003 * (u - 0.5) * g)];
+        const sk = onSkin(skinD, q, 0.0011 + 0.0009 * layer + 0.0016 * t * t); pp.push(sk.p); nn.push(sk.n);
+      }
+      cards.ribbon(pp, nn, {w: t => hw * (1 - 0.82 * Math.pow(Math.max(0, t - 0.3) / 0.7, 1.3)), variant: layer ? (i % 2 ? 1 : 3) : 0, lift: 0.0035 * s, root: 0.5, tip: 0.05, ao: layer ? 0.95 : 0.75, keep: layer ? 1 : 0, round: 0.55});
+    }
+    return cards.build([{keep: 1, segStep: 1, wScale: 1}, {keep: 0.6, segStep: 1, wScale: 1.3}, {keep: 0.3, segStep: 2, wScale: 1.6}], 12);
+  };
+  const T = p.tris || [220, 110, 50];
+  return {sdf: bed, bounds: [m[0] - 0.035, m[1] - 0.04, -0.055, nt[0] + 0.01, nt[1] - 0.008, 0.055], cell: p.cell || 0.0018, tris: T,
+    cull: (x, y, z) => H.sdf(x, y, z) < -0.002, project: 0.001, ao: 0.005, aoFloor: 0.6,
     band: (x, y, z, o) => { const zs = Math.abs(z); o[0] = zs * 0.9 - y * 0.6; o[1] = y * 0.9 + zs * 0.6; o[2] = 1 - smoothstep(0.0003, 0.004, skinD(x, y, z)); },
-    paint: (x, y, z, o) => { LS.info(x, y, z, tmp); o[0] = cl(0.3 * (1 - smoothstep(0, 0.2, tmp.t ?? 0)) + 0.12 * smoothstep(0.0004, 0.002, tmp.d) + 0.12 * (tmp[2] - 0.5), 0, 1); }};
+    paint: (x, y, z, o) => { o[0] = 0.4; }, cardsPart: {cardsDirect: direct}};
 }
 
 /* ---------- beard: hugs the jaw and cheeks (grows out of the face), then falls in tapered locks ---------- */
@@ -306,10 +321,8 @@ export function beard(H, p = {}) {
     }
     return d;
   }
-  // ---- locks (npc_hair.js): the smooth envelope above is the inner mass (inset by `inset`); layered locks lie on its surface ----
-  const inset = p.inset ?? 0.0032, rr = rng(p.seed ?? 17), zMax = 0.06 * W, locks = [];
-  const root = (z0, y0) => surfacePoint(core, [0.3, y0, z0], [-1, 0, 0], 0, 0.36);
-  // half width of the beard at each height (rows of 5 mm), so a lock can keep its relative position across the mass while it narrows
+  // ---- cards (npc_hair.js): the envelope above is the inner mass (inset, darker); curved ribbon cards lie over it in layers from inner to outer ----
+  const inset = p.inset ?? 0.0034, rr = rng(p.seed ?? 17), zMax = 0.06 * W;
   const ZY0 = cheekY + 0.004, ZS = 0.005, zExt = [];
   for (let y = ZY0; y > -L - 0.03; y -= ZS) {
     let w = 0.004; for (let z = 0.1; z > 0.004; z -= 0.003) { let hit = false; for (let x = 0.04; x < 0.14 && !hit; x += 0.004) hit = core(x, y, z) < 0; if (hit) { w = z; break; } }
@@ -318,50 +331,53 @@ export function beard(H, p = {}) {
   for (let r = 0; r < 2; r++) for (let i = 1; i < zExt.length - 1; i++) zExt[i] = (zExt[i - 1] + 2 * zExt[i] + zExt[i + 1]) / 4;
   const halfW = y => { const f = cl((ZY0 - y) / ZS, 0, zExt.length - 1.001), i = Math.floor(f); return zExt[i] + (zExt[i + 1] - zExt[i]) * (f - i); };
   const yRoot = z0 => { const a = Math.abs(z0); return m[1] - 0.022 + (cheekY - 0.014 - (m[1] - 0.022)) * smoothstep(0.02, 0.046, a); };
-  // one lock: relative position zeta (-1..1) across the beard, root height y0 down to yEnd, S-curve of amplitude amp (m) and wavelength wl
-  const addLock = (zeta, y0, yEnd, o, wisps) => {
-    const yz = []; const st = o.step ?? 0.006;
-    for (let y = y0; y > yEnd; y -= st) { const s = (y0 - y) / (y0 - yEnd); yz.push([y, zeta * (1 - (o.drift ?? 0.1) * s) * halfW(y) * (o.fill ?? 0.94) + o.amp * Math.sin((y0 - y) / o.wl * 2 * Math.PI + o.phase) * smoothstep(0, 0.25, s)]); }
-    const tr = traceSurface(core, yz); if (tr.pts.length < 4) return;
-    const lk = lockFromTrace(tr, o); locks.push(lk); if (wisps) for (const q of tipWisps(lk, rr, wisps)) locks.push(q);
+  const skinD = H.sdf, tmp = [0, 0, 0];
+  const mass = f => (x, y, z) => { let d = core(x, y, z) + f * (1 - smoothstep(cheekY - 0.05, cheekY - 0.012, y)); if (chest) d = smax(d, -(chest(x, y, z) - gap * 0.5), 0.004); return d; };   // inset fades out on the cheek
+  const direct = () => {
+    const cards = new Cards();
+    // one card: relative position zeta (-1..1) across the beard, from height y0 down to y1 (a card is 2 to 4 segments), S-curve amp / wavelength wl
+    const addCard = (zeta, y0, y1, o) => {
+      const ns = o.seg ?? 3, yz = [], yAt = s => y0 + (y1 - y0) * s;
+      for (let i = 0; i <= ns; i++) { const s = i / ns, y = yAt(s), g = (-y) / L; yz.push([y, zeta * (1 - (o.drift ?? 0.1) * g) * halfW(y) * (o.fill ?? 0.9) + o.amp * Math.sin((y0 - y) / o.wl * 2 * Math.PI + o.phase) * smoothstep(0, 0.25, g) + (o.splay ?? 0) * Math.sign(zeta) * s * s * g]); }
+      const tr = traceSurface(core, yz); if (tr.pts.length < ns + 1) return;
+      const pts = [], nor = tr.nor;
+      for (let i = 0; i <= ns; i++) { const s = i / ns, f = o.off * (0.4 + 0.6 * s), q = tr.pts[i]; pts.push([q[0] + nor[i][0] * f, q[1] + nor[i][1] * f, q[2] + nor[i][2] * f]); }
+      const wk = o.W ?? 0.0055;
+      cards.ribbon(pts, nor, {w: s => { const y = yAt(s), r = cl(halfW(y) / 0.07, 0, 1); return wk * (0.4 + 0.6 * r) * (1 - 0.72 * Math.pow(smoothstep(0.5, 1, s), 1.2)); }, variant: o.variant ?? 0, lift: o.lift ?? 0.002, root: o.root ?? 0.55, tip: o.tipPaint ?? 0.05, ao: (o.ao ?? 1) * (0.72 + 0.4 * rr()), keep: o.keep ?? 1, round: o.round ?? 0.55});
+    };
+    // layers A, B: shingled rows, upper cards lie over the roots of the ones below (their offset is larger)
+    const layer = (nCol, o) => {
+      for (let i = 0; i < nCol; i++) {
+        const zeta = ((i + 0.5) / nCol * 2 - 1) * (o.span ?? 1) + (rr() - 0.5) * (o.jit ?? 0.05), y0 = yRoot(zeta * zMax) - rr() * 0.006 - (o.top ?? 0);
+        const yEnd = -L * (o.end0 + o.end1 * (1 - zeta * zeta) * (0.85 + 0.3 * rr())), len = o.len * (0.9 + 0.2 * rr()), step = len * 0.62;
+        const rows = Math.max(1, Math.ceil((y0 - yEnd - len) / step) + 1);
+        for (let r = 0; r < rows; r++) {
+          const ya = y0 - r * step, yb = Math.max(yEnd, ya - len);
+          if (ya - yb < 0.03) break;
+          addCard(zeta, ya, yb, {...o, off: o.off + (rows - 1 - r) * o.rowOff, amp: o.amp * (0.6 + 0.9 * rr()), wl: 0.05 + 0.07 * rr(), shear: (rr() - 0.5) * 0.03, phase: rr() * 6.28, variant: r === rows - 1 && o.tipVariant != null ? o.tipVariant : o.variant, W: o.W * (0.85 + 0.3 * rr()), ao: o.ao + 0.1 * (r / rows), keep: o.keep});
+        }
+      }
+    };
+    const nA = Math.round(p.locks ?? 28);
+    layer(nA, {off: 0.0008, rowOff: 0.0009, len: 0.12, end0: 0.7, end1: 0.3, amp: 0.009, W: 0.0036, ao: 0.66, variant: 3, tipVariant: 0, keep: 0, lift: 0.0003, drift: 0.12});
+    layer(Math.round(nA * 1.2), {off: 0.0026, rowOff: 0.0009, len: 0.1, end0: 0.6, end1: 0.25, amp: 0.011, W: 0.0034, ao: 0.82, variant: 0, tipVariant: 1, keep: 1, lift: 0.0006, top: 0.006, span: 0.92, jit: 0.1, drift: 0.14, splay: 0.004});
+    // layer C: loose wisps standing off the mass, narrow and wispy; layer D: sparse strands near the tip
+    for (let i = 0; i < (p.wisps ?? 46); i++) {
+      const zeta = (rr() * 2 - 1) * 0.85, y0 = -0.01 - rr() * 0.17 * L / 0.3, len = 0.075 + 0.07 * rr();
+      addCard(zeta, y0, y0 - len, {off: 0.0042 + 0.002 * rr(), amp: 0.004, wl: 0.05 + 0.03 * rr(), phase: rr() * 6.28, variant: i % 3 ? 1 : 2, W: 0.0026 + 0.0012 * rr(), ao: 0.95, keep: 1, lift: 0.002, splay: 0.008, root: 0.4, round: 0.4});
+    }
+    for (let i = 0; i < (p.strays ?? 18); i++) {
+      const zeta = (rr() * 2 - 1) * 0.55, y0 = -L * (0.55 + 0.3 * rr()), len = 0.05 + 0.05 * rr();
+      addCard(zeta, y0, Math.max(-L * 1.02, y0 - len), {off: 0.003, seg: 2, amp: 0.003, wl: 0.05, phase: rr() * 6.28, variant: 2, W: 0.003, ao: 1, keep: 1, lift: 0.002, splay: 0.012, root: 0.3, round: 0.3});
+    }
+    return cards.build([{keep: 1, segStep: 1, wScale: 1}, {keep: 0.55, segStep: 1, wScale: 1.25}, {keep: 0.25, segStep: 2, wScale: 1.7}], 13);
   };
-  // layer 1: the full-length under-layer, one lock per ~8 mm across the jaw, centre longest (defines the silhouette)
-  const nA = Math.round(p.locks ?? 14);
-  for (let i = 0; i < nA; i++) {
-    const zeta = (i + 0.5) / nA * 2 - 1 + (rr() - 0.5) * 0.04, y0 = yRoot(zeta * zMax) - rr() * 0.006;
-    const yEnd = -L * (0.78 + 0.22 * (1 - zeta * zeta) * (0.85 + 0.3 * rr()));
-    addLock(zeta, y0, yEnd, {amp: 0.005 + 0.004 * rr(), wl: 0.06 + 0.05 * rr(), phase: rr() * 6.28, off: 0, R: (0.0052 + 0.0012 * rr()) * (0.8 + 0.2 * W), taper: 0.5, tip: 0.0005}, {s0: 0.7, count: 1 + (rr() < 0.5 ? 1 : 0), spread: 0.01, extend: 0.1, R: 0.0017});
-  }
-  // layer 2: shorter tufts that start lower on the chin and lie over the first layer (their blunt ends step over it)
-  const nB = Math.round(p.tufts ?? 15);
-  for (let i = 0; i < nB; i++) {
-    const zeta = ((i + rr() * 0.8) / nB * 2 - 1) * 0.8, y0 = -0.004 - rr() * 0.07 * L / 0.3 - (Math.abs(zeta) > 0.5 ? 0.01 : 0);
-    const yEnd = y0 - L * (0.22 + 0.3 * rr()) * (1 - 0.35 * Math.abs(zeta));
-    addLock(zeta, y0, yEnd, {step: 0.005, amp: 0.004 + 0.004 * rr(), wl: 0.05 + 0.05 * rr(), phase: rr() * 6.28, off: 0.0022, R: (0.0043 + 0.0012 * rr()) * (0.8 + 0.2 * W), root: 0.8, taper: 0.4, tip: 0.0004}, {s0: 0.62, count: 2, spread: 0.009, extend: 0.14, R: 0.0014});
-  }
-  // layer 3: a few loose wisps near the edge and the tip, standing a little off the mass
-  for (let i = 0; i < (p.wisps ?? 8); i++) {
-    const zeta = (i % 2 ? 1 : -1) * (0.3 + 0.6 * rr()) * 0.8, y0 = -0.02 - rr() * 0.12 * L / 0.3;
-    addLock(zeta, y0, y0 - L * (0.25 + 0.25 * rr()), {step: 0.005, amp: 0.004, wl: 0.05 + 0.03 * rr(), phase: rr() * 6.28, off: 0.004, R: 0.0022 + 0.0008 * rr(), root: 0.6, taper: 0.3, tip: 0.0003});
-  }
-  const LS = lockSet(locks, {k: 0.0014, pad: 0.003});
-  function sdf(x, y, z) {
-    let d = smin(core(x, y, z) + inset * (1 - smoothstep(cheekY - 0.05, cheekY - 0.012, y)), LS.eval(x, y, z), 0.002);   // the inset fades out on the cheek, so a thin stubble shell remains there
-    if (chest) d = smax(d, -(chest(x, y, z) - gap * 0.5), 0.004);
-    return d;
-  }
-  const skinD = H.sdf, tmp = [0, 0, 0], fat = f => (x, y, z) => { let d = smin(core(x, y, z) + inset, LS.eval(x, y, z) - f, 0.004); if (chest) d = smax(d, -(chest(x, y, z) - gap * 0.5), 0.004); return d; };
-  return {sdf, bounds: [-0.02, -L - 0.04, -0.1, chest ? 0.24 : 0.14, cheekY + 0.01, 0.1], cell: p.cell || 0.0055, tris: [(p.tris || [4500, 1200, 200])[0]],
-    lods: (p.tris || [4500, 1200, 200]).slice(1).map((t, i) => ({sdf: fat(0.0012 + 0.003 * i), cell: 0.0034 + 0.0018 * i, tris: [t]})),
-    cull: (x, y, z) => H.sdf(x, y, z) < -0.002, project: 0.003, locks: LS,
-    // band = (u along the hair, v across the lock + per-lock offset, skin proximity 0..1 for the root fade)
-    ao: 0.006, aoFloor: 0.62,
-    // continuous flow coordinates: u runs down the beard, v across it relative to the beard's width (locks follow lines of constant v, so strands converge towards the tip like real hair)
+  const T = p.tris || [650, 300, 110];
+  return {sdf: mass(inset), bounds: [-0.02, -L - 0.04, -0.1, chest ? 0.24 : 0.14, cheekY + 0.01, 0.1], cell: p.cell || 0.0048, tris: T,
+    cull: (x, y, z) => H.sdf(x, y, z) < -0.002, project: 0.003, cardsPart: {cardsDirect: direct},
+    ao: 0.006, aoFloor: 0.5,
     band: (x, y, z, o) => { o[0] = -y; o[1] = z / Math.max(0.004, halfW(y)) * 0.045; o[2] = 1 - smoothstep(0.0005, 0.007, skinD(x, y, z)); },
-    paint: (x, y, z, o) => {
-      LS.info(x, y, z, tmp); const t = tmp.t ?? 0, valley = smoothstep(0.0008, 0.0035, tmp.d);
-      o[0] = cl(0.4 * (1 - smoothstep(0, 0.1, t)) + 0.14 * valley + 0.14 * (tmp[2] - 0.5), 0, 1);   // darker roots and valleys, a little variation per lock
-    }};
+    paint: (x, y, z, o) => { o[0] = 0.85; }};
 }
 
 /* =====================================================================================
@@ -1055,6 +1071,7 @@ export function sanitize(M, minArea = 1e-10) {
 // each LOD is simplified from the previous one, so the cheaper LODs are decimated versions of the finest.
 export function* bakePartGen(spec, seed = 1) {
   setSeed(seed);
+  if (spec.cardsDirect) { yield; const out = spec.cardsDirect().map(m => sanitize(m)); out.raw = 0; return out; }   // hair cards: meshes built directly, no sculpting
   const guard = function* (g) { let r; while (!(r = g.next()).done) { yield; setSeed(seed); } return r.value; }; // noise seed is global: restore it after every pause
   const raw = yield* guard(sculptGen(spec.sdf, spec.bounds, spec.cell, {cull: spec.cull}));
   const fo = {paint: spec.paint || (() => {}), project: spec.project ?? spec.cell * 0.5, normalSdf: spec.normalSdf, aoSdf: spec.aoSdf, band: spec.band, bandWrap: spec.bandWrap, eps: 0.0006, ao: spec.ao ?? 0.012, aoFloor: spec.aoFloor};

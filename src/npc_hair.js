@@ -125,3 +125,87 @@ export function tipWisps(lock, r, o = {}) {
   }
   return out;
 }
+
+/* =====================================================================================
+   HAIR CARDS (v11): curved ribbons textured with a procedural strand atlas, alpha tested in the hair shader (game.js, material 14).
+   The solid inner mass (a low envelope) keeps skin from showing through; cards give the strands and the broken silhouette.
+   ===================================================================================== */
+// Strand atlas: 4 variants side by side, each a 128 x 512 tile (u across the card, v along it, root at v = 0). Returns {data: Uint8Array RGBA, w, h, tiles}.
+// 0 dense clump (strands converge to a point), 1 wispy tip (strands fan out and end at different lengths), 2 sparse (a few thin curly strands), 3 ragged (blunt, uneven ends).
+export const ATLAS_TILES = 4;
+export function hairAtlas(size = 512, seed = 7) {
+  const W = size, H = size, tw = W / ATLAS_TILES, data = new Uint8Array(W * H * 4), r = rng(seed);
+  const TONES = [[0.94, 0.93, 0.89, 0.5], [0.76, 0.76, 0.74, 0.2], [0.56, 0.56, 0.55, 0.1], [0.93, 0.84, 0.62, 0.2]];
+  const tone = () => { let t = r(), a = 0; for (const c of TONES) { a += c[3]; if (t <= a) return c; } return TONES[0]; };
+  for (let i = 0; i < W * H; i++) { data[i * 4] = 205; data[i * 4 + 1] = 203; data[i * 4 + 2] = 196; data[i * 4 + 3] = 0; }
+  const spec = [
+    {n: 40, hw: 1.0, x0: () => 0.06 + 0.88 * r(), len: x0 => 0.97 - 0.5 * Math.pow(Math.abs(x0 - 0.5) * 2, 1.8) - 0.03 * r(), conv: 0.6, wob: 0.025},
+    {n: 20, hw: 0.9, x0: () => 0.22 + 0.56 * r(), len: () => 0.5 + 0.5 * r(), conv: -0.55, wob: 0.045},
+    {n: 9, hw: 0.8, x0: () => 0.12 + 0.76 * r(), len: () => 0.55 + 0.45 * r(), conv: -0.1, wob: 0.07},
+    {n: 30, hw: 1.0, x0: () => 0.05 + 0.9 * r(), len: () => 0.68 + 0.3 * r(), conv: 0.15, wob: 0.03}
+  ];
+  spec.forEach((sp, ti) => {
+    const ox = ti * tw, strands = [];
+    for (let k = 0; k < sp.n; k++) strands.push({x0: sp.x0(), ph: r() * 6.28, f: 2 + 4 * r(), len: 0, t: tone(), hwK: 0.8 + 0.5 * r(), bri: 0.88 + 0.2 * r(), drift: (r() - 0.5) * 0.1});
+    for (const s of strands) s.len = sp.len(s.x0);
+    strands.sort((a, b) => a.bri - b.bri);
+    for (const s of strands) {
+      for (let y = 0; y < H; y++) {
+        const v = y / (H - 1); if (v > s.len) break;
+        const taper = 1 - 0.8 * Math.pow(Math.max(0, (v - (s.len - 0.3)) / 0.3), 1.2);      // thin out over the last 30% of its own length
+        const xc = (s.x0 + (0.5 - s.x0) * sp.conv * Math.pow(v, 1.5) + s.drift * v + sp.wob * Math.sin(s.ph + s.f * v * 3.14) * (0.3 + v)) * (tw - 8) + 4;
+        const hw = Math.max(0.3, sp.hw * s.hwK * taper), b = s.bri * (0.9 + 0.1 * Math.sin(s.ph * 3 + v * 9));
+        for (let px = Math.floor(xc - hw - 1); px <= Math.ceil(xc + hw + 1); px++) {
+          if (px < 3 || px >= tw - 3) continue;
+          const cov = Math.max(0, Math.min(1, hw + 0.5 - Math.abs(px + 0.5 - xc)));
+          if (cov <= 0) continue;
+          const o = ((y) * W + ox + px) * 4, a0 = data[o + 3] / 255, a1 = a0 + cov * (1 - a0), wgt = cov / Math.max(1e-6, a0 * (1 - cov) + cov);
+          for (let c = 0; c < 3; c++) data[o + c] = Math.round(data[o + c] * (1 - wgt) + 255 * Math.min(1, s.t[c] * b) * wgt);
+          data[o + 3] = Math.round(a1 * 255);
+        }
+      }
+    }
+  });
+  return {data, w: W, h: H, tiles: ATLAS_TILES};
+}
+
+// Card collector. ribbon(pts, nor, o): a strip along the polyline `pts` (n >= 2 points), lying on the surface whose normals are `nor`.
+// o: {w: half width in m (number or s => m), variant 0..3, lift (m the tip stands off the surface), root (paint 0..1 at the root), tip (paint at the tip), ao (0..1),
+//     round (0..1: how much the shading normal bends across the card so it reads as a lock, default 0.55), keep (LOD level 0: always kept, 1: dropped first)}
+// build(lods): [{keep, segStep, wScale}] -> one mesh per LOD (stride 9 + .band = (u across 0..1, v along 0..1, 2 + variant)).
+export class Cards {
+  constructor() { this.list = []; }
+  ribbon(pts, nor, o = {}) { if (pts.length >= 2) this.list.push({pts, nor, o}); }
+  get count() { return this.list.length; }
+  build(lods = [{keep: 1, segStep: 1, wScale: 1}], seed = 3) {
+    return lods.map(L => {
+      const V = [], B = [], r = rng(seed + 17);
+      for (const c of this.list) {
+        const pri = c.o.keep ?? 1, rk = r();   // pri 0: always (silhouette cards); otherwise kept with probability L.keep
+        if (pri !== 0 && rk > L.keep) continue;
+        let idx = []; const n = c.pts.length;
+        for (let i = 0; i < n; i += Math.max(1, L.segStep)) idx.push(i);
+        if (idx[idx.length - 1] !== n - 1) idx.push(n - 1);
+        const m = idx.length, P = idx.map(i => c.pts[i]), N = idx.map(i => c.nor[i]), s = P.map((_, k) => idx[k] / (n - 1));
+        const Lf = [], Rt = [];
+        for (let k = 0; k < m; k++) {
+          const a = P[Math.max(0, k - 1)], b = P[Math.min(m - 1, k + 1)];
+          let tx = b[0] - a[0], ty = b[1] - a[1], tz = b[2] - a[2]; const tl = Math.hypot(tx, ty, tz) || 1; tx /= tl; ty /= tl; tz /= tl;
+          const nn = N[k]; let bx = ty * nn[2] - tz * nn[1], by = tz * nn[0] - tx * nn[2], bz = tx * nn[1] - ty * nn[0]; const bl = Math.hypot(bx, by, bz) || 1; bx /= bl; by /= bl; bz /= bl;
+          const sk = s[k], hw = (typeof c.o.w === 'function' ? c.o.w(sk) : (c.o.w ?? 0.004)) * L.wScale, lf = (c.o.lift ?? 0) * sk * sk, p = P[k];
+          const q = [p[0] + nn[0] * lf, p[1] + nn[1] * lf, p[2] + nn[2] * lf], rd = c.o.round ?? 0.55;
+          const nl = norm(nn[0] - bx * rd, nn[1] - by * rd, nn[2] - bz * rd), nr = norm(nn[0] + bx * rd, nn[1] + by * rd, nn[2] + bz * rd);
+          Lf.push({p: [q[0] - bx * hw, q[1] - by * hw, q[2] - bz * hw], n: nl}); Rt.push({p: [q[0] + bx * hw, q[1] + by * hw, q[2] + bz * hw], n: nr});
+        }
+        const pr = c.o.root ?? 0.5, pt = c.o.tip ?? 0.1, ao = c.o.ao ?? 1, vz = 2 + (c.o.variant ?? 0);
+        const push = (v, u, sk) => { const t = Math.min(1, sk * 1.6); V.push(v.p[0], v.p[1], v.p[2], v.n[0], v.n[1], v.n[2], pr + (pt - pr) * t, 0, ao); B.push(u, sk, vz); };
+        for (let k = 0; k < m - 1; k++) {
+          push(Lf[k], 0, s[k]); push(Rt[k], 1, s[k]); push(Rt[k + 1], 1, s[k + 1]);
+          push(Lf[k], 0, s[k]); push(Rt[k + 1], 1, s[k + 1]); push(Lf[k + 1], 0, s[k + 1]);
+        }
+      }
+      const out = new Float32Array(V); out.stride = 9; out.band = new Float32Array(B); out.cards = true; return out;
+    });
+  }
+}
+const norm = (x, y, z) => { const l = Math.hypot(x, y, z) || 1; return [x / l, y / l, z / l]; };
