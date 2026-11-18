@@ -199,7 +199,7 @@ export class Cards {
           Lf.push({p: [q[0] - bx * hw, q[1] - by * hw, q[2] - bz * hw], n: nl}); Rt.push({p: [q[0] + bx * hw, q[1] + by * hw, q[2] + bz * hw], n: nr});
         }
         const pr = c.o.root ?? 0.5, pt = c.o.tip ?? 0.1, ao = c.o.ao ?? 1, vz = 2 + (c.o.variant ?? 0);
-        const push = (v, u, sk) => { const t = Math.min(1, sk * 1.6), ad = ao * (0.62 + 0.38 * smoothstep(0, 0.5, sk)); V.push(v.p[0], v.p[1], v.p[2], v.n[0], v.n[1], v.n[2], pr + (pt - pr) * t, 0, ad); B.push(u, sk, vz); };
+        const push = (v, u, sk) => { const t = Math.min(1, sk * 1.6), ad = ao * (0.8 + 0.2 * smoothstep(0, 0.5, sk)); V.push(v.p[0], v.p[1], v.p[2], v.n[0], v.n[1], v.n[2], pr + (pt - pr) * t, 0, ad); B.push(u, sk, vz); };
         for (let k = 0; k < m - 1; k++) {
           push(Lf[k], 0, s[k]); push(Rt[k], 1, s[k]); push(Rt[k + 1], 1, s[k + 1]);
           push(Lf[k], 0, s[k]); push(Rt[k + 1], 1, s[k + 1]); push(Lf[k + 1], 0, s[k + 1]);

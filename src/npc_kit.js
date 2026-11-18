@@ -360,8 +360,8 @@ export function beard(H, p = {}) {
       }
     };
     const nA = Math.round(p.locks ?? 24);
-    layer(nA, {off: 0.0006, rowOff: 0.0005, len: 0.14, end0: 0.7, end1: 0.3, amp: 0.02, W: 0.0078, ao: 0.66, variant: 3, tipVariant: 0, keep: 0, lift: 0.0002, drift: 0.3});
-    layer(Math.round(nA * 1.25), {off: 0.0014, rowOff: 0.0006, len: 0.12, end0: 0.6, end1: 0.25, amp: 0.02, W: 0.0072, ao: 0.8, variant: 0, tipVariant: 1, keep: 1, lift: 0.0004, top: 0.006, span: 0.92, jit: 0.1, drift: 0.32, splay: 0.004});
+    layer(nA, {off: 0.0006, rowOff: 0.0005, len: 0.14, end0: 0.7, end1: 0.3, amp: 0.02, W: 0.0078, ao: 0.8, variant: 3, tipVariant: 0, keep: 0, lift: 0.0002, drift: 0.3});
+    layer(Math.round(nA * 1.25), {off: 0.0014, rowOff: 0.0006, len: 0.12, end0: 0.6, end1: 0.25, amp: 0.02, W: 0.0072, ao: 0.9, variant: 0, tipVariant: 1, keep: 1, lift: 0.0004, top: 0.006, span: 0.92, jit: 0.1, drift: 0.32, splay: 0.004});
     // fill layer: dense cards close to the mass in the lower half so the envelope never shows
     for (let i = 0; i < (p.fill ?? 60); i++) {
       const zeta = (rr() * 2 - 1) * 0.8, y0 = -0.05 - rr() * 0.12 * L / 0.3, len = 0.09 + 0.06 * rr();

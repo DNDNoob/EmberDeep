@@ -344,3 +344,7 @@ Keeper v11 costs: bake about 4.9 s in Node (6.3 s CPU in the browser before the 
 - **Shoulders** narrower (S x +-0.104, deltoid 0.034) and stoop 0.065.
 
 v12 costs: bake about 4.5 s in Node, near 24.5k triangles (73k vertices), mid 10.9k, far 4.4k (GLB far 4.0k). Grip lock 0 mm, sleeve-mouth drift 2.1 mm.
+
+### Keeper v13 beard pass
+
+Cards are lit with a normal blended 78% from the beard volume's SDF gradient (`Cards.volN`), so the beard shades as one mass. Per-vertex card AO darkens roots (0.8 to 1.0 along the card) and inner layers; the shader dissolves card edges with a dithered threshold; atlas has finer, higher-contrast strands (brightness 0.58-1.1, more dark grey) and the albedo cap was raised so that contrast survives. Fewer, wider, more S-curved cards that converge toward the tip: beard cards 2160 near triangles (was 3112). Known gap: Q0 (low) still shows the plain solid mass.

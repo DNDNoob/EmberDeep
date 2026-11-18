@@ -978,7 +978,7 @@ function emitS(mesh,f,c,col,col2,mat,R2,sc,dr){
         X+=(X2-X)*k;Y+=(Y2-Y)*k;Z+=(Z2-Z)*k;NX+=(A-NX)*k;NY+=(B-NY)*k;NZ+=(C-NZ)*k;
         const il=1/(Math.hypot(NX,NY,NZ)||1);NX*=il;NY*=il;NZ*=il}}
     b[o++]=X;b[o++]=Y;b[o++]=Z;b[o++]=NX;b[o++]=NY;b[o++]=NZ;
-    let ao2=ao;if(Q===0&&mat===14&&bnd){const k=i/9*3,sv=0.5+0.5*Math.sin(bnd[k+1]*5200+3*Math.sin(bnd[k]*30+bnd[k+1]*900));ao2=ao*(0.78+0.34*sv)}
+    const ao2=ao;
     b[o++]=(c0+d0*w)*ao2;b[o++]=(c1+d1*w)*ao2;b[o++]=(c2+d2*w)*ao2;b[o++]=l0+x;b[o++]=l1+y;b[o++]=l2+z;b[o++]=mat+0.82*mesh[i+7];
     if(W===16){const k=i/9*3;b[o++]=bnd?bnd[k]:0;b[o++]=bnd?bnd[k+1]:0;b[o++]=bnd?bnd[k+2]:0}
   }
