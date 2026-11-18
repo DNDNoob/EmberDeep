@@ -1083,7 +1083,10 @@ export function sanitize(M, minArea = 1e-10) {
       o += 9;
     }
   }
-  const r = out.slice(0, o); r.stride = 9; r.dropped = dropped; if (bo) r.band = bo.slice(0, o / 9 * 3); return r;
+  const r = out.slice(0, o); r.stride = 9; r.dropped = dropped;
+  if (bo) r.band = bo.slice(0, o / 9 * 3);
+  if (M.cards) r.cards = true;
+  return r;
 }
 
 // Generator: yields during the heavy loops so bakeRecipeIdle can spread the work over many ticks. tris: [near, mid, far] (any length):

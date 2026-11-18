@@ -228,5 +228,5 @@ export function shellStack(m, o) {
       const b = (k * nv + i) * 3; B[b] = 0; B[b + 1] = 0; B[b + 2] = 6 + h * 0.99;
     }
   }
-  V.stride = 9; V.band = B; V.cards = true; return V;
+  V.stride = 9; V.band = B; return V;
 }

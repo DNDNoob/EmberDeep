@@ -80,7 +80,10 @@ function parts(lod) {
   const list = [];
   for (const q of rec.parts) {
     const f = fr[q.frame], m = baked.parts[q.part]; if (!f || !m) continue;
-    list.push({name: q.part, mat: q.cards ? 'hair_cards' : q.mat, ...place(m[Math.min(lod, m.length - 1)], f, q.at || [0, 0, 0], pal[q.col], pal[q.col2 || q.col], MATID[q.mat], q.R, scOf(q.frame), q.drape && fr.D ? {f: fr.D, y0: q.drape[0], y1: q.drape[1]} : null)});
+    const mesh = m[Math.min(lod, m.length - 1)];
+    // The underlying hair mesh represents shells in GLB, which cannot run the game's shell shader.
+    if (!mesh.length || (q.cards && !mesh.cards)) continue;
+    list.push({name: q.part, mat: mesh.cards ? 'hair_cards' : q.mat, ...place(mesh, f, q.at || [0, 0, 0], pal[q.col], pal[q.col2 || q.col], MATID[q.mat], q.R, scOf(q.frame), q.drape && fr.D ? {f: fr.D, y0: q.drape[0], y1: q.drape[1]} : null)});
   }
   const E = baked.eyes, ec = rec.eyes;
   if (E && fr[ec.frame]) {
