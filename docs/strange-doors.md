@@ -19,6 +19,27 @@ Decide whether each ending affects the visitor or the whole party.
    supports spectating, send the seed and state that a watcher needs to
    reconstruct the same visit.
 
+## Light and detail the room
+
+Rooms registered with the shared manager get FXAA edge smoothing on Medium
+and High, plus half-resolution ambient occlusion on High. Opaque,
+depth-writing geometry contributes to occlusion. Glass, particles, and
+translucent effects stay out of its depth pass, so surfaces behind them
+can still contribute. Use the shared renderer and set the room's `bloom`
+strength to suit its lighting.
+
+- Give the arrival view one clear focal point. The Glass Kiln uses its
+  illuminated cabinet, and the Picture House uses the screen. Place the
+  room's strongest light where the player should look first.
+- Use softer fill and local light pools to reveal the rest of the space.
+  Let light come from visible fixtures when possible. The Mirror Room uses
+  warm parlor lamps beyond the pane and cooler light on the player's side.
+  Keep interaction targets and exits readable in dim states.
+- Give visible surfaces distinct material responses. Use wood grain,
+  fabric roughness, restrained glass sheen, and small bevels where light
+  should catch an edge. Place furniture legs and prop bases against the
+  floor so the shared occlusion pass can shade those contacts.
+
 ## Use the shared movement
 
 Walkable rooms default to the maze controls. Use `createRoomWalker` from
@@ -48,8 +69,15 @@ input and scene updates, and skips the door-consumption and outcome
 effects. Play through an actual door to check those effects and test
 spectating in a shared run.
 
-Before shipping, check that the arrival view reads clearly, the player
-can use the main interaction on keyboard, controller, and touch, and the
-room leaves no lingering HUD, audio, or controls after exit. Run
-`tools/movement_test.mjs` and `tools/door_rotation_test.mjs` against a
-fresh build.
+Check that the arrival and main interaction views read clearly on Medium
+and High. Revisit lighting changes, including darkened states and the
+unlocked exit if applicable. Check Low when glow or contact shadows help
+guide the player. For before-and-after captures, use the same seed, camera,
+room state, viewport, and quality. Compare frame times under those same
+conditions when adding a costly graphics effect.
+
+Before shipping, verify that the main interaction works on keyboard,
+controller, and touch, and that the room leaves no lingering HUD, audio,
+or controls after exit. Run `tools/movement_test.mjs` and
+`tools/door_rotation_test.mjs` against a fresh build. Run
+`tools/room_fxaa_test.mjs` when changing room rendering.

@@ -195,7 +195,7 @@ await pg.evaluate(free);
    if(corner)out.corner=at(...corner);out.cornerFound=!!corner;return out});
  console.log('j xray',JSON.stringify(r));
  if(!r.found[0]||!r.found[1])bad('j no test geometry '+r.found);if(r.one!==1)bad('j one wall not shown');if(r.two!==0)bad('j two walls shown');if(r.vis!==0)bad('j straight line flagged');if(r.xrayOff!==0)bad('j shown without the reward');if(r.cornerFound&&r.corner!==1)bad('j corner not shown')}
-// a mirror door is visible in the registry order
-{const o=await pg.evaluate(()=>window.__game.doorOrder());console.log('order',o.join(','));if(o.join()!=='galaxy,kiln,fall,mirror,theater')bad('registry order')}
+// New kinds can be appended without changing the order of existing doors.
+{const o=await pg.evaluate(()=>window.__game.doorOrder());console.log('order',o.join(','));if(o.slice(0,6).join()!=='galaxy,kiln,fall,mirror,theater,monoliths')bad('registry order')}
 if(errs.length){console.log('console errors:',errs.slice(0,5));bad('console errors')}
 await b.close();console.log(fails?'FAILED':'ALL PASSED');process.exit(fails?1:0);

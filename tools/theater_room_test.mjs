@@ -186,7 +186,9 @@ ok(Math.abs(r.eyeStand-1.6)<0.03,'standing eye height is 1.6 m over the floor ('
     await pg2.addInitScript(()=>{window.__norender=true});
     await pg2.goto(url,{timeout:120000});await pg2.waitForFunction(()=>window.__game&&window.__game.genFloor,null,{timeout:120000});
     await pg2.evaluate(()=>{const G=__game;G.startRun('yt1',1,true);G.ROOMS.theaterOpts.noMic=true;const D=G.F.sdoors[0];D.kind='theater';G.sdoorOpen(D)});
-    await pg2.waitForTimeout(mode==='blocked'?600:700);
+    if(mode==='error'){
+      await pg2.waitForFunction(()=>__game.ROOMS.state().why==='errors',null,{timeout:5000});
+    }else await pg2.waitForTimeout(mode==='blocked'?600:700);
     const o=await pg2.evaluate(()=>{const S=__game.ROOMS.state(),y=window.__yt||{},now=document.getElementById('theaterNow'),a=now&&now.querySelector('a');
       let drawn='n/a';if(S.tv==='yt'){const R=__game.ROOMS;R.render();const w=document.getElementById('theaterYT');drawn=w?w.style.visibility+'|'+w.style.transform.slice(0,24):'nowrap'}
       return {tv:S.tv,why:S.why,np:S.np&&S.np.id,cfg:y.cfg&&{host:y.cfg.host,pv:y.cfg.playerVars,vid:y.cfg.videoId},href:a&&a.href,rel:a&&a.rel,target:a&&a.target,nowShown:now&&now.style.display,calls:(y.calls||[]).slice(0,12),iframe:!!document.querySelector('#theaterYT iframe'),drawn}});

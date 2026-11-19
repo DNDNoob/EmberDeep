@@ -1842,7 +1842,7 @@ function advanceLoading(now){
 }
 /* ---------- strange doors (the rooms themselves are in src/rooms.js) ---------- */
 let nearDoor=null;
-const ROOMS=createRooms(renderer,{post:POST,low:Q===0,
+const ROOMS=createRooms(renderer,{post:POST,low:Q===0,ao:Q>=2,
   say:(t,s)=>say(t,s),tone:(...a)=>tone(...a),noise:(...a)=>noise(...a),rumble:(...a)=>rumble(...a),
   hud:h=>{const el=$('roomHud');if(el.innerHTML!==h)el.innerHTML=h},
   hurtFx:()=>{const h=$('hurt');h.style.transition='none';h.style.opacity=1;requestAnimationFrame(()=>{h.style.transition='opacity .9s';h.style.opacity=0})},

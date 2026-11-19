@@ -5,6 +5,7 @@
 //   crying  they burst into tears, the EXIT sign turns green and the side door unlocks
 // The screen plays an allow-listed YouTube video (a DOM player laid over the canvas, see THEATER_VIDEOS) and falls back to a drawn "house reel".
 import * as THREE from 'three';
+import {RoundedBoxGeometry} from 'three/addons/geometries/RoundedBoxGeometry.js';
 
 /* ---------- the allow-list ----------
    ONLY these videos are ever played, and nothing else can be reached: the player is created with no controls, no keyboard, no suggestions,
@@ -105,21 +106,20 @@ export function createTheater(env){
     const carpet=tex(256,256,(c,w)=>{c.fillStyle='#4a1016';c.fillRect(0,0,w,w);c.strokeStyle='#b8862e';c.lineWidth=3;
       for(let i=0;i<2;i++)for(let j=0;j<2;j++){const x=i*128+64,y=j*128+64;c.beginPath();c.moveTo(x,y-46);c.lineTo(x+46,y);c.lineTo(x,y+46);c.lineTo(x-46,y);c.closePath();c.stroke();c.fillStyle='#7a1c24';c.fill();c.fillStyle='#d6a640';c.fillRect(x-4,y-4,8,8)}
       for(let i=0;i<1800;i++){c.fillStyle=`rgba(0,0,0,${rnd()*0.18})`;c.fillRect(rnd()*w,rnd()*w,2,2)}},true);
-    carpet.repeat.set(5,6);
+    carpet.repeat.set(5,11);
     const wallT=tex(256,256,(c,w)=>{c.fillStyle='#5a1822';c.fillRect(0,0,w,w);for(let x=0;x<w;x+=64){c.fillStyle='#6a2030';c.fillRect(x+4,0,56,w);c.fillStyle='rgba(0,0,0,0.28)';c.fillRect(x,0,4,w);c.fillStyle='rgba(255,200,160,0.07)';c.fillRect(x+10,0,6,w)}
       c.fillStyle='#b8862e';c.fillRect(0,w*0.62,w,5);c.fillStyle='#2a0c10';c.fillRect(0,w*0.63,w,w)},true);
     wallT.repeat.set(5,1);
-    const velvet=tex(128,128,(c,w)=>{const g=c.createLinearGradient(0,0,w,0);for(let i=0;i<=8;i++)g.addColorStop(i/8,i%2?'#8a1626':'#5e0e1a');c.fillStyle=g;c.fillRect(0,0,w,w)},true);
     const M={
       carpet:new THREE.MeshStandardMaterial({map:carpet,roughness:1}),
       wall:new THREE.MeshStandardMaterial({map:wallT,roughness:0.95}),
-      ceil:new THREE.MeshStandardMaterial({color:0x2a1218,roughness:1}),
-      velvet:new THREE.MeshStandardMaterial({map:velvet,roughness:0.9}),
-      seat:new THREE.MeshStandardMaterial({color:0xb02a3a,roughness:0.85}),
-      seatD:new THREE.MeshStandardMaterial({color:0x2a1014,roughness:0.9}),
+      ceil:new THREE.MeshStandardMaterial({color:0x2a1218,roughness:1,emissive:0x211821,emissiveIntensity:0.26}),
+      velvet:new THREE.MeshStandardMaterial({color:0x77152c,roughness:0.92}),
+      seat:new THREE.MeshStandardMaterial({color:0x9b293f,roughness:0.84}),
+      seatD:new THREE.MeshStandardMaterial({color:0x3c1722,roughness:0.79}),
       wood:new THREE.MeshStandardMaterial({color:0x4a2a18,roughness:0.7}),
       black:new THREE.MeshStandardMaterial({color:0x08080a,roughness:0.6}),
-      brass:new THREE.MeshStandardMaterial({color:0xc29a3a,roughness:0.35,metalness:0.7}),
+      brass:new THREE.MeshStandardMaterial({color:0xc29a3a,roughness:0.42,metalness:0.42}),
     };
     const box=(w,h,d,x,y,z,m,par)=>{const q=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m||M.black);q.position.set(x,y,z);(par||group).add(q);return q};
     const quad=(pts,uv,m)=>{const g=new THREE.BufferGeometry(),p=[],u=[];for(const i of [0,1,2,0,2,3]){p.push(...pts[i]);u.push(...uv[i])}
@@ -127,7 +127,10 @@ export function createTheater(env){
       const q=new THREE.Mesh(g,m);m.side=THREE.DoubleSide;group.add(q);return q};
     const UV=[[0,0],[1,0],[1,1],[0,1]];
     // floor: flat at the front, a ramp under the seats, a flat landing at the back
-    const fl=(z0,z1)=>quad([[-RX,FY(z0),z0],[RX,FY(z0),z0],[RX,FY(z1),z1],[-RX,FY(z1),z1]],UV,M.carpet);
+    const fl=(z0,z1)=>{
+      const v0=(z0-ZF)/(ZB-ZF),v1=(z1-ZF)/(ZB-ZF);
+      return quad([[-RX,FY(z0),z0],[RX,FY(z0),z0],[RX,FY(z1),z1],[-RX,FY(z1),z1]],[[0,v0],[1,v0],[1,v1],[0,v1]],M.carpet);
+    };
     fl(ZF,-5);fl(-5,4);fl(4,ZB);
     quad([[-RX,RH,ZF],[RX,RH,ZF],[RX,RH,ZB],[-RX,RH,ZB]],UV,M.ceil);
     // walls
@@ -135,21 +138,70 @@ export function createTheater(env){
     wall(-RX,ZB,-RX,ZF);wall(RX,ZF,RX,ZB);wall(-RX,ZF,RX,ZF);wall(RX,ZB,-RX,ZB);
     // the screen wall: a black frame, the picture, velvet curtains and a valance with a chase of bulbs
     box(SCR.w+0.6,SCR.h+0.6,0.2,0,SCR.cy,ZF+0.15,M.black);
+    for(const side of [-1,1]){
+      box(0.035,SCR.h+0.48,0.04,side*(SCR.w/2+0.22),SCR.cy,ZF+0.265,M.brass);
+      box(SCR.w+0.44,0.035,0.04,0,SCR.cy+side*(SCR.h/2+0.22),ZF+0.265,M.brass);
+    }
     S.reel=makeReel();
     S.screen=new THREE.Mesh(new THREE.PlaneGeometry(SCR.w,SCR.h),new THREE.MeshBasicMaterial({map:S.reel.tex,color:new THREE.Color(1.15,1.15,1.15)}));
     S.screen.position.set(0,SCR.cy,SCR.z);group.add(S.screen);
-    for(const sx of [-1,1]){const cw=2.1;box(cw,RH,0.45,sx*(SCR.w/2+0.3+cw/2),RH/2,ZF+0.3,M.velvet);box(0.5,RH,0.6,sx*(SCR.w/2+0.3+cw+0.1),RH/2,ZF+0.4,M.velvet)}
-    box(RX*2,0.9,0.7,0,RH-0.45,ZF+0.4,M.velvet);
+    const curtain=(w,h,x,y,folds,depth,z)=>{
+      const g=new THREE.PlaneGeometry(w,h,folds*8,1),p=g.attributes.position;
+      for(let i=0;i<p.count;i++){
+        const u=p.getX(i)/w+0.5;
+        p.setZ(i,depth*(0.5+0.5*Math.cos(u*folds*Math.PI*2)));
+      }
+      g.computeVertexNormals();
+      const m=new THREE.Mesh(g,M.velvet);m.position.set(x,y,z);group.add(m);
+    };
+    const curtainW=RX-SCR.w/2-0.29;
+    for(const side of [-1,1])curtain(curtainW,RH,side*(RX-curtainW/2),RH/2,7,0.2,ZF+0.37);
+    curtain(RX*2,0.78,0,RH-0.39,24,0.10,ZF+0.66);
+    box(RX*2,0.045,0.12,0,RH-0.80,ZF+0.73,M.brass);
     S.bulbs=[];for(let i=0;i<19;i++){const b=new THREE.Mesh(new THREE.SphereGeometry(0.07,8,6),new THREE.MeshBasicMaterial({color:0x553311}));b.position.set(-5.4+i*0.6,RH-0.95,ZF+0.8);group.add(b);S.bulbs.push(b)}
     box(RX*2-1,0.5,1.4,0,0.25,ZF+0.9,M.wood);   // the lip of the stage
+    box(RX*2-1,0.065,0.08,0,0.46,ZF+1.62,M.brass);
+    for(let i=-2;i<=2;i++)box(1.37,2.65,0.12,i*1.45,1.94,ZF+0.14,M.wood);
+    box(7.45,0.08,0.18,0,3.31,ZF+0.17,M.brass);
     // seats
     const seats=[];for(const z of ROWZ)for(const bl of BLOCKS)for(const x of bl)seats.push([x,z]);
-    const iBase=new THREE.InstancedMesh(new THREE.BoxGeometry(0.58,0.16,0.54),M.seat,seats.length),iBack=new THREE.InstancedMesh(new THREE.BoxGeometry(0.58,0.62,0.12),M.seat,seats.length),iLeg=new THREE.InstancedMesh(new THREE.BoxGeometry(0.46,0.44,0.4),M.seatD,seats.length);
-    {const m4=new THREE.Matrix4(),c=new THREE.Color();seats.forEach(([x,z],i)=>{const y=FY(z),k=0.85+((i*37)%7)*0.04;c.setRGB(k,k*0.95,k*0.95);
-      m4.makeTranslation(x,y+0.46,z);iBase.setMatrixAt(i,m4);iBase.setColorAt(i,c);m4.makeTranslation(x,y+0.82,z+0.27);iBack.setMatrixAt(i,m4);iBack.setColorAt(i,c);m4.makeTranslation(x,y+0.22,z+0.04);iLeg.setMatrixAt(i,m4)});
-      group.add(iBase,iBack,iLeg)}
+    const seatPart=(w,h,d,r,m,count=seats.length)=>new THREE.InstancedMesh(new RoundedBoxGeometry(w,h,d,1,r),m,count);
+    const cushion=seatPart(0.55,0.16,0.52,0.055,M.seat),back=seatPart(0.59,0.62,0.16,0.075,M.seatD);
+    const upholstery=seatPart(0.50,0.49,0.075,0.037,M.seat),pedestal=seatPart(0.30,0.44,0.36,0.025,M.seatD);
+    const arm=seatPart(0.10,0.085,0.42,0.025,M.wood,seats.length*2);
+    const armPost=seatPart(0.054,0.24,0.075,0.018,M.seatD,seats.length*2);
+    const placement=new THREE.Matrix4(),seatTone=new THREE.Color();
+    seats.forEach(([x,z],i)=>{
+      const y=FY(z),k=0.84+((i*37)%7)*0.04;
+      seatTone.setRGB(k,k*0.95,k*0.95);
+      cushion.setMatrixAt(i,placement.makeTranslation(x,y+0.46,z));cushion.setColorAt(i,seatTone);
+      back.setMatrixAt(i,placement.makeTranslation(x,y+0.82,z+0.26));
+      upholstery.setMatrixAt(i,placement.makeTranslation(x,y+0.84,z+0.314));upholstery.setColorAt(i,seatTone);
+      pedestal.setMatrixAt(i,placement.makeTranslation(x,y+0.22,z+0.04));
+      for(const side of [-1,1]){
+        const part=i*2+(side+1)/2;
+        arm.setMatrixAt(part,placement.makeTranslation(x+side*0.28,y+0.63,z+0.01));
+        armPost.setMatrixAt(part,placement.makeTranslation(x+side*0.27,y+0.49,z+0.13));
+      }
+    });
+    group.add(cushion,back,upholstery,pedestal,arm,armPost);
     // the aisle lights
-    for(const x of [-1.7,1.7])for(const z of ROWZ){box(0.06,0.04,0.3,x+(x<0?0.45:-0.45),FY(z)+0.03,z,new THREE.MeshBasicMaterial({color:new THREE.Color(1.6,0.9,0.3)}))}
+    const aisleLens=new THREE.MeshBasicMaterial({color:new THREE.Color(1.35,0.64,0.20)});
+    const aisleGlow=tex(64,64,(c,w)=>{
+      const g=c.createRadialGradient(w/2,w/2,0,w/2,w/2,w/2);
+      g.addColorStop(0,'#fff');g.addColorStop(0.32,'rgba(255,255,255,.55)');g.addColorStop(1,'rgba(255,255,255,0)');
+      c.fillStyle=g;c.fillRect(0,0,w,w);
+    });
+    const aisleSpill=new THREE.MeshBasicMaterial({map:aisleGlow,color:0xff8b36,opacity:0.32,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending});
+    for(const side of [-1,1])for(const z of ROWZ){
+      const x=side*1.25,y=FY(z),x0=x-0.58,x1=x+0.58,z0=z-0.53,z1=z+0.53;
+      box(0.13,0.07,0.36,x,y+0.041,z,M.black);
+      box(0.072,0.018,0.27,x,y+0.081,z,aisleLens);
+      // Each pool follows the carpet, including the break from the ramp to the landing.
+      const pool=(a,b,v0,v1)=>quad([[x0,FY(a)+0.008,a],[x1,FY(a)+0.008,a],[x1,FY(b)+0.008,b],[x0,FY(b)+0.008,b]],[[0,v0],[1,v0],[1,v1],[0,v1]],aisleSpill);
+      if(z===4){pool(z0,z,0,0.5);pool(z,z1,0.5,1)}
+      else pool(z0,z1,0,1);
+    }
     // the entrance (behind you) and its sign
     const eY=FY(ZB);
     box(1.7,2.7,0.12,ENT.x,eY+1.35,ZB-0.04,M.black);
@@ -168,17 +220,29 @@ export function createTheater(env){
     box(0.12,2.5,1.5,RX-0.04,1.25,EXIT.z,M.black);box(0.1,2.2,1.2,RX-0.1,1.1,EXIT.z,new THREE.MeshStandardMaterial({color:0x2c3a34,roughness:0.6,metalness:0.3}));box(0.08,0.1,1.0,RX-0.18,1.05,EXIT.z,M.brass);
     S.exitDoor=null;
     const exitTex=tex(256,96,(c,w,h)=>{c.fillStyle='#fff';c.fillRect(0,0,w,h);c.fillStyle='#000';c.fillRect(6,6,w-12,h-12);c.fillStyle='#fff';c.font='bold 66px Arial,Helvetica,sans-serif';c.textAlign='center';c.textBaseline='middle';c.fillText('EXIT',w/2,h/2+4)});
-    S.sign=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.34,0.9),[M.black,M.black,M.black,M.black,new THREE.MeshBasicMaterial({color:0xffffff}),M.black]);
-    S.sign.position.set(RX-0.07,2.82,EXIT.z);group.add(S.sign);
+    box(0.1,0.34,0.9,RX-0.07,2.82,EXIT.z,M.black);
     S.signFace=new THREE.Mesh(new THREE.PlaneGeometry(0.9,0.34),new THREE.MeshBasicMaterial({map:exitTex,color:new THREE.Color(2.4,0.12,0.1)}));
     S.signFace.position.set(RX-0.125,2.82,EXIT.z);S.signFace.rotation.y=-Math.PI/2;group.add(S.signFace);
     S.signLight=new THREE.PointLight(0xff2a1a,5,8,1.6);S.signLight.position.set(RX-0.8,2.7,EXIT.z);group.add(S.signLight);
-    // lights: ambient so you can see, the screen's own flicker, a couple of wall lamps
-    group.add(new THREE.AmbientLight(0x6a5a78,1.5));
-    S.hemi=new THREE.HemisphereLight(0x9a8aa8,0x2a1014,0.7);group.add(S.hemi);
-    S.sLight=new THREE.PointLight(0xaaccff,120,34,1.4);S.sLight.position.set(0,SCR.cy-0.5,ZF+3.5);group.add(S.sLight);
-    for(const [x,z] of [[-RX+0.2,-3],[-RX+0.2,3],[RX-0.2,0.5],[RX-0.2,5]]){box(0.12,0.3,0.2,x,FY(z)+2.4,z,M.brass);const g=glow(0xffb070,1.6,0.6);g.position.set(x+(x<0?0.3:-0.3),FY(z)+2.4,z);group.add(g)}
-    S.lampL=new THREE.PointLight(0xffb878,22,16,1.5);S.lampL.position.set(0,5.5,2);group.add(S.lampL);
+    // The screen lights the audience; its bounce catches the stage and curtain folds.
+    group.add(new THREE.AmbientLight(0x74718e,0.9));
+    group.add(new THREE.HemisphereLight(0x9a9ebf,0x4a2419,0.75));
+    const screenLight=new THREE.SpotLight(0xaaccff,200,25,0.88,0.72,1.45);
+    screenLight.position.set(0,SCR.cy-0.6,SCR.z+0.1);
+    screenLight.target.position.set(0,1.15,2.5);
+    const screenBounce=new THREE.PointLight(0xaaccff,18,10,1.65);
+    screenBounce.position.set(0,SCR.cy-2.2,SCR.z+1.65);
+    group.add(screenLight,screenLight.target,screenBounce);
+    const shade=new THREE.MeshBasicMaterial({color:new THREE.Color(1.45,0.78,0.33)});
+    for(const [x,z] of [[-RX+0.12,-3],[-RX+0.12,3],[RX-0.12,0.5],[RX-0.12,5]]){
+      const inward=x<0?1:-1,y=FY(z)+2.55;
+      box(0.12,0.42,0.27,x,y,z,M.brass);
+      box(0.11,0.29,0.20,x+inward*0.10,y,z,shade);
+      const g=glow(0xffad65,0.95,0.34);g.position.set(x+inward*0.21,y,z);group.add(g);
+      const lamp=new THREE.PointLight(0xffab72,6,6,1.7);lamp.position.set(x+inward*0.30,y,z);group.add(lamp);
+    }
+    const landingLight=new THREE.PointLight(0xffb878,17,11,1.6);
+    landingLight.position.set(0,4.65,6.7);group.add(landingLight);
     // where you cannot walk: seat blocks and the walls
     const BOXES=[];for(const z of ROWZ)for(const bl of BLOCKS)BOXES.push([bl[0]-0.36,bl[bl.length-1]+0.36,z-0.38,z+0.38]);
     BOXES.push([-RX,RX,ZF,ZF+1.2]);
@@ -614,7 +678,9 @@ export function createTheater(env){
       if(S.tv==='reel'&&reelA){const d=Math.hypot(S.vx,S.vz-SCR.z);reelA.g.gain.setTargetAtTime(0.5*clamp(1.15-d/16,0.2,1)*TH.SCREEN_DUCK,reelA.ac.currentTime,0.1);tapT-=dt;if(tapT<=0){tapT=0.5+Math.random()*1.2;reelTap()}}
       const av=S.reel.avg;const fl=0.9+Math.sin(S.t*23)*0.03+Math.sin(S.t*7.1)*0.05;
       const tint=S.tv==='yt'?[0.65+0.2*Math.sin(S.t*0.7),0.7,0.8+0.2*Math.sin(S.t*0.5)]:av;
-      S.sLight.color.setRGB(0.35+tint[0]*0.65,0.35+tint[1]*0.65,0.35+tint[2]*0.65);S.sLight.intensity=120*fl*(S.st==='attack'?1.15:1);
+      screenLight.color.setRGB(0.20+tint[0]*0.67,0.29+tint[1]*0.69,0.46+tint[2]*0.54);
+      screenLight.intensity=200*fl*(S.st==='attack'?1.15:1);
+      screenBounce.color.copy(screenLight.color);screenBounce.intensity=18*fl;
       S.screen.material.color.setScalar(S.st==='calm'?1.15:1.0);
       S.bulbs.forEach((b,i)=>{const on=Math.max(0,Math.sin(S.t*4-i*0.7));b.material.color.setRGB(0.35+on*2,0.2+on*1.1,0.06+on*0.25)});
       // the exit sign: red, then green
@@ -685,7 +751,7 @@ export function createTheater(env){
       bubbleFrame(sz);ytPlace();
     };
     // the bubbles also age in the fixed-step tests (they are removed on dispose either way)
-    S.bloom=0.5;
+    S.bloom=0.37;
 
     function dispose(){
       if(disposed)return;disposed=true;
