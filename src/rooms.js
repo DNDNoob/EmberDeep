@@ -1,4 +1,4 @@
-// Strange doors (the picture house is in src/theater.js): five rooms that are somewhere else entirely.
+// Strange doors lead to scenes outside the maze.
 //   galaxy  you float among stars until the sun collapses and spits you back out, floors deeper
 //   kiln    a stone hall with an arcade console: walk up, press its buttons to steer the falling stones in the glass, burn enough rows and the door lets you go
 //   fall    there is no floor behind the door
@@ -11,6 +11,7 @@ import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
 import {ShaderPass} from 'three/addons/postprocessing/ShaderPass.js';
 import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
 import {createTheater} from './theater.js';
+import {monolithRoom} from './monoliths.js';
 import {MOVE,lookStep,lookBy,bobAdvance,bobY,createRoomWalker} from './movement.js';
 
 // Order is part of seeded door rotation. Add new IDs at the end.
@@ -20,6 +21,7 @@ export const DOOR_KINDS={
   fall:{name:'a door with no floor behind it',disguise:true,mode:'none',fadeIn:0.18}, // cinematic fall
   mirror:{name:'a room behind a mirror',look:'mirror',action:'USE',css:'mirroom',fadeIn:1.4},
   theater:{name:'the picture house',look:'theater',action:'TALK'},
+  monoliths:{name:'the whispering monoliths',look:'monoliths'},
 };
 const modeOf=k=>DOOR_KINDS[k]?.mode||'walk';
 
@@ -1431,7 +1433,8 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
   }
 
   const theater=createTheater({renderer,scene,cam,o,A,canvasTex,glow,clamp,ss,lerp,nf,rnd,getGroup:()=>group,onClear:fn=>clearHooks.push(fn),finish:r=>finish(r),createRoomWalker,MOVE,lookStep,bobAdvance,bobY});
-  const KINDS={galaxy,fall,kiln,mirror,theater};
+  const monoliths=(seed=7)=>monolithRoom({group,cam,o,A,finish,rand:rng32(seed),seed});
+  const KINDS={galaxy,fall,kiln,mirror,theater,monoliths};
   for(const kind of Object.keys(DOOR_KINDS))if(!Object.hasOwn(KINDS,kind))throw new Error('Missing room factory for '+kind);
   A.mode=modeOf;
   // a room only ever sees the controls its mode allows
