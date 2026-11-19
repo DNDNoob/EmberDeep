@@ -7,9 +7,11 @@
 import * as THREE from 'three';
 import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
 import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
+import {GTAOPass} from 'three/addons/postprocessing/GTAOPass.js';
 import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
 import {ShaderPass} from 'three/addons/postprocessing/ShaderPass.js';
 import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
+import {FXAAShader} from 'three/addons/shaders/FXAAShader.js';
 import {createTheater} from './theater.js';
 import {MOVE,lookStep,lookBy,bobAdvance,bobY,createRoomWalker} from './movement.js';
 
@@ -132,7 +134,7 @@ vec3 pat(int k,vec3 p,vec3 n,vec3 c){
     if(y<1.05){float px=fract(q.x/0.85);float ins=smoothstep(0.05,0.08,px)*smoothstep(0.05,0.08,1.0-px)*smoothstep(0.12,0.15,y)*smoothstep(0.12,0.15,0.93-y);
       float gr=fb(vec2(q.x*6.0,y*50.0));c=uWain*(0.7+0.6*gr)*(0.7+0.4*ins);if(y>0.96)c=uTrim*(0.8+0.4*gr);}
     else{float u=q.x/uWsc;float st=smoothstep(0.3,0.5,abs(fract(u)-0.5));vec2 d=vec2(abs(fract(u)-0.5),abs(fract(y/0.34)-0.5));float dm=smoothstep(0.17,0.12,d.x+d.y*0.55);if(uWpat>0.5&&uWpat<1.5)dm=0.0;if(uWpat>1.5)st=0.0;
-      c=mix(c*0.8,c*1.25,st);c=mix(c,vec3(0.55,0.4,0.15),dm*0.55*(1.0-st));c*=0.75+0.4*fb(q*2.5);}}
+      c=mix(c*0.8,c*1.25,st);c=mix(c,vec3(0.37,0.24,0.10),dm*0.35*(1.0-st));c*=0.75+0.4*fb(q*2.5);}}
   else if(k==4){float row=floor(q.y/0.18),xo=q.x+row*0.73,len=floor(xo/1.4);vec2 id=vec2(len,row);float fx=fract(xo/1.4),fz=fract(q.y/0.18);
     float j=min(min(fz,1.0-fz)*0.18,min(fx,1.0-fx)*1.4);float gr=fb(vec2(q.x*3.0,q.y*60.0)+id*5.0);
     c*=(0.55+0.75*h1(id))*(0.7+0.55*gr)*(0.5+0.5*smoothstep(0.0,0.006,j));
@@ -141,6 +143,8 @@ vec3 pat(int k,vec3 p,vec3 n,vec3 c){
   else if(k==5){float g=fb(q*vec2(3.0,42.0));float kn=smoothstep(0.1,0.0,length(fract(q*vec2(0.9,2.2))-0.5)-0.04);c*=(0.6+0.7*g)*(1.0-0.3*kn);}
   else if(k==6){float g=fb(q*vec2(42.0,3.0));c*=(0.6+0.7*g);}
   else if(k==7){float g=fb(q*30.0);c*=0.65+0.55*g+0.15*sin(q.x*70.0)*sin(q.y*70.0);}
+  else if(k==8){vec2 thread=q*150.0;float weave=sin(thread.x)*sin(thread.y);
+    c*=0.91+0.15*fb(q*14.0)+0.09*weave*(1.0-smoothstep(0.5,2.5,length(fwidth(thread))));}
   return c;
 }
 void main(){
@@ -153,16 +157,18 @@ void main(){
   int k=int(uPat+0.5);if(k>0)c=pat(k,vW,N,c);
   float zp=smoothstep(uWallZ+0.04,uWallZ-0.04,vW.z);
   vec3 lp=vec3(0.0),sp=vec3(0.0);
-  for(int i=0;i<4;i++){vec3 L=uLP[i]-vW;float d=length(L);L/=d;float w=max((dot(N,L)+uWrap)/(1.0+uWrap),0.0),at=1.0/(1.0+0.09*d*d);lp+=uLC[i]*w*at;sp+=uLC[i]*at*pow(max(dot(N,normalize(L+V)),0.0),28.0);}
+  for(int i=0;i<4;i++){vec3 L=uLP[i]-vW;float d=max(length(L),0.001);L/=d;float w=max((dot(N,L)+uWrap)/(1.0+uWrap),0.0),at=1.0/(1.0+0.32*d*d);lp+=uLC[i]*w*at;sp+=uLC[i]*at*pow(max(dot(N,normalize(L+V)),0.0),28.0);}
   vec3 B=uBP-vW;float bd=length(B);B/=bd;float bw=max((dot(N,B)+uWrap)/(1.0+uWrap),0.0);vec3 lb=uBC*bw/(1.0+0.3*bd*bd);
   vec3 lit=mix(uAmbB+lb+lp*0.1,uAmbP+lp,zp);
   vec3 col=c*lit*uLit+sp*uSpec*mix(0.08,1.0,zp)+c*uGlow;
-  float rim=pow(1.0-max(dot(N,V),0.0),3.0);col+=uRimC*rim*uRim*mix(0.5,1.0,zp)*uLit;
+  float rim=pow(1.0-max(dot(N,V),0.0),3.0);
+  float rimLight=mix(0.35,0.15+0.55*clamp(lp.r,0.0,1.0),zp);
+  col+=uRimC*rim*uRim*rimLight*uLit;
   gl_FragColor=vec4(col,uAlpha);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`;
-const PANE_FS=`uniform vec4 uH[10];uniform float uK,uT;varying vec2 vP;
+const PANE_FS=`uniform vec4 uH[10];uniform float uK;varying vec2 vP;varying vec3 vW;
 ${NOISE_GLSL}
 float cracks(vec2 p){
   float m=0.0,prox=0.0;
@@ -184,11 +190,13 @@ float cracks(vec2 p){
 }
 void main(){
   vec2 p=vP;
-  float band=exp(-pow((p.x*0.7+p.y*0.45-0.15+0.2*sin(uT*0.2))*2.6,2.0));
-  float edge=smoothstep(0.7,0.0,min(1.55-abs(p.x),1.065-abs(p.y)));
+  vec3 view=normalize(cameraPosition-vW);
+  float grazing=pow(1.0-abs(view.z),2.0);
+  float band=1.0-smoothstep(0.02,0.2,abs(p.x*0.25+p.y*0.85+view.x*1.4+view.y*0.4));
+  float edge=1.0-smoothstep(0.0,0.48,min(1.55-abs(p.x),1.095-abs(p.y)));
   float tar=smoothstep(0.58,0.7,fb(p*4.0+2.0));
-  float a=0.05+0.07*band+0.1*edge+0.1*tar;
-  vec3 col=mix(vec3(0.78,0.84,0.92),vec3(0.22,0.19,0.16),tar*0.7);
+  float a=0.012+0.04*edge+0.025*tar+grazing*(0.10+0.26*band);
+  vec3 col=mix(vec3(0.37,0.47,0.60),vec3(0.14,0.12,0.10),tar*0.6);
   float cr=cracks(p);
   col=mix(col,vec3(1.1,1.15,1.25),cr);a=clamp(a+cr*0.6,0.0,0.9);
   gl_FragColor=vec4(col,a);
@@ -211,6 +219,24 @@ void main(){float a=0.0;
   #include <colorspace_fragment>
 }`;
 
+class RoomGTAOPass extends GTAOPass {
+  setSize(width,height){
+    // The normal, AO and denoise buffers use half the drawing size on each axis.
+    super.setSize(Math.max(1,Math.floor(width/2)),Math.max(1,Math.floor(height/2)));
+  }
+
+  overrideVisibility(){
+    super.overrideVisibility();
+    this.scene.traverseVisible(object=>{
+      if(object.isSprite) object.visible=false;
+      if(!object.isMesh) return;
+      const materials=Array.isArray(object.material)?object.material:[object.material];
+      // Glass and other overlays must let the surfaces behind them contribute.
+      if(!materials.some(m=>m.visible&&!m.transparent&&m.depthTest&&m.depthWrite)) object.visible=false;
+    });
+  }
+}
+
 export function createRooms(renderer,o0){
   // a watcher is not the one in the room: no speech or shaking for them, and a fast-forward makes no sound
   const o=Object.assign({},o0,{say:(...a)=>{if(!A.watching)o0.say(...a)},rumble:(...a)=>{if(!A.watching)o0.rumble(...a)},
@@ -218,7 +244,7 @@ export function createRooms(renderer,o0){
   const nf=v=>typeof v==='number'&&isFinite(v),Z={mx:0,my:0,press:0,lx:0,ly:0};
   const scene=new THREE.Scene(),cam=new THREE.PerspectiveCamera(72,1,0.05,2000);
   scene.background=new THREE.Color(0x000000);
-  let composer=null,bloom=null,blurPass=null,viewKey='',cur=null,group=null,done=null,held=false;
+  let composer=null,bloom=null,blurPass=null,fxaaPass=null,viewKey='',cur=null,group=null,done=null,held=false;
   const A={active:false,kind:'',watching:false,label:'',mute:0,theaterOpts:{}};
   const clearHooks=[];
   const glowTex=canvasTex(128,128,(c,w)=>{const g=c.createRadialGradient(w/2,w/2,0,w/2,w/2,w/2);
@@ -229,12 +255,23 @@ export function createRooms(renderer,o0){
     if(o.post&&!composer){
       composer=new EffectComposer(renderer,new THREE.WebGLRenderTarget(4,4,{type:THREE.HalfFloatType}));
       composer.addPass(new RenderPass(scene,cam));
+      if(o.ao){
+        const ao=new RoomGTAOPass(scene,cam,4,4);
+        // Some room shells are viewed from the reverse side of their geometry.
+        ao.normalMaterial.side=THREE.DoubleSide;
+        ao.blendIntensity=0.7;
+        ao.updateGtaoMaterial({radius:0.55,distanceExponent:1.4,thickness:0.7,scale:1.1,samples:12,distanceFallOff:1,screenSpaceRadius:false});
+        composer.addPass(ao);
+      }
       // a soft blur for burning eyes, off unless a room asks for it
       blurPass=new ShaderPass({uniforms:{tDiffuse:{value:null},uAmt:{value:0},uPx:{value:new THREE.Vector2(1,1)}},vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
         fragmentShader:'uniform sampler2D tDiffuse;uniform float uAmt;uniform vec2 uPx;varying vec2 vUv;void main(){vec4 s=vec4(0.0);for(int i=0;i<16;i++){float a=float(i)*2.39996,r=sqrt((float(i)+0.5)/16.0)*uAmt;s+=texture2D(tDiffuse,vUv+vec2(cos(a),sin(a))*r*uPx);}gl_FragColor=s/16.0;}'});
       blurPass.enabled=false;composer.addPass(blurPass);
       bloom=new UnrealBloomPass(new THREE.Vector2(4,4),0.9,0.6,0.8);composer.addPass(bloom);
-      composer.addPass(new OutputPass());viewKey='';
+      composer.addPass(new OutputPass());
+      // Match the maze: FXAA detects edges in the final display colors.
+      fxaaPass=new ShaderPass(FXAAShader);composer.addPass(fxaaPass);
+      viewKey='';
     }
     group=new THREE.Group();scene.add(group);
   }
@@ -845,12 +882,21 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     {const z=WZ-0.325;box(group,paper,(-PX-PW)/2,PH/2,z,PX-PW,PH,0.05);box(group,paper,(PX+PW)/2,PH/2,z,PX-PW,PH,0.05);box(group,paper,0,(PY1+PH)/2,z,PW*2,PH-PY1,0.05);box(group,paper,0,PY0/2,z,PW*2,PY0,0.05);
       for(const s of[-1,1])box(group,gilt,s*(PW+0.05),(PY0+PY1)/2,z-0.02,0.1,PY1-PY0+0.2,0.06);box(group,gilt,0,PY1+0.05,z-0.02,PW*2+0.2,0.1,0.06);box(group,gilt,0,PY0-0.05,z-0.02,PW*2+0.2,0.1,0.06)}
     // furniture
-    const cloth=lit(0xa99d86,{rim:0.4,rc:[0.5,0.35,0.2],wrap:0.6}),dwood=lit(0x3a2112,{rim:0.5,rc:[0.6,0.35,0.15],sp:0.5,wrap:0.3}),china=lit(0xb8b2a2,{rim:0.4,rc:[0.5,0.4,0.3],sp:0.6});
+    const cloth=lit(0xa99d86,{pat:8,rim:0.4,rc:[0.5,0.35,0.2],wrap:0.6}),dwood=lit(0x3a2112,{pat:5,rim:0.5,rc:[0.6,0.35,0.15],sp:0.35,wrap:0.3}),china=lit(0xb8b2a2,{rim:0.4,rc:[0.5,0.4,0.3],sp:0.6});
         cyl(group,dwood,TX,0.37,TZ,0.07,0.13,0.74);cyl(group,dwood,TX,0.76,TZ,0.62,0.62,0.04,20);cyl(group,cloth,TX,0.6,TZ,0.6,0.72,0.34,20);cyl(group,cloth,TX,0.775,TZ,0.6,0.6,0.012,20);
     S.cup=cyl(group,china,TX+0.1,0.82,TZ-0.05,0.07,0.05,0.07);S.cup0=S.cup.position.clone();ball(group,china,TX-0.25,0.84,TZ+0.1,0.09,0.08,0.09);cyl(group,china,TX+0.3,0.805,TZ+0.18,0.04,0.03,0.04);cyl(group,china,TX-0.1,0.805,TZ-0.3,0.04,0.03,0.04);
     const chair=(x,z,yaw)=>{const c=grp(group,x,0,z);c.rotation.y=yaw;box(c,dwood,0,0.45,0,0.44,0.05,0.44);box(c,dwood,0,0.78,-0.21,0.44,0.62,0.04);
       for(const a of[-1,1])for(const b of[-1,1])cyl(c,dwood,a*0.19,0.22,b*0.19,0.02,0.018,0.44);box(c,lit(0x3a1a2a,{rim:0.4,rc:[0.5,0.3,0.2],wrap:0.5}),0,0.485,0,0.38,0.03,0.38);return c};
     S.chairA=chair(...SEAT[seatK]);S.chairB=chair(...SEAT[seat2]);
+    // Soft floor contacts keep furniture grounded, including when the chair is knocked aside.
+    const shadowMat=new THREE.ShaderMaterial({transparent:true,depthWrite:false,
+      vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+      fragmentShader:'varying vec2 vUv;void main(){float r=length(vUv*2.0-1.0);gl_FragColor=vec4(0.0,0.0,0.0,0.56*(1.0-smoothstep(0.15,1.0,r)));}'});
+    const contact=(x,z,w,d)=>plane(group,shadowMat,x,0.004,z,w,d,-Math.PI/2);
+    contact(TX,TZ,1.85,1.55);contact(sbX,-6.47,1.95,0.75);contact(sofX,-6.38,1.75,0.95);
+    contact(LA[0],LA[1],0.7,0.7);contact(LB[0],LB[1],0.7,0.7);contact(SX,SZ,0.62,0.62);
+    const chairShadow=contact(S.chairA.position.x,S.chairA.position.z,0.85,0.85);
+    contact(S.chairB.position.x,S.chairB.position.z,0.85,0.85);
     box(group,dwood,sbX,0.45,-6.45,1.5,0.9,0.5);box(group,gilt,sbX,0.92,-6.45,1.56,0.04,0.54);
     {const sf=lit(pk([0x203826,0x2a2a4a,0x4a2a20,0x4a3a1a,0x3a2036]),{rim:0.4,rc:[0.5,0.4,0.2],wrap:0.4});box(group,sf,sofX,0.3,-6.4,1.3,0.6,0.55);box(group,sf,sofX,0.72,-6.62,1.3,0.45,0.14)}
     const lamp=(x,z,i)=>{const L={};cyl(group,dwood,x,0.04,z,0.2,0.22,0.08);cyl(group,dwood,x,0.85,z,0.025,0.025,1.6);
@@ -892,7 +938,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
         P.ua[i].rotation.set(-A[0],0,sg*A[1]);P.fa[i].rotation.x=-A[2];
         P.ul[i].rotation.set(-sg*w*wa*0.5-s*1.5,0,sg*((q.sp||0)+s*0.08));P.fl[i].rotation.x=s*1.5+Math.max(0,-sg*w)*0.7*wa+(q.kb||0)}
     };
-    for(const e of cast){e.p=person(e.c);group.add(e.p.R)}
+    for(const e of cast){e.p=person(e.c);group.add(e.p.R);e.contact=contact(e.V[0],e.V[1],0.74,0.66)}
     // each role is one small routine, a function of the clock: it says where the person is and how they hold themselves
     const ENT=MIR.ENTER+0.35,CM=[99,99],SY=SEAT[seatK][2];
     const ROLE={
@@ -963,12 +1009,12 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       for(let i=0;i<2;i++){const sg=i?-1:1,A=(i?q.aR:q.aL)||[0.05-sg*w*wa*0.4,0.12+sag*0.04,0.15+Math.abs(w)*wa*0.2];
         mon.ua[i].rotation.set(-A[0],0,sg*A[1]);mon.fa[i].rotation.x=-A[2];
         mon.ul[i].rotation.set(-sg*w*wa*0.5-0.3,0,sg*0.04);mon.fl[i].rotation.x=0.55+Math.max(0,-sg*w)*0.6*wa}
-      const e=q.e===undefined?0.2:q.e;mon.eye.uniforms.uCol.value.setRGB(4*e,3.2*e,1.2*e);for(const g of mon.glows){g.material.opacity=0.55*Math.min(1,e);g.scale.setScalar(0.2+0.2*Math.min(e,1.5))}
+      const e=q.e===undefined?0.2:q.e;mon.eye.uniforms.uCol.value.setRGB(1.45*e,0.85*e,0.25*e);for(const g of mon.glows){g.material.opacity=0.28*Math.min(1,e);g.scale.setScalar(0.18+0.14*Math.min(e,1.5))}
     };
     // ---- the glass ----
     const HP=[[0.1,0.3],[-0.55,0.55],[0.65,0.25],[-0.2,-0.2],[0.4,0.65],[-0.8,0.1],[0.9,0.5],[0.0,0.8],[-0.45,0.85],[0.75,-0.1]];
     const hits=[...Array(10)].map((_,i)=>new THREE.Vector4(HP[i][0],HP[i][1]+0.1,0,rnd()));S.hitT=[];
-    S.pane=new THREE.Mesh(new THREE.PlaneGeometry(PW*2,PY1-PY0),new THREE.ShaderMaterial({uniforms:{uH:{value:hits},uK:{value:0},uT:{value:0}},transparent:true,depthWrite:false,vertexShader:'varying vec2 vP;void main(){vP=position.xy;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',fragmentShader:PANE_FS}));
+    S.pane=new THREE.Mesh(new THREE.PlaneGeometry(PW*2,PY1-PY0),new THREE.ShaderMaterial({uniforms:{uH:{value:hits},uK:{value:0}},transparent:true,depthWrite:false,vertexShader:'varying vec2 vP;varying vec3 vW;void main(){vP=position.xy;vec4 w=modelMatrix*vec4(position,1.0);vW=w.xyz;gl_Position=projectionMatrix*viewMatrix*w;}',fragmentShader:PANE_FS}));
     S.pane.position.set(0,(PY0+PY1)/2,WZ-0.04);S.pane.renderOrder=5;group.add(S.pane);
     // what you spray at the glass before it breaks: splats, beads and runs, on the pane's near face
     S.drip=new THREE.Mesh(new THREE.PlaneGeometry(PW*2,PY1-PY0),new THREE.ShaderMaterial({uniforms:{uS:{value:[...Array(10)].map(()=>new THREE.Vector4(0,0,-1,0))},uT:{value:0}},transparent:true,depthWrite:false,vertexShader:'varying vec2 vP;void main(){vP=position.xy;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',fragmentShader:DRIP_FS}));
@@ -1006,7 +1052,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     // lights
     const WARM=[1.0,0.62,0.32];
     LU.uLP.value[0].set(LA[0],1.75,LA[1]);LU.uLP.value[1].set(LB[0],1.75,LB[1]);LU.uLP.value[2].set(TX,2.6,TZ);LU.uLP.value[3].set(sbX,1.4,-6.3);
-    const LI=[1.15,1.15,1.35,0.7];
+    const LI=[1.05,1.05,1.65,0.65];
     const setLights=t=>{
       let a=1,b=1,c=1,d=1;
       const flick=ss(MIR.ENTER-0.1,MIR.ENTER,t)*(1-ss(MIR.ENTER+3.5,MIR.ENTER+4.5,t));
@@ -1015,8 +1061,8 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       a*=1-LO[0].d*ss(LO[0].t,LO[0].t+0.3,t);b*=1-LO[1].d*ss(LO[1].t,LO[1].t+0.3,t);c*=1-LO[2].d*ss(LO[2].t,LO[2].t+0.4,t);d*=1-LO[3].d*ss(LO[3].t,LO[3].t+0.3,t);
       const F=S.lampK;a*=F;b*=F;c*=F;d*=F;LU.uAmbP.value.set(lerp(0.026,0.05,F),lerp(0.04,0.03,F),lerp(0.07,0.02,F));
       const k=[a,b,c,d];for(let i=0;i<4;i++){const I=LI[i]*k[i];LU.uLC.value[i].set(WARM[0]*I,WARM[1]*I,WARM[2]*I)}
-      const sw=Math.sin(t*0.9)*0.02;S.lampA.shade.material.uniforms.uCol.value.setRGB(2.3*a,1.35*a,0.55*a);S.lampB.shade.material.uniforms.uCol.value.setRGB(2.3*b,1.35*b,0.55*b);
-      S.lampA.g.material.opacity=0.5*a;S.lampB.g.material.opacity=0.5*b;S.chG.material.opacity=0.3*c;S.candleG.material.opacity=0.5*d;
+      S.lampA.shade.material.uniforms.uCol.value.setRGB(1.6*a,0.83*a,0.3*a);S.lampB.shade.material.uniforms.uCol.value.setRGB(1.6*b,0.83*b,0.3*b);
+      S.lampA.g.material.opacity=0.35*a;S.lampB.g.material.opacity=0.35*b;S.chG.material.opacity=0.24*c;S.candleG.material.opacity=0.38*d;
       for(const f of S.chFl)f.material.uniforms.uCol.value.setRGB(3*c,1.9*c,0.7*c);S.candle.material.uniforms.uCol.value.setRGB(3*d,1.9*d,0.7*d);
       return[a,b,c,d];
     };
@@ -1313,6 +1359,11 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       // people
       CM[0]=mp.x;CM[1]=mp.z;const mOn=t>=MIR.ENTER+0.35;
       if(!S.st)for(const e of cast)drawCast(e,t);
+      for(const e of cast){
+        const p=e.p.R.position;
+        e.contact.position.set(p.x,0.004,p.z);
+      }
+      chairShadow.position.set(S.chairA.position.x,0.004,S.chairA.position.z);
       // the thing
       mon.R.visible=mOn&&!S.st;
       if(mOn){
@@ -1349,7 +1400,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       {let a=0;if(t>=MIR.ENTER){const u=t-MIR.ENTER;a=-1.9*(u<0.18?u/0.18:1+0.08*Math.exp(-(u-0.18)*6)*Math.sin((u-0.18)*30))}
         if(S.ch===2&&hold>=LK.PROMPT-6.6+5.0)a=lerp(-1.9,0,ss(LK.PROMPT-6.6+5.4,LK.PROMPT-6.6+5.9,hold));if(S.lockT>=0){const u=t-S.lockT;if(u<0.8&&a===0)a+=0.035*Math.sin(u*55)*Math.exp(-u*5)}S.door.rotation.y=a}
       // the pane
-      const U=S.pane.material.uniforms;U.uK.value=S.sm+0.12*S.fb;U.uT.value=t;for(let i=0;i<10;i++){const h=hits[i];h.z=S.hitT[i]===undefined?0:(0.45+0.5*((i*37%10)/10))*ss(0,0.2,t-S.hitT[i])}
+      const U=S.pane.material.uniforms;U.uK.value=S.sm+0.12*S.fb;for(let i=0;i<10;i++){const h=hits[i];h.z=S.hitT[i]===undefined?0:(0.45+0.5*((i*37%10)/10))*ss(0,0.2,t-S.hitT[i])}
       if(S.gb>=0&&S.bt<0){
         // broken from this side: the glass falls inward onto the parlor floor and stays there
         const d=t-S.gb;S.shards.visible=true;
@@ -1399,11 +1450,11 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       // light and dust
       const fl=1+Math.sin(t*37)*0.03*Math.sin(t*3.1);S.bulbG.material.opacity=0.3*fl;LU.uBC.value.set(0.5*fl,0.62*fl,0.9*fl);
       const dp=S.dust.geometry.attributes.position;for(let i=0;i<S.dustSeed.length;i++){const s=S.dustSeed[i];dp.setY(i,dp.getY(i)+Math.sin(t*s[2]*2+s[0])*0.0006)}dp.needsUpdate=true;
-      S.spill.material.uniforms.uK.value=0.55+0.45*(lit4[0]+lit4[2])/2;
+      S.spill.material.uniforms.uK.value=0.2*lit4[0]+0.25*lit4[1]+0.55*lit4[2];
       // the blur that comes with burning eyes
       S.blur=burn>0?burn*(1-ss(4.6,9.5,hold)):0;
       S.fade=Math.max(S.bt>=0?ss(S.bt+0.95,S.bt+1.55,t):0,S.leaveT>=0?ss(S.leaveT+0.1,S.leaveT+0.65,t):0,S.ch===2?0.62*burn*(1-ss(4.4,9.0,hold)):0);
-      S.bloom=0.55+0.25*burn;
+      S.bloom=0.33+0.25*burn;
       if(!W)hudHtml();
     };
     S.snap=()=>({px:+S.px.toFixed(2),pz:+S.pz.toFixed(2),fb:S.fb,...emM.snap(),...emB.snap(),lo:S.lamp,jy:+S.jy.toFixed(2),t:+S.t.toFixed(3),yaw:+S.yaw.toFixed(2),pitch:+S.pitch.toFixed(2),sm:+S.sm.toFixed(3),ch:S.ch,ct:+S.ct.toFixed(2),bt:+S.bt.toFixed(2),sel:S.sel,lv:+S.leaveT.toFixed(2),sd:S.seed,hd:S.held?1:0,sp:S.splats.map(q=>[+q[0].toFixed(3),+q[1].toFixed(3),+q[2].toFixed(2),+q[3].toFixed(2)])});
@@ -1424,7 +1475,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       if((q.lo===0||q.lo===1)&&q.lo!==S.lamp)setLamp(q.lo);if(nf(q.jy))S.tjy=clamp(q.jy,0,2);
       emM.apply(q);emB.apply(q);
     };
-    S.bloom=0.55;
+    S.bloom=0.33;
     S.look=0;S.aimed=()=>S.aim;
     S.update(0,Z);
     return S;
@@ -1481,7 +1532,11 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     cam.updateProjectionMatrix();
     if(composer){
       const key=sz.x+'x'+sz.y+'@'+pr;
-      if(key!==viewKey){viewKey=key;composer.setPixelRatio(pr);composer.setSize(sz.x,sz.y)}
+      if(key!==viewKey){
+        viewKey=key;composer.setPixelRatio(pr);composer.setSize(sz.x,sz.y);
+        const px=renderer.getDrawingBufferSize(new THREE.Vector2());
+        fxaaPass.uniforms.resolution.value.set(1/Math.max(1,px.x),1/Math.max(1,px.y));
+      }
       bloom.strength=cur.bloom;
       blurPass.enabled=(cur.blur||0)>0.01;if(blurPass.enabled){blurPass.uniforms.uAmt.value=cur.blur*10*pr;blurPass.uniforms.uPx.value.set(1/(sz.x*pr),1/(sz.y*pr))}
       composer.render();
