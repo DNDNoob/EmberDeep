@@ -70,6 +70,17 @@
   .panel{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
     background:radial-gradient(ellipse at center,rgba(10,6,4,.55),rgba(0,0,0,.92));text-align:center;padding:20px}
   .hidden{display:none!important}
+  #loading{position:fixed;inset:0;z-index:10;display:grid;place-items:center;box-sizing:border-box;
+    padding:24px;background:radial-gradient(ellipse at center,#21150d,#080604 65%,#000);text-align:center}
+  #loadingCard{width:min(100%,360px)}
+  #loadingTitle{display:block;color:#ffc27a;font:30px Georgia,serif;letter-spacing:.09em;
+    text-shadow:0 0 22px rgba(255,150,50,.45)}
+  #loadingBar{display:block;width:100%;height:8px;margin:20px 0 12px;appearance:none;
+    border:0;border-radius:6px;overflow:hidden;background:#39281b;accent-color:#ffb65f}
+  #loadingBar::-webkit-progress-bar{background:#39281b}
+  #loadingBar::-webkit-progress-value{background:linear-gradient(90deg,#b95524,#ffbf70);border-radius:6px}
+  #loadingBar::-moz-progress-bar{background:linear-gradient(90deg,#b95524,#ffbf70);border-radius:6px}
+  #loadingPhase{margin:0;color:#d4c3b0;font-size:13px;letter-spacing:.09em}
   h1{font-family:Georgia,"Times New Roman",serif;font-weight:400;font-size:clamp(30px,8.5vw,84px);letter-spacing:.2em;margin:0 0 6px;
     color:#ffc27a;text-shadow:0 0 30px rgba(255,140,40,.55),0 2px 4px #000}
   h2{font-family:Georgia,serif;font-weight:400;font-size:clamp(24px,6vw,46px);letter-spacing:.14em;margin:0 0 10px;color:#ffc27a}
@@ -194,6 +205,13 @@
 <div id="roomHud"></div><div id="roomCross"></div>
 <div id="talk" class="hidden"><div id="talkPurse"></div><div id="talkName"></div><div id="talkText"></div><div id="talkOpts"></div><div id="talkHint"></div></div>
 <div id="fade" class="fx"></div>
+<div id="loading" hidden>
+  <div id="loadingCard">
+    <label id="loadingTitle" for="loadingBar"></label>
+    <progress id="loadingBar" max="100" value="0" aria-describedby="loadingPhase"></progress>
+    <p id="loadingPhase" role="status"></p>
+  </div>
+</div>
 
 <div id="title" class="panel">
   <h1>DOOR SIMULATOR</h1>
