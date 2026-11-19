@@ -1619,6 +1619,20 @@ const DOOR_LOOKS={
       doorKnob(f,[0.8,0.65,0.25,4]);
     },
     glow(D,t){return[1.0,0.32,0.4,0.42+0.22*Math.sin(t*4+D.ph)]}
+  },
+  monoliths:{
+    leaf(f,D){
+      slab(f,[0.02,0.515,0],[0.04,1.03,0.5],[0.115,0.09,0.16,0]);
+      slab(f,[0.045,0.60,0],[0.04,0.49,0.29],[0.32,0.29,0.38,0]);
+      for(const side of [-1,1]){
+        slab(f,[0.071,0.73,side*0.08],[0.023,0.035,0.1],[0.52,0.47,0.58,0]);
+        slab(f,[0.079,0.68,side*0.08],[0.009,0.021,0.056],[0.16,0.08,0.23,0]);
+      }
+      slab(f,[0.084,0.615,0],[0.05,0.16,0.065],[0.48,0.42,0.52,0]);
+      slab(f,[0.071,0.49,0],[0.014,0.017,0.13],[0.13,0.10,0.19,0]);
+      doorKnob(f,[0.7,0.48,0.94,4]);
+    },
+    glow(D,t){return[0.72,0.46,1,0.43+0.14*Math.sin(t*2+D.ph)]}
   }
 };
 const DOOR_EXPLORE_PER_MIN=150;
@@ -1841,6 +1855,7 @@ const ROOMS=createRooms(renderer,{post:POST,low:Q===0,ao:Q>=2,
 
   hint:k=>k==='mpick'||k==='mspray'?(touch.on?'tap '+(k==='mpick'?'PICK UP':'SPRAY'):pad.id?'X':'E or click'):k==='muse'?(touch.on?'tap USE':pad.id?'X':'E or click'):
     k==='mirror'?(touch.on?'Left stick walks · drag to look · tap SPRAY or THUMB':pad.id?'Left stick walks · right stick looks · A jumps · D-pad left or right chooses · X confirms':'WASD walk · Shift sprints · Space jumps · mouse or left / right arrows look · 1 / 2, Tab or wheel picks · E or click confirms'):
+    k==='monoliths'?'Follow the path and walk through the doorway':
     k==='theater'?(touch.on?'Left stick walks · drag to look · JUMP jumps · tap TALK to speak':pad.id?'Left stick walks · right stick looks · A jumps · V speaks':'WASD walk · Shift sprints · Space jumps · mouse look · V or the mic speaks'):
     touch.on?'Left stick walk · drag to look · JUMP jumps · aim at a button and tap PRESS, or tap a button':pad.id?'Left stick walk · right stick look · A jumps · aim at a button and press X':'WASD walk · Shift sprints · Space jumps · mouse look · aim at a button and click or press E'});
 // a fallen player rides along with the friend they follow, into that friend's strange door too
@@ -1954,6 +1969,11 @@ function roomEnd(res){
     return;
   }
   roomClose();
+  if(res.k==='maze-exit'){
+    P.x=F.exit.x;P.z=F.exit.z;P.y=0;P.vx=P.vy=P.vz=0;P.pitch=0;
+    onTileChange();sfx('noclip');
+    return;
+  }
   if(res.why==='theater'){
     if(res.k==='win'){
       R.score+=60*R.depth;P.inv=2;R.guide=R.depth;GD.have=false;GD.key='';sfx('shard');
@@ -2511,7 +2531,7 @@ function mpRecv(m,from){
       D.used=true;if(nearDoor===D)nearDoor=null;buildStatic(F);
       say(p.name+' opened a strange door',2.5);mpSys(p.name+' opened '+(DOOR_KINDS[m.w]?.name||'a strange door'));
       break;}
-    case 'rv':if(m.q&&typeof m.q==='object'&&(m.w==='galaxy'||m.w==='kiln'||m.w==='fall'||m.w==='mirror'||m.w==='theater')){p.rv={w:m.w,q:m.q,d:m.d,at:performance.now()};if(RW&&RW.id===from&&RW.w===m.w)ROOMS.sync(m.q)}break;
+    case 'rv':if(m.q&&typeof m.q==='object'&&typeof m.w==='string'&&Object.hasOwn(DOOR_KINDS,m.w)){p.rv={w:m.w,q:m.q,d:m.d,at:performance.now()};if(RW&&RW.id===from&&RW.w===m.w)ROOMS.sync(m.q)}break;
     case 'sdr':if(inRun)say(m.r==='theater'?p.name+' silenced the picture house':m.r==='theater-dead'?p.name+' was roasted to death by teenagers':m.r==='esc'?p.name+' beat the glass kiln':m.r==='fall'?p.name+' fell to their death':m.r==='lucky'?p.name+' hid behind a mirror and got lucky':m.r==='mirror'?p.name+' was eaten by the thing behind the mirror':p.name+' was buried in the glass kiln',3);break;
     case 'warp':{
       const n=(m.d|0)-R.depth;
