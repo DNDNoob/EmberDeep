@@ -1793,7 +1793,39 @@ function pickTalk(){
   q.fn();if(talk)buildTalk();
 }
 function moveTalk(d){if(!talk)return;const n=talk.opts.length;talk.sel=(talk.sel+d+n)%n;buildTalk()}
-function act(){if(P.down){mpCycle();return}if(state==='play'&&nearNpc)openTalk(nearNpc);else if(state==='play'&&nearDoor)sdoorOpen(nearDoor);else useFlash()}
+function act(){if(loading)return;if(P.down){mpCycle();return}if(state==='play'&&nearNpc)openTalk(nearNpc);else if(state==='play'&&nearDoor)sdoorOpen(nearDoor,true);else useFlash()}
+/* ---------- loading transitions ---------- */
+let loading=null;
+function showLoading(title,stages){
+  $('loadingTitle').textContent=title;
+  $('loadingPhase').textContent=stages[0][0];
+  $('loadingBar').value=0;
+  $('loading').hidden=false;
+  loading={stages,index:0,at:performance.now()+100};
+}
+function closeLoading(){
+  loading=null;
+  $('loading').hidden=true;
+}
+function advanceLoading(now){
+  if(!loading||now<loading.at)return;
+  const transition=loading,{stages,index}=transition;
+  if(index===stages.length){closeLoading();return}
+  try{stages[index][1]()}catch(error){
+    closeLoading();
+    roomLeave();
+    if(state==='trans')state='play';
+    $('fade').style.opacity=0;
+    console.error('Could not load the new area',error);
+    say('Could not load the new area.',4);
+    return;
+  }
+  if(loading!==transition)return;
+  transition.index++;
+  transition.at=performance.now()+120;
+  $('loadingBar').value=100*transition.index/stages.length;
+  $('loadingPhase').textContent=stages[transition.index]?.[0]||'Ready';
+}
 /* ---------- strange doors (the rooms themselves are in src/rooms.js) ---------- */
 let nearDoor=null;
 const ROOMS=createRooms(renderer,{post:POST,low:Q===0,
@@ -1813,10 +1845,16 @@ const ROOMS=createRooms(renderer,{post:POST,low:Q===0,
     touch.on?'Left stick walk · drag to look · JUMP jumps · aim at a button and tap PRESS, or tap a button':pad.id?'Left stick walk · right stick look · A jumps · aim at a button and press X':'WASD walk · Shift sprints · Space jumps · mouse look · aim at a button and click or press E'});
 // a fallen player rides along with the friend they follow, into that friend's strange door too
 let RW=null,rvT=0;const NOIN={mx:0,my:0,press:0,lx:0,ly:0};let mouseL=false;
-function roomWatch(){
+function roomWatch(showProgress=true){
   const f=MP.on&&P.down&&(state==='play'||state==='pause')?MP.peers.get(MP.follow):null,rv=f&&f.away&&f.d===R.depth&&f.rv&&f.rv.d===R.depth&&performance.now()-f.rv.at<2000?f.rv:null;
   if(rv){
-    if(!ROOMS.watching||!RW||RW.id!==f.id||RW.w!==rv.w){ROOMS.watch(rv.w,rv.q);RW={id:f.id,w:rv.w};document.body.classList.add('rwatch');$('fade').style.transition='none'}
+    if(!ROOMS.watching||!RW||RW.id!==f.id||RW.w!==rv.w){
+      if(showProgress){
+        showLoading('Entering room',[['Preparing the spectator view',()=>roomWatch(false)]]);
+        return;
+      }
+      ROOMS.watch(rv.w,rv.q);RW={id:f.id,w:rv.w};document.body.classList.add('rwatch');$('fade').style.transition='none';
+    }
     const nm=f.name.replace(/[<>&"']/g,''),lb=`Watching ${nm} · ${DOOR_KINDS[rv.w]?.name||'a strange door'}`+(mpAlive().length>1?' · E to switch':'');
     ROOMS.label=lb;if(rv.w!=='kiln'){const el=$('roomHud'),h=`<small>${lb}</small>`;if(el.innerHTML!==h)el.innerHTML=h}
   }else if(RW||ROOMS.watching){
@@ -1825,21 +1863,27 @@ function roomWatch(){
     if(state!=='room'){$('fade').style.transition='opacity .4s';$('fade').style.opacity=0}
   }
 }
-function sdoorOpen(D){
-  if(state!=='play'||D.used||P.down||P.grab)return;
-  D.used=true;nearDoor=null;buildStatic(F);clearPrompt();RW=null;document.body.classList.remove('rwatch');
+function sdoorOpen(D,showProgress=false){
+  if(loading||state!=='play'||D.used||P.down||P.grab)return;
+  D.used=true;nearDoor=null;clearPrompt();RW=null;document.body.classList.remove('rwatch');
   mpSend({k:'sd',d:R.depth,i:F.sdoors.indexOf(D),w:D.kind});
   sfx('door');
-  beginRoom(D.kind,roomEnd,hashStr(R.seed+'#theater'+R.depth+','+D.tx+','+D.ty));
+  const seed=hashStr(R.seed+'#theater'+R.depth+','+D.tx+','+D.ty);
+  if(!showProgress)buildStatic(F);
+  beginRoom(D.kind,roomEnd,seed,showProgress);
 }
-function beginRoom(kind,onEnd,seed){
+function beginRoom(kind,onEnd,seed,showProgress=false){
   const door=DOOR_KINDS[kind]||{};
   state='room';P.away=true;P.vx=P.vz=0;mapBig=false;
   document.body.classList.add('inroom');
   if(door.css)document.body.classList.add(door.css);
   $('tFlash').textContent=door.action||'FLASH';$('tJump').textContent='JUMP';$('tJump').style.display='';
   $('fade').style.transition='none';$('fade').style.opacity=1;
-  ROOMS.start(kind,onEnd,seed);
+  if(showProgress)showLoading('Entering room',[
+    ['Opening the strange door',()=>buildStatic(F)],
+    ['Preparing the room',()=>ROOMS.start(kind,onEnd,seed)]
+  ]);
+  else ROOMS.start(kind,onEnd,seed);
 }
 let previewStamina=null;
 function previewRoom(kind,seed=7){
@@ -1984,9 +2028,11 @@ function los(x0,z0,x1,z1){
   return true;
 }
 function loadFloor(depth,look){
+  installFloor(depth,genFloor(R.seed,depth,look));
+}
+function installFloor(depth,nextFloor){
   R.depth=depth;
   if(depth>deepest&&!(URL_DEPTH&&depth===R.startDepth)){deepest=depth;store.set('deepest',deepest)}
-  const nextFloor=genFloor(R.seed,depth,look);
   if(F?.npcs)for(const npc of F.npcs)disposeGpuRig(npc);
   R.xray=0;R.guide=0;GD.have=false;GD.key='';F=nextFloor;panelLvl=1;P.grab=null;if(typeof MIM!=='undefined')mimicReset();
   buildMesh(F);buildStatic(F);buildSdf(F);sweepWorld();if(F.npcs&&F.npcs.some(q=>q.type==='keeper'))keeperWarm();
@@ -2022,14 +2068,34 @@ function fillStartSel(){
   sel.value=want;$('depthLbl').hidden=deepest<2;
 }
 const floorTag=()=>F.name+(F.variant.ix?` (${F.variant.name})`:'');
-function startRun(seed,depth,force){
-  roomLeave();$('deadTitle').textContent='THE DARK TAKES YOU';
+function loadFloorWithProgress(title,seed,depth,enter){
+  let nextFloor;
+  showLoading(title,[
+    ['Generating the maze',()=>{nextFloor=genFloor(seed,depth)}],
+    ['Building the floor',()=>enter(nextFloor)]
+  ]);
+}
+function startRun(seed,depth,force,showProgress=false,onReady){
   if(MP.guest&&!force){mpJoinClick();return}
   const sd=force?depth:clamp(depth||URL_DEPTH||+$('startSel').value||1,1,Math.max(deepest,URL_DEPTH));
+  seed=(seed||randSeed()).toUpperCase();
+  if(showProgress){
+    initAudio();
+    loadFloorWithProgress('Starting game',seed,sd,floor=>{
+      enterRun(seed,sd,floor);
+      if(onReady)onReady();
+    });
+  }else enterRun(seed,sd,genFloor(seed,sd));
+}
+function startFromMenu(seed,depth){
+  if(!loading)startRun(seed,depth,false,true);
+}
+function enterRun(seed,sd,floor){
+  roomLeave();$('deadTitle').textContent='THE DARK TAKES YOU';
   P.down=false;
-  R.seed=(seed||randSeed()).toUpperCase();R.pk={};P.pick=0;R.score=0;R.time=0;R.gems=0;R.startDepth=sd;
+  R.seed=seed;R.pk={};P.pick=0;R.score=0;R.time=0;R.gems=0;R.startDepth=sd;
   P.hp=maxHp();P.fuel=100;P.stam=100;P.winded=false;P.flash=1+Math.floor((sd-1)/3)+(up.band|0);P.ward=0;R.wind=false;P.inv=0;P.chill=0;lowFuelSaid=false;
-  loadFloor(sd);
+  installFloor(sd,floor);
   state='play';
   ['title','pause','dead','talk'].forEach(id=>$(id).classList.add('hidden'));talk=null;
   $('hud').classList.remove('hidden');$('map').classList.remove('hidden');
@@ -2046,6 +2112,7 @@ function showTips(){
   t.forEach((msg,i)=>tipTimers.push(setTimeout(()=>{if(state==='play'&&R.depth===d)say(msg,4)},4200+i*4600)));
 }
 function toTitle(){
+  if(loading)closeLoading();
   roomLeave();glFallEnd();GL.queued=null;
   if(MP.on)mpLeave(false);
   state='title';
@@ -2078,6 +2145,7 @@ let toastTimer=0;
 function say(t,secs){const el=$('toast');el.textContent=t;el.style.opacity=1;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.style.opacity=0,(secs||2.5)*1000)}
 
 function die(){
+  if(loading)closeLoading();
   roomLeave();GL.queued=null;R.xray=0;R.guide=0;
   if(MP.on&&!MP.wiping){mpDown();return}
   state='dead';clearPrompt();
@@ -2097,15 +2165,15 @@ function descend(n,why){
   const bonus=why?0:100*R.depth+Math.round(P.fuel);
   R.score+=bonus;
   sfx('descend');
-  $('fade').style.opacity=1;
-  setTimeout(()=>{
+  const depth=R.depth+n;
+  loadFloorWithProgress('Descending to depth '+depth,R.seed,depth,floor=>{
     P.fuel=Math.min(100,P.fuel+25);lowFuelSaid=false;
     if(P.down){P.down=false;P.hp=maxHp();P.fuel=Math.max(P.fuel,50);P.inv=2;say('You rise again',2)}
-    loadFloor(R.depth+n);
+    installFloor(depth,floor);
     $('fade').style.transition='';$('fade').style.opacity=0;
     say((why?why+'. ':'')+`Depth ${R.depth}: ${floorTag()}`,why?5:3.5);showTips();
     state='play';
-  },550);
+  });
 }
 function useFlash(){
   if(P.flash<=0){say('No flash bombs',1.2);return}
@@ -2337,13 +2405,16 @@ function mpLeave(endIfDown){
 }
 // the host button: open a room, start a run, copy the invite link
 function mpHost(){
+  if(loading)return;
   if(MP.on)mpLeave(false);
   MP.host=true;MP.guest=false;
   mpOpen(newRoomCode());
-  startRun($('seedIn').value.trim());
+  let copied;
+  startRun($('seedIn').value.trim(),undefined,false,true,()=>{
+    copied.then(ok=>say(ok?'Invite link copied. Send it to your friends.':'Room '+MP.code+'. Press Esc for the invite link.',4));
+  });
   lock();
-  const link=mpLink(),fallback=()=>say('Room '+MP.code+'. Press Esc for the invite link.',4);
-  try{navigator.clipboard.writeText(link).then(()=>say('Invite link copied. Send it to your friends.',4),fallback)}catch(e){fallback()}
+  try{copied=navigator.clipboard.writeText(mpLink()).then(()=>true,()=>false)}catch(e){copied=Promise.resolve(false)}
 }
 // opened from an invite link: connect straight away, start when the player clicks Join
 function mpPrepareJoin(code){
@@ -2362,7 +2433,9 @@ function mpSendRun(to){
   mpSend({k:'run',seed:R.seed,d:R.depth,sd:R.startDepth,t:r2(R.time),got,door:F.doorOpen?1:0,sdo:F.sdoors.map(q=>q.used?1:0),pk:(R.pk[R.depth]||[]).slice(0,64),sh:P.shards,ke:P.keys,blk:F.blk|0},to);
 }
 function mpApplyRun(r){
-  startRun(r.seed,r.d,true);
+  startRun(r.seed,r.d,true,true,()=>mpRestoreRun(r));
+}
+function mpRestoreRun(r){
   R.startDepth=r.sd;R.time=r.t;
   for(const i of r.got||[]){const it=F.items[i];if(it)it.got=true}
   if(r.door&&F.door)openDoor(true);
@@ -2377,7 +2450,7 @@ function mpGone(id){
   if(p&&p.greeted&&state!=='title'){say(p.name+' left',2.5);mpSys(p.name+' left')}
   if(MP.guest&&id===MP.hostId){
     MP.hostId=null;MP.run=null;
-    if(state==='title'||!MP.wantJoin)mpTitle();
+    if(state==='title'||!MP.wantJoin){if(loading)closeLoading();mpTitle()}
     else{say('The host left. The maze is yours alone now.',4);mpLeave(true)}
   }else mpTitle();
 }
@@ -2950,8 +3023,9 @@ $('brainUrl').addEventListener('change',()=>{BRAIN.url=$('brainUrl').value.trim(
 /* ---------- input ---------- */
 const keys={};
 addEventListener('keydown',e=>{
+  if(loading){if(e.code==='Tab'||e.code==='Enter'||e.code==='Space')e.preventDefault();return}
   if(e.target&&e.target.tagName==='SELECT')return;
-  if(e.target&&e.target.tagName==='INPUT'){if(e.code==='Enter'&&(e.target.id==='seedIn'||e.target.id==='nameIn')){e.target.blur();startRun($('seedIn').value.trim())}return}
+  if(e.target&&e.target.tagName==='INPUT'){if(e.code==='Enter'&&(e.target.id==='seedIn'||e.target.id==='nameIn')){e.target.blur();startFromMenu($('seedIn').value.trim())}return}
   if(['Tab','Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
   if(e.repeat)return;
   keys[e.code]=true;
@@ -2960,7 +3034,7 @@ addEventListener('keydown',e=>{
   if(e.code==='KeyV'&&!(state==='room'&&ROOMS.kind==='theater'))toggleMute();   // in the picture house V is your voice when there is no microphone
   if(e.code==='BracketRight')setBright(bright+0.15);
   if(e.code==='BracketLeft')setBright(bright-0.15);
-  if(state==='title'){if(e.code==='Enter')startRun($('seedIn').value.trim())}
+  if(state==='title'){if(e.code==='Enter')startFromMenu($('seedIn').value.trim())}
   else if(state==='play'){
     if(e.code==='Space')P.jumpQ=MOVE.jumpBuffer;
     if(e.code==='KeyE')act();
@@ -2980,8 +3054,8 @@ addEventListener('keydown',e=>{
     if(e.code==='Enter'||e.code==='KeyP'||(e.code==='Escape'&&performance.now()-pausedAt>300))resume(false);
     if(e.code==='KeyT')toTitle();
   }else if(state==='dead'){
-    if(e.code==='Enter')startRun();
-    if(e.code==='KeyR')startRun(R.seed,R.startDepth);
+    if(e.code==='Enter')startFromMenu();
+    if(e.code==='KeyR')startFromMenu(R.seed,R.startDepth);
     if(e.code==='KeyT')toTitle();
   }
 });
@@ -2989,7 +3063,7 @@ addEventListener('keyup',e=>{keys[e.code]=false});
 addEventListener('blur',()=>{for(const k in keys)keys[k]=false;mouseL=false;pause()});
 document.addEventListener('visibilitychange',()=>{if(document.hidden)pause()});
 document.addEventListener('mousemove',e=>{
-  if((state!=='play'&&state!=='room')||document.pointerLockElement!==canvas)return;
+  if(loading||(state!=='play'&&state!=='room')||document.pointerLockElement!==canvas)return;
   const mx=e.movementX,my=e.movementY;
   if(!isFinite(mx)||!isFinite(my)||Math.abs(mx)>600||Math.abs(my)>600)return;
   if(state==='room'){ROOMS.look(mx*MOVE.mouse*sens,my*MOVE.mouse*sens);return}
@@ -3001,12 +3075,12 @@ document.addEventListener('pointerlockchange',()=>{
   else if(usingLock){usingLock=false;pause()}
 });
 canvas.addEventListener('click',()=>{if((state==='play'||state==='room')&&!document.pointerLockElement)lock()});
-canvas.addEventListener('mousedown',e=>{if(state==='room'&&e.button===0)mouseL=true;if(state!=='play'||document.pointerLockElement!==canvas)return;if(e.button===0)act();else if(e.button===2)P.jumpQ=MOVE.jumpBuffer});
+canvas.addEventListener('mousedown',e=>{if(loading)return;if(state==='room'&&e.button===0)mouseL=true;if(state!=='play'||document.pointerLockElement!==canvas)return;if(e.button===0)act();else if(e.button===2)P.jumpQ=MOVE.jumpBuffer});
 addEventListener('mouseup',e=>{if(e.button===0)mouseL=false});
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
-$('startBtn').addEventListener('click',()=>{startRun($('seedIn').value.trim());lock()});
+$('startBtn').addEventListener('click',()=>{startFromMenu($('seedIn').value.trim());lock()});
 $('resumeBtn').addEventListener('click',()=>resume(true));
-$('againBtn').addEventListener('click',()=>{startRun();lock()});
+$('againBtn').addEventListener('click',()=>{startFromMenu();lock()});
 // touch controls
 const touch={on:false,mx:0,my:0,jump:false,stickId:null,lookId:null,tapId:null,sx:0,sy:0,lx:0,ly:0};
 function enableTouch(){
@@ -3064,7 +3138,7 @@ addEventListener('touchstart',()=>{enableTouch();initAudio()},{passive:true});
   btn('tTalk',()=>{touch.talk=true},()=>{touch.talk=false});
   btn('tChat',()=>{chatOpenBox()});
   $('quitBtn').addEventListener('click',toTitle);
-  $('retryBtn').addEventListener('click',()=>startRun(R.seed,R.startDepth));
+  $('retryBtn').addEventListener('click',()=>startFromMenu(R.seed,R.startDepth));
   document.addEventListener('contextmenu',e=>{if(touch.on)e.preventDefault()});
 }
 // optional gamepad
@@ -3087,6 +3161,7 @@ function pollPad(){
     $('padLine').innerHTML='Controller connected. <b>Left stick</b> move · <b>Right stick</b> look · <b>A</b> jump · <b>X</b> or <b>RT</b> flash · <b>LT</b> or click left stick to sprint · <b>Y</b> map · <b>RB</b> pickaxe · <b>Start</b> pause';
     if(state==='play')say('Controller connected',2)}
   const B=i=>{const b=gp.buttons[i];return !!b&&(b.pressed||b.value>0.4)};
+  if(loading){pad.prev=gp.buttons.map((_,i)=>B(i));return}
   pad.b0=B(0);pad.b2=B(2);pad.du=B(12);pad.dd=B(13);pad.dl=B(14);pad.dr=B(15);
   const hit=i=>B(i)&&!pad.prev[i];
   const curve=v=>{const a=Math.abs(v);if(a<0.2)return 0;const k=(a-0.2)/0.8;return Math.sign(v)*k};
@@ -3105,7 +3180,7 @@ function pollPad(){
     if(hit(9))pause();
     if(hit(14))setBright(bright-0.15);
     if(hit(15))setBright(bright+0.15);
-  }else if(state==='title'){if(hit(0)||hit(9))startRun($('seedIn').value.trim());
+  }else if(state==='title'){if(hit(0)||hit(9))startFromMenu($('seedIn').value.trim());
     const sel=$('startSel');if(hit(14)&&+sel.value>1){sel.value=+sel.value-1;store.set('startDepth',+sel.value)}
     if(hit(15)&&+sel.value<deepest){sel.value=+sel.value+1;store.set('startDepth',+sel.value)}}
   else if(state==='talk'){
@@ -3115,7 +3190,7 @@ function pollPad(){
     if(hit(0)||hit(2))pickTalk();else if(hit(1)||hit(9))closeTalk();
   }
   else if(state==='pause'){if(hit(0)||hit(9))resume(false);else if(hit(8))toTitle()}
-  else if(state==='dead'){if(hit(0)||hit(9))startRun();else if(hit(2))startRun(R.seed,R.startDepth);else if(hit(8)||hit(1))toTitle()}
+  else if(state==='dead'){if(hit(0)||hit(9))startFromMenu();else if(hit(2))startFromMenu(R.seed,R.startDepth);else if(hit(8)||hit(1))toTitle()}
   for(let i=0;i<gp.buttons.length;i++)pad.prev[i]=B(i);
 }
 addEventListener('gamepadconnected',()=>{});
@@ -4240,6 +4315,7 @@ function step(now){
   const raw=Math.max(0,(now-last)/1000);last=now;
   const dt=Math.min(raw,0.05);
   pollPad();
+  if(loading){mpTick(raw);return raw}
   if((state==='play'||state==='room')!==wasPlaying){wasPlaying=state==='play'||state==='room';document.body.classList.toggle('playing',wasPlaying)}
   roomWatch();
   if(state==='room'){ROOMS.update(dt,roomInput());if(state==='room'){$('fade').style.opacity=ROOMS.fade();$('roomCross').classList.toggle('on',ROOMS.aimed());mirrorBtns()}}
@@ -4257,9 +4333,11 @@ function step(now){
   return raw;
 }
 function frame(now){
+  advanceLoading(now);
   const raw=step(now);
+  if(loading&&loading.index<loading.stages.length){requestAnimationFrame(frame);return}
   mpVoiceTick(Math.min(raw,0.1));chatTick();
-  if(state==='play'&&!STUDIO)adapt(raw);
+  if(state==='play'&&!STUDIO&&!loading)adapt(raw);
   setHum();updateAmbience(Math.min(raw,0.1),{F,state,hold:GL.frz>0||!!GL.fall||P.away});
   if(GL.frz<=0){
     if(!window.__norender){if((state==='room'||ROOMS.watching)&&ROOMS.active){resize();renderer.toneMappingExposure=1;ROOMS.render()}else render(now/1000)}
@@ -4268,7 +4346,12 @@ function frame(now){
   }
   requestAnimationFrame(frame);
 }
-setInterval(()=>{if(MP.host&&document.hidden&&performance.now()-last>200)step(performance.now())},100);
+setInterval(()=>{
+  if(!document.hidden)return;
+  const now=performance.now();
+  advanceLoading(now);
+  if(MP.host&&now-last>200)step(now);
+},100);
 // a backdrop maze behind the title screen
 R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();achLine();
 {const rc=cleanCode(new URLSearchParams(location.search).get('room'));if(rc)mpPrepareJoin(rc)}
