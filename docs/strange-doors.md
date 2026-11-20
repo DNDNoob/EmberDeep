@@ -19,6 +19,20 @@ Decide whether each ending affects the visitor or the whole party.
    supports spectating, send the seed and state that a watcher needs to
    reconstruct the same visit.
 
+## Give the room an entrance, an exit, and an achievement
+
+- Give each room a physical entrance and exit by default. Place the
+  arrival point by the entrance and make the exit identifiable from
+  inside the room. Use a different layout when the room's premise or
+  mechanics call for it.
+- Give each room at least one achievement tied to an action or outcome
+  specific to that room. Check that the intended trigger awards it in
+  a real visit through a strange door.
+- Sign minigames in the room itself. Put the game's name on a cabinet,
+  tabletop, marquee, or nearby wall sign so players can discover it by
+  walking through the space. Keep the play station physically reachable
+  and preserve the player's position when switching back to walking.
+
 ## Light and detail the room
 
 Rooms registered with the shared manager get FXAA edge smoothing on Medium

@@ -6,7 +6,12 @@ const kitInputs=readdirSync('src').filter(f=>/^(npc_|sculpt).*\.js$/.test(f)||f=
 let kh=2166136261;for(const f of kitInputs)for(const c of readFileSync('src/'+f,'utf8')){kh^=c.charCodeAt(0);kh=Math.imul(kh,16777619)}
 const KIT_HASH=(kh>>>0).toString(36);
 const dev=process.argv.includes('--dev');
-const r=await build({entryPoints:['src/game.js'],bundle:true,format:'iife',minify:!dev,write:false,target:'es2020',legalComments:'none',define:{__KIT_HASH__:JSON.stringify(KIT_HASH)},
+const murals=['canadian-ranger','uncle-sam'].map(name=>{
+  const path=`src/art/${name}.webp`;
+  return `data:image/webp;base64,${readFileSync(path).toString('base64')}`;
+});
+const r=await build({entryPoints:['src/game.js'],bundle:true,format:'iife',minify:!dev,write:false,target:'es2020',legalComments:'none',
+  define:{__KIT_HASH__:JSON.stringify(KIT_HASH),__OUTPOST_MURALS__:JSON.stringify(murals)},
   alias:{'three/addons':'./node_modules/three/examples/jsm'}});
 const js=r.outputFiles[0].text.replace(/<\/script/gi,'<\\/script');
 const shell=readFileSync('src/shell.html','utf8');
