@@ -22,6 +22,7 @@ import {pickVariant,VARIANTS} from './variants.js';
 import {createForest,coreFaces,INSET,CORE_H} from './forest.js';
 import {MOVE,stepMove,lookStep,lookBy,bobY} from './movement.js';
 import {initAmbience,updateAmbience,amb} from './ambience.js';
+import {initMusic,useStore,updateMusic,setVolumes,getVolumes,music} from './music.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('gl');
@@ -3202,6 +3203,9 @@ function mpVoiceUI(){
   $('brainLine').textContent=BRAIN.on?(BRAIN.ok===true?'Local AI is answering.':BRAIN.ok===false?'Local AI is not answering; the mimic picks lines itself.':'Waiting for the first clip.'):'';
   $('guestOpts').textContent=MP.on&&MP.guest?`Host settings: voices ${MP.prox?'fade with distance':'carry everywhere'}, mimic ${MP.mimicOn?'on':'off'}.`:'';
 }
+useStore(store);
+document.querySelectorAll('.volSl').forEach(el=>{const k=el.dataset.bus,sync=()=>{el.value=Math.round(getVolumes()[k]*100)};sync();
+  el.addEventListener('input',()=>setVolumes({[k]:el.value/100}));el.addEventListener('pointerdown',()=>{if(!ac)initAudio();sync()})});
 document.querySelectorAll('.voiceSel').forEach(el=>{el.value=voiceMode;el.addEventListener('change',()=>mpVoiceSet(el.value))});
 $('proxChk').addEventListener('change',()=>{MP.prox=$('proxChk').checked;store.set('prox',MP.prox);mpSend(mpCfg())});
 $('mimicChk').addEventListener('change',()=>{MP.mimicOn=$('mimicChk').checked;store.set('mimic',MP.mimicOn);mpSend(mpCfg())});
@@ -3574,7 +3578,7 @@ function pollPad(){
 addEventListener('gamepadconnected',()=>{});
 
 /* ---------- audio (all synthesized) ---------- */
-let ac=null,master=null,muted=store.get('muted',false),noiseBuf=null;
+let ac=null,master=null,sfxBus=null,CHASE={n:0,near:99},muted=store.get('muted',false),noiseBuf=null;
 function initAudio(){
   if(ac){if(ac.state==='suspended')ac.resume();return}
   try{
@@ -3582,9 +3586,10 @@ function initAudio(){
     master=ac.createGain();master.gain.value=muted?0:0.55;master.connect(ac.destination);
     noiseBuf=ac.createBuffer(1,ac.sampleRate,ac.sampleRate);
     const d=noiseBuf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
-    initAmbience(ac,master,noiseBuf);
+    const buses=initMusic(ac,master,store);sfxBus=buses.sfx;
+    initAmbience(ac,buses.ambience,noiseBuf);
     // low ambient drone
-    for(const[f,v]of[[55,0.05],[82.6,0.03],[110.7,0.015]]){const o=ac.createOscillator(),g=ac.createGain();o.frequency.value=f;g.gain.value=v;o.connect(g);g.connect(master);o.start()}
+    for(const[f,v]of[[55,0.05],[82.6,0.03],[110.7,0.015]]){const o=ac.createOscillator(),g=ac.createGain();o.frequency.value=f;g.gain.value=v;o.connect(g);g.connect(sfxBus);o.start()}
   }catch(e){ac=null}
 }
 // fluorescent buzz and the air handling of the humming rooms
@@ -3595,10 +3600,10 @@ function setHum(){
   const b=on?0.02*panelLvl:0,h=on?0.1:0;
   if(!humG){
     if(!on)return;
-    humG=ac.createGain();humG.gain.value=0;humG.connect(master);
+    humG=ac.createGain();humG.gain.value=0;humG.connect(sfxBus);
     const o=ac.createOscillator(),hp=ac.createBiquadFilter();o.type='sawtooth';o.frequency.value=120;hp.type='highpass';hp.frequency.value=700;o.connect(hp);hp.connect(humG);o.start();
     const o2=ac.createOscillator(),g2=ac.createGain();o2.frequency.value=60;g2.gain.value=1.6;o2.connect(g2);g2.connect(humG);o2.start();
-    hvG=ac.createGain();hvG.gain.value=0;hvG.connect(master);
+    hvG=ac.createGain();hvG.gain.value=0;hvG.connect(sfxBus);
     const n=ac.createBufferSource(),lp=ac.createBiquadFilter();n.buffer=noiseBuf;n.loop=true;lp.type='lowpass';lp.frequency.value=210;n.connect(lp);lp.connect(hvG);n.start();
   }
   if(b!==humB){humB=b;humG.gain.setTargetAtTime(b,ac.currentTime,0.02)}
@@ -3613,14 +3618,14 @@ function tone(freq,dur,type,vol,when,slide,pan){
   g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(vol||0.2,t+0.012);g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
   o.connect(g);let out=g;
   if(pan&&ac.createStereoPanner){const p=ac.createStereoPanner();p.pan.value=clamp(pan,-1,1);g.connect(p);out=p}
-  out.connect(master);o.start(t);o.stop(t+dur+0.05);
+  out.connect(sfxBus);o.start(t);o.stop(t+dur+0.05);
 }
 function noise(dur,vol,freq,q){
   if(!ac)return;
   const t=ac.currentTime,s=ac.createBufferSource(),f=ac.createBiquadFilter(),g=ac.createGain();
   s.buffer=noiseBuf;s.loop=true;f.type='bandpass';f.frequency.value=freq;f.Q.value=q||1;
   g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
-  s.connect(f);f.connect(g);g.connect(master);s.start(t,Math.random()*0.5);s.stop(t+dur+0.02);
+  s.connect(f);f.connect(g);g.connect(sfxBus);s.start(t,Math.random()*0.5);s.stop(t+dur+0.02);
 }
 function sfx(n){
   switch(n){
@@ -3874,6 +3879,7 @@ function update(dt){
   }
   if(TG)mimicHost(dt,TG);
   // heartbeat when hunted
+  CHASE.n=chasing;CHASE.near=nearest;
   if(chasing){beatT-=dt;if(beatT<=0){beatT=clamp(0.35+nearest*0.05,0.4,1.0);sfx('beat')}}
   glTick(dt,chasing);
   // homing chime toward the nearest shard, or the exit once the seal is broken
@@ -4743,6 +4749,7 @@ function frame(now){
   mpVoiceTick(Math.min(raw,0.1));chatTick();
   if(state==='play'&&!STUDIO&&!loading)adapt(raw);
   setHum();updateAmbience(Math.min(raw,0.1),{F,state,hold:GL.frz>0||!!GL.fall||P.away});
+  updateMusic(Math.min(raw,0.1),{F,state,chasing:CHASE.n,nearest:CHASE.near,inRoom:state==='room'||ROOMS.watching||ROOMS.active,voiceActive:MP.on&&[...MP.peers.keys()].some(id=>VOX.speaking(id))});
   if(GL.frz<=0){
     if(!window.__norender){if((state==='room'||ROOMS.watching)&&ROOMS.active){resize();renderer.toneMappingExposure=1;ROOMS.render()}else render(now/1000)}
     if(state!=='title'){drawHUD();if(state!=='room'&&!ROOMS.watching)drawMap()}
@@ -4805,5 +4812,5 @@ function gripProbe(ts,talking){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='
   for(const t of ts){buildNpc(n,t,P.x,0.7,P.z,0.016);res.push({t,...GRIP_DBG})}talk=save;return res}
 function benchNpc(iters){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='keeper');const e=[P.x,0.7,P.z];buildNpc(n,1,e[0],e[1],e[2],0.016);let t0=performance.now();
   for(let i=0;i<iters;i++){CH.n=0;buildNpc(n,1+i*0.016,e[0],e[1],e[2],0.016)}return (performance.now()-t0)/iters}
-window.__game={previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={music,previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);

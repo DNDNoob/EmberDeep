@@ -125,6 +125,8 @@
   .row{margin-top:18px;font-size:14px;opacity:.85;display:flex;gap:22px;align-items:center;flex-wrap:wrap;justify-content:center}
   input[type=text]{font:inherit;width:110px;text-align:center;text-transform:uppercase;letter-spacing:.15em;
     background:rgba(255,255,255,.08);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;padding:5px}
+  .vols label{display:flex;align-items:center;gap:10px}
+  input[type=range]{width:130px;height:28px;accent-color:#ffb066;touch-action:none;cursor:pointer}
   select{font:inherit;background:rgba(255,255,255,.08);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;padding:5px 8px}
   select option{background:#1a120c;color:#fff}
   [hidden]{display:none!important}
@@ -294,6 +296,11 @@
   <h2>PAUSED</h2>
   <div class="sub kb">Click Resume to capture the mouse, or press Enter to keep playing with the keyboard.</div>
   <button id="resumeBtn">RESUME</button>
+  <div class="row vols">
+    <label>Music <input class="volSl" data-bus="music" type="range" min="0" max="100" step="1" aria-label="Music volume"></label>
+    <label>Effects <input class="volSl" data-bus="sfx" type="range" min="0" max="100" step="1" aria-label="Effects volume"></label>
+    <label>Ambience <input class="volSl" data-bus="ambience" type="range" min="0" max="100" step="1" aria-label="Ambience volume"></label>
+  </div>
   <div id="mpPause" hidden>
     <div class="row">Friends can join with this link. The game keeps going while you are paused.</div>
     <div class="row"><input id="mpLinkIn" class="plain" type="text" readonly> <button id="copyBtn" style="font-size:13px;padding:8px 20px;background:rgba(255,255,255,.15);color:#fff;box-shadow:none">COPY INVITE LINK</button></div>
