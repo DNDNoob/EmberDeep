@@ -22,6 +22,38 @@
   #fade{background:#000;opacity:0;transition:opacity .4s}
   #roomHud{position:fixed;left:0;right:0;top:calc(14px + env(safe-area-inset-top));text-align:center;font-size:17px;line-height:1.5;letter-spacing:.05em;color:#ffd9a0;pointer-events:none;text-shadow:0 2px 6px #000,0 0 12px #000;z-index:6}
   #roomHud small{font-size:13px;color:#cdbfae}
+  #moosePanel{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:clamp(10px,2.7vh,22px) 12px;box-sizing:border-box;pointer-events:none;z-index:7;color:#ecf4ed;text-align:center}
+  .moose-info,.moose-console{width:min(100%,690px);box-sizing:border-box;background:rgba(13,24,29,.93);border:1px solid #536b62;border-radius:12px}
+  .moose-info{width:min(100%,520px);padding:9px 16px 10px}
+  @media(min-width:760px) and (orientation:landscape){.moose-info{align-self:flex-start;width:min(368px,43vw)}}
+  .moose-info h2{font-size:clamp(18px,3.4vh,27px);line-height:1.1;margin:0;color:#ffcb80}
+  .moose-info p,.moose-hint{font-size:13px;margin:5px 0;color:#d7e9df}
+  .moose-info label{font-size:11px;display:flex;align-items:center;justify-content:center;gap:8px}
+  .moose-info progress{accent-color:#e3a362;width:min(45vw,210px);height:10px}
+  .moose-stats,.moose-tile{font-size:12px;font-weight:650;color:#b1e7c8;line-height:1.25}
+  .moose-stats{margin-top:6px}
+  .moose-console{pointer-events:auto;padding:8px 10px 5px}
+  .moose-watching .moose-console{pointer-events:none}
+  .moose-roam .moose-info,.moose-roam .moose-console{display:none}
+  .moose-walk{display:none}
+  .moose-roam .moose-walk{display:flex;align-items:center;gap:12px;margin:auto auto 0;padding:8px 12px;border-radius:8px;background:rgba(13,24,29,.92);border:1px solid #536b62;font-size:13px}
+  .moose-walk button{pointer-events:auto}
+  .moose-track{display:flex;align-items:center;gap:9px;padding:0 4px 6px;font-size:12px;color:#d7e9df}
+  .moose-track progress{appearance:none;border:0;background:#24353a;flex:1;width:0;height:7px;border-radius:6px;overflow:hidden}
+  .moose-track progress::-webkit-progress-bar{background:#24353a}
+  .moose-track progress::-webkit-progress-value{background:var(--track-color,#48cf69);border-radius:6px}
+  .moose-track progress::-moz-progress-bar{background:var(--track-color,#48cf69);border-radius:6px}
+  .moose-track output{min-width:34px;text-align:right;font-variant-numeric:tabular-nums}
+  .moose-actions{display:flex;justify-content:center;gap:5px;flex-wrap:wrap}
+  .moose-actions{margin-top:6px}
+  #moosePanel button{background:#263b3c;border:1px solid #57736c;color:#f1f5e8;padding:5px 9px;min-height:30px;border-radius:5px;font:inherit;font-size:12px;cursor:pointer}
+  #moosePanel .moose-actions button:last-child{background:#ecb875;color:#142228;border-color:#efcb92;font-weight:bold}
+  #moosePanel button:disabled{opacity:.55;cursor:default}
+  #moosePanel button:focus-visible{outline:2px solid #fff;outline-offset:1px}
+  body.moose-table #touch{display:none!important}
+  body.mooseroom #toast,body.mooseroom #achToast,body.mooseroom #hurt{visibility:hidden}
+  #mooseLine{color:#a7dec0}
+  #scoutLine{color:#83efff}
   body.inroom #hud,body.inroom #map,body.inroom #prompt,body.inroom #vig,body.inroom #tMap,body.inroom #tPause,body.inroom #chill,body.inroom .ptag{display:none!important}
   #roomCross{position:fixed;left:50%;top:50%;width:12px;height:12px;margin:-6px 0 0 -6px;border:2px solid rgba(255,235,200,.75);border-radius:50%;box-shadow:0 0 4px #000,inset 0 0 3px #000;pointer-events:none;display:none;z-index:6;transition:transform .08s,border-color .08s,background .08s}
   #roomCross.on{transform:scale(1.7);border-color:#ffb050;background:rgba(255,150,50,.45)}
@@ -132,6 +164,10 @@
   #tFlash{right:calc(124px + env(safe-area-inset-right));bottom:calc(22px + env(safe-area-inset-bottom));width:66px;height:66px}
   #tPick{right:calc(124px + env(safe-area-inset-right));bottom:calc(96px + env(safe-area-inset-bottom));width:52px;height:52px;font-size:11px}
   body:not(.haspick) #tPick{display:none}
+  #tMoose,#tLure{bottom:calc(150px + env(safe-area-inset-bottom));width:54px;height:54px;font-size:10px}
+  #tMoose{right:calc(24px + env(safe-area-inset-right))}
+  #tLure{right:calc(86px + env(safe-area-inset-right))}
+  body:not(.hasmoose) #tMoose,body:not(.hasmoose) #tLure{display:none}
   #tPause{right:calc(150px + env(safe-area-inset-right));top:calc(12px + env(safe-area-inset-top));width:42px;height:42px;font-size:14px}
   #tMap{right:calc(10px + env(safe-area-inset-right));top:calc(10px + env(safe-area-inset-top));width:130px;height:130px;border-radius:10px;border:0;background:none}
   #stickBase,#stickKnob{position:absolute;border-radius:50%;pointer-events:none;display:none;transform:translate(-50%,-50%)}
@@ -183,6 +219,8 @@
   <div id="br">
     <div id="shards"></div>
     <div id="flashes"></div>
+    <div id="mooseLine"></div>
+    <div id="scoutLine"></div>
     <div id="keysLine" style="color:#ffd35a"></div>
     <div id="embers" style="color:#ffd84a;font-size:.8em"></div>
   </div>
@@ -196,6 +234,8 @@
   <div id="tFlash" class="tbtn">FLASH</div>
   <div id="tJump" class="tbtn">JUMP</div>
   <div id="tPick" class="tbtn">PICK</div>
+  <div id="tMoose" class="tbtn">RIDE</div>
+  <div id="tLure" class="tbtn">LURE</div>
   <div id="tTalk" class="tbtn">TALK</div>
   <div id="tChat" class="tbtn">CHAT</div>
 </div>
