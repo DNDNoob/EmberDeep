@@ -1,19 +1,25 @@
 // node tools/music_test.mjs  -- checks the music channel with a generated test track (needs a built index.html)
 import {createRequire} from 'node:module';const {chromium}=createRequire(import.meta.url)('playwright');
-import {pathToFileURL,fileURLToPath} from 'node:url';
-import {resolve,dirname} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {resolve,dirname} from 'node:path';import {serve} from './serve.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const b=await chromium.launch({args:['--autoplay-policy=no-user-gesture-required']}),pg=await b.newPage({viewport:{width:1280,height:720}}),errs=[];
 pg.on('pageerror',e=>errs.push(String(e)));pg.on('console',m=>{if(m.type()==='error'||(m.type()==='warning'&&/music/.test(m.text())))errs.push(m.text())});
 await pg.addInitScript(()=>{window.__norender=true});
-await pg.goto(pathToFileURL(root+'/index.html').href);await pg.waitForFunction(()=>window.__game&&window.__game.music);
+const srv=await serve(root);await pg.goto(srv.url+'index.html');await pg.waitForFunction(()=>window.__game&&window.__game.music);
 let fails=0;const bad=m=>{fails++;console.log('FAIL',m)},ok=(c,m)=>{if(!c)bad(m);else console.log('ok  ',m)};
 const ev=(f,a)=>pg.evaluate(f,a),wait=s=>pg.waitForTimeout(s*1000);
 const M=f=>ev(f);
 // ---- registry and resolution
 const keys=await M(()=>Object.keys(window.__game.music.tracks));
 for(const k of ['title','stonework','moss','cinder','frost','hollow','blackhush','chase','The Bone Galleries','The Rustworks','The Glimmer Veins','forest'])ok(keys.includes(k),'track key '+k);
-ok(await M(()=>Object.values(window.__game.music.tracks).every(a=>a.length===0)),'no tracks ship by default');
+const shipped=await M(()=>JSON.parse(JSON.stringify(window.__game.music.tracks)));
+ok(Object.entries(shipped).every(([k,a])=>k==='The Glimmer Veins'?a.length===0:a.length>0),'every key but Glimmer Veins ships tracks');
+const dec=await ev(async urls=>{const ac=new OfflineAudioContext(2,44100,44100),out=[];for(const u of urls){try{const b=await (await fetch(u)).arrayBuffer();const a=await ac.decodeAudioData(b);
+  const d=a.getChannelData(0);let s=0,pk=0,bad=0;for(let i=0;i<d.length;i++){const x=d[i];if(x!==x)bad++;s+=x*x;pk=Math.max(pk,Math.abs(x))}out.push({u,dur:a.duration,rms:Math.sqrt(s/d.length),pk,bad})}catch(e){out.push({u,err:String(e)})}}return out},[...new Set(Object.values(shipped).flat())]);
+ok(dec.length===20&&dec.every(x=>!x.err&&x.dur>55&&x.dur<65&&!x.bad&&x.rms>0.01&&x.rms<0.5&&x.pk<=1.01),'all 20 shipped tracks decode as real ~60 s music '+JSON.stringify(dec.filter(x=>x.err||x.bad||x.rms<=0.01||x.rms>=0.5||x.dur<=55)));
+// the rest of the test drives the channel with a synthetic tone, so start from empty lists
+await ev(()=>{const t=window.__game.music.tracks;for(const k in t)t[k].length=0});
 // ---- generate a 2 s test tone as a WAV blob URL in the page and register it for moss, chase and title
 await ev(()=>{
   const sr=8000,n=sr*2,buf=new ArrayBuffer(44+n*2),v=new DataView(buf),w=(o,s)=>[...s].forEach((c,i)=>v.setUint8(o+i,c.charCodeAt(0)));

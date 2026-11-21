@@ -1,5 +1,5 @@
 /* ---------- music channel: streamed tracks under the synthesized sound ----------
-   Plumbing only: no audio files ship yet. Drop tracks in by adding URLs to MUSIC_TRACKS (below, or from anywhere before the floor
+   Tracks live in music/*.ogg next to index.html (60 s ACE-Step loops, fetched lazily). Add more by adding URLs to MUSIC_TRACKS (below, or from anywhere before the floor
    loads: MUSIC_TRACKS.moss.push('audio/moss1.ogg') or __game.music.register('moss',[...])). With every list empty this module
    does nothing per frame and creates no nodes beyond three idle gains.
 
@@ -15,8 +15,9 @@
    The title screen plays 'title'; a chase plays 'chase' if it has tracks, otherwise ducks the floor track by CHASE_DUCK_DB.
    Silent: strange-door rooms, the Humming Rooms, dead. Paused: lowered. A voice-chat peer talking ducks by VOICE_DUCK_DB.
    Each list holds one or more URLs; one is picked at random when the track starts. Tracks loop. */
-export const MUSIC_TRACKS={title:[],stonework:[],moss:[],cinder:[],frost:[],hollow:[],blackhush:[],chase:[],
-  'The Bone Galleries':[],'The Rustworks':[],'The Glimmer Veins':[],forest:[]};
+export const MUSIC_TRACKS={title:['music/title-1.ogg','music/title-2.ogg'],stonework:['music/stonework-1.ogg','music/stonework-2.ogg'],moss:['music/moss-1.ogg','music/moss-2.ogg'],cinder:['music/cinder-1.ogg','music/cinder-2.ogg'],
+  frost:['music/frost-1.ogg','music/frost-2.ogg'],hollow:['music/hollow-1.ogg','music/hollow-2.ogg'],blackhush:['music/blackhush-1.ogg','music/blackhush-2.ogg'],chase:['music/chase-1.ogg','music/chase-2.ogg'],
+  'The Bone Galleries':['music/bones-1.ogg','music/bones-2.ogg'],'The Rustworks':['music/rust-1.ogg'],'The Glimmer Veins':[],forest:['music/forest-2.ogg']};
 const BIOME_KEY={'The Old Stonework':'stonework','Mossgrown Halls':'moss','Cinder Warrens':'cinder','The Frostvault':'frost','The Dark Forest':'forest'};
 const KIND_KEY={cave:'hollow',dark:'blackhush',forest:'forest'};
 export const DEFAULT_VOL={music:0.35,sfx:1,ambience:1};

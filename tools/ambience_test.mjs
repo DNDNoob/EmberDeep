@@ -1,12 +1,12 @@
 // node tools/ambience_test.mjs  -- checks the ambient soundscapes (needs a built index.html). Add --levels to print the level table.
 import {createRequire} from 'node:module';const {chromium}=createRequire(import.meta.url)('playwright');
-import {pathToFileURL,fileURLToPath} from 'node:url';
-import {resolve,dirname} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {resolve,dirname} from 'node:path';import {serve} from './serve.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const b=await chromium.launch({args:['--autoplay-policy=no-user-gesture-required']}),pg=await b.newPage({viewport:{width:1280,height:720}}),errs=[];
 pg.on('pageerror',e=>errs.push(String(e)));pg.on('console',m=>{if(m.type()==='error'||(m.type()==='warning'&&/ambience/.test(m.text())))errs.push(m.text())});
 await pg.addInitScript(()=>{window.__norender=true});
-await pg.goto(pathToFileURL(root+'/index.html').href);await pg.waitForFunction(()=>window.__game&&window.__game.amb);
+const srv=await serve(root);await pg.goto(srv.url+'index.html');await pg.waitForFunction(()=>window.__game&&window.__game.amb);
 let fails=0;const bad=m=>{fails++;console.log('FAIL',m)},ok=(c,m)=>{if(!c)bad(m);else console.log('ok  ',m)};
 const ev=(f,a)=>pg.evaluate(f,a);
 // ---- registry
