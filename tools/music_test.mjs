@@ -14,10 +14,10 @@ const M=f=>ev(f);
 const keys=await M(()=>Object.keys(window.__game.music.tracks));
 for(const k of ['title','stonework','moss','cinder','frost','hollow','blackhush','chase','The Bone Galleries','The Rustworks','The Glimmer Veins','forest'])ok(keys.includes(k),'track key '+k);
 const shipped=await M(()=>JSON.parse(JSON.stringify(window.__game.music.tracks)));
-ok(Object.entries(shipped).every(([k,a])=>k==='The Glimmer Veins'?a.length===0:a.length>0),'every key but Glimmer Veins ships tracks');
+ok(Object.values(shipped).every(a=>a.length===2),'every key ships two tracks');
 const dec=await ev(async urls=>{const ac=new OfflineAudioContext(2,44100,44100),out=[];for(const u of urls){try{const b=await (await fetch(u)).arrayBuffer();const a=await ac.decodeAudioData(b);
   const d=a.getChannelData(0);let s=0,pk=0,bad=0;for(let i=0;i<d.length;i++){const x=d[i];if(x!==x)bad++;s+=x*x;pk=Math.max(pk,Math.abs(x))}out.push({u,dur:a.duration,rms:Math.sqrt(s/d.length),pk,bad})}catch(e){out.push({u,err:String(e)})}}return out},[...new Set(Object.values(shipped).flat())]);
-ok(dec.length===20&&dec.every(x=>!x.err&&x.dur>55&&x.dur<65&&!x.bad&&x.rms>0.01&&x.rms<0.5&&x.pk<=1.01),'all 20 shipped tracks decode as real ~60 s music '+JSON.stringify(dec.filter(x=>x.err||x.bad||x.rms<=0.01||x.rms>=0.5||x.dur<=55)));
+ok(dec.length===24&&dec.every(x=>!x.err&&x.dur>55&&x.dur<65&&!x.bad&&x.rms>0.01&&x.rms<0.5&&x.pk<=1.01),'all 24 shipped tracks decode as real ~60 s music '+JSON.stringify(dec.filter(x=>x.err||x.bad||x.rms<=0.01||x.rms>=0.5||x.dur<=55)));
 // the rest of the test drives the channel with a synthetic tone, so start from empty lists
 await ev(()=>{const t=window.__game.music.tracks;for(const k in t)t[k].length=0});
 // ---- generate a 2 s test tone as a WAV blob URL in the page and register it for moss, chase and title
