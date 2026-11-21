@@ -28,6 +28,9 @@ import {createMenuRoom,onLiftPlatform} from './menu-room.js';
 import {createSettingsScreen,createTerminalSession} from './shared-terminal.js';
 import {landingMazeZ} from './mine-shaft.js';
 import {floorDiorama,lenticularDoor} from './archive-hall.js';
+import {wheelModel,planSpin,spinAngle,pegPush,sliceAt,WOF_SLICES,WOF_N,WOF_W} from './wheel.js';
+import {announce,statusStrip,tints,coinFlip,breakUI} from './wheel-screens.js';
+import {createBreaks} from './wheel-breaks.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('gl');
@@ -300,6 +303,15 @@ function genFloor(seedStr,depth,look){
   // friendly faces: the Keeper tends every sanctuary, and a wanderer sometimes waits in the maze
   const npcs=[];
   if(safe)npcs.push({type:'keeper',x:safe.x+0.62,z:safe.z+0.62,ph:rng()*6.28,used:false});
+  // the Wheel of Misfortune stands in a sanctuary corner with no passage beside it (away from the Keeper when it can), Pat Sajak at its side.
+  // Placed without drawing from rng so the rest of the floor is the same as before.
+  if(safe){
+    const closed=(cx,cz)=>g[idx(safe.tx+2*cx,safe.ty+cz)]===1&&g[idx(safe.tx+cx,safe.ty+2*cz)]===1;
+    const c=[[-1,-1],[1,-1],[-1,1]].find(q=>closed(q[0],q[1]))||[-1,-1];
+    const wx=safe.x+c[0]*1.1,wz=safe.z+c[1]*1.1,nx=-c[0]*Math.SQRT1_2,nz=-c[1]*Math.SQRT1_2;   // n: the way the wheel faces (into the room)
+    safe.wheel={x:wx,z:wz,nx,nz,yaw:Math.atan2(nx,nz),pat:[wx+nz*0.5+nx*0.24,wz-nx*0.5+nz*0.24],
+      discs:[[wx-nx*0.03,wz-nz*0.03,0.2],[wx+nz*0.32,wz-nx*0.32,0.07],[wx-nz*0.32,wz+nx*0.32,0.07]]};   // the stand's middle and both posts, for collision
+  }
   {const r=rng(),wt=depth===1?'map':r<0.4?'map':r<0.75?'delver':null;
     if(wt&&pool.length){const c=pool.pop(),w={type:wt,x:c[0]+0.5,z:c[1]+0.5,ph:rng()*6.28,used:false,gift:ri(3),tip:ri(6)};
       for(const d of DIRS)if(g[idx(c[0]+d[0],c[1]+d[1])]===1){w.ox=d[0]*0.27;w.oz=d[1]*0.27;w.wy=Math.atan2(-d[1],-d[0]);break}
@@ -449,6 +461,8 @@ function genFloor(seedStr,depth,look){
   }
   const stone=[B.stone[0]*variant.stone[0],B.stone[1]*variant.stone[1],B.stone[2]*variant.stone[2]];
   const forest=bi===8;
+  // Pat joins after props and items are placed, so he changes nothing else about the floor
+  if(safe&&safe.wheel)npcs.push({type:'pat',x:safe.wheel.pat[0],z:safe.wheel.pat[1],ph:(safe.tx*7.31+safe.ty*3.7)%6.28,used:true});
   return {W,H,g,cw,ch,kind:forest?'forest':kind==='forest'?'maze':kind,dark:kind==='dark',back:kind==='back',base:B.base,variant,litter,stone,wet:clamp(B.wet*variant.wetK,0,1),fogK:variant.fogK,ambK:variant.ambK,ambT:variant.ambT,torchT:variant.torch,tex:{v:variant.tex,seed:variant.seed,tint:variant.tint},panels,panelAt,pocketMask,phantoms,pockets,blk:0,boT:22+rng()*25,props,discs,safe,safeMask,npcs,reveal:false,door,sdoors,traps,pillars,sconces,rubble,frames:[],start:{tx:stx,ty:sty,yaw},exit:{tx:ex,ty:ey,x:ex+0.5,z:ey+0.5},items,shades,
           seen:new Uint8Array(W*H),dist:d0,bi,biome:B,...(forest?{forest:true,fo:{seed:seedStr,depth}}:{}),
           name:kind==='cave'?'The Hollow':kind==='dark'?'The Black Hush':BIOMES[bi].name};
@@ -1225,7 +1239,7 @@ function buildNpc(n,t,ex,ey,ez,dtR){
   const ph=n.ph,br=Math.sin(t*1.7+ph),breath=br*0.004;
   const blink=STUDIO&&STUDIO.blink!=null?STUDIO.blink:STUDIO&&STUDIO.open?1:((t*0.23+ph)%1)<0.035?0.12:1;
   const nod=talking?Math.sin(t*5.5)*0.05:0,jaw=talking?Math.max(0,Math.sin(t*9))*0.006:0;
-  const B={p:[n.x+(n.ox||0),0,n.z+(n.oz||0)],R:rYaw(n.yaw)};
+  const B={p:[n.x+(n.ox||0),(n.fall||0)*0.07,n.z+(n.oz||0)],R:n.fall?m3(rYaw(n.yaw),rZ(n.fall*1.48)):rYaw(n.yaw)};   // fall: a plague victim, lying on its back
   const out={top:1,lantern:null};
   if(n.type==='keeper'&&!NPC_CLASSIC&&dist<14&&keeperReady())buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,STUDIO&&STUDIO.lod!=null?STUDIO.lod:Q>=1?(dist<6?0:dist<9.5?1:2):(dist<8?1:2)); // near / mid / far; low quality never uses the near LOD
   else if(n.type==='keeper'){
@@ -1302,7 +1316,7 @@ function buildNpc(n,t,ex,ey,ez,dtR){
     seg(HS,[-0.095,0.15,0],[-0.14+sway*2,-0.04,sway*6],0.03,0.01,hair);
     seg(HS,[-0.09,0.145,0],[-0.1,0.13,0],0.033,0.033,must);
     out.top=0.98;
-  }else{
+  }else if(n.type==='delver'){
     const lea=[0.4,0.24,0.12,3],leaD=[0.27,0.16,0.09,3],iron=[0.42,0.44,0.48,4],ironD=[0.25,0.26,0.29,4],skin=[0.78,0.56,0.44,1],beard=[0.42,0.22,0.1,5],
           cloth=[0.3,0.3,0.24,2],band=[0.88,0.86,0.8,2],boot=[0.22,0.14,0.09,3];
     // legs stretched out on the floor, one of them bandaged
@@ -1339,6 +1353,102 @@ function buildNpc(n,t,ex,ey,ez,dtR){
     seg(B,[0.42,0.02,0.36],[0.39,0.03,0.5],0.02,0.004,iron);seg(B,[0.42,0.02,0.36],[0.45,0.03,0.22],0.02,0.004,iron);
     ball(B,[-0.03,0.07,-0.27],[0.09,0.075,0.08],[0.33,0.27,0.16,2]);seg(B,[-0.03,0.13,-0.27],[-0.03,0.16,-0.27],0.05,0.035,[0.24,0.19,0.11,3]);
     out.top=0.72;out.lamp=fpt(HS,[0.107,0.15,0]);
+  }else if(n.type==='pat'){
+    // Pat Sajak: a small man (about three and a half feet tall) in a sharp navy suit, red tie and silver hair, presenting the wheel
+    const S=0.6,v=(x,y,z)=>[x*S,y*S,z*S];
+    const suit=[0.11,0.13,0.27,2],suitD=[0.06,0.07,0.16,2],shirt=[0.93,0.93,0.9,2],tie=[0.72,0.07,0.1,2],shoe=[0.05,0.04,0.04,4],
+          skin=[0.92,0.7,0.57,1],hair=[0.8,0.78,0.76,5],card=[0.96,0.9,0.72,2];
+    const sway=Math.sin(t*0.9+ph)*0.006,dead=!!n.fall;
+    // which hand is on the wheel's side
+    const W0=F&&F.safe&&F.safe.wheel,sd=W0?(Math.hypot(fpt(B,[0,0,0.3])[0]-W0.x,fpt(B,[0,0,0.3])[2]-W0.z)<Math.hypot(fpt(B,[0,0,-0.3])[0]-W0.x,fpt(B,[0,0,-0.3])[2]-W0.z)?1:-1):1;
+    const present=dead?0:!WOF.done?1:0.35+0.3*Math.max(0,Math.sin(t*0.6+ph)),bounce=!WOF.done?Math.abs(Math.sin(t*6))*0.01:0;
+    for(const z of[-1,1]){
+      const hip=v(0,0.45,z*0.055),knee=v(0.012,0.25,z*0.058),ank=v(0,0.06,z*0.06);
+      seg(B,hip,knee,0.052*S,0.044*S,suit);ball(B,knee,0.044*S,suit,true);seg(B,knee,ank,0.044*S,0.038*S,suit);
+      ball(B,v(0.035,0.032,z*0.06),[0.072*S,0.034*S,0.04*S],shoe,true);
+    }
+    const U=subF(B,v(sway,0.45+bounce,0),rX(sway*2));
+    seg(U,v(0,-0.1,0),v(0,0.08,0),0.12*S,0.088*S,suit);                       // jacket skirt
+    seg(U,v(0,0.04,0),v(0,0.07,0),0.09*S,0.088*S,suitD);                       // waist seam
+    ball(U,v(0,0.17+breath,0),[0.072*S,0.122*S,0.098*S],suit);                // chest
+    slab(U,v(0.064,0.205+breath,0),[0.012*S,0.058*S,0.03*S],shirt,rZ(0.12));  // shirt front
+    slab(U,v(0.074,0.185+breath,0),[0.008*S,0.072*S,0.011*S],tie,rZ(0.12));
+    ball(U,v(0.072,0.25+breath,0),[0.014*S,0.014*S,0.016*S],tie,true);
+    for(const z of[-1,1])slab(U,v(0.062,0.2+breath,z*0.037),[0.01*S,0.068*S,0.016*S],suitD,m3(rX(-z*0.38),rZ(0.12)));   // lapels
+    slab(U,v(0.066,0.215+breath,-sd*0.06),[0.006*S,0.012*S,0.016*S],shirt);    // pocket square
+    for(const z of[-1,1])ball(U,v(-0.005,0.24+breath,z*0.096),[0.052*S,0.042*S,0.05*S],suit,true);
+    // presenting arm: out towards the wheel, palm open
+    const lift=present*0.11;
+    const E1=v(0.05,0.14+lift*0.6+breath,sd*0.17),W1=v(0.1+0.04*present,0.12+lift*1.4+breath,sd*(0.22+0.07*present));
+    limb(U,v(0,0.23+breath,sd*0.1),E1,W1,0.034*S,0.03*S,0.025*S,suit,suit,null);
+    seg(U,[W1[0]-0.01*S,W1[1]-0.004*S,W1[2]-sd*0.014*S],W1,0.027*S,0.026*S,shirt);
+    ball(U,[W1[0]+0.012*S,W1[1]+0.004*S,W1[2]+sd*0.012*S],[0.026*S,0.012*S,0.03*S],skin,true);
+    // the other hand holds the cue cards at the chest
+    const W2=v(0.13,0.13+breath,-sd*0.05);
+    limb(U,v(0,0.23+breath,-sd*0.1),v(0.03,0.11+breath,-sd*0.15),W2,0.034*S,0.03*S,0.025*S,suit,suit,skin,0.028*S);
+    slab(U,[W2[0]+0.012*S,W2[1]+0.04*S,W2[2]],[0.004*S,0.05*S,0.036*S],card,rZ(-0.25));
+    seg(U,v(0,0.262+breath,0),v(0,0.288+breath,0),0.036*S,0.034*S,shirt);    // collar
+    seg(U,v(0,0.27+breath,0),v(0.003,0.31+breath,0),0.03*S,0.028*S,skin);
+    const H=subF(U,v(0.003,0.305+breath,0),m3(m3(rYaw(n.hy),rZ(n.hp+nod+(dead?0.4:0))),rX(Math.sin(t*0.6+ph)*0.04)));
+    const K=S*1.25,HS={p:H.p,R:H.R.map(q=>q*K)};                              // a big friendly head on a small man
+    face(HS,{skin,blink:dead?0.05:blink,iris:[0.35,0.45,0.62],brow:[0.62,0.6,0.58,5],browH:0.008,browTilt:-0.18,browUp:0.004,eyeS:1.05,nose:[0.017,0.019,0.016],ears:true,
+      mouth:[0.45,0.12,0.12],mouthW:0.034,talk:jaw+(!WOF.done?Math.max(0,Math.sin(t*7))*0.006:0.003)});
+    slab(HS,[0.083,0.041,0],[0.004,0.004,0.028],[0.98,0.97,0.94,5]);           // the grin
+    ball(HS,[0.07,0.05,0.045],[0.012,0.008,0.014],[0.95,0.6,0.5,1],true);ball(HS,[0.07,0.05,-0.045],[0.012,0.008,0.014],[0.95,0.6,0.5,1],true);
+    ball(HS,[-0.014,0.122,0],[0.087,0.052,0.089],hair);                         // silver hair, neatly parted
+    ball(HS,[-0.05,0.075,0],[0.055,0.07,0.088],hair,true);
+    for(const z of[-1,1])ball(HS,[-0.008,0.092,z*0.076],[0.042,0.032,0.02],hair,true);
+    ball(HS,[0.04,0.148,0.018],[0.04,0.018,0.066],hair);
+    slab(HS,[0.0,0.17,-0.035],[0.06,0.004,0.004],[0.55,0.53,0.5,5]);            // the part
+    out.top=0.6;
+  }else if(n.type==='tickle'){
+    // The Tickle Monster: a sleazy old man, hunched, bald on top with a grey comb-over and mullet, open trench coat, sunglasses, gold chain,
+    // both hands out in front pumping and wiggling like he is already tickling someone
+    const S=0.97,v=(x,y,z)=>[x*S,y*S,z*S];
+    const coat=[0.55,0.46,0.3,2],coatD=[0.38,0.31,0.2,2],pants=[0.32,0.22,0.15,2],shoe=[0.9,0.88,0.84,4],tank=[0.9,0.88,0.74,2],stain=[0.68,0.6,0.38,2],
+          skin=[0.84,0.64,0.54,1],hair=[0.76,0.75,0.73,5],gold=[1.0,0.78,0.22,4],glass=[0.03,0.03,0.04,8],fur=[0.8,0.78,0.76,5],spot=[0.62,0.44,0.34,1];
+    const w=n.walk||0,mv=n.mv||0,sw=Math.sin(w)*mv,bob=Math.abs(Math.cos(w))*0.02*mv,gig=n.gig||0,shake=Math.sin(t*26)*0.014*gig,reach=n.reach==null?0.5:n.reach;
+    for(const z of[-1,1]){
+      const st=sw*z,hip=v(0,0.45,z*0.055),knee=v(0.012+0.09*st,0.25+0.03*Math.max(0,st),z*0.06),ank=v(0.17*st,0.05+0.06*Math.max(0,-st),z*0.064);
+      seg(B,hip,knee,0.05*S,0.042*S,pants);ball(B,knee,0.042*S,pants,true);seg(B,knee,ank,0.042*S,0.05*S,pants);   // flares
+      ball(B,[ank[0]+0.03*S,ank[1]-0.02*S,ank[2]],[0.066*S,0.03*S,0.036*S],shoe,true);
+    }
+    const U=subF(B,v(0,0.45+bob+shake,0),m3(rYaw(sw*0.15),rZ(-0.14*mv-0.16)));   // an old man's stoop
+    // the coat: skirt to the knee, open down the front
+    for(const z of[-1,1])seg(U,v(-0.012,0.05,z*0.05),v(-0.02-0.04*mv,-0.24,z*0.075),0.075*S,0.1*S,coat);
+    seg(U,v(-0.03,0.05,0),v(-0.06-0.05*mv,-0.24,0),0.07*S,0.1*S,coatD);
+    ball(U,v(-0.012,0.17+breath,0),[0.07*S,0.128*S,0.104*S],coat);
+    slab(U,v(0.056,0.15+breath,0),[0.016*S,0.09*S,0.045*S],tank);
+    ball(U,v(0.07,0.11,0.015),[0.006*S,0.018*S,0.015*S],stain,true);
+    for(let i=0;i<9;i++)ball(U,v(0.072,0.22+((i*7)%5)*0.007+breath,((i*5)%9-4)*0.006),0.004*S,fur,true);       // chest hair
+    for(let i=0;i<7;i++){const a=(i/6-0.5)*2.2;ball(U,v(0.07+Math.cos(a)*0.004,0.245-Math.cos(a)*0.03+breath,Math.sin(a)*0.04),0.004*S,gold,true)}
+    ball(U,v(0.075,0.212+breath,0),0.008*S,gold,true);
+    for(const z of[-1,1]){slab(U,v(0.05,0.17+breath,z*0.06),[0.014*S,0.11*S,0.02*S],coatD,rX(z*0.18));slab(U,v(0.0,0.29+breath,z*0.05),[0.03*S,0.035*S,0.012*S],coatD,rX(z*0.5))} // lapels, popped collar
+    // arms out in front, fingers going
+    for(const z of[-1,1]){
+      const pump=Math.sin(t*11+(z>0?0:Math.PI)),r=reach*(0.75+0.25*pump);   // hands take turns jabbing forward
+      const Sh=v(0,0.23+breath,z*0.11),E=v(0.07+0.05*r,0.15+0.05*r,z*0.17),Wr=v(0.13+0.13*r,0.16+0.07*r+Math.sin(t*14+z)*0.014,z*(0.13-0.03*r)+Math.cos(t*11+z)*0.008);
+      limb(U,Sh,E,Wr,0.04*S,0.036*S,0.03*S,coat,coat,null);
+      ball(U,Wr,[0.026*S,0.022*S,0.03*S],skin,true);
+      for(let f=0;f<4;f++){const fz=Wr[2]+(f-1.5)*0.012*S,wig=Math.sin(t*24+f*1.7+z)*0.03;seg(U,[Wr[0]+0.015*S,Wr[1],fz],[Wr[0]+0.05*S,Wr[1]+(wig-0.008)*S,fz+wig*0.2*S],0.007*S,0.005*S,skin)}
+      ball(U,[Wr[0]-0.004,Wr[1]+0.012*S,Wr[2]],0.006*S,spot,true);
+    }
+    seg(U,v(0,0.27+breath,0),v(0.003,0.31+breath,0),0.03*S,0.028*S,skin);
+    const H=subF(U,v(0.003,0.305+breath,0),m3(m3(rYaw(n.hy||0),rZ((n.hp||0)+0.08+Math.sin(t*13)*0.06*gig)),rX(Math.sin(t*0.8+ph)*0.05)));
+    const HS={p:H.p,R:H.R.map(q=>q*S)};
+    face(HS,{skin,blink,iris:[0.3,0.25,0.18],brow:hair,browH:0.012,browTilt:-0.3,eyeS:1,nose:[0.02,0.02,0.017],ears:true,mouth:[0.4,0.1,0.1],mouthW:0.034,talk:0.006+gig*Math.max(0,Math.sin(t*18))*0.012});
+    for(const z of[-1,1])slab(HS,[0.088,0.088,z*0.033],[0.006,0.017,0.024],glass);slab(HS,[0.09,0.093,0],[0.004,0.004,0.012],gold);   // sunglasses
+    slab(HS,[0.09,0.058,0],[0.006,0.006,0.03],[0.6,0.58,0.56,5]);                                             // thin grey moustache
+    for(const z of[-1,1])ball(HS,[-0.02,0.08,z*0.07],[0.06,0.04,0.03],hair,true);                            // grey fringe over the ears
+    ball(HS,[-0.055,0.08,0],[0.045,0.06,0.08],hair,true);
+    for(let k=0;k<4;k++)seg(HS,[0.0,0.172,0.05-k*0.004],[0.05-k*0.01,0.168,-0.055+k*0.01],0.004,0.004,hair); // the comb-over, four strands
+    seg(HS,[-0.07,0.07,0],[-0.11,-0.07,0],0.045,0.022,hair);                                                  // a thin grey mullet
+    ball(HS,[0.02,0.17,0.03],0.01,spot,true);ball(HS,[-0.02,0.16,-0.04],0.008,spot,true);                    // liver spots
+    for(const z of[-1,1]){ball(HS,[0.05,0.03,z*0.05],[0.03,0.035,0.03],skin,true);                            // jowls
+      slab(HS,[0.085,0.11,z*0.034],[0.008,0.007,0.026],hair,rX(z*0.25))}                                     // bushy grey brows over the shades
+    ball(HS,[0.098,0.06,0],[0.016,0.018,0.016],[0.88,0.55,0.48,1],true);                                    // a red old nose
+    for(const z of[-1,1])seg(HS,[0.086,0.072,z*0.05],[0.08,0.064,z*0.062],0.002,0.002,[0.6,0.42,0.34,1]);   // crow's feet
+    out.top=S;
   }
   return out;
 }
@@ -2019,8 +2129,10 @@ const NPC={
   keeper:{name:'The Keeper',col:[0.3,0.19,0.11],eye:[1.0,0.6,0.2],h:1},
   map:{name:'Ilse the Mapmaker',col:[0.16,0.34,0.4],eye:[0.7,1.0,0.95],h:0.94},
   delver:{name:'Brakk, a wounded delver',col:[0.4,0.36,0.3],eye:[1.0,0.95,0.8],h:0.72},
+  pat:{name:'Pat Sajak',col:[0.11,0.13,0.27],eye:[0.4,0.55,0.8],h:0.6},
 };
 const KEEPER_LINES=['Sit. The fire keeps them out. Gems feed the fire, and the fire remembers you.','Still breathing? Good. Warm your hands and show me what you found.','Every hall below is hungrier than the last. Spend well.','The dark forgets its dead. I do not. What will you carry down?'];
+const PAT_LINES=['Welcome to the Wheel of Misfortune! Ten gems a spin, and everybody down here lives with the result.','Big money, big money... well. Big something.','Step right up! I have hosted a lot of wheels, and this is by far the meanest.','No vowels to buy down here. Just ten gems and a dream.'];
 const DELVER_TIPS=['The pale statues only walk when you look away. Keep your eyes on them and back off.','Blue wisps do not bite. They drink your flame, and that is worse.','A running jump clears a spike plate. Do not stand and think about it.','When your torch dies they smell you from much farther off.','The chime turns low and warm once the seal is broken. Follow it down.','Shades lose interest if you break their line of sight twice.'];
 const clearPrompt=()=>{hudCache.prompt='';$('prompt').textContent=''};
 function openTalk(n){
@@ -2065,6 +2177,10 @@ function buildTalk(){
   }else if(n.type==='map'){
     text=n.used?'It is all on your map now. Mind the corners.':'I have walked every hall of this floor twice. Hold out your map and I will mark what matters.';
     if(!n.used)o.push({label:'Mark the shards and the way down',sub:'Shows them on your map',cost:'free',fn:()=>{n.used=true;F.reveal=true;sfx('shard')}});
+  }else if(n.type==='pat'){
+    const busy=!WOF.done;
+    text=talk.line||(busy?'Round and round she goes, and where she stops... well, you will all find out together.':PAT_LINES[(R.depth+Math.floor(R.time/20))%PAT_LINES.length]);
+    o.push({label:'Spin the Wheel of Misfortune',sub:busy?'The wheel is still turning':'Twelve fates. Whatever it lands on happens.',cost:'10 gems',off:busy||wallet<10,fn:()=>{closeTalk();wofSpinStart()}});
   }else{
     text=n.used?DELVER_TIPS[n.tip%DELVER_TIPS.length]:'Took a claw to the leg. I am done going down. Take this, it is no use to me now.';
     if(!n.used)o.push({label:'Take the gift',sub:['A flash bomb','A flask of oil','A pouch of 8 gems'][n.gift],cost:'free',fn:()=>{
@@ -2088,7 +2204,285 @@ function pickTalk(){
   q.fn();if(talk)buildTalk();
 }
 function moveTalk(d){if(!talk)return;const n=talk.opts.length;talk.sel=(talk.sel+d+n)%n;buildTalk()}
-function act(){if(loading)return;if(P.down){mpCycle();return}if(state==='play'&&nearNpc)openTalk(nearNpc);else if(state==='play'&&nearDoor)sdoorOpen(nearDoor,true);else useFlash()}
+function act(){if(loading||FX.frozen)return;if(P.down){mpCycle();return}if(state==='play'&&nearNpc)openTalk(nearNpc);else if(state==='play'&&nearDoor)sdoorOpen(nearDoor,true);else useFlash()}
+
+/* ---------- the Wheel of Misfortune ---------- */
+// Pat Sajak stands beside the wheel in every sanctuary. A spin costs 10 gems. The result is drawn when the spin starts and the disc is planned to
+// stop on it (src/wheel.js), and the outcome is read back from that final angle, so the slice under the pointer is always what happens.
+// The spin is sent to everyone ({k:'wof'}): players on this floor watch the same wheel turn, players elsewhere hear about it, and when it stops
+// every client applies the result. Outcomes the brief gives to "every user" run on every client; the ones it gives to "the user"/"the spinner"
+// (Walmart, Ad Break, Black Plague, First Thanksgiving) run on the spinner. The Tickle Monster is run by the host (or a solo player) and streamed.
+const WOF_DESC=['Go stand in line.','And now, a word from our sponsor.','Everyone is a pug for two minutes.','Everyone is a large rat for two minutes.',
+  'Everyone gains 200 pounds and moves ten times slower.','A coin decides. Heads: everyone gains 200 pounds.','Everyone loses this run\'s gems and supplies.',
+  'Every sound is ten times louder.','A ringing in everyone\'s ears for a minute.','The spinner is a plague rat. Anyone who comes near dies slowly.',
+  'He giggles. He is coming for each of you.','The spinner has smallpox. It is catching.'];
+const WOF_SCALE=0.66;   // the model is built a little large; this fits the banner under the 1.25 m ceiling
+const WOF={plan:null,t:0,angle:0,flap:0,flapV:0,peg:0,result:-1,coin:0,mine:false,here:false,done:true,win:0,by:'',grp:null,chat:0};
+const FX={pug:0,rat:0,last:null,plague:0,fat:0,loud:0,tin:0,dying:false,dyT:0,pox:0,poxNear:0,poxC:4,stag:0,tickled:0,frozen:null};
+const FX_TIMERS=['pug','rat','plague','fat','loud','tin','pox','tickled','stag'];
+const FX_DUR={form:120,fat:120,loud:30,tin:60,plague:120,pox:300,tickled:3};
+let TK=null,wofOut=null,tinNode=null,BRK=null;
+// the first-person breaks (Walmart, the ad) are their own little 3D scenes, drawn instead of the maze while they run
+const brk=()=>BRK||(BRK=createBreaks(renderer,{ui:breakUI,onBeep:()=>{if(ac)tone(2350,0.08,'square',0.06)}}));
+const wofForm=()=>FX.plague>0?3:FX.pug>0&&FX.rat>0?(FX.last==='rat'?2:1):FX.rat>0?2:FX.pug>0?1:0;   // 0 you, 1 pug, 2 rat, 3 plague rat
+const wofSpeed=()=>(FX.fat>0?0.1:1)*(FX.tickled>0?0.3:1)*(FX.stag>0?0.35:1);
+const wofEye=()=>[1,0.42,0.55,0.55][wofForm()];
+const wofLive=()=>state!=='title'&&state!=='dead';
+
+function wofSpinStart(){
+  if(!F||!F.safe||!F.safe.wheel||!WOF.done||wallet<10)return;
+  wallet-=10;store.set('wallet',wallet);sfx('gem');
+  const i=(Math.random()*WOF_N)|0,plan=planSpin(i,WOF.angle);
+  const m={k:'wof',d:R.depth,i,c:Math.random()<0.5?1:0,a0:plan.from,a1:plan.to,dur:plan.dur,n:myName()};
+  mpSend(m);wofBegin(m,true);
+}
+function wofBegin(m,mine){
+  WOF.plan={from:m.a0,to:m.a1,dur:m.dur};WOF.t=0;WOF.coin=m.c?1:0;WOF.mine=mine;WOF.by=mine?myName():String(m.n||'Someone').slice(0,16);
+  WOF.here=!!(F&&F.safe&&F.safe.wheel&&m.d===R.depth);WOF.done=false;WOF.chat=0;WOF.angle=m.a0;WOF.peg=Math.floor(m.a0/WOF_W);
+  if(mine)say('Pat: "Big money! Big money!"',3);
+  else if(WOF.here)say(WOF.by+' spins the Wheel of Misfortune!',3);
+  else mpSys(WOF.by+' is spinning the Wheel of Misfortune...');
+}
+const PAT_CHAT=['Pat: "Round and round she goes!"','Pat: "Ooh, she is slowing down..."','Pat: "Here it comes..."'];
+function wofTickSpin(dt){
+  if(WOF.done){
+    WOF.win=Math.max(0,WOF.win-dt);
+    if(Math.abs(WOF.flap)>1e-4||Math.abs(WOF.flapV)>1e-4){WOF.flapV+=(-140*WOF.flap-7*WOF.flapV)*dt;WOF.flap+=WOF.flapV*dt}
+    return;
+  }
+  WOF.t+=dt;const pl=WOF.plan;
+  if(WOF.here){
+    const a=spinAngle(pl,WOF.t),push=pegPush(a);WOF.angle=a;
+    if(push>=0){WOF.flap=push*0.85;WOF.flapV=0}
+    else{WOF.flapV+=(-140*WOF.flap-7*WOF.flapV)*dt;WOF.flap+=WOF.flapV*dt}
+    const pg=Math.floor((a-0.19)/WOF_W);
+    if(pg!==WOF.peg){WOF.peg=pg;const w=F.safe.wheel,d=Math.hypot(w.x-P.x,w.z-P.z);if(d<12)tone(2100+Math.random()*200,0.025,'square',0.09*Math.max(0.15,1-d/12))}   // the flapper's clack
+    const k=Math.floor(WOF.t/pl.dur*4);
+    if(k>WOF.chat&&k<=3){WOF.chat=k;if(Math.hypot(F.safe.wheel.x-P.x,F.safe.wheel.z-P.z)<8)say(PAT_CHAT[k-1],2.2)}
+  }
+  if(WOF.t>=pl.dur+0.9){
+    WOF.done=true;WOF.win=4;
+    if(WOF.here)WOF.angle=pl.to;
+    wofResolve();
+  }
+}
+function wofResolve(){
+  const i=sliceAt(WOF.plan.to),sl=WOF_SLICES[i],mine=WOF.mine,coin=WOF.coin;WOF.result=i;
+  mpSys(WOF.by+' landed on '+sl.name);
+  if(!wofLive())return;
+  announce(sl.name.toUpperCase()+'!',(mine?'':WOF.by+' spun. ')+WOF_DESC[i],sl.col);
+  if(ac){tone(392,0.32,'sawtooth',0.09,0.1,-12);tone(370,0.32,'sawtooth',0.09,0.45,-12);tone(349,0.32,'sawtooth',0.09,0.8,-12);tone(330,1.1,'sawtooth',0.09,1.15,-40)} // sad trombone
+  switch(i){
+    case 0:if(mine)wofScene('walmart');break;
+    case 1:if(mine)wofScene('ad');break;
+    case 2:FX.pug=FX_DUR.form;FX.last='pug';break;
+    case 3:FX.rat=FX_DUR.form;FX.last='rat';break;
+    case 4:FX.fat=FX_DUR.fat;break;
+    case 5:coinFlip(coin===1,()=>{if(coin===1&&wofLive())FX.fat=FX_DUR.fat});break;
+    case 6:wofLoseAll();break;
+    case 7:FX.loud=FX_DUR.loud;break;
+    case 8:FX.tin=FX_DUR.tin;break;
+    case 9:if(mine){FX.plague=FX_DUR.plague;FX.dying=false}break;
+    case 10:if(!MP.guest)tkSpawn();break;
+    case 11:if(mine){FX.pox=FX_DUR.pox;FX.poxC=3}break;
+  }
+}
+// "Nothing": every gem found on this run is taken back out of the purse, and every supply bought or found for it is gone
+function wofLoseAll(){
+  const g=R.gems|0;wallet=Math.max(0,wallet-g);store.set('wallet',wallet);R.gems=0;
+  const had=P.flash+(P.ward|0)+(P.spikeTraps|0)+(R.xray>0?1:0)+(R.guide>0?1:0);
+  P.flash=0;P.ward=0;P.spikeTraps=0;R.xray=0;R.guide=0;
+  setTimeout(()=>say(`You lose ${g} gem${g===1?'':'s'} and ${had?'all your supplies':'nothing else, you had nothing'}.`,4),1800);
+}
+function wofScene(kind){
+  if(state==='talk')closeTalk();
+  FX.frozen=kind;P.vx=P.vz=0;
+  const end=()=>{FX.frozen=null;if(wofLive()&&!touch.on&&!document.pointerLockElement)say('Click to return to the maze',4)};
+  if(kind==='ad'&&document.pointerLockElement){usingLock=false;document.exitPointerLock()}   // free the cursor for the Skip Ad button
+  brk().start(kind,end);
+}
+function wofClear(){
+  for(const k of FX_TIMERS)FX[k]=0;FX.dying=false;FX.poxNear=0;FX.frozen=null;TK=null;
+  if(BRK)BRK.stop(true);statusStrip([]);tints({});wofAudio();
+}
+/* sounds: the hearing aids sit after the master volume; the ringing goes through it */
+function wofAudio(){
+  if(!ac||!wofOut)return;
+  const loud=FX.loud>0?10:1;if(wofOut._v!==loud){wofOut._v=loud;wofOut.gain.setTargetAtTime(loud,ac.currentTime,0.12)}
+  if(FX.tin>0&&!tinNode){
+    const o=ac.createOscillator(),o2=ac.createOscillator(),g=ac.createGain();o.frequency.value=7900;o2.frequency.value=7911;g.gain.value=0;
+    o.connect(g);o2.connect(g);g.connect(master);o.start();o2.start();g.gain.setTargetAtTime(0.11,ac.currentTime,0.5);tinNode={o,o2,g};
+  }else if(FX.tin<=0&&tinNode){const q=tinNode;tinNode=null;q.g.gain.setTargetAtTime(0,ac.currentTime,0.4);setTimeout(()=>{try{q.o.stop();q.o2.stop()}catch(e){}},2500)}
+}
+// a breathy old man's "hee-hee-hee", placed in stereo
+function giggle(x,z,vol,pitch){
+  if(!ac)return;const dx=x-P.x,dz=z-P.z,d=Math.hypot(dx,dz);if(d>16)return;
+  const k=(vol||1)*Math.max(0.12,1-d/16),pan=d<0.3?0:clamp((dx*-Math.sin(P.yaw)+dz*Math.cos(P.yaw))/d,-1,1),n=4+(Math.random()*3|0),f0=(pitch||1)*(430+Math.random()*90);
+  for(let i=0;i<n;i++){
+    const t=ac.currentTime+i*0.12,o=ac.createOscillator(),bp=ac.createBiquadFilter(),g=ac.createGain(),fi=f0*(1-i*0.035);
+    o.type='sawtooth';o.frequency.setValueAtTime(fi*1.15,t);o.frequency.exponentialRampToValueAtTime(fi*0.78,t+0.1);
+    bp.type='bandpass';bp.frequency.value=1300+i*60;bp.Q.value=2.2;
+    g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(0.4*k,t+0.012);g.gain.exponentialRampToValueAtTime(0.0001,t+0.1);
+    o.connect(bp);bp.connect(g);let out=g;
+    if(ac.createStereoPanner){const p=ac.createStereoPanner();p.pan.value=pan;g.connect(p);out=p}
+    out.connect(sfxBus);o.start(t);o.stop(t+0.12);
+    const s=ac.createBufferSource(),f=ac.createBiquadFilter(),ng=ac.createGain();s.buffer=noiseBuf;f.type='bandpass';f.frequency.value=2600;f.Q.value=1;
+    ng.gain.setValueAtTime(0.12*k,t);ng.gain.exponentialRampToValueAtTime(0.0001,t+0.09);s.connect(f);f.connect(ng);ng.connect(sfxBus);s.start(t,Math.random()*0.5);s.stop(t+0.1);
+  }
+}
+function cough(){if(!ac)return;noise(0.22,0.3,650,1.3);tone(190,0.16,'sawtooth',0.1,0,-80);tone(170,0.16,'sawtooth',0.09,0.26,-70)}
+
+/* ---------- the Tickle Monster ---------- */
+function tkSpawn(){
+  if(!F)return;const w=F.safe&&F.safe.wheel;
+  const x=w?w.x+w.nx*0.9:P.x+0.8,z=w?w.z+w.nz*0.9:P.z;
+  TK={x,z,yaw:0,t:150,tg:null,pause:1.6,walk:0,mv:0,gig:1,last:{},df:null,dfK:-1,dfT:0,net:0,gT:0,age:0,
+    n:{type:'tickle',x,z,ph:1.7,used:true,lock:true,yaw:0,hy:0,hp:0}};
+}
+function tkTargets(){
+  const L=[];if(!P.down&&wofLive()&&!FX.frozen)L.push({id:'me',x:P.x,z:P.z});
+  if(MP.on)for(const p of MP.peers.values())if(p.d===R.depth&&mpDrawn(p)&&!p.frz)L.push({id:p.id,x:p.x,z:p.z});
+  return L;
+}
+function tkTick(dt){
+  const T0=TK;if(!T0)return;
+  if(MP.guest){
+    T0.age+=dt;if(T0.age>3){TK=null;return}
+    const k=Math.min(1,dt*10),ox=T0.x,oz=T0.z;T0.x+=(T0.tx-T0.x)*k;T0.z+=(T0.tz-T0.z)*k;
+    let dy=T0.tyaw-T0.yaw;while(dy>Math.PI)dy-=Math.PI*2;while(dy<-Math.PI)dy+=Math.PI*2;T0.yaw+=dy*k;void ox;void oz;
+  }else{
+    T0.t-=dt;
+    if(T0.t<=0){TK=null;mpSend({k:'tk',d:R.depth,end:1});say('The Tickle Monster wanders off, giggling.',3);return}
+    if(T0.pause>0){T0.pause-=dt;T0.mv=Math.max(0,T0.mv-dt*4);T0.gig=1}
+    else{
+      const L=tkTargets();let tg=L.find(q=>q.id===T0.tg);
+      if(!tg&&L.length){L.sort((a,b)=>((T0.last[a.id]||-99)-(T0.last[b.id]||-99))||(Math.hypot(a.x-T0.x,a.z-T0.z)-Math.hypot(b.x-T0.x,b.z-T0.z)));tg=L[0];T0.tg=tg.id}
+      if(!tg)T0.mv=Math.max(0,T0.mv-dt*4);
+      else{
+        const d=Math.hypot(tg.x-T0.x,tg.z-T0.z);
+        if(d<0.42){T0.last[tg.id]=R.time;T0.tg=null;T0.pause=2.6;T0.gig=1;T0.gT=0}   // got one: a giggling fit, then the next player
+        else{
+          let gx=tg.x,gz=tg.z;const cx=Math.floor(T0.x),cz=Math.floor(T0.z),tx=Math.floor(tg.x),tz=Math.floor(tg.z);
+          if(cx!==tx||cz!==tz){
+            const key=tz*F.W+tx;T0.dfT-=dt;
+            if(!T0.df||T0.dfK!==key||T0.dfT<=0){T0.df=bfs(F.g,F.W,F.H,tx,tz);T0.dfK=key;T0.dfT=1}
+            const here=T0.df[cz*F.W+cx];let bd=here<0?1e9:here,bn=null;
+            for(const q of DIRS){const nx=cx+q[0],nz=cz+q[1];if(nx<0||nz<0||nx>=F.W||nz>=F.H)continue;const nd=T0.df[nz*F.W+nx];if(nd>=0&&nd<bd){bd=nd;bn=[nx,nz]}}
+            if(bn){gx=bn[0]+0.5;gz=bn[1]+0.5}
+          }
+          const dx=gx-T0.x,dz=gz-T0.z,dl=Math.hypot(dx,dz)||1,sp=2.3*dt;
+          T0.x+=dx/dl*Math.min(sp,dl);T0.z+=dz/dl*Math.min(sp,dl);T0.yaw=Math.atan2(dz,dx);T0.mv=Math.min(1,T0.mv+dt*4);T0.gig=Math.max(0.15,T0.gig-dt);
+        }
+      }
+    }
+    T0.net-=dt;if(T0.net<=0&&MP.on){T0.net=0.1;mpSend({k:'tk',d:R.depth,x:r3(T0.x),z:r3(T0.z),y:r3(T0.yaw),m:r3(T0.mv),g:r3(T0.gig),p:T0.pause>0?1:0,t:Math.round(T0.t)})}
+  }
+  T0.walk+=dt*T0.mv*9;
+  T0.gT-=dt;if(T0.gT<=0){T0.gT=T0.pause>0?0.75:1.2+Math.random()*1.4;giggle(T0.x,T0.z,T0.pause>0?1.3:0.9)}
+  // caught: you are tickled, which slows you right down
+  if(!P.down&&wofLive()&&!FX.frozen&&Math.hypot(T0.x-P.x,T0.z-P.z)<0.5){
+    if(FX.tickled<=0){say('Hee hee! He is tickling you! You can barely move.',2.5);giggle(P.x,P.z,1.1,1.5)}
+    FX.tickled=FX_DUR.tickled;
+  }
+}
+
+/* ---------- every frame ---------- */
+function wofTick(dt){
+  wofTickSpin(dt);
+  if(!wofLive()){if(FX.tin||FX.loud||TK||FX.frozen||FX.pug||FX.rat||FX.plague||FX.fat||FX.pox||FX.dying)wofClear();return}
+  for(const k of FX_TIMERS)if(FX[k]>0)FX[k]=Math.max(0,FX[k]-dt);
+  tkTick(dt);
+  // the plague rat: anyone or anything that comes near starts to die, slowly
+  const carriers=[];
+  if(FX.plague>0&&!P.down)carriers.push([P.x,P.z]);
+  if(MP.on)for(const p of MP.peers.values())if(p.form===3&&p.d===R.depth&&mpDrawn(p))carriers.push([p.x,p.z]);
+  const near=(x,z,r)=>carriers.some(c=>(c[0]-x)**2+(c[1]-z)**2<r*r);
+  if(F&&carriers.length){
+    if(!FX.dying&&FX.plague<=0&&!P.down&&near(P.x,P.z,1.4)){FX.dying=true;FX.dyT=6;say('You caught the Black Plague. You are dying, slowly.',4);cough()}
+    for(const n of F.npcs)if(!n.sick&&!n.fall&&near(n.x+(n.ox||0),n.z+(n.oz||0),1.4))n.sick=16;
+    if(!MP.guest)for(const s of F.shades)if(!s.dead&&!s.sick&&s.x>0&&near(s.x,s.z,1.4))s.sick=10;
+  }
+  if(F){
+    for(const n of F.npcs){
+      if(n.sick>0&&!n.fall){n.sick-=dt;if(n.sick<=0){n.fall=0.001;n.lock=true;if(nearNpc===n)nearNpc=null;if(talk&&talk.npc===n)closeTalk();if(Math.hypot(n.x-P.x,n.z-P.z)<10)cough()}}
+      else if(n.fall&&n.fall<1)n.fall=Math.min(1,n.fall+dt*1.5);
+    }
+    if(!MP.guest)for(const s of F.shades)if(s.sick>0&&!s.dead){s.sick-=dt;if(s.sick<=0){s.dead=true;const close=Math.hypot(s.x-P.x,s.z-P.z)<10;banish(s,!close)}}
+  }
+  if(FX.dying){
+    if(P.down){FX.dying=false}
+    else{FX.dyT-=dt;if(FX.dyT<=0){FX.dyT=6;cough();P.ward=0;P.inv=0;hurt(null);if(state==='dead')return}}
+  }
+  // smallpox: stand next to someone who has it for a second and you have it too
+  if(FX.pox<=0&&!P.down&&MP.on){
+    let c=false;for(const p of MP.peers.values())if(p.pox&&p.d===R.depth&&mpDrawn(p)&&(p.x-P.x)**2+(p.z-P.z)**2<1.6*1.6){c=true;break}
+    FX.poxNear=c?FX.poxNear+dt:Math.max(0,FX.poxNear-dt);
+    if(FX.poxNear>1){FX.pox=FX_DUR.pox;FX.poxNear=0;FX.poxC=2;say('Smallpox. Someone breathed on you.',4)}
+  }
+  if(FX.pox>0&&!P.down){FX.poxC-=dt;if(FX.poxC<=0){FX.poxC=5+Math.random()*5;cough();FX.stag=0.8}}
+  // what is on you right now
+  const L=[],f=wofForm();
+  if(f)L.push([['','Pug','Rat','Plague rat'][f],f===3?FX.plague:f===2?FX.rat:FX.pug]);
+  if(FX.fat>0)L.push(['+200 lbs',FX.fat]);
+  if(FX.loud>0)L.push(['Hearing aids',FX.loud]);
+  if(FX.tin>0)L.push(['Tinnitus',FX.tin]);
+  if(FX.dying)L.push(['Dying of the plague',null]);
+  if(FX.pox>0)L.push(['Smallpox',FX.pox]);
+  if(FX.tickled>0)L.push(['Tickled',null]);
+  if(TK)L.push(['Tickle Monster loose',TK.t]);
+  statusStrip(L);
+  tints({plague:FX.dying?0.9:FX.plague>0?0.45:0,tickle:FX.tickled>0?0.8:0,pox:FX.pox>0?0.55:0,fat:FX.fat>0?0.6:0});
+  wofAudio();
+}
+function wofDraw(t,ex,ey,ez,dtR){
+  const w=F&&F.safe&&F.safe.wheel,show=!!w&&state!=='title';
+  if(!WOF.grp){if(!show)return;WOF.grp=wheelModel();scene.add(WOF.grp)}
+  WOF.grp.visible=show;
+  if(show){WOF.grp.position.set(w.x,0,w.z);WOF.grp.rotation.y=w.yaw;WOF.grp.scale.setScalar(WOF_SCALE);WOF.grp.userData.pose(WOF.here||WOF.done?WOF.angle:WOF.angle,WOF.flap,t,!WOF.done&&WOF.here?'spin':WOF.win>0?'win':'idle')}
+  if(TK){const n=TK.n;n.x=TK.x;n.z=TK.z;n.yaw=TK.yaw;n.walk=TK.walk;n.mv=TK.mv;n.gig=TK.gig;n.reach=TK.pause>0?1:0.7;buildNpc(n,t,ex,ey,ez,dtR)}
+  // sickly green around everything that is dying
+  if(F)for(const n of F.npcs)if(n.sick>0&&!n.fall){const y=0.5+Math.sin(t*2+n.ph)*0.1;spr(n.x+(n.ox||0),y,n.z+(n.oz||0),0.5,0.5,7,0.4,0.9,0.2,0.35,1)}
+  if(F&&!MP.guest)for(const s of F.shades)if(s.sick>0&&!s.dead&&s.x>0)spr(s.x,0.6,s.z,0.7,0.7,7,0.4,0.9,0.2,0.4,1);
+}
+// pug, large rat or plague rat. self: the first-person body (no back of the head in the way, the muzzle hangs under the camera).
+// Returns where the torch is held (in the mouth).
+function buildCritter(p,t,form,self){
+  const pug=form===1,K=pug?1:1.3,mv=Math.min(1,(p.spd||0)/2.7),w=p.walk||0,sw=Math.sin(w*1.2)*mv;
+  const fur=pug?[0.84,0.68,0.46,5]:form===3?[0.2,0.18,0.15,5]:[0.48,0.46,0.44,5],furD=pug?[0.7,0.54,0.34,5]:form===3?[0.13,0.12,0.1,5]:[0.36,0.34,0.33,5];
+  const black=[0.06,0.05,0.05,5],pink=[0.92,0.6,0.62,1],eyeC=form===3?[2.4,0.2,0.1,7]:[0.03,0.02,0.02,8],wood=[0.36,0.23,0.12,6];
+  const bob=Math.abs(Math.cos(w*1.2))*0.012*mv;
+  const B={p:[p.rx,Math.max(0,p.ry||0)+bob,p.rz],R:rYaw(p.ryaw)},v=(x,y,z)=>[x*K,y*K,z*K];
+  const fat=p.fat?1.35:1;
+  if(!self){ball(B,v(0,0.2,0),[0.19*K,0.12*K*fat,0.12*K*fat],fur);ball(B,v(0.1,0.21,0),[0.1*K,0.12*K,0.11*K*fat],pug?furD:fur)}
+  for(const [x,z] of self?[[0.2,1],[0.2,-1]]:[[0.12,1],[0.12,-1],[-0.12,1],[-0.12,-1]]){const st=(x>0?sw:-sw)*(z>0?1:-1);
+    seg(B,v(x,0.16,z*0.075),v(x+0.06*st,0.02,z*0.08),0.035*K,0.03*K,fur);ball(B,v(x+0.06*st+0.01,0.018,z*0.08),[0.03*K,0.016*K,0.026*K],pug?furD:pink,true)}
+  if(self){}
+  else if(pug){ball(B,v(-0.19,0.3,0),0.032*K,fur,true);ball(B,v(-0.16,0.34,0.02),0.028*K,fur,true);ball(B,v(-0.13,0.33,-0.01),0.024*K,furD,true)}   // curly tail
+  else{let pr=v(-0.18,0.18,0);for(let k=1;k<=6;k++){const q=v(-0.18-k*0.06,0.18-k*0.022,Math.sin(t*3+k*0.8)*0.025*k);seg(B,pr,q,(0.02-k*0.0025)*K,(0.02-(k+1)*0.0025)*K,pink);pr=q}}
+  if(p.pox&&!self)for(let i=0;i<6;i++)ball(B,v(((i*37)%30-15)*0.01,0.26+((i*13)%7)*0.006,((i*23)%20-10)*0.01),0.012*K,[0.8,0.12,0.1,1],true);
+  // head: on the player it follows the camera so the muzzle stays at the bottom of the view
+  const H=self?{p:[p.rx,Math.min(CAM_TOP,EYE*wofEye()+(p.ry||0)),p.rz],R:m3(rYaw(p.ryaw),rZ(clamp(p.rpitch||0,-0.9,0.9)))}
+                 :subF(B,v(0.2,0.29,0),rZ(clamp(p.rpitch||0,-0.5,0.5)*0.6));
+  const Hk=self?{p:fpt(H,[0.04*K,-0.05*K,0]),R:H.R}:H;
+  if(pug){
+    if(!self){ball(Hk,[0,0,0],[0.11*K,0.1*K,0.12*K],fur);for(const z of[-1,1]){ball(Hk,[0.07*K,0.03*K,z*0.05*K],0.027*K,[0.95,0.95,0.92,8],true);ball(Hk,[0.09*K,0.03*K,z*0.05*K],0.016*K,eyeC,true)}}
+    if(!self)for(const z of[-1,1])ball(Hk,[0.0,0.08*K,z*0.1*K],[0.03*K,0.05*K,0.02*K],black,true);                          // ears
+    ball(Hk,[0.1*K,-0.03*K,0],[0.05*K,0.045*K,0.07*K],black);                                                    // the flat black muzzle
+    ball(Hk,[0.135*K,-0.01*K,0],[0.012*K,0.012*K,0.02*K],[0.02,0.02,0.02,8],true);
+    slab(Hk,[0.12*K,-0.075*K,0.01*K],[0.012*K,0.025*K,0.016*K],pink);                                           // tongue
+  }else{
+    if(!self){ball(Hk,[0,0,0],[0.09*K,0.08*K,0.085*K],fur);for(const z of[-1,1])ball(Hk,[0.05*K,0.03*K,z*0.045*K],0.014*K,eyeC,true)}
+    if(!self)for(const z of[-1,1])ball(Hk,[-0.02*K,0.07*K,z*0.07*K],[0.012*K,0.04*K,0.035*K],pink,true);                 // round ears
+    seg(Hk,[0.05*K,-0.01*K,0],[0.17*K,-0.04*K,0],0.05*K,0.02*K,furD);ball(Hk,[0.175*K,-0.04*K,0],0.016*K,pink,true);  // snout and nose
+    for(const z of[-1,1])for(const a of[-0.4,0,0.4])seg(Hk,[0.16*K,-0.035*K,z*0.012*K],[0.15*K,(-0.035+a*0.05)*K,z*0.13*K],0.002*K,0.001*K,[0.9,0.9,0.85,5]);  // whiskers
+    for(const z of[-1,1])slab(Hk,[0.16*K,-0.065*K,z*0.006*K],[0.006*K,0.014*K,0.005*K],[0.96,0.9,0.6,5]);        // front teeth
+  }
+  // the torch, carried in the mouth
+  const ta=[0.1*K,-0.05*K,-0.09*K],tb=[0.13*K,0.04*K,0.13*K];
+  if(self){const tp=[0.2*K,-0.06*K,0.12*K];seg(Hk,[0.11*K,-0.06*K,0.02*K],tp,0.006,0.008,wood);return {torch:fpt(Hk,[tp[0],tp[1]+0.015,tp[2]])}}
+  seg(Hk,ta,tb,0.008,0.01,wood);
+  return {torch:fpt(Hk,[tb[0],tb[1]+0.02,tb[2]])};
+}
 /* ---------- loading transitions ---------- */
 let loading=null;
 function showLoading(title,stages){
@@ -2388,7 +2782,7 @@ function installFloor(depth,nextFloor,prepared=false){
   R.depth=depth;
   if(!archiveRun&&depth>deepest&&!(URL_DEPTH&&depth===R.startDepth)){deepest=depth;store.set('deepest',deepest)}
   if(F?.npcs)for(const npc of F.npcs)disposeGpuRig(npc);
-  R.xray=0;R.guide=0;GD.have=false;GD.key='';F=nextFloor;panelLvl=1;P.grab=null;clearMooseLures();mimicReset();
+  R.xray=0;R.guide=0;GD.have=false;GD.key='';F=nextFloor;TK=null;WOF.here=false;panelLvl=1;P.grab=null;clearMooseLures();mimicReset();
   if(!prepared){buildMesh(F);buildStatic(F);buildSdf(F)}
   sweepWorld();if(F.npcs&&F.npcs.some(q=>q.type==='keeper'))keeperWarm();
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
@@ -2446,7 +2840,7 @@ function startFromMenu(seed,depth){
   if(!loading)startRun(seed,depth,false,true);
 }
 function enterRun(seed,sd,floor,landing,liftTrip){
-  roomLeave();$('deadTitle').textContent='THE DARK TAKES YOU';
+  roomLeave();$('deadTitle').textContent='THE DARK TAKES YOU';wofClear();WOF.done=true;WOF.plan=null;WOF.flap=0;
   showHub(false);
   if(!archiveRun)hub.reset();
   P.down=false;
@@ -2920,7 +3314,7 @@ function mpRecv(m,from){
     case 'p':{
       const a=m.a;if(!Array.isArray(a))return;
       p.hub=null;
-      p.d=m.d;p.x=+a[0];p.z=+a[1];p.y=+a[2];p.yaw=+a[3];p.pitch=+a[4];p.fu=+a[5];p.down=!!(a[6]&1);p.safe=!!(a[6]&2);p.run=!!(a[6]&4);p.away=!!(a[6]&8);p.mounted=!!(a[6]&16);p.hp=a[7];
+      p.d=m.d;p.x=+a[0];p.z=+a[1];p.y=+a[2];p.yaw=+a[3];p.pitch=+a[4];p.fu=+a[5];p.down=!!(a[6]&1);p.safe=!!(a[6]&2);p.run=!!(a[6]&4);p.away=!!(a[6]&8);p.mounted=!!(a[6]&16);p.hp=a[7];p.form=a[6]>>5&3;p.fat=!!(a[6]&128);p.pox=!!(a[6]&256);p.frz=!!(a[6]&512);
       if(p.rx===undefined||p.rd!==p.d||Math.hypot(p.x-p.rx,p.z-p.rz)>3){p.rx=p.x;p.rz=p.z;p.ry=p.y;p.ryaw=p.yaw;p.rpitch=p.pitch;p.rd=p.d}
       break;}
     case 'm':{
@@ -3002,12 +3396,18 @@ function mpRecv(m,from){
     case 'eat':if(fromHost&&inRun)mimicEat();break;
     case 'gl':glRecv(m,p);break;
     case 'wipe':if(fromHost&&inRun){MP.wiping=true;die();MP.wiping=false}break;
+    case 'wof':{if(!inRun)break;const ok=Number.isInteger(m.i)&&m.i>=0&&m.i<WOF_N&&[m.a0,m.a1,m.dur].every(Number.isFinite)&&m.dur>3&&m.dur<30&&m.a1>m.a0&&m.a1-m.a0<400&&sliceAt(m.a1)===m.i;
+      if(ok&&WOF.done)wofBegin(m,false);break}
+    case 'tk':{if(!fromHost||!inRun||m.d!==R.depth)break;if(m.end){TK=null;break}
+      if(![m.x,m.z,m.y].every(Number.isFinite))break;
+      if(!TK)TK={x:m.x,z:m.z,yaw:m.y,walk:0,mv:0,gig:0,pause:0,t:0,gT:0,age:0,last:{},n:{type:'tickle',x:m.x,z:m.z,ph:1.7,used:true,lock:true,yaw:0,hy:0,hp:0}};
+      TK.tx=m.x;TK.tz=m.z;TK.tyaw=m.y;TK.mv=+m.m||0;TK.gig=+m.g||0;TK.pause=m.p?1:0;TK.t=+m.t||0;TK.age=0;break}
   }
 }
 // the host's view of everyone the creatures can hunt
 function mpTargets(){
   const T=[];
-  if(!P.down)T.push({x:P.x,z:P.z,yaw:P.yaw,fuel:P.fuel,inSafe:P.inSafe||P.away,inv:P.inv,loc:true,tx:P.tx,ty:P.ty});
+  if(!P.down)T.push({x:P.x,z:P.z,yaw:P.yaw,fuel:P.fuel,inSafe:P.inSafe||P.away||!!FX.frozen,inv:P.inv,loc:true,tx:P.tx,ty:P.ty});
   if(MP.host)for(const p of MP.peers.values())
     if(p.run&&!p.down&&p.d===R.depth&&p.x!==undefined&&mpFresh(p))T.push({x:p.x,z:p.z,yaw:p.yaw,fuel:p.fu,inSafe:p.safe,inv:p.inv,loc:false,p,tx:Math.floor(p.x),ty:Math.floor(p.z)});
   return T;
@@ -3086,7 +3486,7 @@ function mpTick(raw){
   MP.pt-=raw;
   if(MP.pt<=0){
     MP.pt=1/15;
-    mpSend({k:'p',d:R.depth,a:[r3(P.x),r3(P.z),r3(P.y),r3(P.yaw),r3(P.pitch),Math.round(P.fuel),(P.down?1:0)|(P.inSafe||P.away?2:0)|4|(P.away?8:0)|(P.mounted?16:0),P.hp]});
+    mpSend({k:'p',d:R.depth,a:[r3(P.x),r3(P.z),r3(P.y),r3(P.yaw),r3(P.pitch),Math.round(P.fuel),(P.down?1:0)|(P.inSafe||P.away||FX.frozen?2:0)|4|(P.away?8:0)|(P.mounted?16:0)|wofForm()<<5|(FX.fat>0?128:0)|(FX.pox>0?256:0)|(FX.frozen?512:0),P.hp]});
   }
   rvT-=raw;
   if(state==='room'&&rvT<=0&&MP.peers.size){rvT=0.1;const q=ROOMS.snap();if(q)mpSend({k:'rv',d:R.depth,w:ROOMS.kind,q})}
@@ -3110,6 +3510,7 @@ function mpTick(raw){
 }
 // friends drawn in the maze, built from the same jointed parts as everyone else
 function buildPlayer(p,t,rev,et){
+  if(p.form&&!rev)return buildCritter(p,t,p.form,false);
   rev=rev||0;et=et||0;
   const c=p.col,cloak=[c[0]*0.72,c[1]*0.72,c[2]*0.72,2],cloakD=[c[0]*0.42,c[1]*0.42,c[2]*0.42,2];
   const leg=[0.22,0.17,0.13,2],boot=[0.3,0.19,0.1,3],belt=[0.3,0.17,0.08,3],skin=[0.86,0.65,0.5,1],wood=[0.36,0.23,0.12,6],rag=[0.13,0.1,0.08,2];
@@ -3127,6 +3528,7 @@ function buildPlayer(p,t,rev,et){
   seg(U,v(0,-0.1,0),v(0,0.07,0),0.12*S,0.078*S,cloak);
   seg(U,v(0,0.045,0),v(0,0.075,0),0.083*S,0.081*S,belt);
   if(rev<=0)ball(U,v(0,0.17+breath,0),[0.066*S,0.115*S,0.09*S],cloak);
+  if(p.fat&&rev<=0){ball(U,v(0.05,0.05,0),[0.15*S,0.15*S,0.17*S],cloak);ball(U,v(0.0,0.19+breath,0),[0.11*S,0.12*S,0.15*S],cloak);for(const z of[-1,1])ball(B,v(0,0.36,z*0.07),[0.08*S,0.1*S,0.07*S],cloakD)}   // 200 extra pounds
   else mimicMaw(U,v,S,rev,t,et,cloak);
   ball(U,v(-0.035,0.2+breath,0),[0.055*S,0.12*S,0.095*S],cloakD);
   const la=-sw*0.09;
@@ -3141,6 +3543,7 @@ function buildPlayer(p,t,rev,et){
   face(HS,{skin,blink:((t*0.23+ph*0.01)%1)<0.035?0.12:1,iris:[0.3,0.25,0.18],brow:[0.25,0.16,0.1,5],browH:0.006,eyeS:1.1,nose:[0.012,0.013,0.011],mouth:[0.6,0.32,0.3],mouthW:0.022});
   ball(HS,[-0.03,0.1,0],[0.088,0.1,0.094],cloak);
   ball(HS,[-0.05,0.04,0],[0.07,0.07,0.09],cloakD,true);
+  if(p.pox)for(let i=0;i<7;i++)ball(HS,[0.075+((i*3)%4)*0.004,0.03+((i*7)%9)*0.011,((i*5)%11-5)*0.011],0.007,[0.82,0.12,0.1,1],true);   // smallpox
   return {torch:fpt(U,[tt[0],tt[1]+0.035,tt[2]])};
 }
 // the chest splits like a pair of doors: a ring of teeth, a red throat, and tentacles that reach
@@ -3603,6 +4006,7 @@ document.addEventListener('mousemove',e=>{
   if(state==='title'){hub.look(mx*MOVE.mouse*sens,my*MOVE.mouse*sens);return}
   if(state==='room'){if(mx||my)roomDevice='keyboard';ROOMS.look(mx*MOVE.mouse*sens,my*MOVE.mouse*sens);return}
   if(glLook(mx*MOVE.mouse*sens,-my*MOVE.mouse*sens))return;
+  if(FX.frozen){if(BRK)BRK.look(mx*MOVE.mouse*sens,my*MOVE.mouse*sens);return}
   lookBy(P,mx*MOVE.mouse*sens,my*MOVE.mouse*sens,MOVE.pitch);
 });
 document.addEventListener('pointerlockchange',()=>{
@@ -3795,7 +4199,7 @@ function initAudio(){
   if(ac){if(ac.state==='suspended')ac.resume();return}
   try{
     ac=new (window.AudioContext||window.webkitAudioContext)();
-    master=ac.createGain();master.gain.value=muted?0:0.55;master.connect(ac.destination);
+    master=ac.createGain();master.gain.value=muted?0:0.55;wofOut=ac.createGain();wofOut.connect(ac.destination);master.connect(wofOut); // wofOut: the Hearing Aids boost
     noiseBuf=ac.createBuffer(1,ac.sampleRate,ac.sampleRate);
     const d=noiseBuf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
     const buses=initMusic(ac,master,store);sfxBus=buses.sfx;
@@ -3917,12 +4321,12 @@ function watcher(s,dt,pfx,pfz){
 }
 /* ---------- update ---------- */
 // speed modifiers shared by the maze and the rooms: the cold slows you, boots speed you up
-const moveMul=()=>(P.chill>0?0.55:1)*(1+0.06*(up.boots|0));
+const moveMul=()=>(P.chill>0?0.55:1)*(1+0.06*(up.boots|0))*wofSpeed();
 function update(dt){
   R.time+=dt;xrayTick(dt);guideTick(dt);mooseLureTick(dt);scoutTick(dt);
   // in a shared game the world keeps going while you pause or talk, but you stand still
   if(P.grab)mimicGrabTick(dt);
-  const ctl=state==='play'&&!P.grab&&!GL.fall&&!(GL.rb&&!GL.rb.fwd);
+  const ctl=state==='play'&&!P.grab&&!GL.fall&&!(GL.rb&&!GL.rb.fwd)&&!FX.frozen;
   if(P.down)mpSpectate();
   else{
   // look and move: the shared movement system (src/movement.js), the same one the rooms use
@@ -3930,14 +4334,15 @@ function update(dt){
   const fwd=ctl?((keys.KeyW||keys.ArrowUp)?1:0)-((keys.KeyS||keys.ArrowDown)?1:0)-pad.my-touch.my:0;
   const str=ctl?(keys.KeyD?1:0)-(keys.KeyA?1:0)+pad.mx+touch.mx:0;
   const ev=stepMove(P,dt,{fwd,str,fx:Math.cos(P.yaw),fz:Math.sin(P.yaw),ctl,
-    jump:keys.Space||pad.jump||touch.jump,sprint:keys.ShiftLeft||keys.ShiftRight||pad.sprint||Math.hypot(touch.mx,touch.my)>0.94},
+    jump:FX.fat<=0&&(keys.Space||pad.jump||touch.jump),sprint:keys.ShiftLeft||keys.ShiftRight||pad.sprint||Math.hypot(touch.mx,touch.my)>0.94},
     {scale:1,speedMul:moveMul()*(P.mounted?1.25:1),lungs:up.lungs|0,blocked});
   if(ev.jumped)sfx('jump');
   if(ev.landed>0||ev.step)sfx('step');
   for(const q of F.pillars){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=0.2+PR;if(dd<m&&dd>1e-4){P.x=q[0]+ddx/dd*m;P.z=q[1]+ddz/dd*m}}
   if(F.safe){const ddx=P.x-F.safe.x,ddz=P.z-F.safe.z,dd=Math.hypot(ddx,ddz),m=0.3+PR;if(dd<m&&dd>1e-4){P.x=F.safe.x+ddx/dd*m;P.z=F.safe.z+ddz/dd*m}}
   for(const q of F.discs){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=q[2]+PR;if(dd<m&&dd>1e-4){const nx2=q[0]+ddx/dd*m,nz2=q[1]+ddz/dd*m;if(!blocked(nx2,nz2)){P.x=nx2;P.z=nz2}}}
-  for(const n of F.npcs){const X=n.x+(n.ox||0),Z=n.z+(n.oz||0),ddx=P.x-X,ddz=P.z-Z,dd=Math.hypot(ddx,ddz),m=0.16+PR;if(dd<m&&dd>1e-4){const nx2=X+ddx/dd*m,nz2=Z+ddz/dd*m;if(!blocked(nx2,nz2)){P.x=nx2;P.z=nz2}}}
+  if(F.safe&&F.safe.wheel)for(const q of F.safe.wheel.discs){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=q[2]+PR;if(dd<m&&dd>1e-4){const nx2=q[0]+ddx/dd*m,nz2=q[1]+ddz/dd*m;if(!blocked(nx2,nz2)){P.x=nx2;P.z=nz2}}}
+  for(const n of F.npcs){if(n.fall)continue;const X=n.x+(n.ox||0),Z=n.z+(n.oz||0),ddx=P.x-X,ddz=P.z-Z,dd=Math.hypot(ddx,ddz),m=0.16+PR;if(dd<m&&dd>1e-4){const nx2=X+ddx/dd*m,nz2=Z+ddz/dd*m;if(!blocked(nx2,nz2)){P.x=nx2;P.z=nz2}}}
   if(Math.floor(P.x)!==P.tx||Math.floor(P.z)!==P.ty)onTileChange();
   // torch
   // sanctuary: the brazier feeds the torch and nothing hunts you here
@@ -3947,7 +4352,7 @@ function update(dt){
     else if(!F.back)P.fuel=Math.max(0,P.fuel-0.85*(1-0.15*(up.lamp|0))*dt);}
   // who is close enough to talk to
   {let best=null,bd=1.45;
-    for(const n of F.npcs){const d=Math.hypot(n.x-P.x,n.z-P.z);if(d<bd&&los(P.x,P.z,n.x,n.z)){bd=d;best=n}}
+    for(const n of F.npcs){if(n.fall)continue;const d=Math.hypot(n.x-P.x,n.z-P.z);if(d<bd&&los(P.x,P.z,n.x,n.z)){bd=d;best=n}}
     let nd=null;
     if(!best&&ctl){let dd=0.72;for(const D of F.sdoors){if(D.used)continue;const d=Math.hypot(D.x-P.x,D.z-P.z);if(d<dd&&(D.x-P.x)*Math.cos(P.yaw)+(D.z-P.z)*Math.sin(P.yaw)>d*0.45){dd=d;nd=D}}}
     if(best!==nearNpc||nd!==nearDoor){nearNpc=best;nearDoor=nd;if(state!=='room')$('tFlash').textContent=best?'TALK':nd?'OPEN':'FLASH'}
@@ -3987,6 +4392,7 @@ function update(dt){
     }else tr.up=false;
   }
   } // end of the living player's turn
+  wofTick(dt);if(state==='dead')return;
   // the humming rooms: lights that fail, knocking in the walls, a map that will not hold
   if(F.back){
     if(!MP.guest){
@@ -4007,6 +4413,7 @@ function update(dt){
   const pfx=Math.cos(P.yaw),pfz=Math.sin(P.yaw);
   const TG=MP.guest?null:mpTargets(), MD=MP.guest?null:mpDist(TG);
   for(const s of F.shades){
+    if(s.dead){s.x=s.z=-99;s.state=0;s.vis=false;continue}
     rememberMob(s.type,s);
     s.ph+=dt*3;
     if(s.type===3){if(!P.down&&!followMoose(s,dt,1.9)){watcher(s,dt,pfx,pfz);if(state==='dead')return}continue}
@@ -4675,8 +5082,9 @@ function render(t){
   const SC=STUDIO&&STUDIO.cam;
   const yaw=SC?SC.yaw:P.yaw, pitch=SC?SC.pitch:title?0:P.pitch;
   const riding=P.mounted&&!P.down&&!P.away;
-  const ex=SC?SC.x:P.x, ez=SC?SC.z:P.z, ey=SC?SC.y:Math.min(CAM_TOP,EYE+(title?0:P.y+bobY(P,1)+(riding?.16:0)));
+  const ex=SC?SC.x:P.x, ez=SC?SC.z:P.z, ey=SC?SC.y:Math.min(CAM_TOP,EYE*(title?1:wofEye())+(title?0:P.y+bobY(P,1)+(riding?.16:0)));
   {const cp=Math.cos(pitch);camera.position.set(ex,ey,ez);camera.lookAt(ex+cp*Math.cos(yaw),ey+Math.sin(pitch),ez+cp*Math.sin(yaw))}
+  if(FX.tickled>0&&!title){const k=0.025;camera.position.x+=(Math.random()-0.5)*k;camera.position.y+=(Math.random()-0.5)*k;camera.position.z+=(Math.random()-0.5)*k}
   if(pkShake>0){const k=0.05*pkShake;camera.position.x+=(Math.random()-0.5)*k;camera.position.y+=(Math.random()-0.5)*k;camera.position.z+=(Math.random()-0.5)*k;pkShake=Math.max(0,pkShake-0.03)}
   if(P.grab){const k=0.012+0.02*Math.min(1,P.grab.t);camera.position.x+=(Math.random()-0.5)*k;camera.position.y+=(Math.random()-0.5)*k;camera.position.z+=(Math.random()-0.5)*k}
   const B=F.biome;
@@ -4764,7 +5172,8 @@ function render(t){
     if(o.lantern){const q=o.lantern,fl=1+Math.sin(t*10+n.ph)*0.1;spr(q[0],q[1]+0.012,q[2],0.045*fl,0.07*fl,11,1.0,0.6,0.2,1,1);spr(q[0],q[1],q[2],0.5,0.5,7,1.0,0.5,0.15,0.3,1)}
     if(o.lamp){const q=o.lamp;spr(q[0],q[1],q[2],0.22,0.22,7,1.0,0.75,0.3,0.4,1)}
     if(!n.used&&n.type!=='keeper'){const y=o.top+0.08+Math.sin(t*3+n.ph)*0.03,X=n.x+(n.ox||0),Z=n.z+(n.oz||0);spr(X,y,Z,0.08,0.08,7,1.0,0.85,0.4,1,1);spr(X,y,Z,0.32,0.32,7,1.0,0.7,0.2,0.3,1)}
-  }}
+  }
+  wofDraw(t,ex,ey,ez,dtR);}
   drawMoose(t,title||!!STUDIO);drawScout(t,title||!!STUDIO);mpDrawPlayers(t,ex,ez,fwx,fwz);mimicDraw(t,ex,ez);glDraw(t,ex,ez,fwx,fwz);
   if(F.safe&&(F.safe.x-ex)**2+(F.safe.z-ez)**2<22*22){
     const fl=F.safe.fl||1,X=F.safe.x,Z=F.safe.z;
@@ -4792,7 +5201,8 @@ function render(t){
   // the torch in your hand, drawn close to the eye so it never pokes through a wall
   HB.n=0;
   if(!title&&state!=='dead'&&!P.down){
-    TB=HB;const q=buildHand(t,ex,ey,ez,yaw,pitch);TB=CH;
+    const fm=wofForm();
+    TB=HB;const q=fm?buildCritter({rx:P.x,rz:P.z,ry:P.y,ryaw:yaw,rpitch:pitch,walk:P.bob,spd:Math.hypot(P.vx,P.vz),fat:FX.fat>0,pox:FX.pox>0},t,fm,true).torch:buildHand(t,ex,ey,ez,yaw,pitch);TB=CH;
     const hk=0.3,b=HB.buf;
     for(let i=0;i<HB.n;i++){const o=i*13;b[o]=ex+(b[o]-ex)*hk;b[o+1]=ey+(b[o+1]-ey)*hk;b[o+2]=ez+(b[o+2]-ez)*hk}
     const hx=ex+(q[0]-ex)*hk,hy=ey+(q[1]-ey)*hk,hz=ez+(q[2]-ez)*hk,lit=P.fuel>0;
@@ -5020,6 +5430,7 @@ function frame(now){
         if(++titleFrames===20)selfCheck();
       }
       else if((state==='room'||ROOMS.watching)&&ROOMS.active){resize();renderer.toneMappingExposure=1;ROOMS.render()}
+      else if(FX.frozen&&BRK&&BRK.active){resize();renderer.toneMappingExposure=1;BRK.render(raw)}
       else render(now/1000);
     }
     if(state!=='title'){drawHUD();if(state!=='room'&&!ROOMS.watching)drawMap()}
@@ -5620,5 +6031,5 @@ function gripProbe(ts,talking){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='
   for(const t of ts){buildNpc(n,t,P.x,0.7,P.z,0.016);res.push({t,...GRIP_DBG})}talk=save;return res}
 function benchNpc(iters){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='keeper');const e=[P.x,0.7,P.z];buildNpc(n,1,e[0],e[1],e[2],0.016);let t0=performance.now();
   for(let i=0;i<iters;i++){CH.n=0;buildNpc(n,1+i*0.016,e[0],e[1],e[2],0.016)}return (performance.now()-t0)/iters}
-window.__game={music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={wof:WOF,fx:FX,get tk(){return TK},get brk(){return BRK},set tk(v){TK=v},wofSpinStart,wofResolve,wofBegin,music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);
