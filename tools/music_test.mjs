@@ -12,7 +12,7 @@ const ev=(f,a)=>pg.evaluate(f,a),wait=s=>pg.waitForTimeout(s*1000);
 const M=f=>ev(f);
 // ---- registry and resolution
 const keys=await M(()=>Object.keys(window.__game.music.tracks));
-for(const k of ['title','stonework','moss','cinder','frost','hollow','blackhush','chase','The Bone Galleries','The Rustworks','The Glimmer Veins','forest'])ok(keys.includes(k),'track key '+k);
+for(const k of ['lobby','stonework','moss','cinder','frost','hollow','blackhush','chase','The Bone Galleries','The Rustworks','The Glimmer Veins','forest'])ok(keys.includes(k),'track key '+k);
 const shipped=await M(()=>JSON.parse(JSON.stringify(window.__game.music.tracks)));
 ok(Object.values(shipped).every(a=>a.length===2),'every key ships two tracks');
 const dec=await ev(async urls=>{const ac=new OfflineAudioContext(2,44100,44100),out=[];for(const u of urls){try{const b=await (await fetch(u)).arrayBuffer();const a=await ac.decodeAudioData(b);
@@ -20,7 +20,7 @@ const dec=await ev(async urls=>{const ac=new OfflineAudioContext(2,44100,44100),
 ok(dec.length===24&&dec.every(x=>!x.err&&x.dur>55&&x.dur<65&&!x.bad&&x.rms>0.01&&x.rms<0.5&&x.pk<=1.01),'all 24 shipped tracks decode as real ~60 s music '+JSON.stringify(dec.filter(x=>x.err||x.bad||x.rms<=0.01||x.rms>=0.5||x.dur<=55)));
 // the rest of the test drives the channel with a synthetic tone, so start from empty lists
 await ev(()=>{const t=window.__game.music.tracks;for(const k in t)t[k].length=0});
-// ---- generate a 2 s test tone as a WAV blob URL in the page and register it for moss, chase and title
+// ---- generate a 2 s test tone as a WAV blob URL in the page and register it for moss and chase
 await ev(()=>{
   const sr=8000,n=sr*2,buf=new ArrayBuffer(44+n*2),v=new DataView(buf),w=(o,s)=>[...s].forEach((c,i)=>v.setUint8(o+i,c.charCodeAt(0)));
   w(0,'RIFF');v.setUint32(4,36+n*2,true);w(8,'WAVEfmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,sr,true);v.setUint32(28,sr*2,true);v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,'data');v.setUint32(40,n*2,true);
@@ -28,9 +28,9 @@ await ev(()=>{
   const u=URL.createObjectURL(new Blob([buf],{type:'audio/wav'})),m=window.__game.music;
   window.__u=u;m.register('moss',[u]);
 });
-// ---- title screen: nothing plays (no title track registered), no voices created
+// ---- lobby: nothing plays (no lobby track registered), no voices created
 await wait(0.5);
-ok(await M(()=>window.__game.music.voices.length===0&&window.__game.music.playing===null),'title screen: silent, no voices, nothing loaded');
+ok(await M(()=>window.__game.music.voices.length===0&&window.__game.music.playing===null),'lobby: silent, no voices, nothing loaded');
 // ---- start a run
 await pg.mouse.click(640,360);
 await ev(()=>{window.__game.startRun('mus',1,true)});
@@ -67,13 +67,14 @@ d=await M(()=>({k:window.__game.music.key,duck:window.__game.music.duckGain}));
 ok(d.k==='moss'&&Math.abs(d.duck-0.35)<0.03,'pause lowers music ('+d.duck.toFixed(3)+')');
 // ---- sliders: real mouse clicks on the track of each range input, then persisted values
 for(const bus of ['music','sfx','ambience']){
-  const sl=pg.locator(`.volSl[data-bus=${bus}]`);ok(await sl.isVisible(),bus+' slider visible in the pause panel');
+  const sl=pg.locator(`#pause .volSl[data-bus=${bus}]`);ok(await sl.isVisible(),bus+' slider visible in the pause panel');
 }
-const bx=await pg.locator('.volSl[data-bus=sfx]').boundingBox();
+// a real Escape releases the mouse before the pause panel shows; pause() from the test does not
+await ev(()=>document.exitPointerLock());await wait(0.3);const bx=await pg.locator('#pause .volSl[data-bus=sfx]').boundingBox();
 await pg.mouse.click(bx.x+bx.width*0.25,bx.y+bx.height/2);
 const sfxV=await M(()=>window.__game.music.getVolumes().sfx);
 ok(sfxV>0.15&&sfxV<0.35,'mouse click on the Effects slider sets it ('+sfxV.toFixed(2)+')');
-await pg.locator('.volSl[data-bus=music]').fill('70');await pg.locator('.volSl[data-bus=ambience]').fill('20');
+await pg.locator('#pause .volSl[data-bus=music]').fill('70');await pg.locator('#pause .volSl[data-bus=ambience]').fill('20');
 const stored=await M(()=>({m:localStorage.getItem('emberdeep.vol.music'),s:localStorage.getItem('emberdeep.vol.sfx'),a:localStorage.getItem('emberdeep.vol.ambience'),v:window.__game.music.getVolumes()}));
 ok(stored.m==='0.7'&&stored.a==='0.2'&&+stored.s===sfxV,'values persisted '+JSON.stringify(stored));
 await wait(0.3);
@@ -81,11 +82,11 @@ const g=await M(()=>({m:window.__game.music.bus.gain.value,s:window.__game.music
 ok(Math.abs(g.m-0.7)<0.01&&Math.abs(g.a-0.2)<0.01&&Math.abs(g.s-sfxV)<0.01,'bus gains follow sliders '+JSON.stringify(g));
 // touch: a tap on the slider
 const tctx=await b.newContext({hasTouch:true,viewport:{width:1280,height:720}});await tctx.close();
-await pg.evaluate(()=>{const el=document.querySelector('.volSl[data-bus=music]');el.dispatchEvent(new PointerEvent('pointerdown',{pointerType:'touch',bubbles:true}));el.value=40;el.dispatchEvent(new Event('input',{bubbles:true}))});
+await pg.evaluate(()=>{const el=document.querySelector('#pause .volSl[data-bus=music]');el.dispatchEvent(new PointerEvent('pointerdown',{pointerType:'touch',bubbles:true}));el.value=40;el.dispatchEvent(new Event('input',{bubbles:true}))});
 ok(await M(()=>window.__game.music.getVolumes().music===0.4),'touch-style input event sets the slider value');
 // reload keeps values
 await pg.reload();await pg.waitForFunction(()=>window.__game&&window.__game.music);
-ok(await M(()=>document.querySelector('.volSl[data-bus=music]').value==='40'&&document.querySelector('.volSl[data-bus=ambience]').value==='20'),'sliders restore from storage after reload');
+ok(await M(()=>document.querySelector('#pause .volSl[data-bus=music]').value==='40'&&document.querySelector('#pause .volSl[data-bus=ambience]').value==='20'),'sliders restore from storage after reload');
 // ---- Humming Rooms and strange-door rooms fade to silence
 await ev(()=>{
   const sr=8000,n=sr,buf=new ArrayBuffer(44+n*2),v=new DataView(buf),w=(o,s)=>[...s].forEach((c,i)=>v.setUint8(o+i,c.charCodeAt(0)));

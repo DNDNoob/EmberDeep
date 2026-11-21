@@ -12,10 +12,10 @@
      1. F.music     an explicit key a floor may set
      2. F.kind      'cave' -> hollow, 'dark' -> blackhush, 'forest' -> forest ('back' = Humming Rooms: always silent)
      3. F.biome.name  the biome's own key (BIOME_KEY below) or the biome name itself, e.g. 'The Rustworks'
-   The title screen plays 'title'; a chase plays 'chase' if it has tracks, otherwise ducks the floor track by CHASE_DUCK_DB.
+   The walkable lobby (game state 'title': menu room, archives, lift ride) plays 'lobby'; a chase plays 'chase' if it has tracks, otherwise ducks the floor track by CHASE_DUCK_DB.
    Silent: strange-door rooms, the Humming Rooms, dead. Paused: lowered. A voice-chat peer talking ducks by VOICE_DUCK_DB.
    Each list holds one or more URLs; one is picked at random when the track starts. Tracks loop. */
-export const MUSIC_TRACKS={title:['music/title-1.ogg','music/title-2.ogg'],stonework:['music/stonework-1.ogg','music/stonework-2.ogg'],moss:['music/moss-1.ogg','music/moss-2.ogg'],cinder:['music/cinder-1.ogg','music/cinder-2.ogg'],
+export const MUSIC_TRACKS={lobby:['music/lobby-1.ogg','music/lobby-2.ogg'],stonework:['music/stonework-1.ogg','music/stonework-2.ogg'],moss:['music/moss-1.ogg','music/moss-2.ogg'],cinder:['music/cinder-1.ogg','music/cinder-2.ogg'],
   frost:['music/frost-1.ogg','music/frost-2.ogg'],hollow:['music/hollow-1.ogg','music/hollow-2.ogg'],blackhush:['music/blackhush-1.ogg','music/blackhush-2.ogg'],chase:['music/chase-1.ogg','music/chase-2.ogg'],
   'The Bone Galleries':['music/bones-1.ogg','music/bones-2.ogg'],'The Rustworks':['music/rust-1.ogg','music/rust-2.ogg'],'The Glimmer Veins':['music/glimmer-1.ogg','music/glimmer-2.ogg'],forest:['music/forest-1.ogg','music/forest-2.ogg']};
 const BIOME_KEY={'The Old Stonework':'stonework','Mossgrown Halls':'moss','Cinder Warrens':'cinder','The Frostvault':'frost','The Dark Forest':'forest'};
@@ -63,6 +63,8 @@ export function setVolumes(o){
 
 function load(url){
   if(bufs.has(url))return bufs.get(url);
+  // opened straight from disk (file://) browsers refuse fetch: stay silent instead of logging errors
+  if(location.protocol==='file:'){failed.add(url);const p=Promise.resolve(null);bufs.set(url,p);return p}
   const p=fetch(url).then(r=>{if(!r.ok)throw new Error(r.status);return r.arrayBuffer()}).then(b=>new Promise((ok,no)=>ac.decodeAudioData(b,ok,no)))
     .catch(e=>{failed.add(url);console.warn('music: could not load',url,e&&e.message||e);return null});
   bufs.set(url,p);return p;
@@ -87,7 +89,7 @@ export function updateMusic(dt,info){
   try{
     const s=info.state,F=info.F;
     let key=null,floorKey=null;
-    if(s==='title')key=MUSIC_TRACKS.title.length?'title':null;
+    if(s==='title')key=MUSIC_TRACKS.lobby.length?'lobby':null;
     else if(s==='dead'||info.inRoom||s==='room')key=null;
     else{
       floorKey=resolveMusicKey(F);key=floorKey;

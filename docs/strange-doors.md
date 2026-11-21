@@ -73,6 +73,60 @@ The galaxy is look-only because there's no floor. The fall is a
 cinematic with no movement input. For local effects that change movement
 temporarily, follow the mirror's use of the walker's speed multiplier.
 
+## Room controls protocol
+
+Use the shared action names from `src/room-controls.js`. Room logic reads
+those actions from `roomInput()` and shows their current device labels
+through `o.control(action)`. Controller labels use Xbox names for the
+standard button positions. Use a room's `controlMode()` to declare
+temporary `table`, `choice`, or `read` focus.
+
+| Intent | Keyboard and mouse | Controller | Touch |
+| --- | --- | --- | --- |
+| Walk and look | WASD to move, mouse to look. Outside focused activities, ↑/↓ also move and ←/→ turn. | Left stick moves, right stick looks. | Left stick moves, drag to look. |
+| Sprint | Shift | LT or left-stick click | Push the movement stick fully. |
+| Jump | Space | A | Jump |
+| Interact or confirm (`press`) | E or click an eligible control | X | Tap Use or the labeled control. |
+| Navigate a choice or board (`nav*`) | Arrow keys | D-pad | Tap the option or tile. |
+| Step back (`back`) | Esc | B | Visible Back, Close, or Step away action. |
+| Alternate action (`alternate`) | Q | Y | Labeled action button. |
+| Additional tool (`tool`) | Z | RB | Labeled action button. |
+| Start a ready round (`start`) | Enter | Menu | Start round button. |
+
+- Keep walking and looking available at stations. A tabletop or choice
+  overlay can reserve arrows and D-pad for selection while the player still
+  walks with WASD or the left stick. Let the player step away to disengage.
+- Reserve Space and A for jumping, and consume each confirm, back, and
+  purchase once per press. Repeat only for an action that benefits from a
+  hold, such as a console's soft drop. Leave Tab and focused buttons'
+  native keyboard activation available for accessible navigation.
+- In a focused activity, Back returns to walking or closes an optional
+  overlay. Exiting a room is a separate action at its physical door.
+  Use the room's established exit interaction when a passage is meant
+  to be walked through.
+- Explain any additional action at the station, with the correct keyboard,
+  controller, or touch label. Offer an equivalent control on every
+  supported input device. A required voice action needs a button fallback.
+- Declare look-only or cinematic rooms in the registry. They should only
+  show controls the player can use, and spectators should never operate
+  the room they are watching.
+
+### Existing rooms
+
+- The Glass Kiln uses Interact on the aimed machine button. Mouse and
+  touch also support hitting the physical control.
+- The Mirror Room uses Interact on objects and exits. In its timed choice,
+  use left/right and confirm, or select the visible option directly.
+  Back closes the optional book.
+- Mosquito Outpost uses Interact to operate the table, build a tower
+  on a selected snow tile, or open the physical exit when walking.
+  Alternate places spikes, Tool pours syrup, and Start launches a round.
+  Back returns to walking while a wave continues.
+- The Picture House uses the microphone or a held Interact action to
+  speak and yell. Walk through an available exit.
+- The Whispering Monoliths use ordinary walking through the passage.
+  The star room is look-only, and the falling room is cinematic.
+
 ## Preview and check
 
 Start a solo run and call `__game.previewRoom('mirror', 7)` from the
@@ -94,4 +148,5 @@ Before shipping, verify that the main interaction works on keyboard,
 controller, and touch, and that the room leaves no lingering HUD, audio,
 or controls after exit. Run `tools/movement_test.mjs` and
 `tools/door_rotation_test.mjs` against a fresh build. Run
+`tools/room_controls_test.mjs` when changing bindings or focus and
 `tools/room_fxaa_test.mjs` when changing room rendering.

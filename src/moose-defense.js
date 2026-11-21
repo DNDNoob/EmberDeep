@@ -364,6 +364,7 @@ export function mooseDefenseRoom({group:room,scene,cam,o,A,onClear,finish}){
   const S=mooseDefenseGame(),live=!A.watching;
   const arcade=outpostArcade(room,o,onClear),group=arcade.board;
   Object.assign(S,{table:false,tableMix:0,yaw:0,pitch:-.085});
+  S.controlMode=()=>S.table?'table':'walk';
   const frame=outpostCamera(cam,arcade,S);
   let selection=Math.floor(TILES.length/2),previous={},time=0,prompt='',lastHud='';
   if(TILES[selection].path>=0)selection--;
@@ -548,14 +549,16 @@ export function mooseDefenseRoom({group:room,scene,cam,o,A,onClear,finish}){
     const target=String.fromCharCode(65+Math.floor(selection/COLS))+(selection%COLS+1)
       +' · '+(S.towers.has(selection)?'Tower':S.traps.has(selection)?'Spike trap':S.syrups.has(selection)?'Maple syrup':tile.path>=0?'Path':'Snow');
     const pct=Math.min(100,Math.floor(S.farthest/LAST*100)),near=arcade.near(),atExit=arcade.atExit();
-    const hud=[text,S.hp,count,funds,supply,target,phase,prompt,S.table,near,atExit,pct].join('|');
+    const device=o.inputDevice(),key=o.control;
+    const hud=[text,S.hp,count,funds,supply,target,phase,prompt,S.table,near,atExit,pct,device].join('|');
     if(hud===lastHud)return;
     lastHud=hud;status.textContent=text;tileLabel.textContent=target;
     panel.classList.toggle('moose-roam',!S.table);
     enter.hidden=!near||!live;
     door.hidden=!atExit||!live;
-    walkHint.textContent=atExit?'E or X to exit':phase==='run'?'Round '+round+' running · '+pct+'% of track':
-      phase==='hatch'||phase==='revive'?'Round complete':near?'E or X to play':'Approach the table to play';
+    const interact=device==='touch'?'Tap Use':key('press');
+    walkHint.textContent=atExit?interact+' to exit':phase==='run'?'Round '+round+' running · '+pct+'% of track':
+      phase==='hatch'||phase==='revive'?'Round complete':near?interact+' to play':'Approach the table to play';
     track.value=pct;percent.value=pct+'%';
     const hue=pct>=50?0:pct<25?120-pct*3:45-(pct-25)*1.8;
     track.style.setProperty('--track-color',`hsl(${hue} 83% 56%)`);
@@ -575,7 +578,9 @@ export function mooseDefenseRoom({group:room,scene,cam,o,A,onClear,finish}){
     release.hidden=over||phase==='run'||phase==='revive'||phase==='hatch';
     release.disabled=!live;
     release.textContent=S.bonus&&phase==='break'?'Start bonus round 4':'Start round '+(phase==='break'?round+1:round);
-    hint.textContent=prompt||(live?(over?'Step away and use the exit door to return to the maze.':'Click, tap, or use arrows / D-pad · E/X tower · Q/B spikes · Z/Y syrup · Space/A start'):'Watching Mosquito Outpost');
+    const controls=device==='touch'?'Drag to look · Tap a square, then tap an action.':
+      (device==='keyboard'?'Right-drag to look · Click or ':'')+key('navigate')+' select · '+key('press')+' tower · '+key('alternate')+' spikes · '+key('tool')+' syrup · '+key('start')+' start · '+key('back')+' back';
+    hint.textContent=prompt||(live?(over?'Step away and use the exit door to return to the maze.':controls):'Watching Mosquito Outpost');
   }
 
   function moveSelection(dx,dz){
@@ -586,7 +591,7 @@ export function mooseDefenseRoom({group:room,scene,cam,o,A,onClear,finish}){
   const ray=new THREE.Raycaster(),pointer=new THREE.Vector2(),hit=new THREE.Vector3();
   const board=new THREE.Plane(new THREE.Vector3(0,1,0),-(TABLE_HEIGHT+.034*TABLE_SCALE));
   S.tap=(x,y)=>{
-    if(!live||!S.table||S.tableMix<.97||!['build','run','break'].includes(S.phase))return false;
+    if(!live||!S.table||!['build','run','break'].includes(S.phase))return false;
     ray.setFromCamera(pointer.set(x,y),cam);
     if(!ray.ray.intersectPlane(board,hit))return false;
     const col=Math.floor(hit.x/TABLE_SCALE+COLS/2),row=Math.floor(hit.z/TABLE_SCALE+ROWS/2);
@@ -597,17 +602,17 @@ export function mooseDefenseRoom({group:room,scene,cam,o,A,onClear,finish}){
   S.update=(dt,input)=>{
     time+=dt;
     effects.update(dt);
-    const edges={left:input.sl,right:input.sr,up:input.defenseUp,down:input.defenseDown,
-      build:input.press,spike:input.defenseSpike,syrup:input.defenseSyrup,launch:input.defenseStart,back:input.defenseBack};
+    const edges={left:input.navLeft,right:input.navRight,up:input.navUp,down:input.navDown,
+      build:input.press,spike:input.alternate,syrup:input.tool,launch:input.start,back:input.back};
     const rising=action=>edges[action]&&!previous[action];
     if(live){
+      walkOutpost(arcade,S,input,dt);
       if(!S.table){
-        walkOutpost(arcade,S,input,dt);
         if(rising('build')){
           if(arcade.atExit()){leaveArcade();return}
           if(arcade.near())setTable(true);
         }
-      }else if(rising('back'))setTable(false);
+      }else if(rising('back')||!arcade.near())setTable(false);
       else{
         if(rising('left'))moveSelection(-1,0);
         if(rising('right'))moveSelection(1,0);

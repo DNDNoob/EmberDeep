@@ -24,7 +24,7 @@ export const DOOR_KINDS={
   fall:{name:'a door with no floor behind it',disguise:true,mode:'none',fadeIn:0.18}, // cinematic fall
   mirror:{name:'a room behind a mirror',look:'mirror',action:'USE',css:'mirroom',fadeIn:1.4},
   theater:{name:'the picture house',look:'theater',action:'TALK'},
-  monoliths:{name:'the whispering monoliths',look:'monoliths'},
+  monoliths:{name:'the whispering monoliths',look:'monoliths',touchUse:false},
   moose:{name:'Mosquito Outpost',look:'moose',css:'mooseroom'}, // walkable arcade with a tabletop camera
 };
 const modeOf=k=>DOOR_KINDS[k]?.mode||'walk';
@@ -349,6 +349,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     S.update=(dt,inp)=>{
       S.t+=dt;const t=S.t;
       lookStep(S,dt,inp.lx,inp.ly);
+      if(!A.watching)o.hud('<small>'+o.hint('galaxy')+'</small>');
       if(S.said===0&&t>0.9){S.said=1;o.say('You are floating. There is no floor, and no maze.',4)}
       if(S.said===1&&t>HOLE_AT){S.said=2;o.say('The sun goes out.',3.5);o.tone(55,3.5,'sawtooth',0.2,0,-30);o.noise(2.5,0.25,180,0.7)}
       if(S.said===2&&t>EAT+1.6){S.said=3;o.say('It is pulling everything in.',3.5)}
@@ -1145,7 +1146,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     const walk=(dt,inp,hold,ok)=>{
       holdNow=hold;
       // not while it breaks through, not when you spray it: you stand still (and a jump already begun keeps going)
-      const ci=ok?{mx:inp.mx,my:inp.my,sprint:inp.sprint,jump:!!inp.jump&&!(S.live&&inp.touch)}:{mx:0,my:0,jump:false};
+      const ci=ok?{mx:inp.mx,my:inp.my,sprint:inp.sprint,jump:!!inp.jump}:{mx:0,my:0,jump:false};
       if(!ok){WK.b.vx=WK.b.vz=0}
       WK.step(dt,ci,S.yaw);view(dt);
     };
@@ -1221,12 +1222,17 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       B.aimed=(ox,oy,oz,fx,fy,fz)=>{if(!S.st)return false;const rx=bx-ox,ry=0.8-oy,rz=bz-oz,al=rx*fx+ry*fy+rz*fz;return al>0.2&&al<1.8&&Math.hypot(rx-fx*al,ry-fy*al,rz-fz*al)<0.3};
       B.toggle=()=>{if(B.st===1){B.st=2;o.tone(300,0.12,'triangle',0.05);return}B.st=1;o.noise(0.2,0.08,2600,1);o.tone(240,0.1,'triangle',0.04);
         if(!B.paid){B.paid=true;o.gems(5);o.sfx('shard');o.say('+5 gems tucked in the book.',3.5)}};
-      B.html=()=>`<div style="position:fixed;left:50%;top:50%;transform:translate(-50%,-50%) rotate(-1.2deg);width:min(90vw,470px);box-sizing:border-box;padding:30px 34px 26px;text-align:left;font:italic 20px/1.55 'Segoe Script','Bradley Hand','Lucida Handwriting','Snell Roundhand',Georgia,'Times New Roman',serif;letter-spacing:0;color:#2a1810;text-shadow:none;background:radial-gradient(ellipse at 28% 18%,rgba(255,246,218,.97),rgba(226,200,146,.98) 62%,rgba(168,128,76,1) 100%);border-radius:3px;box-shadow:inset 0 0 38px rgba(110,70,30,.55),0 8px 40px #000,0 0 0 1px rgba(60,35,15,.8)">To whoever stood behind the glass:<br>Thank you for not looking. Most of them look.<br>Please take something for your trouble.<br><span style="display:block;text-align:right;margin-top:6px">&mdash; the Guest</span><small style="display:block;margin-top:14px;font:12px sans-serif;color:#6a5030;text-align:center;letter-spacing:.06em">${S.touch?'tap USE or walk to close':'press again or walk to close'}</small></div>`;
+      B.html=()=>`<div style="position:fixed;left:50%;top:50%;transform:translate(-50%,-50%) rotate(-1.2deg);width:min(90vw,470px);box-sizing:border-box;padding:30px 34px 26px;text-align:left;font:italic 20px/1.55 'Segoe Script','Bradley Hand','Lucida Handwriting','Snell Roundhand',Georgia,'Times New Roman',serif;letter-spacing:0;color:#2a1810;text-shadow:none;background:radial-gradient(ellipse at 28% 18%,rgba(255,246,218,.97),rgba(226,200,146,.98) 62%,rgba(168,128,76,1) 100%);border-radius:3px;box-shadow:inset 0 0 38px rgba(110,70,30,.55),0 8px 40px #000,0 0 0 1px rgba(60,35,15,.8)">To whoever stood behind the glass:<br>Thank you for not looking. Most of them look.<br>Please take something for your trouble.<br><span style="display:block;text-align:right;margin-top:6px">&mdash; the Guest</span><small style="display:block;margin-top:14px;font:12px sans-serif;color:#6a5030;text-align:center;letter-spacing:.06em">${o.inputDevice()==='touch'?'Tap Close or walk away':o.control('back')+' to close, or walk away'}</small></div>`;
       B.snap=()=>({eb:B.st,bp:B.paid?1:0});
       B.apply=q=>{if(Number.isInteger(q.eb)&&q.eb>=0&&q.eb<=2)B.st=q.eb;if(q.bp===1)B.paid=true};
       return B;
     };
     const emM=mirrorEggMirror(),emB=mirrorEggBook();
+    S.controlMode=()=>S.ch===0&&S.live?'choice':emB.st===1?'read':'walk';
+    S.choose=index=>{
+      if(S.controlMode()!=='choice'||(index!==0&&index!==1))return false;
+      S.sel=index;pick(index+1);hudHtml();return true;
+    };
     // ---- the lamp that rules the parlor: the one nearest the little mirror is the switch for every light in the room ----
     const LN=Math.hypot(LA[0]-S.mini[0],LA[1]-S.mini[1])<=Math.hypot(LB[0]-S.mini[0],LB[1]-S.mini[1])?LA:LB;S.lampAt=LN.slice();{const q=LO[LN===LA?0:1];q.d=Math.min(q.d,0.4)}
     const lampAim=(ox,oy,oz,fx,fy,fz)=>{const rx=LN[0]-ox,rz=LN[1]-oz,d2=fx*fx+fz*fz;if(d2<1e-4)return false;const al=(rx*fx+rz*fz)/d2,y=oy+fy*al;return al>0.1&&al<1.6&&y>0.1&&y<1.95&&Math.hypot(rx-fx*al,rz-fz*al)<0.4};
@@ -1238,7 +1244,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     let T0=0;const at=x=>T0<x&&S.t>=x;
     S.update=(dt,inp)=>{
       T0=S.t;S.t+=dt;const t=S.t,W=A.watching,hold=S.ch===2?t-S.ct:-1;
-      lookStep(S,dt,inp.lx,inp.ly,[-1.25,1.0]);S.yaw=wrap(S.yaw);S.touch=!!inp.touch;
+      lookStep(S,dt,inp.lx||0,inp.ly||0,[-1.25,1.0]);S.yaw=wrap(S.yaw);
       S.fr=S.ch===2&&hold>=LK.PROMPT&&S.bt<0;
       // walking: not while it breaks through, not when you spray it, not while you lean in to the little glass
       const wOk=S.bt<0&&S.ch!==1&&S.leaveT<0;
@@ -1282,17 +1288,19 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       }
       if(S.want&&t>=S.want[1]&&S.ch===0){pick(S.want[0]);S.want=null}
       // choosing
-      const cur_={l:!!inp.sl,r:!!inp.sr,k1:!!inp.k1,k2:!!inp.k2,tab:!!inp.tab,ok:!!inp.press,spray:!!inp.spray,thumb:!!inp.thumb},P0=S.prev||cur_;S.prev=cur_;const e=k=>cur_[k]&&!P0[k];
+      const cur_={l:!!inp.navLeft,r:!!inp.navRight,ok:!!inp.press,back:!!inp.back},P0=S.prev||cur_;S.prev=cur_;const e=k=>cur_[k]&&!P0[k];
       const live=S.held&&t>=MIR.CHOICE&&S.ch===0&&S.bt<0;S.live=live;
       if(!W&&S.ch===0&&S.bt<0){
         if(!S.held){if(S.tg==='can'&&e('ok'))grab()}
         else if(live){
-          if(inp.touch){if(e('spray'))pick(1);else if(e('thumb'))pick(2)}
-          else{if(e('l'))S.sel=0;if(e('r'))S.sel=1;if(e('tab'))S.sel=S.sel===0?1:0;if(nf(inp.wh)&&inp.wh)S.sel=inp.wh>0?1:0;if(e('k1'))pick(1);else if(e('k2'))pick(2);else if(e('ok')&&S.sel>=0)pick(S.sel===0?1:2)}
+          if(e('l'))S.sel=0;
+          if(e('r'))S.sel=1;
+          if(e('ok')&&S.sel>=0)pick(S.sel+1);
         }else if(e('ok')&&t>=S.spc)spray(fx,fy,fz);
       }
       // once it is gone: break the glass, leave by the door, or look at what is in the parlor. No timer forces you out
-      if(!W&&S.fr&&S.leaveT<0&&e('ok')){
+      if(!W&&emB.st===1&&e('back'))emB.toggle();
+      else if(!W&&S.fr&&S.leaveT<0&&e('ok')){
         if(emB.st===1)emB.toggle();
         else if(S.tg==='glass')fblow();
         else if(S.tg==='door'){S.leaveT=t;o.tone(300,0.4,'sine',0.12,0,-100)}
@@ -1331,18 +1339,19 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     // ---- drawing ----
     const hudHtml=()=>{
       if(A.watching)return;
-      let h='';const t=S.t,op=(i,tx,tag)=>{const on=S.sel===i;return`<div style="display:block;margin:6px auto 0;padding:6px 14px;max-width:88vw;border:1px solid ${on?'#ffe0a8':'#6b5a48'};border-radius:6px;background:${on?'rgba(255,190,110,.26)':'rgba(0,0,0,.5)'};color:${on?'#fff2d6':'#d9c7ae'}">${S.touch?'<span style="opacity:.65;font-size:12px">['+tag+']</span> ':''}${tx}</div>`};
+      let h='';
+      const op=(i,tx)=>`<button type="button" data-room-choice="${i}" aria-pressed="${S.sel===i}">${tx}</button>`;
       const pr=(w,k)=>`<div style="position:fixed;left:0;right:0;top:61%;font-size:15px">${w} <small>[${o.hint(k)}]</small></div>`;
-      S.btn=['USE',false];
-      if(emB.st===1)h=emB.html();
-      else if(S.bt<0&&S.ch===0&&S.live){S.btn=['SPRAY',true];h=op(0,'Spray the monster','SPRAY')+op(1,'Suck your thumb and hope the bad things go away','THUMB')+`<small style="display:block;margin-top:8px">${o.hint('mirror')}</small>`}
-      else if(S.bt<0&&S.ch===0&&S.held){S.btn=['SPRAY',false];h=pr('Spray','mspray')}
-      else if(S.bt<0&&S.ch===0&&S.tg==='can'){S.btn=['PICK UP',false];h=pr('Pick up','mpick')}
+      S.touchAction='USE';
+      if(emB.st===1){S.touchAction='CLOSE';h=emB.html()}
+      else if(S.bt<0&&S.ch===0&&S.live){h=op(0,'Spray the monster')+op(1,'Suck your thumb and hope the bad things go away')+`<small style="display:block;margin-top:8px">${o.hint('mirror')}</small>`}
+      else if(S.bt<0&&S.ch===0&&S.held){S.touchAction='SPRAY';h=pr('Spray','mspray')}
+      else if(S.bt<0&&S.ch===0&&S.tg==='can'){S.touchAction='PICK UP';h=pr('Pick up','mpick')}
       else if(S.fr&&S.leaveT<0){
-        if(S.tg==='door'){S.btn=['LEAVE',false];h=pr('Leave','muse')}
+        if(S.tg==='door')h=pr('Leave','muse');
         else if(S.tg==='lamp')h=pr(S.lamp?'Turn off':'Turn on','muse')
         else if(S.tg==='mdoor')h=pr('Open','muse')
-        else if(S.tg==='book'){S.btn=['READ',false];h=pr('Read','muse')}}
+        else if(S.tg==='book')h=pr('Read','muse')}
       o.hud(h);
     };
     const v3=new THREE.Vector3(),M4=new THREE.Matrix4(),Q4=new THREE.Quaternion(),E4=new THREE.Euler(),S3=new THREE.Vector3(),camQ=new THREE.Quaternion();
@@ -1491,8 +1500,9 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
   const KINDS={galaxy,fall,kiln,mirror,theater,monoliths,moose};
   for(const kind of Object.keys(DOOR_KINDS))if(!Object.hasOwn(KINDS,kind))throw new Error('Missing room factory for '+kind);
   A.mode=modeOf;
+  A.controlMode=()=>cur?.controlMode?.()||modeOf(A.kind);
   // a room only ever sees the controls its mode allows
-  const gate=(k,inp)=>{const m=modeOf(k);return m==='walk'?inp:m==='look'?Object.assign({},inp,{mx:0,my:0,jump:false,sprint:false}):Object.assign({},inp,{mx:0,my:0,jump:false,sprint:false,lx:0,ly:0,press:0})};
+  const gate=(k,inp)=>{const m=modeOf(k);return m==='walk'?inp:m==='look'?{lx:inp.lx||0,ly:inp.ly||0}:Z};
   const build=(kind,seed)=>{
     setup();A.active=true;A.kind=kind;held=false;
     cur=(KINDS[kind]||kiln)(seed);
@@ -1522,6 +1532,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
   A.update=(dt,inp)=>{if(!cur||held)return;cur.in+=dt;cur.update(dt,A.watching?inp:gate(A.kind,inp))};
   A.tap=(x,y)=>!!(cur&&!A.watching&&cur.tap&&cur.tap(x,y));
   A.untap=()=>{if(cur&&cur.untap)cur.untap()};
+  A.choose=index=>!A.watching&&cur?.choose?.(index);
   A.aimed=()=>!!(cur&&cur.aimed&&cur.aimed());
   A.cam=cam;
   // test hooks for the picture house: inject a mic level or recognised words, force the house reel
