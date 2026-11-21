@@ -210,10 +210,12 @@ try{
   const trackColor=()=>track.evaluate(el=>el.style.getPropertyValue('--track-color'));
   assert.match(await trackColor(),/hsl\(120 /);
   await roomKey('Space');
+  assert.equal(await page.evaluate(()=>__game.ROOMS.state().phase),'build','Jump does not start the tabletop');
+  await roomKey('Enter');
   await move(4.65);
   assert.match(await trackColor(),/hsl\((3\d|4\d)/);
   const before=await page.evaluate(()=>__game.ROOMS.snap());
-  await roomKey('Backspace');
+  await roomKey('Escape');
   await move(.45,{mx:1});
   const walking=await page.evaluate(()=>__game.ROOMS.snap());
   assert.equal(walking.arcade[5],false);
@@ -228,7 +230,7 @@ try{
   await shot('moose-arcade-track-progress.png');
   await move(14);
   await shot('moose-defense-loss.png');
-  await roomKey('Space');
+  await roomKey('Enter');
   await roomKey('e');
   assert.ok(await page.getByText('Step away and use the exit door to return to the maze.').isVisible());
   await page.getByRole('button',{name:'Step away'}).click();
@@ -238,7 +240,7 @@ try{
     {lost:true,pet:false,state:'play'});
   assert.equal(await page.locator('#achToast b').textContent(),MOOSE_ACH.mooseLose.title);
   await open();
-  await roomKey('Space');
+  await roomKey('Enter');
   await move(1);
   await page.getByRole('button',{name:'Step away'}).click();
   await walkToExit();
