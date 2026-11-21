@@ -2134,7 +2134,6 @@ const ROOMS=createRooms(renderer,{post:POST,low:Q===0,ao:Q>=2,
   gems:n=>{wallet+=n;R.gems+=n;store.set('wallet',wallet)},sfx:n=>sfx(n),
   mooseSpikes:()=>P.spikeTraps,useMooseSpike:()=>{if(P.spikeTraps<1)return false;P.spikeTraps--;return true},
   mooseGems:()=>previewStamina?.mooseGems??wallet,
-  outpostMurals:typeof __OUTPOST_MURALS__==='undefined'?[]:__OUTPOST_MURALS__,
   mooseTableFocus:on=>{
     document.body.classList.toggle('moose-table',on);mouseL=false;
     if(on){

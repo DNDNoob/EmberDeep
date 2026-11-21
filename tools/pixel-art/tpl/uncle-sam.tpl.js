@@ -1,0 +1,96 @@
+// Uncle Sam mural, rebuilt as 192x108 pixel art at load time.
+// Background is procedural (seeded hash noise, Bayer dithering); the figure is an RLE palette sprite.
+// Usage: const canvas = drawUncleSam();  // 192x108; draw it scaled with imageSmoothingEnabled=false
+const PAL = '@@PAL@@'.split(',');
+const SPRITE = { x: @@X@@, y: @@Y@@, w: @@W@@, h: @@H@@, rle: '@@RLE@@' };
+
+const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map(n => (n + .5) / 16 - .5);
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+
+// deterministic hash value-noise
+function hash(x, y, s) {
+  let h = Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(s, 1442695041);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+function vnoise(x, y, s) {
+  const xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi;
+  const u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
+  const a = hash(xi, yi, s), b = hash(xi + 1, yi, s), c = hash(xi, yi + 1, s), d = hash(xi + 1, yi + 1, s);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+const fbm = (x, y, s) => (vnoise(x, y, s) * .57 + vnoise(x * 2, y * 2, s + 1) * .29 + vnoise(x * 4, y * 4, s + 2) * .14);
+
+function inStar(px, py, cx, cy, R, rot) {
+  const dx = px - cx, dy = py - cy, seg = Math.PI * 2 / 5;
+  if (dx * dx + dy * dy > R * R) return false;
+  let t = ((Math.atan2(dy, dx) - rot) % seg + seg) % seg;
+  if (t > seg / 2) t = seg - t;
+  const r = Math.hypot(dx, dy), ro = R * .42, tx = R, ix = ro * Math.cos(seg / 2), iy = ro * Math.sin(seg / 2);
+  const qx = r * Math.cos(t), qy = r * Math.sin(t);
+  const cr = (ix - tx) * (qy) - (iy) * (qx - tx), c0 = (ix - tx) * 0 - iy * (0 - tx);
+  return cr * c0 >= 0;
+}
+
+// gold brush-stroke cloud mass: positive inside, soft edge, streaky
+function cloud(x, y, cx, cy, rx, ry, tilt, s) {
+  const dx = (x - cx) / rx, dy = (y - cy - tilt * (x - cx)) / ry;
+  return 1 - Math.hypot(dx, dy) + .9 * (vnoise(x * .05 + y * .03, y * .45, s) - .5);
+}
+
+const STARS = [[50, 8, 6, -85], [22.5, 19, 6.5, -100], [6.5, 32, 5.5, -80], [123, 8, 6, -95], [157.5, 13.5, 6.5, -78], [185, 26, 6.5, -100]];
+const PEAKS = [[31, 39, .6], [153, 34.5, .55], [172, 40, .5], [112, 46, .5]];
+const PINES = [[9, 64, 28, 4.5], [3, 73, 20, 3.5], [17.5, 76, 22, 3.6], [23, 88, 20, 3], [182.5, 70, 32, 4.6], [171, 77, 24, 4], [165, 85, 18, 3.2], [158, 93, 16, 3]];
+
+function pine(x, y, p) {
+  const f = (y - p[1]) / p[2];
+  if (f < 0 || f > 1) return false;
+  return Math.abs(x - p[0]) < p[3] * 1.35 * (.15 + .85 * f) * (.62 + .38 * ((f * 5) % 1));
+}
+
+export function drawUncleSam(w = 192) {
+  const h = Math.round(w * 9 / 16), cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d'), img = ctx.createImageData(w, h), px = new Uint32Array(img.data.buffer);
+  const rgb = PAL.map(c => c ? 0xff000000 | parseInt(c.slice(5, 7), 16) << 16 | parseInt(c.slice(3, 5), 16) << 8 | parseInt(c.slice(1, 3), 16) : 0);
+  const sp = new Uint8Array(SPRITE.w * SPRITE.h);
+  for (let i = 0, p = 0; i < SPRITE.rle.length; i += 2) {
+    const n = B64.indexOf(SPRITE.rle[i]) + 1; sp.fill(B64.indexOf(SPRITE.rle[i + 1]), p, p + n); p += n;
+  }
+  const k = 192 / w;
+  for (let Y = 0; Y < h; Y++) for (let X = 0; X < w; X++) {
+    const x = (X + .5) * k, y = (Y + .5) * k, d = BAYER[(Y & 3) * 4 + (X & 3)];
+    // sky: dark teal at the top, lighter below, with diagonal brush streaks
+    const sw = .5 + .5 * Math.sin((x * .5 + y * .9) / 5.5 + 5 * fbm(x * .035, y * .06, 4));
+    const lv = .12 + .5 * clamp(y / 55) + .5 * (sw * sw - .3) + d * .22;
+    let c = lv > .62 ? 23 : lv > .3 ? 17 : 16;
+    // gold clouds
+    const e = Math.max(cloud(x, y, 38, 31, 22, 9, -.15, 11), cloud(x, y, 18, 43, 24, 4, -.2, 12),
+      cloud(x, y, 150, 32, 46, 8, -.08, 13), cloud(x, y, 132, 44, 30, 4, -.05, 14),
+      cloud(x, y, 180, 41, 18, 5, -.1, 15), cloud(x, y, 122, 21, 18, 3, -.3, 16)) + d * .16;
+    if (e > -.02) c = e > .5 ? 7 : e > .2 ? 22 : 6;
+    for (const s of STARS) if (inStar(x, y, s[0], s[1], s[2], s[3] * Math.PI / 180)) c = 8;
+    // mountains: snowy back range, two blue ranges
+    let ra = 99;
+    for (const p of PEAKS) ra = Math.min(ra, p[1] + p[2] * Math.abs(x - p[0]));
+    ra += (fbm(x * .13, 2, 21) - .5) * 7;
+    if (y > ra) {
+      const dd = y - ra, near = 1.2 - Math.min(Math.abs(x - 31), Math.abs(x - 153)) / 70;
+      const sn = (3 + 10 * vnoise(x * .2 + y * .15, y * .45, 22)) * near;
+      c = dd < sn + d * 2 ? 8 : (vnoise(x * .15 - y * .2, y * .3, 23) > .55 ? 18 : 19);
+    }
+    const rb = 59 + (fbm(x * .06, 3, 24) - .5) * 9 - (x < 60 ? 4 : 0);
+    if (y > rb) c = y < rb + 2 && d > 0 ? 19 : 18;
+    const rc = x > 140 ? 70 - 10 * (x - 148) / 44 + (fbm(x * .1, 5, 25) - .5) * 6 : 68;
+    if (y > rc && x > 140) c = 20;
+    if (y > 92 + (x < 80 ? -10 : 0) + (fbm(x * .1, 7, 26) - .5) * 6 && (x < 24 || x > 155)) c = 21;
+    for (const p of PINES) if (pine(x, y, p)) c = 21;
+    // sprite
+    const sx = Math.floor(x) - SPRITE.x, sy = Math.floor(y) - SPRITE.y;
+    if (sx >= 0 && sy >= 0 && sx < SPRITE.w && sy < SPRITE.h) { const v = sp[sy * SPRITE.w + sx]; if (v) c = v; }
+    px[Y * w + X] = rgb[c];
+  }
+  ctx.putImageData(img, 0, 0);
+  return cv;
+}

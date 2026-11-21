@@ -66,6 +66,25 @@ idea → SDF (primitives + smooth-min + noise) → mesh (surface nets, once) →
 - Every effect needs a low-quality path (`Q === 0` stays Lambert, no extras).
 - Abyssal Garden adapts resolution from GPU timings; worth copying if frame times become a problem.
 
+## 8. Wall art, posters and murals
+
+Any 2D wall art (murals, posters, paintings, signs with pictures) is generated at load time as lightweight pixel art. Never ship bitmaps: no WebP, PNG or JPG in the bundle, and no base64 image strings in `build.mjs`.
+
+**Recipe**
+
+- A 192x108 canvas for 16:9 wall pieces. Scale other aspect ratios to a similar pixel count.
+- A hand-picked palette of 16-24 colours.
+- A procedural background: seeded PRNG, value noise, ordered (Bayer) dithering, and polygons for stars, trees and mountains.
+- The main subject as a palette-indexed RLE sprite string drawn over the background.
+- Export a `drawX(w = 192)` function that returns a canvas. Cache that canvas at module level so re-entering a room does not regenerate it.
+- Display it with `THREE.CanvasTexture`, `NearestFilter` for mag and min, `generateMipmaps = false`, `colorSpace = SRGBColorSpace`. Dispose the texture when the room clears.
+
+**Style.** Keep a textured, painterly pixel look: quantise the reference to the palette and clean up lightly. Avoid flat cel-shaded redraws; Andrew tested those and preferred them less.
+
+**Budget.** About 10-15 KB of raw JS per piece.
+
+**Pipeline.** `tools/pixel-art/` turns a reference image into the module (see its README). `src/art/uncle-sam.js` and `src/art/canadian-ranger.js` are the worked examples, used in `src/moose-arcade.js`.
+
 ## Checklist for a new area or character
 
 1. Write the shape as a short list of hand-placed primitives.
@@ -76,3 +95,4 @@ idea → SDF (primitives + smooth-min + noise) → mesh (surface nets, once) →
 6. Animate with time-based math on frames or vertices.
 7. Seed it from the floor seed.
 8. Screenshot near and far, then on low quality.
+9. Any wall art or poster is a load-time pixel-art generator (section 8), never a bitmap.
