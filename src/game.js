@@ -5009,7 +5009,7 @@ function frame(now){
   mpVoiceTick(Math.min(raw,0.1));chatTick();
   if(state==='play'&&!STUDIO&&!loading)adapt(raw);
   setHum();updateAmbience(Math.min(raw,0.1),{F,state,hold:GL.frz>0||!!GL.fall||P.away});
-  updateMusic(Math.min(raw,0.1),{F,state,chasing:CHASE.n,nearest:CHASE.near,inRoom:state==='room'||ROOMS.watching||ROOMS.active,voiceActive:MP.on&&[...MP.peers.keys()].some(id=>VOX.speaking(id))});
+  updateMusic(Math.min(raw,0.1),{F,state,lift:state==='title'&&hub.riding,chasing:CHASE.n,nearest:CHASE.near,inRoom:state==='room'||ROOMS.watching||ROOMS.active,voiceActive:MP.on&&[...MP.peers.keys()].some(id=>VOX.speaking(id))});
   if(GL.frz<=0){
     if(!window.__norender){
       if(state==='title'){
