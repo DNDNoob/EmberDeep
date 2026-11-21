@@ -23,7 +23,7 @@ import {pickVariant,VARIANTS} from './variants.js';
 import {createForest,coreFaces,INSET,CORE_H} from './forest.js';
 import {MOVE,stepMove,lookStep,lookBy,bobY} from './movement.js';
 import {initAmbience,updateAmbience,amb} from './ambience.js';
-import {initMusic,useStore,updateMusic,setVolumes,getVolumes,music} from './music.js';
+import {initMusic,useStore,updateMusic,setVolumes,getVolumes,onVolumes,music} from './music.js';
 import {createMenuRoom,onLiftPlatform} from './menu-room.js';
 import {createSettingsScreen,createTerminalSession} from './shared-terminal.js';
 import {landingMazeZ} from './mine-shaft.js';
@@ -2763,11 +2763,11 @@ function mpOpen(code){
   MP.code=code;MP.on=true;MP.local=new URLSearchParams(location.search).get('net')==='local';
   resetSharedLift();
   const room=openRoom(code,MP.local);MP.room=room;MP.id=room.id;
-  room.onPeerJoin=id=>{mpPeer(id);mpSend({k:'hi',n:myName(),h:MP.host},id);if(MP.host)mpSend(mpCfg(),id);if(VOX.stream)room.addStream(VOX.stream,id);mpTitle()};
+  room.onPeerJoin=id=>{mpPeer(id);mpSend({k:'hi',n:myName(),h:MP.host},id);if(MP.host)mpSend(mpCfg(),id);if(VOX.send)room.addStream(VOX.send,id);mpTitle()};
   room.onPeerLeave=id=>mpGone(id);
   room.onPeerStream=(st,id)=>{if(MP.room===room){initAudio();VOX.attach(id,st)}};
   room.onBinary=(buf,meta,from)=>{if(MP.room===room&&from)try{mpBinary(buf,meta||{},from)}catch(e){console.warn('emberdeep clip',e)}};
-  if(VOX.stream)room.addStream(VOX.stream);
+  if(VOX.send)room.addStream(VOX.send);
   room.onMessage=(m,from)=>{if(!m||!from||MP.room!==room)return;try{mpRecv(m,from)}catch(e){console.warn('emberdeep net',e)}};
 }
 function mpLeave(endIfDown){
@@ -3277,11 +3277,11 @@ function mpCfg(){return {k:'cfg',prox:MP.prox,mimic:MP.mimicOn}}
 async function mpVoiceSet(mode){
   voiceMode=mode;store.set('voice',mode);
   document.querySelectorAll('.voiceSel').forEach(el=>el.value=mode);
-  if(mode==='off'){if(VOX.stream&&MP.room)MP.room.removeStream(VOX.stream);VOX.disable();return}
+  if(mode==='off'){if(VOX.send&&MP.room)MP.room.removeStream(VOX.send);VOX.disable();return}
   initAudio();
   const had=!!VOX.stream;
   if(!await VOX.enable(mode)){say('No microphone, or permission was refused',3);document.querySelectorAll('.voiceSel').forEach(el=>el.value='off');voiceMode='off';return}
-  if(!had&&MP.on&&MP.room)MP.room.addStream(VOX.stream);
+  if(!had&&MP.on&&MP.room)MP.room.addStream(VOX.send);
   if(!had)say(mode==='ptt'?'Voice on: hold C to talk':'Voice on: your microphone is open',3);
 }
 function mpVoiceTick(dt){
@@ -3338,15 +3338,19 @@ function chatTick(){
 function mpVoiceUI(){
   const host=MP.on&&MP.host;
   $('hostOpts').hidden=!host;$('brainOpts').hidden=!host;
-  $('proxChk').checked=MP.prox;$('mimicChk').checked=MP.mimicOn;
+  document.querySelectorAll('.proxChk').forEach(el=>{el.checked=MP.prox;el.disabled=MP.on&&!MP.host});$('mimicChk').checked=MP.mimicOn;
   $('brainLine').textContent=BRAIN.on?(BRAIN.ok===true?'Local AI is answering.':BRAIN.ok===false?'Local AI is not answering; the mimic picks lines itself.':'Waiting for the first clip.'):'';
   $('guestOpts').textContent=MP.on&&MP.guest?`Host settings: voices ${MP.prox?'fade with distance':'carry everywhere'}, mimic ${MP.mimicOn?'on':'off'}.`:'';
 }
 useStore(store);
+onVolumes(v=>VOX.setVolumes({voices:v.voices,mic:v.mic}));
 document.querySelectorAll('.volSl').forEach(el=>{const k=el.dataset.bus,sync=()=>{el.value=Math.round(getVolumes()[k]*100)};sync();
   el.addEventListener('input',()=>{setVolumes({[k]:el.value/100});document.querySelectorAll('.volSl[data-bus='+k+']').forEach(o=>{if(o!==el)o.value=el.value})});el.addEventListener('pointerdown',()=>{if(!ac)initAudio();sync()})});
 document.querySelectorAll('.voiceSel').forEach(el=>{el.value=voiceMode;el.addEventListener('change',()=>mpVoiceSet(el.value))});
-$('proxChk').addEventListener('change',()=>{MP.prox=$('proxChk').checked;store.set('prox',MP.prox);mpSend(mpCfg())});
+document.querySelectorAll('.proxChk').forEach(el=>{el.checked=MP.prox;el.addEventListener('change',()=>{
+  // a room setting: only the host decides; a guest's box just shows the host's choice
+  if(MP.on&&!MP.host){el.checked=MP.prox;say('Only the host can change this',2);return}
+  MP.prox=el.checked;store.set('prox',MP.prox);document.querySelectorAll('.proxChk').forEach(o=>o.checked=MP.prox);mpSend(mpCfg())})});
 $('mimicChk').addEventListener('change',()=>{MP.mimicOn=$('mimicChk').checked;store.set('mimic',MP.mimicOn);mpSend(mpCfg())});
 
 /* ---------- the mimic: wears a player's face, speaks with their recorded voice ----------
@@ -5213,7 +5217,7 @@ function applySharedSetting(key,value){
     lsSet(key==='qSel'?'quality':'gtx',value);lsSet('safe',0);
     return;
   }
-  control.dispatchEvent(new Event(control.matches('select')?'change':'input'));
+  control.dispatchEvent(new Event(control.matches('select')||control.type==='checkbox'?'change':'input'));
 }
 
 function updateSettingsScreen(){
