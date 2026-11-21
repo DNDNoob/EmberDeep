@@ -1,0 +1,31 @@
+// Voices and Mic volume: sliders in the pause panel and lobby Settings, persisted, and applied to voice chat audio.
+import {createRequire} from 'node:module';const {chromium}=createRequire(import.meta.url)('playwright');
+import {fileURLToPath} from 'node:url';import {resolve,dirname} from 'node:path';import {serve} from './serve.mjs';
+const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
+const b=await chromium.launch({args:['--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream','--autoplay-policy=no-user-gesture-required']});
+const ctx=await b.newContext({viewport:{width:1280,height:720},permissions:['microphone']});const pg=await ctx.newPage();
+const errs=[];pg.on('pageerror',e=>errs.push(e.message));
+let fails=0;const ok=(c,m)=>{if(!c){fails++;console.log('FAIL',m)}else console.log('ok  ',m)};
+const ev=(f,a)=>pg.evaluate(f,a),wait=s=>pg.waitForTimeout(s*1000);
+const srv=await serve(root);await pg.goto(srv.url+'index.html');await pg.waitForFunction(()=>window.__game&&window.__game.VOX);
+for(const where of ['#title','#pause'])for(const bus of ['music','sfx','ambience','voices','mic'])
+  ok(await ev(([w,k])=>!!document.querySelector(w+' .volSl[data-bus='+k+']'),[where,bus]),where+' has the '+bus+' slider');
+ok(await ev(()=>document.querySelectorAll('.shared-terminal [data-setting=voices],.shared-terminal [data-setting=mic]').length===2),'lobby Settings terminal carries Voices and Mic');
+ok(await ev(()=>document.querySelector('#pause .volSl[data-bus=mic]').max==='200'),'mic slider goes to 200%');
+await pg.mouse.click(640,360);await wait(1);
+await ev(()=>document.exitPointerLock());
+await ev(()=>window.__game.mpVoiceSet('open'));await wait(1);
+let g=await ev(()=>window.__game.VOX.gains());
+ok(g.processed&&Math.abs(g.mic-1)<0.01,'mic goes out through a gain node at 100% '+JSON.stringify(g));
+await ev(()=>{const el=document.querySelector('#pause .volSl[data-bus=mic]');el.value='150';el.dispatchEvent(new Event('input'))});
+await ev(()=>{const el=document.querySelector('#pause .volSl[data-bus=voices]');el.value='40';el.dispatchEvent(new Event('input'))});
+await wait(0.4);g=await ev(()=>window.__game.VOX.gains());
+ok(Math.abs(g.mic-1.5)<0.02&&Math.abs(g.voices-0.4)<0.02,'sliders set mic 150% and voices 40% '+JSON.stringify(g));
+const st=await ev(()=>({m:localStorage.getItem('emberdeep.vol.mic'),v:localStorage.getItem('emberdeep.vol.voices'),lobby:document.querySelector('#title .volSl[data-bus=mic]').value}));
+ok(st.m==='1.5'&&st.v==='0.4'&&st.lobby==='150','persisted and mirrored to the lobby slider '+JSON.stringify(st));
+await ev(()=>window.__game.mpVoiceSet('off'));
+ok(await ev(()=>window.__game.VOX.send===null&&window.__game.VOX.stream===null),'turning voice off releases both streams');
+await pg.reload();await pg.waitForFunction(()=>window.__game&&window.__game.VOX);
+ok(await ev(()=>document.querySelector('#pause .volSl[data-bus=mic]').value==='150'&&document.querySelector('#pause .volSl[data-bus=voices]').value==='40'),'values survive a reload');
+ok(!errs.length,'no page errors '+errs.join(' | '));
+await b.close();srv.close();console.log(fails?fails+' FAILED':'all passed');process.exit(fails?1:0);

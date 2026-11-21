@@ -20,7 +20,12 @@ export const MUSIC_TRACKS={lobby:['music/lobby-1.ogg','music/lobby-2.ogg'],eleva
   'The Bone Galleries':['music/bones-1.ogg','music/bones-2.ogg'],'The Rustworks':['music/rust-1.ogg','music/rust-2.ogg'],'The Glimmer Veins':['music/glimmer-1.ogg','music/glimmer-2.ogg'],forest:['music/forest-1.ogg','music/forest-2.ogg']};
 const BIOME_KEY={'The Old Stonework':'stonework','Mossgrown Halls':'moss','Cinder Warrens':'cinder','The Frostvault':'frost','The Dark Forest':'forest'};
 const KIND_KEY={cave:'hollow',dark:'blackhush',forest:'forest'};
-export const DEFAULT_VOL={music:0.35,sfx:1,ambience:1};
+export const DEFAULT_VOL={music:0.35,sfx:1,ambience:1,voices:1,mic:1};
+// friends' voices and your own mic live in voice.js; they are kept here so every volume persists and syncs the same way
+export const VOL_MAX={mic:2};
+const vmax=k=>VOL_MAX[k]||1;
+let volHook=null;
+export function onVolumes(fn){volHook=fn;if(fn)fn({...vol})}
 const FADE_TAU=1.0;           // seconds; 3 tau is the ~3 s crossfade
 const DUCK_TAU=0.35,CHASE_DUCK_DB=-6,VOICE_DUCK_DB=-8,PAUSE_LEVEL=0.35,CHASE_HOLD=2.5,DIE_AFTER=4.2;
 const db=x=>Math.pow(10,x/20),clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -42,7 +47,7 @@ export function resolveMusicKey(F){
 // load the persisted volumes (call once at startup so the sliders can show them before audio starts)
 export function useStore(storage){
   store=storage||null;
-  for(const k of Object.keys(vol)){const v=store?+store.get('vol.'+k,DEFAULT_VOL[k]):DEFAULT_VOL[k];vol[k]=isFinite(v)?clamp(v,0,1):DEFAULT_VOL[k]}
+  for(const k of Object.keys(vol)){const v=store?+store.get('vol.'+k,DEFAULT_VOL[k]):DEFAULT_VOL[k];vol[k]=isFinite(v)?clamp(v,0,vmax(k)):DEFAULT_VOL[k]}
 }
 export function initMusic(ctx,master,storage){
   teardown();ac=ctx;if(storage)useStore(storage);mst=master;
@@ -57,8 +62,8 @@ function teardown(){for(const v of voices.values())kill(v);voices.clear();ac=nul
 function apply(){if(!ac)return;const t=ac.currentTime;musicBus.gain.setTargetAtTime(vol.music,t,0.03);sfxBus.gain.setTargetAtTime(vol.sfx,t,0.03);ambBus.gain.setTargetAtTime(vol.ambience,t,0.03)}
 export function getVolumes(){return {...vol}}
 export function setVolumes(o){
-  for(const k of Object.keys(vol))if(o&&o[k]!=null&&isFinite(+o[k])){vol[k]=clamp(+o[k],0,1);if(store)store.set('vol.'+k,vol[k])}
-  apply();
+  for(const k of Object.keys(vol))if(o&&o[k]!=null&&isFinite(+o[k])){vol[k]=clamp(+o[k],0,vmax(k));if(store)store.set('vol.'+k,vol[k])}
+  apply();if(volHook)volHook({...vol});
 }
 
 function load(url){

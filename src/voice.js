@@ -2,13 +2,14 @@
 // Web Audio (volume, left/right, a muffling filter behind walls), short clips of what you
 // say (for the mimic), and playback of a clip from any point in the maze.
 export function createVoice(getAC){
-  const V = {stream: null, mode: 'off', on: false, peers: new Map(), out: null, level: 0, onClip: null, cache: new Map()};
+  const V = {stream: null, send: null, mode: 'off', on: false, peers: new Map(), out: null, level: 0, onClip: null, cache: new Map()};
+  let voicesVol = 1, micVol = 1, micGain = null, micSrc = null;
   let micAn = null, micBuf = null, rec = null, recT = 0, quietT = 0, recPeak = 0, recChunks = [];
 
   const ac = () => getAC();
   function outNode(){
     const a = ac(); if(!a) return null;
-    if(!V.out){ V.out = a.createGain(); V.out.gain.value = 1; V.out.connect(a.destination); }
+    if(!V.out){ V.out = a.createGain(); V.out.gain.value = voicesVol; V.out.connect(a.destination); }
     return V.out;
   }
   const rms = (an, buf) => { an.getFloatTimeDomainData(buf); let s = 0; for(let i = 0; i < buf.length; i++) s += buf[i] * buf[i]; return Math.sqrt(s / buf.length); };
@@ -21,7 +22,13 @@ export function createVoice(getAC){
       V.stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true}, video: false});
     }catch(e){ V.mode = 'off'; return false; }
     const a = ac();
-    if(a){ const src = a.createMediaStreamSource(V.stream); micAn = a.createAnalyser(); micAn.fftSize = 1024; micBuf = new Float32Array(micAn.fftSize); src.connect(micAn); }
+    V.send = V.stream;
+    if(a){
+      // friends hear the mic through a gain node, so the Mic slider sets how loud you are to them
+      micSrc = a.createMediaStreamSource(V.stream); micAn = a.createAnalyser(); micAn.fftSize = 1024; micBuf = new Float32Array(micAn.fftSize);
+      try{ micGain = a.createGain(); micGain.gain.value = micVol; const dest = a.createMediaStreamDestination(); micSrc.connect(micGain); micGain.connect(dest); micGain.connect(micAn); V.send = dest.stream; }
+      catch(e){ micGain = null; micSrc.connect(micAn); }
+    }
     V.transmit(false);
     return true;
   };
@@ -30,12 +37,23 @@ export function createVoice(getAC){
     if(rec && rec.state !== 'inactive') try{ rec.stop(); }catch(e){}
     rec = null;
     if(V.stream) for(const t of V.stream.getTracks()) t.stop();
-    V.stream = null; micAn = null; V.on = false;
+    if(micSrc) try{ micSrc.disconnect(); }catch(e){}
+    if(V.send && V.send !== V.stream) for(const t of V.send.getTracks()) t.stop();
+    V.stream = null; V.send = null; micSrc = null; micGain = null; micAn = null; V.on = false;
   };
   V.transmit = on => {
     V.on = !!on && !!V.stream;
     if(V.stream) for(const t of V.stream.getAudioTracks()) t.enabled = V.on;
   };
+
+  // volumes: voices = every friend's voice you hear (0..1), mic = how loud you are to them (0..2)
+  V.setVolumes = ({voices, mic} = {}) => {
+    const a = ac(), t = a ? a.currentTime : 0;
+    if(voices != null){ voicesVol = voices; if(V.out) V.out.gain.setTargetAtTime(voices, t, 0.03); }
+    if(mic != null){ micVol = mic; if(micGain) micGain.gain.setTargetAtTime(mic, t, 0.03); }
+  };
+
+  V.gains = () => ({voices: V.out ? V.out.gain.value : voicesVol, mic: micGain ? micGain.gain.value : null, processed: !!V.send && V.send !== V.stream});
 
   // a friend's voice arrives
   V.attach = (id, stream) => {
