@@ -87,7 +87,7 @@ export function createSettingsScreen(board,{select,close,enabled}){
   const source=Object.fromEntries(Object.entries(selectors).map(([key,selector])=>[key,board.querySelector(selector)]));
   const screen=board.cloneNode(true);
   const display=document.createElement('canvas');
-  display.width=900;display.height=560;
+  display.width=900;display.height=596;
   const ctx=display.getContext('2d');
   screen.className='shared-terminal';
   screen.hidden=true;
@@ -123,9 +123,9 @@ export function createSettingsScreen(board,{select,close,enabled}){
   function paint(session,ownerName,selectionText){
     const {values,selections}=session;
     ctx.fillStyle='#102128';
-    ctx.fillRect(0,0,900,560);
-    ctx.strokeStyle='#416662';ctx.lineWidth=3;ctx.strokeRect(12,12,876,536);
-    for(let y=16;y<548;y+=5){ctx.fillStyle='#08131535';ctx.fillRect(14,y,872,1)}
+    ctx.fillRect(0,0,900,596);
+    ctx.strokeStyle='#416662';ctx.lineWidth=3;ctx.strokeRect(12,12,876,572);
+    for(let y=16;y<584;y+=5){ctx.fillStyle='#08131535';ctx.fillRect(14,y,872,1)}
     write('Settings',40,70,'#bdf1d5',45);
     write('Logged on · '+ownerName,42,112,'#a5efc0',28);
     write(selectionText,42,146,'#f6d590',19);

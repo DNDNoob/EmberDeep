@@ -86,7 +86,8 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       }else b.z=wallZ;
     }
     for(const desk of Object.values(terminals)){
-      if(Math.abs(b.x-desk.x)<2.48&&b.z>desk.z-0.45&&b.z<desk.z+0.57)b.z=desk.z+0.57;
+      const f=desk.f||1,d=f*(b.z-desk.z);
+      if(Math.abs(b.x-desk.x)<2.48&&d>-0.45&&d<0.57)b.z=desk.z+f*0.57;
     }
   }});
 
@@ -141,38 +142,41 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   for(const x of [-3.08,3.08])for(const y of [3.68,4.34])box(lobby,gold,x,y,wallZ+0.28,0.047,0.047,0.04);
   mounted(lobby,'DESCENT LIFT',0,3.47,wallZ+0.28,2.26,0.32,{font:'bold 105px Georgia'});
 
+  // Both computers stand against the back wall (z 15) and face into the room (f=-1); the lift desk faces +z.
   for(const [id,x,z,name,sub] of [
-    ['settings',-9.35,-3.5,'Settings','Run setup · audio · graphics'],
-    ['guide',9.35,-3.5,'Field Guide','Controls · records · achievements']
+    ['settings',-9.35,13.95,'Settings','Run setup · audio · graphics'],
+    ['guide',9.35,13.95,'Field Guide','Controls · records · achievements']
   ]){
-    const settings=id==='settings';
-    const w=settings?2.45:terminalWidth,h=settings?1.52:terminalHeight,y=settings?1.66:1.92;
-    terminals[id]={x,y,z,w,h};
-    box(lobby,iron,x,0.51,z-0.33,w*.70,1.03,0.58);
-    box(lobby,brass,x,0.075,z-0.15,w*.82,0.15,0.86);
-    box(lobby,iron,x,y,z-0.46,w+0.55,h+0.39,0.84);
-    box(lobby,brass,x,y,z-0.13,w+0.25,h+0.22,0.25);
-    box(lobby,black,x,y,z-0.021,w+0.045,h+0.045,0.039);
-    const screen=worldSign(lobby,[name,'READY  /  '+sub],x,y,z+0.012,w,h,{
+    const settings=id==='settings',f=-1;
+    const w=terminalWidth,h=terminalHeight,y=1.92;
+    terminals[id]={x,y,z,w,h,f};
+    const desk=new THREE.Group();
+    desk.position.set(x,0,z);desk.rotation.y=Math.PI;lobby.add(desk);
+    box(desk,iron,0,0.51,-0.33,w*.70,1.03,0.58);
+    box(desk,brass,0,0.075,-0.15,w*.82,0.15,0.86);
+    box(desk,iron,0,y,-0.46,w+0.55,h+0.39,0.84);
+    box(desk,brass,0,y,-0.13,w+0.25,h+0.22,0.25);
+    box(desk,black,0,y,-0.021,w+0.045,h+0.045,0.039);
+    const screen=worldSign(desk,[name,'READY  /  '+sub],0,y,0.012,w,h,{
       color:id==='settings'?'#a9e5d7':'#f4d9ab',background:'#101b20',border:'#345453',
       font:'600 57px monospace',subFont:'500 20px monospace'
     });
     stationLabels[id]={name,sub,screen,text:''};
-    const panelBase=box(lobby,iron,x,0.49,z+0.27,w*.80,0.17,0.61);
+    const panelBase=box(desk,iron,0,0.49,0.27,w*.80,0.17,0.61);
     panelBase.rotation.x=0.06;
     const keys=new THREE.InstancedMesh(keyGeometry,keyMaterial,56);
     for(let i=0;i<56;i++){
       const row=Math.floor(i/14);
-      const key=new THREE.Matrix4().makeScale(w/terminalWidth,1,1);
-      key.setPosition(x+(i%14-6.5)*0.214*w/terminalWidth,0.596-row*0.008,z+0.08+row*0.126);
+      const key=new THREE.Matrix4();
+      key.setPosition((i%14-6.5)*0.214,0.596-row*0.008,0.08+row*0.126);
       keys.setMatrixAt(i,key);
     }
-    lobby.add(keys);
+    desk.add(keys);
     for(const side of [-1,1])for(let i=0;i<10;i++){
-      box(lobby,black,x+side*(w/2+.22),y-.45+i*0.095,z-0.025,0.12,0.039,0.036);
+      box(desk,black,side*(w/2+.22),y-.45+i*0.095,-0.025,0.12,0.039,0.036);
     }
-    box(lobby,settings?green:gold,x+w*.45,y-h/2-.13,z+0.012,0.071,0.041,0.024);
-    target(lobby,{station:id},x,y,z+0.025,w,h,0.04);
+    box(desk,settings?green:gold,w*.45,y-h/2-.13,0.012,0.071,0.041,0.024);
+    target(desk,{station:id},0,y,0.025,w,h,0.04);
   }
   mounted(lobby,['ENTRANCE HALL','WASD or left stick to walk · E, X or click to interact'],0,1.65,14.916,5,0.69,{
     font:'600 74px Georgia',subFont:'500 35px "Segoe UI"',reverse:true
@@ -357,7 +361,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     for(const hit of raycaster.intersectObjects(targets,false)){
       const entry=hit.object.userData.entry;
       if(entry.lift&&(ride||walker.b.z>wallZ-0.3||hit.distance>4.3))continue;
-      if(entry.station&&walker.b.z<=terminals[entry.station].z+0.06)continue;
+      if(entry.station&&(terminals[entry.station].f||1)*(walker.b.z-terminals[entry.station].z)<=0.06)continue;
       if(ride&&!entry.lift)continue;
       if(entry.kind){
         const portal=portals.find(p=>p.id===entry.kind);
@@ -373,7 +377,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     const desk=terminals[id];
     const w=desk.w||terminalWidth,h=desk.h||terminalHeight;
     const projected=panelCorners.map(([x,y])=>{
-      worldPoint.set(desk.x+x*w/terminalWidth,desk.y+y*h/terminalHeight,desk.z+0.015);
+      worldPoint.set(desk.x+(desk.f||1)*x*w/terminalWidth,desk.y+y*h/terminalHeight,desk.z+(desk.f||1)*0.015);
       worldPoint.applyMatrix4(camera.matrixWorldInverse);
       if(worldPoint.z>=-camera.near)return null;
       worldPoint.applyMatrix4(camera.projectionMatrix);
@@ -446,7 +450,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     pose();if(ride)cabin.updateMatrixWorld(true);
     if(panel){
       const desk=terminals[panel];
-      if(panel==='lift'&&!onLiftPlatform(walker.b)||walker.b.z<=desk.z+0.08||
+      if(panel==='lift'&&!onLiftPlatform(walker.b)||(desk.f||1)*(walker.b.z-desk.z)<=0.08||
         Math.hypot(walker.b.x-desk.x,walker.b.z-desk.z)>(panel==='lift'?4:6.5))onLeavePanel();
     }
     focus=aim();
@@ -465,7 +469,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     pose();
     const sharedVisible=sharedSettings&&!sharedSettings.hidden;
     if(sharedVisible){
-      if(ride||walker.b.z<=terminals.settings.z+0.08)sharedSettings.style.visibility='hidden';
+      if(ride||terminals.settings.f*(walker.b.z-terminals.settings.z)<=0.08)sharedSettings.style.visibility='hidden';
       else if(!projectPanel(width,height,'settings',sharedSettings)&&panel==='settings')onLeavePanel();
     }
     if(panel&&!(sharedVisible&&panel==='settings')&&!projectPanel(width,height,panel,stationForm))onLeavePanel();
@@ -486,7 +490,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     },
     settingsInReach(position){
       const desk=terminals.settings;
-      const dz=position.z-desk.z,dx=Math.max(0,Math.abs(position.x-desk.x)-desk.w/2);
+      const dz=desk.f*(position.z-desk.z),dx=Math.max(0,Math.abs(position.x-desk.x)-desk.w/2);
       return dz>0&&Math.abs(position.y)<1.5&&Math.hypot(dx,dz)<=1.524;
     },
     get boarded(){return !liftAway&&onLiftPlatform(walker.b)},
