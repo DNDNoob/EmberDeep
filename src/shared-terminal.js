@@ -12,6 +12,7 @@ const fields={
   ambience:{event:'input',label:'Ambience volume',read:v=>number(v,0,100)},
   voices:{event:'input',label:'Voices volume',read:v=>number(v,0,100)},
   mic:{event:'input',label:'Mic volume',read:v=>number(v,0,200)},
+  prox:{event:'change',label:'Voices fade with distance',read:v=>typeof v==='boolean'?v:undefined},
 };
 const graphics={auto:'Auto',high:'High',medium:'Medium',low:'Low'};
 const voices={off:'Off',ptt:'Push to talk',open:'Open mic'};
@@ -82,7 +83,7 @@ export function createTerminalSession({canReach,publish,apply,read,playerId,play
 }
 
 export function createSettingsScreen(board,{select,close,enabled}){
-  const selectors={nameIn:'#nameIn',seedIn:'#seedIn',startSel:'#startSel',sens:'#sens',brightness:'.brightS',qSel:'#qSel',gtx:'#gtx',voice:'.voiceSel',music:'.volSl[data-bus=music]',sfx:'.volSl[data-bus=sfx]',ambience:'.volSl[data-bus=ambience]',voices:'.volSl[data-bus=voices]',mic:'.volSl[data-bus=mic]'};
+  const selectors={nameIn:'#nameIn',seedIn:'#seedIn',startSel:'#startSel',sens:'#sens',brightness:'.brightS',qSel:'#qSel',gtx:'#gtx',voice:'.voiceSel',music:'.volSl[data-bus=music]',sfx:'.volSl[data-bus=sfx]',ambience:'.volSl[data-bus=ambience]',voices:'.volSl[data-bus=voices]',mic:'.volSl[data-bus=mic]',prox:'.proxChk'};
   const source=Object.fromEntries(Object.entries(selectors).map(([key,selector])=>[key,board.querySelector(selector)]));
   const screen=board.cloneNode(true);
   const display=document.createElement('canvas');

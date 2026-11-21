@@ -3338,7 +3338,7 @@ function chatTick(){
 function mpVoiceUI(){
   const host=MP.on&&MP.host;
   $('hostOpts').hidden=!host;$('brainOpts').hidden=!host;
-  $('proxChk').checked=MP.prox;$('mimicChk').checked=MP.mimicOn;
+  document.querySelectorAll('.proxChk').forEach(el=>{el.checked=MP.prox;el.disabled=MP.on&&!MP.host});$('mimicChk').checked=MP.mimicOn;
   $('brainLine').textContent=BRAIN.on?(BRAIN.ok===true?'Local AI is answering.':BRAIN.ok===false?'Local AI is not answering; the mimic picks lines itself.':'Waiting for the first clip.'):'';
   $('guestOpts').textContent=MP.on&&MP.guest?`Host settings: voices ${MP.prox?'fade with distance':'carry everywhere'}, mimic ${MP.mimicOn?'on':'off'}.`:'';
 }
@@ -3347,7 +3347,10 @@ onVolumes(v=>VOX.setVolumes({voices:v.voices,mic:v.mic}));
 document.querySelectorAll('.volSl').forEach(el=>{const k=el.dataset.bus,sync=()=>{el.value=Math.round(getVolumes()[k]*100)};sync();
   el.addEventListener('input',()=>{setVolumes({[k]:el.value/100});document.querySelectorAll('.volSl[data-bus='+k+']').forEach(o=>{if(o!==el)o.value=el.value})});el.addEventListener('pointerdown',()=>{if(!ac)initAudio();sync()})});
 document.querySelectorAll('.voiceSel').forEach(el=>{el.value=voiceMode;el.addEventListener('change',()=>mpVoiceSet(el.value))});
-$('proxChk').addEventListener('change',()=>{MP.prox=$('proxChk').checked;store.set('prox',MP.prox);mpSend(mpCfg())});
+document.querySelectorAll('.proxChk').forEach(el=>{el.checked=MP.prox;el.addEventListener('change',()=>{
+  // a room setting: only the host decides; a guest's box just shows the host's choice
+  if(MP.on&&!MP.host){el.checked=MP.prox;say('Only the host can change this',2);return}
+  MP.prox=el.checked;store.set('prox',MP.prox);document.querySelectorAll('.proxChk').forEach(o=>o.checked=MP.prox);mpSend(mpCfg())})});
 $('mimicChk').addEventListener('change',()=>{MP.mimicOn=$('mimicChk').checked;store.set('mimic',MP.mimicOn);mpSend(mpCfg())});
 
 /* ---------- the mimic: wears a player's face, speaks with their recorded voice ----------
@@ -5214,7 +5217,7 @@ function applySharedSetting(key,value){
     lsSet(key==='qSel'?'quality':'gtx',value);lsSet('safe',0);
     return;
   }
-  control.dispatchEvent(new Event(control.matches('select')?'change':'input'));
+  control.dispatchEvent(new Event(control.matches('select')||control.type==='checkbox'?'change':'input'));
 }
 
 function updateSettingsScreen(){

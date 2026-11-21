@@ -345,6 +345,9 @@
     <button id="soloBtn" style="font-size:13px;padding:8px 20px;background:rgba(255,255,255,.15);color:#fff;box-shadow:none" hidden>PLAY ALONE INSTEAD</button>
   </div>
   <div class="row">
+    <label title="Friends sound quieter the farther away they are, go silent past about 18 tiles, and are muffled behind walls. The host's choice applies to everyone."><input class="proxChk" type="checkbox"> Voices fade with distance</label>
+  </div>
+  <div class="row">
     <label id="depthLbl" hidden>Default lift floor <select id="startSel"></select></label>
     <label id="seedLbl">Seed <input id="seedIn" type="text" maxlength="8" placeholder="random"></label>
   </div>
@@ -383,7 +386,7 @@
     <div class="hint" id="mpList"></div>
     <div class="row"><label>Voice chat <select class="voiceSel"><option value="off">Off</option><option value="ptt">Push to talk (hold C)</option><option value="open">Open mic</option></select></label></div>
     <div class="row" id="hostOpts" hidden>
-      <label title="Friends sound quieter the farther away they are, and muffled behind walls"><input id="proxChk" type="checkbox"> Voices fade with distance</label>
+      <label title="Friends sound quieter the farther away they are, and muffled behind walls"><input id="proxChk" class="proxChk" type="checkbox"> Voices fade with distance</label>
       <label title="A creature that wears a player's face and replays what they said"><input id="mimicChk" type="checkbox"> The mimic hunts</label>
     </div>
     <div class="row" id="brainOpts">

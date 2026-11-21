@@ -12,6 +12,10 @@ for(const where of ['#title','#pause'])for(const bus of ['music','sfx','ambience
   ok(await ev(([w,k])=>!!document.querySelector(w+' .volSl[data-bus='+k+']'),[where,bus]),where+' has the '+bus+' slider');
 ok(await ev(()=>document.querySelectorAll('.shared-terminal [data-setting=voices],.shared-terminal [data-setting=mic]').length===2),'lobby Settings terminal carries Voices and Mic');
 ok(await ev(()=>document.querySelector('#pause .volSl[data-bus=mic]').max==='200'),'mic slider goes to 200%');
+ok(await ev(()=>!!document.querySelector('#title .proxChk')&&!!document.querySelector('.shared-terminal [data-setting=prox]')),'lobby Settings has "Voices fade with distance"');
+const px=await ev(()=>{const G=window.__game,a=document.querySelector('#title .proxChk'),b=document.querySelector('#pause .proxChk'),before=G.MP.prox;
+  a.click();const r={before,after:G.MP.prox,pause:b.checked,stored:localStorage.getItem('emberdeep.prox')};a.click();r.back=G.MP.prox;return r});
+ok(px.before===true&&px.after===false&&px.pause===false&&px.back===true,'lobby toggle switches distance fading and syncs the pause box '+JSON.stringify(px));
 await pg.mouse.click(640,360);await wait(1);
 await ev(()=>document.exitPointerLock());
 await ev(()=>window.__game.mpVoiceSet('open'));await wait(1);
