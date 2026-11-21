@@ -1,10 +1,16 @@
 import * as THREE from 'three';
+import {drawCanadianRanger} from './art/canadian-ranger.js';
+import {drawUncleSam} from './art/uncle-sam.js';
 import {bobY,createRoomWalker,lookStep,MOVE} from './movement.js';
 
 export const TABLE_SCALE=.42,TABLE_HEIGHT=1.06;
 const HALF_W=6.55,HALF_D=5.5,HEIGHT=3.65,TABLE_W=3.34,TABLE_D=2.09,EYE=1.61;
 const PANEL_W=1.24,PANEL_FRONT=2.59;
 const clamp=THREE.MathUtils.clamp;
+
+// wall murals are drawn once (192x108 pixel art) and reused when the room is re-entered
+let muralCanvases=null;
+const getMurals=()=>muralCanvases||(muralCanvases=[drawCanadianRanger(),drawUncleSam()]);
 
 export function outpostArcade(room,o,onClear){
   const walls=new THREE.Group();room.add(walls);
@@ -110,19 +116,17 @@ export function outpostArcade(room,o,onClear){
     put(walls,gold,x,1.92,-4.33,.79,.095,.055);
   }
 
-  let alive=true;onClear(()=>{alive=false});
-  const murals=o.outpostMurals||[];
+  const murals=getMurals(),muralTex=[];onClear(()=>{for(const t of muralTex)t.dispose()});
   for(const [i,side] of [-1,1].entries()){
     const frame=put(walls,wood,side*6.405,2.18,-.43,.15,2.51,5.18);
     const image=new THREE.Mesh(new THREE.PlaneGeometry(4.98,2.32),new THREE.MeshBasicMaterial({color:0x527275}));
     image.position.set(side*6.313,frame.position.y,frame.position.z);
     image.rotation.y=-side*Math.PI/2;walls.add(image);
     put(walls,gold,side*6.26,3.40,-.43,.025,.045,4.94);
-    if(murals[i])new THREE.TextureLoader().load(murals[i],tex=>{
-      if(!alive){tex.dispose();return}
-      tex.colorSpace=THREE.SRGBColorSpace;tex.anisotropy=4;
-      image.material.color.setHex(0xffffff);image.material.map=tex;image.material.needsUpdate=true;
-    });
+    const tex=new THREE.CanvasTexture(murals[i]);
+    tex.magFilter=tex.minFilter=THREE.NearestFilter;tex.generateMipmaps=false;tex.colorSpace=THREE.SRGBColorSpace;
+    muralTex.push(tex);
+    image.material.color.setHex(0xffffff);image.material.map=tex;image.material.needsUpdate=true;
   }
   const fill=new THREE.HemisphereLight(0xc7e8f5,0x624433,1.34);room.add(fill);
   const board=new THREE.Group();board.scale.setScalar(TABLE_SCALE);board.position.y=TABLE_HEIGHT;room.add(board);
