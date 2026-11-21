@@ -13,6 +13,7 @@ import {createVoice} from './voice.js';
 import {guidePath,guideBeacon,GUIDE_RANGE} from './guide.js';
 import {createRooms,kilnGame,KILN,DOOR_KINDS} from './rooms.js';
 import {animalHitEffects,mooseModel,scoutGooseModel,MOOSE_ACH,MOOSE_SPIKE_PRICE} from './moose-defense.js';
+import {roomActions,roomControlLabel} from './room-controls.js';
 import {bakeRecipe,bakeRecipeIdle,bakeIsDone,bakeStarted,bakeExport,bakePrime,KIT_HASH} from './npc_kit.js';
 import {loadBake,saveBake,cacheStats} from './npc_cache.js';
 import {hairAtlas,ATLAS_TILES} from './npc_hair.js';
@@ -2142,11 +2143,16 @@ const ROOMS=createRooms(renderer,{post:POST,low:Q===0,ao:Q>=2,
   rewardMooseGems:n=>{if(previewStamina)previewStamina.mooseGems+=n;else{wallet+=n;R.gems+=n;store.set('wallet',wallet)}},
   sta:P,speedMul:()=>moveMul(),lungs:()=>up.lungs|0,   // rooms share the player's stamina and the boots / cold modifiers
 
-  hint:k=>k==='mpick'||k==='mspray'?(touch.on?'tap '+(k==='mpick'?'PICK UP':'SPRAY'):pad.id?'X':'E or click'):k==='muse'?(touch.on?'tap USE':pad.id?'X':'E or click'):
-    k==='mirror'?(touch.on?'Left stick walks · drag to look · tap SPRAY or THUMB':pad.id?'Left stick walks · right stick looks · A jumps · D-pad left or right chooses · X confirms':'WASD walk · Shift sprints · Space jumps · mouse or left / right arrows look · 1 / 2, Tab or wheel picks · E or click confirms'):
-    k==='monoliths'?'Follow the path and walk through the doorway':
-    k==='theater'?(touch.on?'Left stick walks · drag to look · JUMP jumps · tap TALK to speak':pad.id?'Left stick walks · right stick looks · A jumps · V speaks':'WASD walk · Shift sprints · Space jumps · mouse look · V or the mic speaks'):
-    touch.on?'Left stick walk · drag to look · JUMP jumps · aim at a button and tap PRESS, or tap a button':pad.id?'Left stick walk · right stick look · A jumps · aim at a button and press X':'WASD walk · Shift sprints · Space jumps · mouse look · aim at a button and click or press E'});
+  control:roomControl,
+  inputDevice:roomInputDevice,
+  hint:k=>{
+    const device=roomInputDevice(),press=roomControl('press');
+    if(k==='monoliths')return 'Follow the path and walk through the doorway';
+    if(k==='galaxy')return roomControl('look');
+    if(k==='mirror')return device==='touch'?'Tap an option':roomControl('navigateHorizontal')+' choose · '+press+' confirm';
+    if(k==='mpick'||k==='mspray'||k==='muse')return device==='touch'?'Tap '+(k==='mpick'?'Pick up':k==='mspray'?'Spray':'Use'):device==='controller'?press:press+' or click';
+    return device==='touch'?'Tap a console button or aim and tap Use':'Aim at a console button and press '+press+(device==='keyboard'?' or click':'');
+  }});
 // a fallen player rides along with the friend they follow, into that friend's strange door too
 let RW=null,rvT=0;const NOIN={mx:0,my:0,press:0,lx:0,ly:0};let mouseL=false,mooseRelock=false,mooseWalkLock=false;
 function roomWatch(showProgress=true){
@@ -2180,9 +2186,12 @@ function beginRoom(kind,onEnd,seed,showProgress=false){
   const door=DOOR_KINDS[kind]||{};
   state='room';P.away=true;P.vx=P.vz=0;mapBig=false;
   document.body.classList.add('inroom');
+  document.body.classList.toggle('room-look-only',door.mode==='look');
+  document.body.classList.toggle('room-cinematic',door.mode==='none');
+  document.body.classList.toggle('room-no-use',door.touchUse===false);
   if(door.css)document.body.classList.add(door.css);
   if(kind==='moose')mooseRelock=document.pointerLockElement===canvas;
-  $('tFlash').textContent=door.action||'FLASH';$('tJump').textContent='JUMP';$('tJump').style.display='';
+  $('tFlash').textContent=door.action||'USE';$('tJump').textContent='JUMP';
   $('fade').style.transition='none';$('fade').style.opacity=1;
   if(showProgress)showLoading('Entering room',[
     ['Opening the strange door',()=>buildStatic(F)],
@@ -2210,8 +2219,8 @@ function roomClose(){
     const {stam,winded,spikeTraps}=previewStamina;
     Object.assign(P,{stam,winded,spikeTraps});previewStamina=null;
   }
-  P.away=false;state='play';document.body.classList.remove('inroom','moose-table',...Object.values(DOOR_KINDS).flatMap(door=>door.css?[door.css]:[]));mouseL=false;ROOMS.untap();
-  $('tFlash').textContent='FLASH';$('tJump').style.display='';
+  P.away=false;state='play';document.body.classList.remove('inroom','moose-table','room-look-only','room-cinematic','room-no-use','room-choice',...Object.values(DOOR_KINDS).flatMap(door=>door.css?[door.css]:[]));mouseL=false;ROOMS.untap();
+  $('tFlash').textContent='FLASH';
   $('fade').style.transition='opacity .4s';$('fade').style.opacity=0;
   if(mooseRelock){mooseRelock=false;if(!touch.on)lock()}
 }
@@ -2257,7 +2266,7 @@ function roomEnd(res){
   const fall=res.k==='dead'&&res.why==='fall';
   if(res.k==='warp'){
     const n=1+(Math.random()*3|0);
-    P.away=false;document.body.classList.remove('inroom');
+    P.away=false;document.body.classList.remove('inroom','room-look-only');
     mpSend({k:'warp',d:R.depth+n});mpSys(myName()+' was thrown '+n+(n>1?' floors':' floor')+' down by a collapsing star, and took everyone along');
     descend(n,'The black hole throws you '+n+(n>1?' floors':' floor')+' down');
     return;
@@ -2313,26 +2322,30 @@ function roomEnd(res){
   if(MP.on)say(mir?'The glass gave way. Your friends can still bring you back on the next floor.':fall?'There was no floor. Your friends can still bring you back on the next floor.':'The kiln filled up. Your friends can still bring you back on the next floor.',5);
 }
 // the mirror room's touch buttons say nothing about the can until you are looking at it or holding it
-function mirrorBtns(){const S=ROOMS.kind==='mirror'&&ROOMS.state(),b=S&&S.btn;if(!b)return;const a=$('tFlash'),j=$('tJump'),t=b[1]?'THUMB':'JUMP';if(a.textContent!==b[0])a.textContent=b[0];if(j.textContent!==t)j.textContent=t;if(j.style.display)j.style.display=''}
-function roomInput(){
-  const mir=ROOMS.kind==='mirror',th=ROOMS.kind==='theater',moose=ROOMS.kind==='moose',ax=(a,b)=>(a?1:0)-(b?1:0);
-  // the same bindings as the maze in every room (WASD / arrows walk and turn, Space jumps, Shift sprints); pressing is one thing for every device.
-  // The mirror also reads which touch button was hit (spray / thumb) and the pad d-pad / 1 2 keys, which choose
-  const wh=roomWheel;roomWheel=0;
-  return {mx:clamp(ax(keys.KeyD,keys.KeyA)+pad.mx+touch.mx,-1,1),
-    my:clamp(ax(keys.KeyS||keys.ArrowDown,keys.KeyW||keys.ArrowUp)+pad.my+touch.my,-1,1),
-    sl:!!(pad.dl||moose&&keys.ArrowLeft),sr:!!(pad.dr||moose&&keys.ArrowRight),k1:!!(keys.Digit1||keys.Numpad1),k2:!!(keys.Digit2||keys.Numpad2),tab:!!keys.Tab,wh,
-    press:!!(mouseL||keys.KeyE||(keys.Enter&&!MP.on)||pad.b2||(!th&&touch.act)),jump:!!(keys.Space||pad.b0||touch.jump),
-    talk:th&&!!(keys.KeyV||touch.act),
-    defenseStart:moose&&!!(keys.Space||pad.b0),defenseSpike:moose&&!!(keys.KeyQ||pad.defenseSpike),
-    defenseSyrup:moose&&!!(keys.KeyZ||pad.defenseSyrup),
-    defenseBack:moose&&!!(keys.Escape||keys.Backspace||pad.defenseBack),
-    defenseUp:moose&&!!(keys.ArrowUp||pad.du),defenseDown:moose&&!!(keys.ArrowDown||pad.dd),
-    sprint:!!(keys.ShiftLeft||keys.ShiftRight||pad.sprint||Math.hypot(touch.mx,touch.my)>0.94),
-    touch:touch.on,spray:!!touch.act,thumb:!!touch.jump,
-    lx:ax(keys.ArrowRight,keys.ArrowLeft)+pad.lx*MOVE.padTurn,ly:pad.ly};
+function mirrorBtns(){
+  if(ROOMS.kind!=='mirror')return;
+  document.body.classList.toggle('room-choice',ROOMS.controlMode()==='choice');
+  const action=ROOMS.state()?.touchAction;
+  if(action)setText('tFlash',action);
 }
-let roomWheel=0;addEventListener('wheel',e=>{if(state==='room'&&isFinite(e.deltaY))roomWheel=Math.sign(e.deltaY)},{passive:true});
+let roomDevice='';
+function roomInputDevice(){
+  if(roomDevice&&!(roomDevice==='controller'&&!pad.id))return roomDevice;
+  return pad.id?'controller':touch.on?'touch':'keyboard';
+}
+function roomControl(action){return roomControlLabel(action,roomInputDevice())}
+function roomInput(){
+  const mode=state==='room'?ROOMS.controlMode():'walk',table=mode==='table',choice=mode==='choice';
+  const ax=(a,b)=>(a?1:0)-(b?1:0);
+  const actions=roomActions(keys,pad.roomButtons,{mode,mouse:mouseL,touchPress:touch.act,touchJump:touch.jump});
+  return {...actions,
+    mx:table?0:clamp(ax(keys.KeyD,keys.KeyA)+pad.mx+touch.mx,-1,1),
+    my:table?0:clamp(ax(keys.KeyS||keys.ArrowDown&&!choice,keys.KeyW||keys.ArrowUp&&!choice)+pad.my+touch.my,-1,1),
+    press:actions.press||(state==='title'&&!!keys.Enter)||(state==='room'&&ROOMS.kind==='theater'&&!!keys.KeyV),
+    sprint:actions.sprint||Math.hypot(touch.mx,touch.my)>0.94,
+    lx:table?0:(choice?0:ax(keys.ArrowRight,keys.ArrowLeft))+pad.lx*MOVE.padTurn,
+    ly:table?0:pad.ly};
+}
 let doorMsgT=0, tipTimers=[];
 let mapBig=false, usingLock=false, pausedAt=0, flashT=0, sealMsgT=0, lowFuelSaid=false, pingT=0, beatT=0, titleYaw=0;
 let sens=store.get('sens',1);
@@ -3385,12 +3398,13 @@ $('brainUrl').addEventListener('change',()=>{BRAIN.url=$('brainUrl').value.trim(
 const keys={};
 addEventListener('keydown',e=>{
   if(loading){if(e.code==='Tab'||e.code==='Enter'||e.code==='Space')e.preventDefault();return}
+  const roomMode=state==='room'?ROOMS.controlMode():'';
+  if(roomMode&&!e.repeat)roomDevice='keyboard';
   if(e.target&&e.target.tagName==='SELECT')return;
   if(e.target&&e.target.tagName==='INPUT'){if(e.code==='Enter'&&(e.target.id==='seedIn'||e.target.id==='nameIn')){e.target.blur();startFromMenu($('seedIn').value.trim())}return}
-  const defense=state==='room'&&ROOMS.kind==='moose';
-  if(defense&&(e.code==='Tab'||e.target?.closest?.('#moosePanel button')&&(e.code==='Enter'||e.code==='Space')))return;
+  if(state==='room'&&(e.code==='Tab'||e.target?.closest?.('button')&&['Enter','NumpadEnter','Space'].includes(e.code)))return;
   if(['Tab','Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
-  if(defense&&e.code==='Backspace')e.preventDefault();
+  if(roomMode==='table'&&['Backspace','Enter','NumpadEnter','Escape'].includes(e.code))e.preventDefault();
   if(e.repeat)return;
   keys[e.code]=true;
   initAudio();
@@ -3409,7 +3423,7 @@ addEventListener('keydown',e=>{
     if(e.code==='Escape'||e.code==='KeyP')pause();
     if((e.code==='Enter'||e.code==='NumpadEnter'||e.code==='KeyT')&&MP.on){e.preventDefault();chatOpenBox()}
   }else if(state==='room'){
-    if((e.code==='Enter'||e.code==='NumpadEnter'||e.code==='KeyT')&&MP.on){e.preventDefault();chatOpenBox()}
+    if((e.code==='KeyT'||roomMode!=='table'&&(e.code==='Enter'||e.code==='NumpadEnter'))&&MP.on){e.preventDefault();chatOpenBox()}
   }else if(state==='talk'){
     if(e.code==='Escape'||e.code==='KeyQ')closeTalk();
     else if(e.code==='ArrowUp'||e.code==='KeyW')moveTalk(-1);
@@ -3432,7 +3446,7 @@ document.addEventListener('mousemove',e=>{
   if(loading||(state!=='play'&&state!=='room')||document.pointerLockElement!==canvas)return;
   const mx=e.movementX,my=e.movementY;
   if(!isFinite(mx)||!isFinite(my)||Math.abs(mx)>600||Math.abs(my)>600)return;
-  if(state==='room'){ROOMS.look(mx*MOVE.mouse*sens,my*MOVE.mouse*sens);return}
+  if(state==='room'){if(mx||my)roomDevice='keyboard';ROOMS.look(mx*MOVE.mouse*sens,my*MOVE.mouse*sens);return}
   if(glLook(mx*MOVE.mouse*sens,-my*MOVE.mouse*sens))return;
   lookBy(P,mx*MOVE.mouse*sens,my*MOVE.mouse*sens,MOVE.pitch);
 });
@@ -3441,6 +3455,13 @@ document.addEventListener('pointerlockchange',()=>{
   else if(usingLock){usingLock=false;pause()}
 });
 const onMooseTable=()=>state==='room'&&ROOMS.kind==='moose'&&ROOMS.state()?.table;
+document.addEventListener('pointerdown',e=>{
+  if(state==='room')roomDevice=e.pointerType==='touch'?'touch':'keyboard';
+});
+$('roomHud').addEventListener('click',e=>{
+  const choice=e.target.closest('button[data-room-choice]');
+  if(state==='room'&&choice)ROOMS.choose(Number(choice.dataset.roomChoice));
+});
 canvas.addEventListener('click',()=>{if((state==='play'||state==='room'&&!onMooseTable())&&!document.pointerLockElement)lock()});
 const selectMooseTile=e=>ROOMS.tap(e.clientX/innerWidth*2-1,1-e.clientY/innerHeight*2);
 canvas.addEventListener('pointerdown',e=>{
@@ -3460,7 +3481,7 @@ function enableTouch(){
   upd();addEventListener('resize',upd);
 }
 if(window.matchMedia&&matchMedia('(pointer:coarse)').matches)enableTouch();
-addEventListener('touchstart',()=>{enableTouch();initAudio()},{passive:true});
+addEventListener('touchstart',()=>{enableTouch();if(state==='room')roomDevice='touch';initAudio()},{passive:true});
 {
   const layer=$('touch'),base=$('stickBase'),knob=$('stickKnob'),SR=52;
   const setStick=(x,y)=>{
@@ -3476,7 +3497,7 @@ addEventListener('touchstart',()=>{enableTouch();initAudio()},{passive:true});
     for(const t of e.changedTouches){
       // in the kiln hall a tap right on a button within reach presses it
       if(state==='room'&&touch.tapId===null&&ROOMS.tap(t.clientX/innerWidth*2-1,1-t.clientY/innerHeight*2)){touch.tapId=t.identifier;continue}
-      if(touch.stickId===null&&t.clientX<innerWidth*0.45){
+      if(touch.stickId===null&&t.clientX<innerWidth*0.45&&!(state==='room'&&ROOMS.controlMode()==='look')){
         touch.stickId=t.identifier;touch.sx=t.clientX;touch.sy=t.clientY;
         base.style.left=knob.style.left=t.clientX+'px';base.style.top=knob.style.top=t.clientY+'px';
         base.style.display=knob.style.display='block';
@@ -3501,7 +3522,7 @@ addEventListener('touchstart',()=>{enableTouch();initAudio()},{passive:true});
     const u=e=>{e.preventDefault();e.stopPropagation();el.classList.remove('on');if(up)up()};
     el.addEventListener('touchend',u);el.addEventListener('touchcancel',u);
     el.addEventListener('touchmove',e=>{e.preventDefault();e.stopPropagation()},{passive:false});};
-  btn('tJump',()=>{touch.jump=true;P.jumpQ=MOVE.jumpBuffer},()=>{touch.jump=false});
+  btn('tJump',()=>{touch.jump=true;if(state==='play')P.jumpQ=MOVE.jumpBuffer},()=>{touch.jump=false});
   btn('tFlash',()=>{touch.act=true;if(state==='play')act()},()=>{touch.act=false});
   btn('tPause',()=>{touch.jump=false;endStick();touch.lookId=null;touch.tapId=null;ROOMS.untap();pause()});
   btn('tMap',()=>{mapBig=!mapBig});
@@ -3517,7 +3538,7 @@ addEventListener('touchstart',()=>{enableTouch();initAudio()},{passive:true});
 // optional gamepad
 // Xbox-style controller (standard mapping): sticks move and look, A jump, X/B/RT flash,
 // LT/LB/left-stick click sprint, Y map, Start pause, Back quits to title from a menu
-const pad={mx:0,my:0,lx:0,ly:0,sprint:false,jump:false,prev:[],gp:null,id:''};
+const pad={mx:0,my:0,lx:0,ly:0,sprint:false,jump:false,prev:[],roomButtons:[],gp:null,id:''};
 function pickPad(){
   const list=navigator.getGamepads?navigator.getGamepads():[];let best=null;
   for(const g of list){if(!g||!g.connected||g.buttons.length<10||g.axes.length<4)continue;if(g.mapping==='standard')return g;if(!best)best=g}
@@ -3527,7 +3548,7 @@ function rumble(ms,strong,weak){
   try{const a=pad.gp&&pad.gp.vibrationActuator;if(a&&a.playEffect)a.playEffect('dual-rumble',{duration:ms,strongMagnitude:strong,weakMagnitude:weak})}catch(e){}
 }
 function pollPad(){
-  pad.mx=pad.my=pad.lx=pad.ly=0;pad.sprint=false;pad.jump=false;pad.b0=pad.b2=pad.du=pad.dd=pad.dl=pad.dr=pad.defenseSpike=pad.defenseSyrup=pad.defenseBack=false;
+  pad.mx=pad.my=pad.lx=pad.ly=0;pad.sprint=false;pad.jump=false;pad.roomButtons.length=0;
   const gp=pickPad();pad.gp=gp;
   if(!gp){if(pad.id){pad.id='';$('padLine').textContent='';pad.prev=[]}return}
   if(pad.id!==gp.id){pad.id=gp.id;initAudio();
@@ -3535,15 +3556,13 @@ function pollPad(){
     if(state==='play')say('Controller connected',2)}
   const B=i=>{const b=gp.buttons[i];return !!b&&(b.pressed||b.value>0.4)};
   if(loading){pad.prev=gp.buttons.map((_,i)=>B(i));return}
-  pad.b0=B(0);pad.b2=B(2);pad.du=B(12);pad.dd=B(13);pad.dl=B(14);pad.dr=B(15);
-  pad.defenseSpike=B(1);
-  pad.defenseSyrup=B(3);
-  pad.defenseBack=B(4);
+  if(state==='room'||state==='title')pad.roomButtons=gp.buttons.map((_,i)=>B(i));
   const hit=i=>B(i)&&!pad.prev[i];
   const curve=v=>{const a=Math.abs(v);if(a<0.2)return 0;const k=(a-0.2)/0.8;return Math.sign(v)*k};
   pad.mx=curve(gp.axes[0]||0);pad.my=curve(gp.axes[1]||0);
   const lx=curve(gp.axes[2]||0),ly=curve(gp.axes[3]||0);
   pad.lx=lx*(0.45+0.55*Math.abs(lx))*sens;pad.ly=ly*(0.45+0.55*Math.abs(ly))*sens;
+  if(state==='room'&&(pad.roomButtons.some(Boolean)||pad.mx||pad.my||lx||ly))roomDevice='controller';
   if(state==='play'){
     pad.jump=B(0)&&performance.now()>padHold;
     if(B(6)||B(4))pad.sprint=true;

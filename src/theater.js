@@ -38,7 +38,7 @@ export const TH={
   INSULT_EVERY:3.5,     // seconds between insults (each costs one heart)
   SCREEN_DUCK:0.7,      // the screen is played this much quieter than it could be, so it cannot drown out your voice
   YT_READY_MS:6000,     // give the video this long to start before the house reel takes over
-  KEY_YELL_HOLD:1.0,    // no microphone: hold V this long to yell the phrase
+  KEY_YELL_HOLD:1.0,    // hold Interact this long to yell the phrase
 };
 // mild and non-hateful only: these exact lines, no others
 export const INSULTS=['ok boomer','L + ratio',"that's so mid",'skill issue','who asked?','touch grass','negative aura','NPC behavior','bro fell off','cringe',"you're cooked",'no rizz','delulu','bro thinks he\'s the main character',"it's giving... nothing"];
@@ -651,16 +651,25 @@ export function createTheater(env){
     };
 
     /* ---------- the HUD ---------- */
-    const isTouch=()=>document.body.classList.contains('touch');
     const hud=()=>{
       let h;
-      const mic=S.mic==='ok'?'microphone listening':S.mic==='asking'?'allow the microphone to talk (or hold V)':isTouch()?'No microphone: hold TALK to talk, hold it for 1 second to yell':'No microphone: hold V to talk, hold V for 1 second to yell';
+      const talk=o.inputDevice()==='touch'?'Talk':o.control('press');
+      const micOff=S.mic==='none',speak='Hold '+talk+' to speak';
+      const fallback=speak+' · Hold for 1 second to yell';
+      const mic=micOff?fallback:S.mic==='ok'?'Microphone listening · '+speak:'Allow the microphone or hold '+talk+' to speak';
       const hearts=o.hearts?o.hearts():'';
       if(S.over==='dead')h='<b>You are cooked.</b>';
       else if(S.over==='win')h='<b>You slip out through the exit.</b>';
       else if(S.st==='calm')h=`<b>THE PICTURE HOUSE</b><br><small>${mic}</small>`;
       else if(S.st==='huh')h='<b>huh?</b>';
-      else if(S.st==='attack')h=`<b style="color:#ff9a8a">${hearts}</b><br>`+(S.insults>=2?'<b>Yell "SILENCE, PEASANTS!"</b>':'<small>they are not happy</small>')+(S.hintT>0?`<br><b style="color:#ffe27a">${S.hint}</b>`:'')+(S.mic!=='ok'&&S.mic!=='asking'?`<br><small>${mic}</small>`:'');
+      else if(S.st==='attack'){
+        h=`<b style="color:#ff9a8a">${hearts}</b><br>`+
+          (micOff&&S.insults>=2?'<b>Yell "SILENCE, PEASANTS!"</b>':'<small>they are not happy</small>');
+        if(micOff){
+          if(S.hintT>0)h+=`<br><b style="color:#ffe27a">${S.hint}</b>`;
+          h+=`<br><small>${fallback}</small>`;
+        }
+      }
       else h=S.unlocked?'<b>The exit is unlocked.</b><br><small>The green sign, on the right wall</small>':'';
       o.hud(h);
     };
@@ -689,13 +698,12 @@ export function createTheater(env){
       // the teens
       for(const T of S.teens)teenPose(T,dt);
       if(live&&!S.over){
-        // microphone, or the V key standing in for it
+        // The primary action also simulates speaking, with or without a microphone.
         let lv=0,keyYell=false;
         if(S.test.level!==null&&S.test.level!==undefined)lv=S.test.level;
-        else if(S.mic==='ok')lv=micLevel();
         else{
-          const held=!!(inp&&inp.talk);S.keyHold=held?S.keyHold+dt:0;
-          lv=held?(S.keyHold>=TH.KEY_YELL_HOLD?0.3:0.06):0;
+          const held=!!inp?.press;S.keyHold=held?S.keyHold+dt:0;
+          lv=Math.max(S.mic==='ok'?micLevel():0,held?(S.keyHold>=TH.KEY_YELL_HOLD?0.3:0.06):0);
           if(S.st==='attack'&&S.keyHold>=TH.KEY_YELL_HOLD&&!S.keyDone){S.keyDone=true;keyYell=true}
           if(!held)S.keyDone=false;
         }

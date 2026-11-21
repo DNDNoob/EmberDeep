@@ -80,8 +80,8 @@ r=await ev(()=>{const o={};
   T.open('th2');let S=T.S();T.nearTeen(0);S.test.level=0.2;T.run(60,{});S.test.level=0;T.run(120,{});
   T.R.theaterTest({noSR:true,level:0.3});T.run(40,{});o.shortYell=S.st;T.R.theaterTest({level:0.05});T.run(200,{});T.R.theaterTest({level:0.3});T.run(70,{});o.longYell=S.st;
   T.open('th3');S=T.S();T.nearTeen(0);T.run(1,{});S.test.level=0.2;T.run(30,{});S.test.level=null;T.run(2,{});o.vstate=S.st;
-  T.run(100,{});o.v0=S.st;T.run(20,{talk:1});o.vShort=S.st;T.run(30,{});T.run(70,{talk:1});o.vLong=S.st;return o});
-console.log(JSON.stringify(r));ok(r.shortYell==='attack'&&r.longYell==='crying','without speech recognition a yell must hold ~1 s');ok(r.vstate==='huh'||r.vstate==='attack','speech triggers the teens');ok(r.v0==='attack'&&r.vShort==='attack'&&r.vLong==='crying','no microphone: a short V press talks, holding V for 1 s yells the phrase');
+  T.run(100,{});o.v0=S.st;T.run(20,{press:1});o.vShort=S.st;T.run(30,{});T.run(70,{press:1});o.vLong=S.st;return o});
+console.log(JSON.stringify(r));ok(r.shortYell==='attack'&&r.longYell==='crying','without speech recognition a yell must hold ~1 s');ok(r.vstate==='huh'||r.vstate==='attack','speech triggers the teens');ok(r.v0==='attack'&&r.vShort==='attack'&&r.vLong==='crying','no microphone: a short Interact press talks, holding it for 1 s yells the phrase');
 // 9. dying here is the normal death
 r=await ev(()=>{T.open('th4');const S=T.S();T.G.P.hp=1;T.nearTeen(0);S.test.level=0.2;T.run(60,{});S.test.level=0;T.run(60*8,{});return {state:T.G.state,hp:T.G.P.hp,title:document.getElementById('deadTitle').textContent}});
 console.log(JSON.stringify(r));ok(r.state==='dead'&&r.hp<=0,'the player can die in the picture house ('+r.title+')');
@@ -139,8 +139,8 @@ r=await ev(()=>{const G=T.G;let o={tested:0,bad:0};for(let s=0;s<40;s++){G.start
 ok(r.tested>0&&r.bad===0,'with a gate shut the light only targets what is reachable ('+r.tested+' floors)');
 // 12b. jumping and walking speed: the same shared walker as the maze and the other rooms (src/movement.js)
 r=await ev(()=>{const o={};const FY=z=>0.15*Math.min(9,Math.max(0,z+5));
-  // the bindings: Space and pad A jump and are never "press"; E presses
-  const G=T.G;T.open('th7');G.keys.Space=true;let i=G.roomInput();o.space=[!!i.press,!!i.jump,!!i.talk];G.keys.Space=false;G.keys.KeyE=true;i=G.roomInput();o.e=[!!i.press,!!i.jump];G.keys.KeyE=false;G.keys.KeyV=true;i=G.roomInput();o.v=[!!i.talk,!!i.jump,!!i.press];G.keys.KeyV=false;
+  // Space jumps, and E and the legacy V shortcut both send the speaking action.
+  const G=T.G;T.open('th7');G.keys.Space=true;let i=G.roomInput();o.space=[!!i.press,!!i.jump];G.keys.Space=false;G.keys.KeyE=true;i=G.roomInput();o.e=[!!i.press,!!i.jump];G.keys.KeyE=false;G.keys.KeyV=true;i=G.roomInput();o.v=[!!i.press,!!i.jump];G.keys.KeyV=false;
   // a jump from the back landing: rises, lands on the floor it is over, never reaches the screen
   T.open('th7');let S=T.S();T.tp(-3.5,7.0);T.run(5,{});const y0=S.WK.b.y;let hi=0,eyeHi=0,air=0;
   T.run(1,{jump:true});for(let k=0;k<120;k++){T.run(1,{});const h=S.WK.b.y-FY(S.WK.b.z);hi=Math.max(hi,h);eyeHi=Math.max(eyeHi,S.eyeY);if(h>0.01)air++}
@@ -159,7 +159,7 @@ r=await ev(()=>{const o={};const FY=z=>0.15*Math.min(9,Math.max(0,z+5));
   T.tp(-1.65,7.6);T.run(5,{my:-1,sprint:true});a=S.WK.b.z;T.run(30,{my:-1,sprint:true});o.sprint=(a-S.WK.b.z)/0.5;
   T.tp(-1.65,7.6);T.run(5,{});o.eyeStand=S.eyeY-FY(7.6);return o});
 console.log('12b',JSON.stringify(r));
-ok(!r.space[0]&&r.space[1]&&!r.space[2],'Space jumps: it is not press and not talk');ok(r.e[0]&&!r.e[1],'E presses and does not jump');ok(r.v[0]&&!r.v[1]&&!r.v[2],'V talks and does not jump or press');
+ok(!r.space[0]&&r.space[1],'Space jumps without speaking');ok(r.e[0]&&!r.e[1],'E speaks without jumping');ok(r.v[0]&&!r.v[1],'V still speaks without jumping');
 ok(r.apex>1.3&&r.apex<1.55&&r.air>=30&&r.air<=45,'Space makes the player rise ('+r.apex.toFixed(2)+' m, '+r.air+' frames) like the maze jump scaled by eye height');
 ok(Math.abs(r.land)<0.02,'and land on the floor ('+r.land.toFixed(3)+')');
 ok(r.eyeHi+0.2<r.screenBottom,'the screen bottom ('+r.screenBottom.toFixed(2)+') stays above the head at the top of a jump from the back landing ('+r.eyeHi.toFixed(2)+')');

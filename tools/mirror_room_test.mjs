@@ -29,7 +29,7 @@ const info=()=>pg.evaluate(()=>{const G=window.__game;return{state:G.state,hp:G.
 // (b) aiming: away shows nothing, at the can shows "Pick up", pressing away does nothing, pressing at it takes it
 {await pg.evaluate(()=>window.__open());const r=await pg.evaluate(()=>{const S=window.__game.ROOMS.state(),H=document.getElementById('roomHud'),o={};
    window.__look(0,0.02);window.__run(S.t+0.5);o.awayHud=H.textContent;o.awayAim=S.aim;window.__tap({press:1});o.awayHeld=S.held;
-   window.__look(S.canAim.yaw,S.canAim.pitch);window.__run(S.t+0.2);o.atHud=H.textContent;o.atAim=S.aim;o.btn=S.btn.join();
+   window.__look(S.canAim.yaw,S.canAim.pitch);window.__run(S.t+0.2);o.atHud=H.textContent;o.atAim=S.aim;o.btn=S.touchAction;
    window.__look(S.canAim.yaw+0.5,S.canAim.pitch);window.__run(S.t+0.1);o.offAim=S.aim;
    window.__look(S.canAim.yaw,S.canAim.pitch);window.__run(S.t+0.1);window.__tap({press:1});o.held=S.held;o.canVis=S.can.visible;window.__run(S.t+0.6);o.heldHud=H.textContent;o.handVis=S.hand.visible;return o});
  console.log('b aim',JSON.stringify(r));
@@ -56,9 +56,11 @@ const brk=async yaw=>{await pg.evaluate(()=>window.__open(5));return pg.evaluate
 // the choice only unlocks after the smashing has started (and only once you hold the can); keyboard select needs left/right then confirm
 {await pg.evaluate(()=>window.__open());const r=await pg.evaluate(()=>{const G=window.__game,S=G.ROOMS.state();window.__grab();window.__run(S.mir.SMASH-3);const early=S.live;window.__run(S.mir.CHOICE+0.3);
    const noSel=(()=>{window.__tap({press:1});return S.ch})();
-   window.__tap({mx:1});const mv=S.sel;window.__tap({sr:1});const s1=S.sel;window.__tap({sl:1});const s0=S.sel;window.__tap({tab:1});const st=S.sel;window.__tap({press:1});return{early,noSel,ch:S.ch,sel:S.sel,mv,s1,s0,st}});
- console.log('keyboard',JSON.stringify(r));if(r.early||r.noSel!==0||r.ch!==2||r.mv!==-1||r.s1!==1||r.s0!==0||r.st!==1)bad('keyboard choice')
- {const k=await pg.evaluate(()=>{window.__open();const S=window.__game.ROOMS.state();window.__grab();window.__run(S.mir.CHOICE+0.3);window.__tap({k2:1});return S.ch});if(k!==2)bad('key 2 picks thumb '+k)}}
+   window.__tap({mx:1});const mv=S.sel;window.__tap({navRight:1});const s1=S.sel;window.__tap({navLeft:1});const s0=S.sel;window.__tap({navRight:1});const st=S.sel;window.__tap({jump:1});const afterJump=S.ch;window.__tap({press:1});return{early,noSel,ch:S.ch,sel:S.sel,mv,s1,s0,st,afterJump}});
+ console.log('keyboard',JSON.stringify(r));if(r.early||r.noSel!==0||r.ch!==2||r.mv!==-1||r.s1!==1||r.s0!==0||r.st!==1||r.afterJump!==0)bad('keyboard choice')
+ {await pg.evaluate(()=>{window.__open();const S=window.__game.ROOMS.state();window.__grab();window.__run(S.mir.CHOICE+0.3)});
+  await pg.getByRole('button',{name:/Suck your thumb/}).click();
+  const k=await pg.evaluate(()=>window.__game.ROOMS.state().ch);if(k!==2)bad('direct button picks thumb '+k)}}
 
 // (k) walking: the view moves, walls and the intact glass stop you, the stool and crates are solid
 {await pg.evaluate(()=>window.__open(5));const r=await pg.evaluate(()=>{const G=window.__game,R=G.ROOMS,S=R.state(),o={};
