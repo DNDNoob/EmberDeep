@@ -1657,7 +1657,20 @@ const DOOR_LOOKS={
       doorKnob(f,[0.7,0.48,0.94,4]);
     },
     glow(D,t){return[0.72,0.46,1,0.43+0.14*Math.sin(t*2+D.ph)]}
-  }
+  },
+  stillwood:{
+    leaf(f,D){
+      slab(f,[0.02,0.515,0],[0.04,1.03,0.5],[0.16,0.28,0.16,6]);
+      slab(f,[0.045,0.55,0],[0.02,0.78,0.36],[0.28,0.18,0.1,6]);
+      slab(f,[0.058,0.62,0],[0.012,0.42,0.22],[0.45,0.78,0.62,11]);
+      for(let i=0;i<5;i++){
+        const z=-0.16+i*0.08;
+        seg(f,[0.05,0.95,z],[0.07,0.2+((i*3)%4)*0.08,z+(i-2)*0.01],0.012,0.004,[0.2,0.36,0.18,6]);
+      }
+      doorKnob(f,[0.55,0.72,0.48,4]);
+    },
+    glow(D,t){return[0.45,0.9,0.62,0.38+0.16*Math.sin(t*1.7+D.ph)]}
+  },
 };
 const DOOR_EXPLORE_PER_MIN=150;
 const doorOrder=()=>Object.keys(DOOR_KINDS);
@@ -2298,6 +2311,12 @@ function roomEnd(res){
   if(res.k==='maze-exit'){
     P.x=F.exit.x;P.z=F.exit.z;P.y=0;P.vx=P.vy=P.vz=0;P.pitch=0;
     onTileChange();sfx('noclip');
+    return;
+  }
+  if(res.why==='stillwood'){
+    achieve('stillwood','Held in the water','Saw the door behind you in a still pond, and walked back out');
+    say('You step back through. The wood does not follow.',3.5);
+    sfx('door');
     return;
   }
   if(res.why==='theater'){
