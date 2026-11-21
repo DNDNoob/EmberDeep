@@ -7,6 +7,9 @@ const fields={
   qSel:{event:'change',label:'Graphics',read:v=>['auto','high','medium','low'].includes(v)?v:undefined},
   gtx:{event:'change',label:'Dedicated graphics',read:v=>typeof v==='boolean'?v:undefined},
   voice:{event:'change',label:'Voice chat',read:v=>['off','ptt','open'].includes(v)?v:undefined},
+  music:{event:'input',label:'Music volume',read:v=>number(v,0,100)},
+  sfx:{event:'input',label:'Effects volume',read:v=>number(v,0,100)},
+  ambience:{event:'input',label:'Ambience volume',read:v=>number(v,0,100)},
 };
 const graphics={auto:'Auto',high:'High',medium:'Medium',low:'Low'};
 const voices={off:'Off',ptt:'Push to talk',open:'Open mic'};
@@ -77,7 +80,7 @@ export function createTerminalSession({canReach,publish,apply,read,playerId,play
 }
 
 export function createSettingsScreen(board,{select,close,enabled}){
-  const selectors={nameIn:'#nameIn',seedIn:'#seedIn',startSel:'#startSel',sens:'#sens',brightness:'.brightS',qSel:'#qSel',gtx:'#gtx',voice:'.voiceSel'};
+  const selectors={nameIn:'#nameIn',seedIn:'#seedIn',startSel:'#startSel',sens:'#sens',brightness:'.brightS',qSel:'#qSel',gtx:'#gtx',voice:'.voiceSel',music:'.volSl[data-bus=music]',sfx:'.volSl[data-bus=sfx]',ambience:'.volSl[data-bus=ambience]'};
   const source=Object.fromEntries(Object.entries(selectors).map(([key,selector])=>[key,board.querySelector(selector)]));
   const screen=board.cloneNode(true);
   const display=document.createElement('canvas');
