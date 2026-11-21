@@ -2864,6 +2864,7 @@ function mpRecv(m,from){
       const station=['settings','guide','lift'].includes(m.station)?m.station:null;
       const ride=m.ride===sharedLift.trip?.id&&sharedLift.trip?.members.includes(from)?m.ride:null;
       p.hub={x,y,z,yaw,station,ride,ready:!!m.ready,at:performance.now()};
+      if(validLiftDepth(m.deepest))p.deepest=m.deepest;
       if(MP.host)terminalSession.expire();
       break;}
     case 'terminalSelect':
@@ -2876,11 +2877,12 @@ function mpRecv(m,from){
       if(MP.host)selectLiftDepth(from,m.depth);
       break;
     case 'liftDepart':
-      if(MP.host)requestLiftDeparture(from);
+      if(MP.host)requestLiftDeparture(from,m.shortcut===true);
       break;
     case 'liftSelection':
       if(fromHost&&validLiftDepth(m.depth)&&validLiftDepth(m.max)&&m.depth<=m.max&&!sharedLift.trip){
-        sharedLift.selection={depth:m.depth,max:m.max,by:String(m.by||'').slice(0,16),pending:!!m.pending};
+        const reached=validLiftDepth(m.deepest)&&m.deepest<=m.max?m.deepest:1;
+        sharedLift.selection={depth:m.depth,max:m.max,deepest:reached,by:String(m.by||'').slice(0,16),pending:!!m.pending};
         updateLiftScreen();
       }
       break;
@@ -3054,7 +3056,7 @@ const mpFresh=p=>performance.now()-(p.seen||0)<15000;
 const mpShown=p=>MP.on&&p.run&&!p.away&&p.d===R.depth&&p.rx!==undefined&&state!=='title'&&mpFresh(p);
 function sendHubPresence(to){
   const {x,y,z,yaw,station,ride,ready}=hub.presence;
-  mpSend({k:'hub',a:[r3(x),r3(y),r3(z),r3(wrapA(yaw))],station,ride,ready},to);
+  mpSend({k:'hub',a:[r3(x),r3(y),r3(z),r3(wrapA(yaw))],station,ride,ready,deepest},to);
 }
 function mpTick(raw){
   if(!MP.on)return;
@@ -5068,9 +5070,10 @@ hub.sharedSettings(settingsScreen.screen,settingsScreen.display);
 const liftFloorLimit=()=>Math.max(40,deepest);
 const defaultLiftFloor=()=>URL_DEPTH||+$('startSel').value||1;
 const validLiftDepth=depth=>Number.isSafeInteger(depth)&&depth>=1;
+const partyDeepestFloor=()=>Math.max(deepest,...[...MP.peers.values()].map(peer=>peer.deepest||1));
 
 function resetSharedLift(){
-  Object.assign(sharedLift,{selection:MP.host?{depth:defaultLiftFloor(),max:liftFloorLimit(),by:''}:null,pending:0,trip:null,waiting:[]});
+  Object.assign(sharedLift,{selection:MP.host?{depth:defaultLiftFloor(),max:liftFloorLimit(),deepest,by:''}:null,pending:0,trip:null,waiting:[]});
   hub.setSharedLift(sharedLift.selection,false);
 }
 
@@ -5081,9 +5084,10 @@ function updateLiftScreen(){
   const field=$('liftDepth');
   field.max=selection?.max||liftFloorLimit();
   if(MP.on&&selection&&field.valueAsNumber!==selection.depth)field.value=selection.depth;
+  $('liftDeepest').textContent='Deepest reached · '+(MP.on?selection?.deepest||deepest:deepest);
   $('liftRunType').textContent=MP.on?(selection?.pending?'Departing · riders on the platform go together':
     selection?.by?selection.by+' selected floor '+selection.depth:'Shared destination · all aboard ride together'):'Solo descent';
-  field.disabled=$('liftGo').disabled=!!(MP.on&&(selection?.pending||MP.guest&&!MP.hostId));
+  field.disabled=$('liftGo').disabled=$('liftDeepest').disabled=!!(MP.on&&(selection?.pending||MP.guest&&!MP.hostId));
 }
 
 function publishLiftSelection(to){
@@ -5101,14 +5105,20 @@ function aboardSharedLift(id){
 function selectLiftDepth(id,depth){
   const max=sharedLift.selection?.max||liftFloorLimit();
   if(state!=='title'||sharedLift.pending||sharedLift.trip||!aboardSharedLift(id)||!validLiftDepth(depth)||depth>max)return;
-  sharedLift.selection={depth,max,by:terminalPlayerName(id)};
+  sharedLift.selection={...sharedLift.selection,depth,max,by:terminalPlayerName(id)};
   publishLiftSelection();
 }
 
-function requestLiftDeparture(id){
+function requestLiftDeparture(id,shortcut=false){
   if(state!=='title'||sharedLift.pending||sharedLift.trip||!aboardSharedLift(id))return;
   sharedLift.pending=performance.now()+420;
   sharedLift.selection={...sharedLift.selection,pending:true};
+  if(shortcut){
+    const reached=partyDeepestFloor();
+    sharedLift.selection.depth=sharedLift.selection.deepest=reached;
+    sharedLift.selection.max=Math.max(40,reached);
+    sharedLift.selection.by=terminalPlayerName(id);
+  }
   publishLiftSelection();
 }
 
@@ -5120,7 +5130,7 @@ function startSharedLift(packet){
   const trip={id,depth,pilot,members,packet,motion:null,started:performance.now()};
   sharedLift.trip=trip;
   sharedLift.pending=0;
-  sharedLift.selection={depth,max,by:sharedLift.selection?.by||''};
+  sharedLift.selection={...sharedLift.selection,depth,max};
   MP.host=pilot===MP.id;
   MP.guest=!MP.host;
   MP.hostId=MP.host?null:pilot;
@@ -5148,6 +5158,14 @@ function startSharedLift(packet){
 }
 
 function tickSharedLift(){
+  if(state==='title'&&!sharedLift.trip&&!sharedLift.pending&&sharedLift.selection){
+    const reached=partyDeepestFloor();
+    if(reached!==sharedLift.selection.deepest){
+      const max=Math.max(40,reached);
+      sharedLift.selection={...sharedLift.selection,deepest:reached,max,depth:Math.min(sharedLift.selection.depth,max)};
+      publishLiftSelection();
+    }
+  }
   if(!sharedLift.pending||performance.now()<sharedLift.pending)return;
   sharedLift.pending=0;
   const members=[MP.id,...MP.peers.keys()].filter(aboardSharedLift);
@@ -5173,7 +5191,7 @@ function publishLiftMotion(){
 function sendLiftAction(message){
   if(MP.host){
     if(message.k==='liftPick')selectLiftDepth(MP.id,message.depth);
-    else requestLiftDeparture(MP.id);
+    else requestLiftDeparture(MP.id,message.shortcut);
   }else if(MP.hostId){
     sendHubPresence(MP.hostId);
     mpSend(message,MP.hostId);
@@ -5357,15 +5375,20 @@ function prepareLanding(seed,depth){
   };
   return task;
 }
-$('liftDestination').addEventListener('submit',event=>{
-  event.preventDefault();
+function departFromLift(shortcut=false){
   if(state!=='title'||activeStation!=='lift'||!hub.boarded)return;
-  const depth=$('liftDepth').valueAsNumber;
+  if(MP.on&&shortcut){sendLiftAction({k:'liftDepart',shortcut:true});return}
+  const depth=shortcut?deepest:$('liftDepth').valueAsNumber;
   if(!Number.isInteger(depth)||depth<1||depth>+$('liftDepth').max)return;
   if(MP.on){sendLiftAction({k:'liftDepart'});return}
   const seed=($('seedIn').value.trim()||randSeed()).toUpperCase();
   if(hub.engageLift(depth,seed))closeStation();
+}
+$('liftDestination').addEventListener('submit',event=>{
+  event.preventDefault();
+  departFromLift();
 });
+$('liftDeepest').addEventListener('click',()=>departFromLift(true));
 $('liftDepth').addEventListener('input',()=>{
   const depth=$('liftDepth').valueAsNumber;
   if(MP.on&&activeStation==='lift'&&hub.boarded&&validLiftDepth(depth)&&depth<=+$('liftDepth').max)sendLiftAction({k:'liftPick',depth});

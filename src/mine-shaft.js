@@ -43,6 +43,43 @@ function beam(group,material,x,y,z,w,h,d){
   mesh.position.set(x,y,z);mesh.scale.set(w,h,d);group.add(mesh);
 }
 
+export function createShaftHead(){
+  const group=new THREE.Group();
+  beam(group,rock,0,1.76,-11.64,6.1,4.28,0.78);
+  beam(group,rock,0,3.87,-9.3,6.1,0.58,4.96);
+  beam(group,steel,0,-0.15,-11.29,4.76,0.31,0.83);
+  beam(group,timber,0,2.92,-11.07,5.2,0.22,0.34);
+  for(const side of [-1,1]){
+    beam(group,timber,side*2.23,1.37,-11.07,0.23,2.94,0.34);
+    for(let i=0;i<7;i++){
+      const stone=new THREE.Mesh(boulderGeometry,rock);
+      stone.position.set(side*(2.6+0.16*Math.sin(i*6.4)),0.15+i*.51,-11.04+0.21*Math.cos(i*4.3));
+      stone.scale.set(0.52,0.45,0.38);stone.rotation.set(i*.64,i*.85,i*.38);
+      group.add(stone);
+    }
+  }
+  const lamp=new THREE.PointLight(0xffd1a3,19,7);
+  lamp.position.set(0,2.64,-10.76);group.add(lamp);
+  beam(group,lampMaterial,0,2.79,-10.89,0.52,0.073,0.12);
+  return group;
+}
+
+export function advanceLiftMotion(ride,elapsed,destination,ready){
+  const dt=Math.min(elapsed,0.055);
+  const acceleration=2.1,braking=1.6,cruise=THREE.MathUtils.clamp(destination/18,2.2,6);
+  const remaining=destination-ride.travel;
+  const desired=ready?Math.min(cruise,Math.sqrt(2*braking*remaining)):cruise;
+  const speed=ride.speed+THREE.MathUtils.clamp(desired-ride.speed,-acceleration*dt,acceleration*dt);
+  const movement=(speed+ride.speed)*0.5*dt;
+  ride.speed=speed;
+  const buffer=Math.max(3.8,cruise*cruise/(2*braking)+0.15);
+  const approach=ready?remaining:Math.max(0,remaining-buffer);
+  const travel=Math.min(approach,movement);
+  ride.travel+=travel;
+  if(!ready)ride.extra+=movement-travel;
+  return ready&&movement>=remaining;
+}
+
 export function createMineLanding({height,numberSign,sampleFloor}){
   const group=new THREE.Group();
   const socket=-11.14,platformDepth=1.73;
@@ -75,6 +112,15 @@ export function createMineLanding({height,numberSign,sampleFloor}){
   lantern.position.set(-1.34,2.27,socket-0.45);
   alcove.add(lantern);
   const mazeMount=new THREE.Group();mazeMount.position.z=landingMazeZ;group.add(mazeMount);
+  const landingFace=new THREE.Group();
+  landingFace.visible=false;
+  group.add(landingFace);
+  // Dress the cut around the preview mesh without covering its walkable mouth.
+  beam(landingFace,rock,0,2.9,landingMazeZ+0.05,5.05,1.32,0.22);
+  for(const side of [-1,1]){
+    beam(landingFace,rock,side*1.79,1.14,landingMazeZ+0.05,1.48,2.28,0.22);
+  }
+  beam(landingFace,steel,0,-0.10,landingMazeZ+0.06,5.05,0.18,0.26);
   let lastKey='',lastFloor;
   function assign(mesh,i,x,y,z,w,h,d,r=0){
     tile.position.set(x,y,z);tile.scale.set(w,h,d);tile.rotation.set(r*0.62,r,r*0.32);
@@ -138,6 +184,7 @@ export function createMineLanding({height,numberSign,sampleFloor}){
     if((mazeMount.children[0]||null)===model&&terrain.visible===!model)return;
     mazeMount.clear();
     if(model)mazeMount.add(model);
+    landingFace.visible=!!model;
     terrain.visible=!model;
     for(const child of alcove.children)if(child!==terrain&&!child.isLight)child.visible=!model;
   }};

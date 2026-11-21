@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import {bobY, createRoomWalker, lookBy, lookStep} from './movement.js';
 import {createArchiveHall, worldSign} from './archive-hall.js';
 import {buildAsteroidLobby} from './asteroid-lobby.js';
-import {createMineLanding,createMineRockGap, landingMazeZ} from './mine-shaft.js';
+import {advanceLiftMotion,createMineLanding,createMineRockGap,createShaftHead,landingMazeZ} from './mine-shaft.js';
 
 const portals=[
   {id:'doors',x:-15.35,name:'Door Archive',color:0xb9c4ff},
@@ -183,7 +183,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
 
   const overhead=[];
   const cabin=new THREE.Group(),well=new THREE.Group();
-  scene.add(well,cabin);
+  scene.add(createShaftHead(),well,cabin);
   const shaftZ=-8.9;
   box(cabin,iron,0,-0.14,shaftZ,3.67,0.27,4.02);
   for(let x=-1.65;x<1.75;x+=0.24)box(cabin,brass,x,0.008,shaftZ,0.018,0.023,3.92);
@@ -271,8 +271,8 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   }
   function engageLift(depth,seed,group=null){
     if(ride||liftAway||!onLiftPlatform(walker.b))return false;
-    ride={depth,travel:0,extra:0,seed,group,task:prepareLanding(seed,depth),docked:false,gate:0,onLanding:false};
-    lobby.visible=false;cage.visible=true;well.visible=true;
+    ride={depth,travel:0,extra:0,speed:0,seed,group,task:prepareLanding(seed,depth),docked:false,gate:0,onLanding:false};
+    cage.visible=true;well.visible=true;
     liftLabel.setLabel(['FLOOR '+depth,'PREPARING MAZE'],true,0);
     indicators(1);sfx('door');
     return true;
@@ -290,28 +290,24 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     }
     ride.task.advance();
     const destination=ride.depth*interval;
-    const speed=Math.max(3.4,destination/12);
     let arriving;
     if(ride.group?.follow){
       const motion=ride.group.follow();
       if(!motion)return;
       // Match the pilot's car. Local generation can continue during transit.
-      const k=Math.min(1,dt*13);
+      const k=1-Math.exp(-Math.min(dt,0.055)*8);
       ride.travel+=(motion.travel-ride.travel)*k;
       ride.extra+=(motion.extra-ride.extra)*k;
-      arriving=motion.docked&&ride.task.ready&&destination-ride.travel<0.10&&motion.extra-ride.extra<0.10;
+      arriving=motion.docked&&ride.task.ready&&destination-ride.travel<0.015&&motion.extra-ride.extra<0.015;
       if(arriving){ride.travel=destination;ride.extra=motion.extra}
     }else{
       const ready=ride.task.ready&&(!ride.group||ride.group.ready());
-      const limit=ready?destination:destination-3.8;
-      const next=ride.travel+dt*speed;
-      ride.travel=Math.min(limit,next);
-      ride.extra+=Math.max(0,next-limit)*(ready?0:1);
-      arriving=ready&&ride.travel>=destination;
+      arriving=advanceLiftMotion(ride,dt,destination,ready);
     }
     const current=Math.max(1,Math.ceil(ride.travel/interval));
     indicators(current);
     cabin.position.y=-ride.travel-ride.extra;
+    lobby.visible=cabin.position.y>-4.5;
     rockGap.resize(-destination+interval,ride.extra);
     const progress=Math.round(Math.min(0.99,(ride.travel/destination)*0.68+ride.task.progress*0.32)*100);
     if(progress!==ride.progress){
@@ -462,10 +458,12 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   function render(exposure,time){
     const width=innerWidth,height=innerHeight;
     const aspect=width/height;
-    if(camera.aspect!==aspect||camera.userData.docked!==!!ride?.docked){
+    const baseFov=Math.min(105,Math.max(61,THREE.MathUtils.radToDeg(2*Math.atan(0.78/aspect))));
+    const open=ride?.docked?THREE.MathUtils.smoothstep(ride.gate,0,1):0;
+    const fov=THREE.MathUtils.lerp(baseFov,Math.max(72,baseFov),open);
+    if(camera.aspect!==aspect||camera.fov!==fov){
       camera.aspect=aspect;
-      camera.userData.docked=!!ride?.docked;
-      camera.fov=ride?.docked?72:Math.min(105,Math.max(61,THREE.MathUtils.radToDeg(2*Math.atan(0.78/aspect))));
+      camera.fov=fov;
       camera.updateProjectionMatrix();
     }
     pose();
