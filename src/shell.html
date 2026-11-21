@@ -53,7 +53,8 @@
   #moosePanel .moose-actions button:last-child{background:#ecb875;color:#142228;border-color:#efcb92;font-weight:bold}
   #moosePanel button:disabled{opacity:.55;cursor:default}
   #moosePanel button:focus-visible{outline:2px solid #fff;outline-offset:1px}
-  body.moose-table #touch{display:none!important}
+  body.touch.moose-table #moosePanel{padding-bottom:100px}
+  body.moose-table #tJump{display:none}
   body.mooseroom #toast,body.mooseroom #achToast,body.mooseroom #hurt{visibility:hidden}
   #mooseLine{color:#a7dec0}
   #scoutLine{color:#83efff}
@@ -196,6 +197,46 @@
   body.touch .row{margin-top:10px;gap:12px;font-size:13px}
   body.touch .hint{margin-top:8px;font-size:12px}
   body.touch .stats{font-size:15px;line-height:1.6;margin-bottom:14px}
+  #menuHub{position:fixed;inset:0;z-index:5;pointer-events:none}
+  #hubCross{position:absolute;left:50%;top:50%;width:5px;height:5px;border:1px solid #ffe4bd;border-radius:50%;opacity:.6;transform:translate(-50%,-50%)}
+  #hubCross.ready{width:8px;height:8px;border-color:#ffca7d;opacity:.95}
+  body.hub-panel #menuHub,body.hub-room #toast{visibility:hidden}
+  body.hub-room #vig,body.hub-room #fps,body.hub-room #tMap,body.hub-room #tPause{display:none!important}
+  body.hub-room #touch{z-index:4}
+  body.touch.hub-room #tJump,body.touch.hub-room #tFlash{width:58px;height:58px;bottom:18px}
+  body.touch.hub-room #tFlash{right:91px}
+  :is(#title,.shared-terminal){position:fixed;z-index:7;left:0;top:0;transform-origin:0 0;box-sizing:border-box;overflow:auto;touch-action:pan-y;background:#0d1d23;color:#c1ecd9;scrollbar-color:#43786e #0d1d23}
+  :is(#stationCard,[data-screen-id=stationCard]){position:relative;box-sizing:border-box;min-height:100%;width:100%;padding:22px 26px;font:16px Consolas,"Courier New",monospace;text-align:left;
+    background:repeating-linear-gradient(0deg,#07131516 0 1px,transparent 1px 4px),radial-gradient(ellipse at 28% 0,#203c40,#101d24 65%,#101921)}
+  :is(#stationCard,[data-screen-id=stationCard]) h1{margin:0 94px 18px 0;padding:0 0 11px;border-bottom:1px solid #416662;font:600 30px Consolas,"Courier New",monospace;color:#bdf1d5;letter-spacing:0;text-shadow:0 0 12px #81d7bc49}
+  :is(#stationCard,[data-screen-id=stationCard]) button,#archiveBack{font:600 15px Consolas,"Courier New",monospace;padding:8px 13px;box-shadow:none;text-shadow:none;letter-spacing:0;border-radius:3px}
+  :is(#stationCard,[data-screen-id=stationCard]) :is(#closeStation,[data-screen-id=closeStation]){position:absolute;right:26px;top:21px;background:#193430;color:#d0f4df;border:1px solid #608f7d}
+  :is(#stationCard,[data-screen-id=stationCard]) :is(#closeStation,[data-screen-id=closeStation]):hover,:is(#stationCard,[data-screen-id=stationCard]) :is(#closeStation,[data-screen-id=closeStation]):focus-visible{background:#2a5049}
+  :is(#stationCard,[data-screen-id=stationCard]) .row{align-items:flex-end;justify-content:flex-start;gap:17px;margin:17px 0;opacity:1;font-size:16px}
+  :is(#stationCard,[data-screen-id=stationCard]) label{display:flex;flex-direction:column;gap:4px;align-items:flex-start}
+  :is(#stationCard,[data-screen-id=stationCard]) label[hidden]{display:none}
+  :is(#stationCard,[data-screen-id=stationCard]) label.gpu-option{flex-direction:row;align-items:center}
+  :is(#stationCard,[data-screen-id=stationCard]) input[type=range],:is(#stationCard,[data-screen-id=stationCard]) input[type=checkbox]{accent-color:#8bdbbb}
+  :is(#stationCard,[data-screen-id=stationCard]) input[type=text],:is(#stationCard,[data-screen-id=stationCard]) select{box-sizing:border-box;background:#111f24;color:#dbf7e8;border:1px solid #517571;font:inherit}
+  body.touch :is(#stationCard,[data-screen-id=stationCard]) label.gpu-option{display:none}
+  :is(#stationCard,[data-screen-id=stationCard]) .keys{margin:0 0 15px;font-size:15px}
+  :is(#stationCard,[data-screen-id=stationCard]) .keys b{color:#9ee5c9}
+  :is(#stationCard,[data-screen-id=stationCard]) .hint,:is(#stationCard,[data-screen-id=stationCard]) .sub{margin:8px 0;text-align:left;line-height:1.45;color:#b8d4cc}
+  #liftDestination{display:flex;flex-wrap:wrap;align-items:end;gap:16px;margin-top:16px}
+  #liftDepth{font:600 25px Consolas,monospace;color:#cbf2df;background:#11242a;border:1px solid #608f7d;width:102px;padding:9px}
+  #liftGo{color:#102c24;background:#a7dbc2;border:1px solid #a7dbc2}
+  #title[data-lift] h1{font-size:clamp(34px,6cqi,50px)}
+  #title[data-lift] #liftRunType,#title[data-lift] #liftDestination label{font-size:clamp(19px,3.7cqi,30px)}
+  #title[data-lift] #liftDestination{gap:24px;margin-top:32px}
+  #title[data-lift] #liftDepth,#title[data-lift] #liftGo{font-size:clamp(22px,4cqi,34px);min-height:50px}
+  @media(max-width:619px){:is(#stationCard,[data-screen-id=stationCard]){padding:15px 17px}:is(#stationCard,[data-screen-id=stationCard]) :is(#closeStation,[data-screen-id=closeStation]){top:13px;right:17px}}
+  .shared-terminal .terminal-login,.shared-terminal .terminal-selection{margin:9px 0}
+  .shared-terminal .terminal-login{color:#b8d4cc;font-weight:600}
+  .shared-terminal .terminal-login.signed-in{color:#a5efc0}
+  .shared-terminal .terminal-selection{color:#f6d590}
+  .shared-terminal .terminal-picked{outline:2px solid #e9be65;outline-offset:3px}
+  .shared-terminal input:disabled,.shared-terminal select:disabled{opacity:.8}
+  #archiveBack{position:fixed;z-index:8;top:calc(12px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);background:#322b40;color:#ffe7ca;border:1px solid #b48f77}
 </style>
 </head>
 <body>
@@ -256,9 +297,20 @@
   </div>
 </div>
 
-<div id="title" class="panel">
-  <h1>DOOR SIMULATOR</h1>
-  <div class="sub">A new maze every descent. Your torch is burning down.</div>
+<div id="menuHub" aria-label="Door Simulator entrance hall"><div id="hubCross" aria-hidden="true"></div></div>
+<button id="archiveBack" hidden>Return to archive</button>
+<div id="title" class="hidden">
+  <section id="stationCard" aria-labelledby="stationTitle">
+  <button id="closeStation" type="button" aria-label="Exit terminal">Exit</button>
+  <h1 id="stationTitle"></h1>
+  <div data-station-panel="lift" hidden>
+    <p id="liftRunType" class="hint"></p>
+    <form id="liftDestination">
+      <label>Destination floor <input id="liftDepth" type="number" min="1" max="40" step="1" required></label>
+      <button id="liftGo" type="submit">Descend</button>
+    </form>
+  </div>
+  <div data-station-panel="guide" hidden>
   <div class="keys kb">
     <b>W A S D</b><span>Move</span>
     <b>Mouse or ← →</b><span>Look around</span>
@@ -270,8 +322,17 @@
   </div>
   <div class="tc sub" style="max-width:520px;line-height:1.5">Left thumb: move, push all the way to sprint. Right thumb: drag to look.<br>Buttons: jump and flash bomb. Tap the map to enlarge it.</div>
   <div class="tc hint" id="rotHint" style="color:#ffc27a;margin:0 0 10px"></div>
-  <button id="startBtn">DESCEND</button>
+  <div class="hint">Collect 3 blue shards on each floor to break the seal on the way down. Listen for the chime: it gets louder as you get close.<br>Every floor hides a sanctuary where nothing can follow you. Its Keeper trades gems for lasting upgrades.</div>
+  <div class="hint" id="padLine" style="color:#9fe3c4;max-width:640px"></div>
+  <div class="hint" id="bestLine"></div>
+  <div class="hint" id="achLine" style="color:#ffe9b0;opacity:.8"></div>
+  </div>
+  <div data-station-panel="settings" hidden>
   <div class="hint" id="mpJoinLine" style="color:#9fe3c4;margin-top:10px"></div>
+  <div class="row" id="hubInvite" hidden>
+    <label>Invite link <input id="hubInviteLink" class="plain" type="text" readonly></label>
+    <button id="hubInviteCopy" type="button">Copy invite</button>
+  </div>
   <div class="row">
     <label>Your name <input id="nameIn" class="plain" type="text" maxlength="16" placeholder="Delver"></label>
     <button id="hostBtn" style="font-size:13px;padding:8px 20px;background:rgba(255,255,255,.15);color:#fff;box-shadow:none" title="Start a game your friends can join with a link">HOST FOR FRIENDS</button>
@@ -279,18 +340,18 @@
     <button id="soloBtn" style="font-size:13px;padding:8px 20px;background:rgba(255,255,255,.15);color:#fff;box-shadow:none" hidden>PLAY ALONE INSTEAD</button>
   </div>
   <div class="row">
-    <label id="depthLbl" hidden>Start at <select id="startSel"></select></label>
+    <label id="depthLbl" hidden>Default lift floor <select id="startSel"></select></label>
     <label id="seedLbl">Seed <input id="seedIn" type="text" maxlength="8" placeholder="random"></label>
+  </div>
+  <div class="row">
     <label><span class="kb">Mouse speed</span><span class="tc" style="display:inline">Look speed</span> <input id="sens" type="range" min="0.4" max="2.5" step="0.1" value="1"></label>
     <label>Brightness <input class="brightS" type="range" min="0.6" max="3" step="0.05" value="1.3"></label>
     <label>Graphics <select id="qSel"><option value="auto">Auto</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
-    <label class="kb" title="Asks the browser to use the dedicated graphics card. Turn off if the picture goes black."><input id="gtx" type="checkbox"> Prefer dedicated GPU</label>
+    <label class="gpu-option" title="Asks the browser to use the dedicated graphics card. Turn off if the picture goes black."><input id="gtx" type="checkbox"> Prefer dedicated GPU</label>
   </div>
-  <div class="hint">Collect 3 blue shards on each floor to break the seal on the way down. Listen for the chime: it gets louder as you get close.<br>Every floor hides a sanctuary where nothing can follow you. Its Keeper trades gems for lasting upgrades.</div>
-  <div class="hint" id="padLine" style="color:#9fe3c4;max-width:640px"></div>
-  <div class="hint" id="bestLine"></div>
-  <div class="hint" id="achLine" style="color:#ffe9b0;opacity:.8"></div>
   <div class="hint" id="diag" style="font-size:11px"></div>
+  </div>
+  </section>
 </div>
 
 <div id="pause" class="panel hidden">

@@ -156,14 +156,24 @@ try{
   }
   async function selectTile(index){
     const {width,height}=page.viewportSize();
-    const {view,projection}=await page.evaluate(()=>{
-      const cam=__game.ROOMS.cam;
-      return {view:cam.matrixWorldInverse.toArray(),projection:cam.projectionMatrix.toArray()};
-    });
     const col=index%cols,row=Math.floor(index/cols);
     const point=new Vector3((col-(cols-1)/2)*TABLE_SCALE,TABLE_HEIGHT+.034*TABLE_SCALE,(row-(rows-1)/2)*TABLE_SCALE);
-    point.applyMatrix4(new Matrix4().fromArray(view)).applyMatrix4(new Matrix4().fromArray(projection));
-    await page.mouse.click((point.x+1)*width/2,(1-point.y)*height/2);
+    const {view,projection,yaw,pitch}=await page.evaluate(([x,y,z])=>{
+      const room=__game.ROOMS,cam=room.cam,s=room.state(),{yaw,pitch}=s;
+      const dx=x-cam.position.x,dy=y-cam.position.y,dz=z-cam.position.z;
+      room.look(Math.atan2(dx,-dz)-yaw,pitch-Math.atan2(dy,Math.hypot(dx,dz)));
+      room.render();
+      return {view:cam.matrixWorldInverse.toArray(),projection:cam.projectionMatrix.toArray(),yaw,pitch};
+    },point.toArray());
+    try{
+      point.applyMatrix4(new Matrix4().fromArray(view)).applyMatrix4(new Matrix4().fromArray(projection));
+      await page.mouse.click((point.x+1)*width/2,(1-point.y)*height/2);
+    }finally{
+      await page.evaluate(({yaw,pitch})=>{
+        const room=__game.ROOMS,s=room.state();
+        room.look(yaw-s.yaw,s.pitch-pitch);room.render();
+      },{yaw,pitch});
+    }
     assert.ok((await page.locator('.moose-tile').textContent()).startsWith(String.fromCharCode(65+row)+(col+1)+' · '),
       'click selects the intended tile');
   }

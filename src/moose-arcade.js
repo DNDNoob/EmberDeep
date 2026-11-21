@@ -149,15 +149,11 @@ export function outpostArcade(room,o,onClear){
 }
 
 export function outpostCamera(cam,arcade,S){
-  const walk=new THREE.PerspectiveCamera(),top=new THREE.PerspectiveCamera(),target=new THREE.Vector3();
   return ()=>{
     const {walker,roof}=arcade,b=walker.b;
-    walk.position.set(b.x,EYE+b.y+bobY(b,walker.scale),b.z);walk.rotation.set(S.pitch,-S.yaw,0,'YXZ');
-    const zoom=Math.max(1,1.24/Math.max(.35,cam.aspect)),mix=S.tableMix;
-    top.position.set(0,TABLE_HEIGHT+6.64*zoom,4.35);
-    top.lookAt(target.set(0,.61,-.43));
-    cam.fov=THREE.MathUtils.lerp(62,54,mix);
-    cam.position.lerpVectors(walk.position,top.position,mix);cam.quaternion.slerpQuaternions(walk.quaternion,top.quaternion,mix);
+    cam.fov=62;
+    cam.position.set(b.x,EYE+b.y+bobY(b,walker.scale),b.z);
+    cam.rotation.set(S.pitch,-S.yaw,0,'YXZ');
     roof.visible=cam.position.y<HEIGHT-.24;
   };
 }
