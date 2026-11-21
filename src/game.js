@@ -23,6 +23,10 @@ import {pickVariant,VARIANTS} from './variants.js';
 import {createForest,coreFaces,INSET,CORE_H} from './forest.js';
 import {MOVE,stepMove,lookStep,lookBy,bobY} from './movement.js';
 import {initAmbience,updateAmbience,amb} from './ambience.js';
+import {createMenuRoom,onLiftPlatform} from './menu-room.js';
+import {createSettingsScreen,createTerminalSession} from './shared-terminal.js';
+import {landingMazeZ} from './mine-shaft.js';
+import {floorDiorama,lenticularDoor} from './archive-hall.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('gl');
@@ -47,8 +51,11 @@ function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a
 function hashStr(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return h>>>0}
 function randSeed(){const c='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';let s='';for(let i=0;i<6;i++)s+=c[Math.random()*c.length|0];return s}
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+let archiveRun=null;
+const runSaveKeys=new Set(['wallet','up','ach','best','deepest']);
 const store={
-  get:lsGet,set:lsSet
+  get:lsGet,
+  set(k,v){if(!archiveRun||!runSaveKeys.has(k))lsSet(k,v)}
 };
 
 /* ---------- constants ---------- */
@@ -1670,6 +1677,18 @@ const doorRng=(D,s)=>mulberry32(hashStr(s+'#'+D.tx+','+D.ty+','+Math.round(D.ph*
 function doorKnob(f,col){
   seg(f,[0.04,0.5,0.17],[0.075,0.5,0.17],0.012,0.012,[0.13,0.12,0.12,4]);ball(f,[0.08,0.5,0.17],0.026,col,true);slab(f,[0.038,0.4,0.17],[0.004,0.05,0.022],[0.01,0.01,0.01,4]);
 }
+function buildStrangeDoor(f,D,st,dk){
+  const band=[0.13,0.12,0.12,4];
+  for(const z of[-0.3,0.3])slab(f,[0.035,0.52,z],[0.09,1.04,0.1],st);
+  slab(f,[0.035,1.08,0],[0.09,0.1,0.7],st);slab(f,[0.045,1.15,0],[0.07,0.06,0.2],dk);
+  if(!D.used)DOOR_LOOKS[doorLookOf(D)].leaf(f,D,{st,dk,band});
+  else{
+    slab(f,[0.02,0.515,0],[0.03,1.03,0.5],[0.06,0.05,0.045,6]);
+    for(const z of[-0.125,0.125])slab(f,[0.036,0.515,z],[0.004,1.0,0.012],[0.1,0.06,0.03,6]);
+    for(const y of[0.2,0.82])slab(f,[0.037,y,0],[0.008,0.05,0.5],band);
+    slab(f,[0.04,0.55,0],[0.006,0.9,0.05],dk,rX(0.6));slab(f,[0.04,0.55,0],[0.006,0.9,0.05],dk,rX(-0.6));
+  }
+}
 function buildStatic(F){
   TB=DEC;DEC.n=0;
   const st=[...F.stone,9],dk=[st[0]*0.8,st[1]*0.8,st[2]*0.8,9],iron=[0.1,0.09,0.085,4];
@@ -1687,16 +1706,8 @@ function buildStatic(F){
     }else{slab(f,[0,0.72,0],[0.05,0.2,0.05],iron);slab(f,[-q.dx*0.07,0.82,-q.dz*0.07],[0.12,0.04,0.12],iron)}}
   for(const pr of F.props)buildProp(pr,F);
   for(const D of F.sdoors){
-    const f={p:[D.x,0,D.z],R:rYaw(D.r),lo:[D.x*0.37,0,D.z*0.37]},band=[0.13,0.12,0.12,4];
-    for(const z of[-0.3,0.3])slab(f,[0.035,0.52,z],[0.09,1.04,0.1],st);
-    slab(f,[0.035,1.08,0],[0.09,0.1,0.7],st);slab(f,[0.045,1.15,0],[0.07,0.06,0.2],dk);
-    if(!D.used)DOOR_LOOKS[doorLookOf(D)].leaf(f,D,{st,dk,band});
-    else{
-      slab(f,[0.02,0.515,0],[0.03,1.03,0.5],[0.06,0.05,0.045,6]);
-      for(const z of[-0.125,0.125])slab(f,[0.036,0.515,z],[0.004,1.0,0.012],[0.1,0.06,0.03,6]);
-      for(const y of[0.2,0.82])slab(f,[0.037,y,0],[0.008,0.05,0.5],band);
-      slab(f,[0.04,0.55,0],[0.006,0.9,0.05],dk,rX(0.6));slab(f,[0.04,0.55,0],[0.006,0.9,0.05],dk,rX(-0.6));
-    }
+    const f={p:[D.x,0,D.z],R:rYaw(D.r),lo:[D.x*0.37,0,D.z*0.37]};
+    buildStrangeDoor(f,D,st,dk);
   }
   TB=CH;
   upload(decorMesh,DEC);
@@ -2179,6 +2190,7 @@ function sdoorOpen(D,showProgress=false){
   mpSend({k:'sd',d:R.depth,i:F.sdoors.indexOf(D),w:D.kind});
   sfx('door');
   const seed=hashStr(R.seed+'#theater'+R.depth+','+D.tx+','+D.ty);
+  remember('doors',D.kind,{seed,depth:R.depth,look:doorLookOf(D),tx:D.tx,ty:D.ty,ph:D.ph,stone:F.stone.slice()});
   if(!showProgress)buildStatic(F);
   beginRoom(D.kind,roomEnd,seed,showProgress);
 }
@@ -2339,15 +2351,15 @@ function roomInput(){
   const ax=(a,b)=>(a?1:0)-(b?1:0);
   const actions=roomActions(keys,pad.roomButtons,{mode,mouse:mouseL,touchPress:touch.act,touchJump:touch.jump});
   return {...actions,
-    mx:table?0:clamp(ax(keys.KeyD,keys.KeyA)+pad.mx+touch.mx,-1,1),
-    my:table?0:clamp(ax(keys.KeyS||keys.ArrowDown&&!choice,keys.KeyW||keys.ArrowUp&&!choice)+pad.my+touch.my,-1,1),
+    mx:clamp(ax(keys.KeyD,keys.KeyA)+pad.mx+touch.mx,-1,1),
+    my:clamp(ax(keys.KeyS||keys.ArrowDown&&!choice&&!table,keys.KeyW||keys.ArrowUp&&!choice&&!table)+pad.my+touch.my,-1,1),
     press:actions.press||(state==='title'&&!!keys.Enter)||(state==='room'&&ROOMS.kind==='theater'&&!!keys.KeyV),
     sprint:actions.sprint||Math.hypot(touch.mx,touch.my)>0.94,
-    lx:table?0:(choice?0:ax(keys.ArrowRight,keys.ArrowLeft))+pad.lx*MOVE.padTurn,
-    ly:table?0:pad.ly};
+    lx:(choice||table?0:ax(keys.ArrowRight,keys.ArrowLeft))+pad.lx*MOVE.padTurn,
+    ly:pad.ly};
 }
 let doorMsgT=0, tipTimers=[];
-let mapBig=false, usingLock=false, pausedAt=0, flashT=0, sealMsgT=0, lowFuelSaid=false, pingT=0, beatT=0, titleYaw=0;
+let mapBig=false, usingLock=false, pausedAt=0, flashT=0, sealMsgT=0, lowFuelSaid=false, pingT=0, beatT=0;
 let sens=store.get('sens',1);
 $('sens').value=sens;
 $('sens').addEventListener('input',e=>{sens=+e.target.value;store.set('sens',sens)});
@@ -2372,14 +2384,15 @@ function los(x0,z0,x1,z1){
 function loadFloor(depth,look){
   installFloor(depth,genFloor(R.seed,depth,look));
 }
-function installFloor(depth,nextFloor){
+function installFloor(depth,nextFloor,prepared=false){
   R.depth=depth;
-  if(depth>deepest&&!(URL_DEPTH&&depth===R.startDepth)){deepest=depth;store.set('deepest',deepest)}
+  if(!archiveRun&&depth>deepest&&!(URL_DEPTH&&depth===R.startDepth)){deepest=depth;store.set('deepest',deepest)}
   if(F?.npcs)for(const npc of F.npcs)disposeGpuRig(npc);
-  R.xray=0;R.guide=0;GD.have=false;GD.key='';F=nextFloor;panelLvl=1;P.grab=null;clearMooseLures();if(typeof MIM!=='undefined')mimicReset();
-  buildMesh(F);buildStatic(F);buildSdf(F);sweepWorld();if(F.npcs&&F.npcs.some(q=>q.type==='keeper'))keeperWarm();
+  R.xray=0;R.guide=0;GD.have=false;GD.key='';F=nextFloor;panelLvl=1;P.grab=null;clearMooseLures();mimicReset();
+  if(!prepared){buildMesh(F);buildStatic(F);buildSdf(F)}
+  sweepWorld();if(F.npcs&&F.npcs.some(q=>q.type==='keeper'))keeperWarm();
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
-  P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;P.inSafe=false;nearNpc=null;
+  P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;P.inSafe=false;nearNpc=nearDoor=null;
   sealMsgT=0;doorMsgT=0;
   onTileChange();
   pkReapply();
@@ -2432,18 +2445,26 @@ function startRun(seed,depth,force,showProgress=false,onReady){
 function startFromMenu(seed,depth){
   if(!loading)startRun(seed,depth,false,true);
 }
-function enterRun(seed,sd,floor){
+function enterRun(seed,sd,floor,landing,liftTrip){
   roomLeave();$('deadTitle').textContent='THE DARK TAKES YOU';
+  showHub(false);
+  if(!archiveRun)hub.reset();
   P.down=false;
   R.seed=seed;R.pk={};P.pick=0;P.spikeTraps=0;P.moose=P.mounted=false;P.moosePending=null;R.score=0;R.time=0;R.gems=0;R.startDepth=sd;
   P.hp=maxHp();P.fuel=100;P.stam=100;P.winded=false;P.flash=1+Math.floor((sd-1)/3)+(up.band|0);P.ward=0;R.wind=false;P.inv=0;P.chill=0;lowFuelSaid=false;
-  installFloor(sd,floor);
+  installFloor(sd,floor,!!landing);
+  if(landing){
+    Object.assign(P,landing);
+    onTileChange();
+  }
   state='play';
+  rememberFloor();
   ['title','pause','dead','talk'].forEach(id=>$(id).classList.add('hidden'));talk=null;
   $('hud').classList.remove('hidden');$('map').classList.remove('hidden');
-  say(sd>1?`Depth ${sd}: ${floorTag()}`:'Find 3 shards to break the seal',4);showTips();
+  if(!archiveRun){say(sd>1?`Depth ${sd}: ${floorTag()}`:'Find 3 shards to break the seal',4);showTips()}
   initAudio();
-  if(MP.host)mpSendRun();
+  if(liftTrip)for(const [message,from] of sharedLift.waiting.splice(0))mpRecv(message,from);
+  if(MP.host)mpSendRun(undefined,liftTrip);
 }
 const TIPS={2:['Spikes ahead: time them, or jump with Space','A locked gate needs its key. Blue wisps drink your torch.'],
   3:['An open cavern. Something here only moves when you look away.'],
@@ -2454,12 +2475,14 @@ function showTips(){
   t.forEach((msg,i)=>tipTimers.push(setTimeout(()=>{if(state==='play'&&R.depth===d)say(msg,4)},4200+i*4600)));
 }
 function toTitle(){
+  if(archiveRun){finishArchive();return}
   if(loading)closeLoading();
   roomLeave();glFallEnd();GL.queued=null;
   if(MP.on)mpLeave(false);
   state='title';
   ['pause','dead','hud','map','talk'].forEach(id=>$(id).classList.add('hidden'));talk=null;clearPrompt();
-  $('title').classList.remove('hidden');
+  $('toast').style.opacity=0;
+  showHub(true);
   showBest();
   if(document.pointerLockElement)document.exitPointerLock();
 }
@@ -2487,6 +2510,7 @@ let toastTimer=0;
 function say(t,secs){const el=$('toast');el.textContent=t;el.style.opacity=1;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.style.opacity=0,(secs||2.5)*1000)}
 
 function die(){
+  if(archiveRun){state='dead';queueMicrotask(finishArchive);return}
   if(loading)closeLoading();
   roomLeave();GL.queued=null;R.xray=0;R.guide=0;
   if(MP.on&&!MP.wiping){mpDown();return}
@@ -2502,6 +2526,7 @@ function die(){
   sfx('die');
 }
 function descend(n,why){
+  if(archiveRun){finishArchive();return}
   n=n||1;roomLeave();
   state='trans';
   const bonus=why?0:100*R.depth+Math.round(P.fuel);
@@ -2512,6 +2537,7 @@ function descend(n,why){
     P.fuel=Math.min(100,P.fuel+25);lowFuelSaid=false;
     if(P.down){P.down=false;P.hp=maxHp();P.fuel=Math.max(P.fuel,50);P.inv=2;say('You rise again',2)}
     installFloor(depth,floor);
+    rememberFloor();
     $('fade').style.transition='';$('fade').style.opacity=0;
     say((why?why+'. ':'')+`Depth ${R.depth}: ${floorTag()}`,why?5:3.5);showTips();
     state='play';
@@ -2549,6 +2575,7 @@ const ACH=(()=>{const a=store.get('ach',{});return a&&typeof a==='object'&&!Arra
 function achLine(){const got=Object.keys(ACH_DEFS).filter(k=>ACH[k]);$('achLine').textContent=got.length?'Achievements: '+got.map(k=>ACH_DEFS[k].title).join(' · '):''}
 // the toast shows every time it is earned; the time it was first earned is kept
 function achieve(id,title,desc){
+  if(archiveRun)return;
   if(!ACH[id]){ACH[id]=Date.now();store.set('ach',ACH)}
   const el=$('achToast');el.innerHTML='<small>ACHIEVEMENT</small><b>'+title+'</b>'+(desc?'<span>'+desc+'</span>':'');el.classList.add('on');
   clearTimeout(achTimer);achTimer=setTimeout(()=>el.classList.remove('on'),5200);achLine();
@@ -2718,7 +2745,14 @@ const toHex=c=>'#'+c.map(v=>Math.round(clamp(v,0,1)*255).toString(16).padStart(2
 const r2=v=>Math.round(v*100)/100, r3=v=>Math.round(v*1000)/1000;
 const wrapA=a=>{while(a>Math.PI)a-=Math.PI*2;while(a<-Math.PI)a+=Math.PI*2;return a};
 function mpSend(m,to){if(MP.on&&MP.room)MP.room.send(m,to)}
-function mpLink(){return location.origin+location.pathname+'?room='+MP.code+(MP.local?'&net=local':'')}
+function mpLink(){
+  const url=new URL(location.href);
+  url.search='';
+  url.hash='';
+  url.searchParams.set('room',MP.code);
+  if(MP.local)url.searchParams.set('net','local');
+  return url.href;
+}
 function mpPeer(id){
   let p=MP.peers.get(id);
   if(!p){const c=MP_COLS[hashStr(id||'')%MP_COLS.length];p={id,name:'Delver',col:c,hex:toHex(c),d:0,run:false,down:false,inv:0,walk:0,spd:0,fu:100};MP.peers.set(id,p)}
@@ -2727,6 +2761,7 @@ function mpPeer(id){
 const hostName=()=>{const h=MP.peers.get(MP.hostId);return h?h.name:'the host'};
 function mpOpen(code){
   MP.code=code;MP.on=true;MP.local=new URLSearchParams(location.search).get('net')==='local';
+  resetSharedLift();
   const room=openRoom(code,MP.local);MP.room=room;MP.id=room.id;
   room.onPeerJoin=id=>{mpPeer(id);mpSend({k:'hi',n:myName(),h:MP.host},id);if(MP.host)mpSend(mpCfg(),id);if(VOX.stream)room.addStream(VOX.stream,id);mpTitle()};
   room.onPeerLeave=id=>mpGone(id);
@@ -2741,23 +2776,25 @@ function mpLeave(endIfDown){
   clearMooseLures();P.moosePending=null;
   for(const id of MP.peers.keys())VOX.detach(id);
   MP.peers.clear();
+  terminalSession.reset();
+  resetSharedLift();
+  if(hub.riding)hub.reset();
   if(chatOpen)chatClose(false);chatLog.textContent='';
   try{const u=new URL(location.href);if(u.searchParams.has('room')){u.searchParams.delete('room');u.searchParams.delete('net');history.replaceState(null,'',u)}}catch(e){}
   if(P.down){P.down=false;if(endIfDown&&state!=='title'&&state!=='dead')die()}
   mpTitle();
 }
 // the host button: open a room, start a run, copy the invite link
-function mpHost(){
+function mpHost(depth,seed=$('seedIn').value.trim(),landing){
   if(loading)return;
   if(MP.on)mpLeave(false);
   MP.host=true;MP.guest=false;
   mpOpen(newRoomCode());
   let copied;
-  startRun($('seedIn').value.trim(),undefined,false,true,()=>{
-    copied.then(ok=>say(ok?'Invite link copied. Send it to your friends.':'Room '+MP.code+'. Press Esc for the invite link.',4));
-  });
-  lock();
   try{copied=navigator.clipboard.writeText(mpLink()).then(()=>true,()=>false)}catch(e){copied=Promise.resolve(false)}
+  const announce=()=>copied.then(ok=>say(ok?'Invite link copied. Send it to your friends.':'Room '+MP.code+'. Press Esc for the invite link.',4));
+  if(landing){enterRun(seed,depth,landing.floor,landing.pose);announce()}
+  else{startRun(seed,depth,depth!==undefined,true,announce);lock()}
 }
 // opened from an invite link: connect straight away, start when the player clicks Join
 function mpPrepareJoin(code){
@@ -2770,10 +2807,10 @@ function mpJoinClick(){
   if(MP.run){mpApplyRun(MP.run);lock()}
   else say('Still looking for the host. Keep this page open.',2.5);
 }
-function mpSendRun(to){
+function mpSendRun(to,liftTrip){
   if(!MP.host||!F)return;
   const got=[];F.items.forEach((it,i)=>{if(it.got)got.push(i)});
-  mpSend({k:'run',seed:R.seed,d:R.depth,sd:R.startDepth,t:r2(R.time),got,door:F.doorOpen?1:0,sdo:F.sdoors.map(q=>q.used?1:0),pk:(R.pk[R.depth]||[]).slice(0,64),sh:P.shards,ke:P.keys,blk:F.blk|0},to);
+  mpSend({k:'run',seed:R.seed,d:R.depth,sd:R.startDepth,t:r2(R.time),got,door:F.doorOpen?1:0,sdo:F.sdoors.map(q=>q.used?1:0),pk:(R.pk[R.depth]||[]).slice(0,64),sh:P.shards,ke:P.keys,blk:F.blk|0,liftTrip},to);
 }
 function mpApplyRun(r){
   startRun(r.seed,r.d,true,true,()=>mpRestoreRun(r));
@@ -2793,6 +2830,9 @@ function mpGone(id){
   if(p&&p.greeted&&state!=='title'){say(p.name+' left',2.5);mpSys(p.name+' left')}
   if(MP.guest&&id===MP.hostId){
     MP.hostId=null;MP.run=null;
+    terminalSession.reset();
+    if(hub.riding){mpLeave(false);return}
+    resetSharedLift();
     if(state==='title'||!MP.wantJoin){if(loading)closeLoading();mpTitle()}
     else{say('The host left. The maze is yours alone now.',4);mpLeave(true)}
   }else mpTitle();
@@ -2811,18 +2851,73 @@ function mpRecv(m,from){
   p.seen=performance.now();
   const inRun=state!=='title'&&state!=='dead'&&!(MP.guest&&!MP.wantJoin);
   const here=m.d===R.depth;
+  if(state==='title'&&hub.riding&&sharedLift.trip&&m.d===sharedLift.trip.depth&&sharedLift.trip.members.includes(from)
+    &&['got','pk','door','sd'].includes(m.k)&&sharedLift.waiting.length<256){
+    sharedLift.waiting.push([m,from]);return;
+  }
   switch(m.k){
+    case 'hub':{
+      const a=m.a;
+      if(!Array.isArray(a)||a.length!==4||!a.every(Number.isFinite))return;
+      const [x,y,z,yaw]=a;
+      if(Math.abs(x)>21||y< -10000||y>3||z< -34||z>16||Math.abs(yaw)>1e4)return;
+      const station=['settings','guide','lift'].includes(m.station)?m.station:null;
+      const ride=m.ride===sharedLift.trip?.id&&sharedLift.trip?.members.includes(from)?m.ride:null;
+      p.hub={x,y,z,yaw,station,ride,ready:!!m.ready,at:performance.now()};
+      if(MP.host)terminalSession.expire();
+      break;}
+    case 'terminalSelect':
+      if(MP.host)terminalSession.select(from,m);
+      break;
+    case 'terminalState':
+      if(MP.guest&&fromHost)terminalSession.update(m.session,m.revision);
+      break;
+    case 'liftPick':
+      if(MP.host)selectLiftDepth(from,m.depth);
+      break;
+    case 'liftDepart':
+      if(MP.host)requestLiftDeparture(from);
+      break;
+    case 'liftSelection':
+      if(fromHost&&validLiftDepth(m.depth)&&validLiftDepth(m.max)&&m.depth<=m.max&&!sharedLift.trip){
+        sharedLift.selection={depth:m.depth,max:m.max,by:String(m.by||'').slice(0,16),pending:!!m.pending};
+        updateLiftScreen();
+      }
+      break;
+    case 'liftStart':
+      if(fromHost)startSharedLift(m);
+      break;
+    case 'liftMotion':
+      if(fromHost&&sharedLift.trip?.id===m.id&&[m.travel,m.extra].every(Number.isFinite)){
+        const previous=sharedLift.trip.motion;
+        if(previous&&(m.travel<previous.travel||m.extra<previous.extra||previous.docked&&!m.docked))return;
+        sharedLift.trip.motion={travel:m.travel,extra:m.extra,docked:!!m.docked};
+        if(m.docked)updateLiftScreen();
+      }
+      break;
+    case 'liftAbort':
+      if(fromHost&&sharedLift.trip?.id===m.id){
+        hub.resetLift();resetSharedLift();mpTitle();
+      }
+      break;
     case 'hi':
       p.name=String(m.n||'Delver').slice(0,16);
-      if(m.h&&MP.guest){MP.hostId=from;p.host=true}
+      if(m.h&&MP.guest&&(!MP.hostId||MP.hostId===from)){MP.hostId=from;p.host=true}
       if(!p.greeted){p.greeted=true;if(inRun)say(p.name+' joined',2.5);mpSys(p.name+' joined');if(MP.host&&state!=='title'&&state!=='dead')mpSendRun(from)}
+      if(MP.host){
+        terminalSession.sync();
+        if(!sharedLift.trip)publishLiftSelection(from);
+        else if(hub.riding)mpSend({k:'liftStart',...sharedLift.trip.packet},from);
+      }
       mpTitle();break;
     case 'run':
       if(!fromHost)return;
-      MP.run=m;if(MP.wantJoin)mpApplyRun(m);
+      MP.run=m;
+      if(MP.wantJoin&&!hub.riding&&(!m.liftTrip||m.liftTrip!==sharedLift.trip?.id))mpApplyRun(m);
       mpTitle();break;
     case 'p':{
       const a=m.a;if(!Array.isArray(a))return;
+      p.hub=null;
       p.d=m.d;p.x=+a[0];p.z=+a[1];p.y=+a[2];p.yaw=+a[3];p.pitch=+a[4];p.fu=+a[5];p.down=!!(a[6]&1);p.safe=!!(a[6]&2);p.run=!!(a[6]&4);p.away=!!(a[6]&8);p.mounted=!!(a[6]&16);p.hp=a[7];
       if(p.rx===undefined||p.rd!==p.d||Math.hypot(p.x-p.rx,p.z-p.rz)>3){p.rx=p.x;p.rz=p.z;p.ry=p.y;p.ryaw=p.yaw;p.rpitch=p.pitch;p.rd=p.d}
       break;}
@@ -2957,8 +3052,13 @@ function mpSpectate(){
 function mpCycle(){const L=mpAlive();if(L.length<2)return;const i=L.findIndex(p=>p.id===MP.follow);MP.follow=L[(i+1)%L.length].id}
 const mpFresh=p=>performance.now()-(p.seen||0)<15000;
 const mpShown=p=>MP.on&&p.run&&!p.away&&p.d===R.depth&&p.rx!==undefined&&state!=='title'&&mpFresh(p);
+function sendHubPresence(to){
+  const {x,y,z,yaw,station,ride,ready}=hub.presence;
+  mpSend({k:'hub',a:[r3(x),r3(y),r3(z),r3(wrapA(yaw))],station,ride,ready},to);
+}
 function mpTick(raw){
   if(!MP.on)return;
+  if(MP.host){terminalSession.expire();tickSharedLift()}
   const dt=Math.min(raw,0.25);
   mimicTick(dt);
   for(const p of MP.peers.values()){
@@ -2971,7 +3071,16 @@ function mpTick(raw){
   }
   // a quiet host for 15 seconds has gone (closed the tab or lost the connection)
   if(MP.guest&&MP.hostId){const h=MP.peers.get(MP.hostId);if(h&&!mpFresh(h)){mpGone(MP.hostId);if(!MP.on)return}}
-  if(state==='title'||state==='dead'||(MP.guest&&!MP.wantJoin))return;
+  if(state==='title'){
+    MP.pt-=raw;
+    if(MP.pt<=0){
+      MP.pt=0.1;
+      sendHubPresence();
+      if(MP.host&&sharedLift.trip&&hub.liftMotion)publishLiftMotion();
+    }
+    return;
+  }
+  if(state==='dead'||(MP.guest&&!MP.wantJoin))return;
   MP.pt-=raw;
   if(MP.pt<=0){
     MP.pt=1/15;
@@ -3117,10 +3226,16 @@ function mpHudLine(){
 // the title, pause and game-over screens in a shared game
 function mpTitle(){
   const g=MP.on&&MP.guest,n=[...MP.peers.values()].length+1;
-  $('startBtn').textContent=g?(MP.run?('JOIN '+hostName().toUpperCase()):'LOOKING FOR HOST…'):'DESCEND';
   $('hostBtn').hidden=g;$('soloBtn').hidden=!g;$('seedLbl').hidden=g;
-  if(g)$('depthLbl').hidden=true;
-  $('mpJoinLine').textContent=g?(MP.run?`${hostName()} is at depth ${MP.run.d}. ${n} player${n>1?'s':''} in room ${MP.code}.`:`Room ${MP.code}: waiting for the host to answer. Keep this page open.`):'';
+  $('depthLbl').hidden=g||deepest<2;
+  hub.liftMode(g?{ready:!!MP.run,name:MP.run?hostName():'Room '+MP.code}:null,MP.host);
+  updateLiftScreen();
+  $('hubInvite').hidden=!MP.host;
+  $('hubInviteLink').value=MP.host?mpLink():'';
+  $('hostBtn').textContent=MP.host?'STOP HOSTING':'HOST FOR FRIENDS';
+  $('hostBtn').setAttribute('aria-pressed',String(MP.host));
+  $('mpJoinLine').textContent=g?(MP.run?`${hostName()} is at depth ${MP.run.d}. ${n} player${n>1?'s':''} in room ${MP.code}.`:`Room ${MP.code} · ${n} in the lobby. Follow the host to the lift.`):
+    MP.host?`Room ${MP.code} · ${n} in the lobby`:'';
 }
 function mpPausePanel(){
   $('mpPause').hidden=!MP.on;mpVoiceUI();
@@ -3137,7 +3252,17 @@ function mpDeadPanel(){
 }
 $('nameIn').value=store.get('name','')||'';
 $('nameIn').addEventListener('input',()=>{store.set('name',$('nameIn').value.trim().slice(0,16));if(MP.on)mpSend({k:'hi',n:myName(),h:MP.host})});
-$('hostBtn').addEventListener('click',mpHost);
+$('hostBtn').addEventListener('click',()=>{
+  if(MP.host){mpLeave(false);return}
+  MP.host=true;MP.guest=false;mpOpen(newRoomCode());
+  mpTitle();
+});
+$('hubInviteCopy').addEventListener('click',()=>{
+  const input=$('hubInviteLink');
+  input.select();
+  try{navigator.clipboard.writeText(input.value).catch(()=>document.execCommand('copy'))}
+  catch(e){document.execCommand('copy')}
+});
 $('soloBtn').addEventListener('click',()=>mpLeave(false));
 $('copyBtn').addEventListener('click',()=>{const el=$('mpLinkIn');try{navigator.clipboard.writeText(el.value).then(()=>say('Invite link copied',2),()=>{el.select();document.execCommand('copy')})}catch(e){el.select();try{document.execCommand('copy')}catch(e2){}}});
 
@@ -3280,7 +3405,7 @@ function mimicReset(){Object.assign(MIM,{x:-99,z:-99,rx:-99,rz:-99,st:0,hid:30+M
 const tid=t=>t.loc?MP.id:t.p.id;
 function mimicHost(dt,TG){
   const M=MIM;
-  if(!MP.on||!MP.mimicOn){if(M.st)mimicReset();return}
+  if(!archiveMimic()&&(!MP.on||!MP.mimicOn)){if(M.st)mimicReset();return}
   if(M.depth!==R.depth){M.depth=R.depth;mimicReset()}
   const ids=TG.map(tid),speakers=ids.filter(id=>(CLIPS.get(id)||[]).length);
   if(M.st===0){
@@ -3369,7 +3494,7 @@ function mimicGrabTick(dt){
 }
 // the mimic's look on every screen: the disguise, or the thing underneath
 function mimicDraw(t,ex,ez){
-  const M=MIM;if(M.st===0||M.rx<0||!MP.on)return;
+  const M=MIM;if(M.st===0||M.rx<0||(!MP.on&&!archiveMimic()))return;
   if((M.rx-ex)**2+(M.rz-ez)**2>18*18)return;
   const as=MP.peers.get(M.as),col=as?as.col:MP_COLS[hashStr(M.as||'')%MP_COLS.length];
   const rev=M.st===2?clamp(M.t/0.45,0,1):M.st===3?Math.sin(clamp(M.t/0.7,0,1)*Math.PI)*0.7:0;
@@ -3398,10 +3523,27 @@ $('brainUrl').addEventListener('change',()=>{BRAIN.url=$('brainUrl').value.trim(
 const keys={};
 addEventListener('keydown',e=>{
   if(loading){if(e.code==='Tab'||e.code==='Enter'||e.code==='Space')e.preventDefault();return}
+  if(state==='title'&&activeStation){
+    if(e.code==='Escape'){e.preventDefault();closeStation();return}
+    if(e.code==='Tab'){
+      const controls=stationControls(),first=controls[0],last=controls.at(-1);
+      if(e.shiftKey&&e.target===first){e.preventDefault();last.focus()}
+      else if(!e.shiftKey&&e.target===last){e.preventDefault();first.focus()}
+      return;
+    }
+  }
   const roomMode=state==='room'?ROOMS.controlMode():'';
   if(roomMode&&!e.repeat)roomDevice='keyboard';
-  if(e.target&&e.target.tagName==='SELECT')return;
-  if(e.target&&e.target.tagName==='INPUT'){if(e.code==='Enter'&&(e.target.id==='seedIn'||e.target.id==='nameIn')){e.target.blur();startFromMenu($('seedIn').value.trim())}return}
+  if(archiveRun&&(e.code==='KeyT'||e.code==='Escape'&&state==='room'&&roomMode!=='table'&&roomMode!=='read')){
+    e.preventDefault();finishArchive();return;
+  }
+  if(e.target?.matches?.('select, input')){
+    const walking=state==='title'&&activeStation&&/^Key[WASD]$/.test(e.code);
+    const editing=e.target.matches('input[type=text]:not([readonly]), input[type=number]');
+    if(!walking||editing)return;
+  }
+  if(state==='title'&&(e.code==='Tab'||e.target?.closest?.('button')&&(e.code==='Enter'||e.code==='Space')))return;
+  if(e.target===$('archiveBack')&&(e.code==='Enter'||e.code==='Space'))return;
   if(state==='room'&&(e.code==='Tab'||e.target?.closest?.('button')&&['Enter','NumpadEnter','Space'].includes(e.code)))return;
   if(['Tab','Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
   if(roomMode==='table'&&['Backspace','Enter','NumpadEnter','Escape'].includes(e.code))e.preventDefault();
@@ -3412,7 +3554,9 @@ addEventListener('keydown',e=>{
   if(e.code==='KeyV'&&!(state==='room'&&ROOMS.kind==='theater'))toggleMute();   // in the picture house V is your voice when there is no microphone
   if(e.code==='BracketRight')setBright(bright+0.15);
   if(e.code==='BracketLeft')setBright(bright-0.15);
-  if(state==='title'){if(e.code==='Enter')startFromMenu($('seedIn').value.trim())}
+  if(state==='title'){
+    if(e.code==='KeyE'||e.code==='Enter'){e.preventDefault();hub.interact()}
+  }
   else if(state==='play'){
     if(e.code==='Space')P.jumpQ=MOVE.jumpBuffer;
     if(e.code==='KeyE')act();
@@ -3443,9 +3587,11 @@ addEventListener('keyup',e=>{keys[e.code]=false});
 addEventListener('blur',()=>{for(const k in keys)keys[k]=false;mouseL=false;pause()});
 document.addEventListener('visibilitychange',()=>{if(document.hidden)pause()});
 document.addEventListener('mousemove',e=>{
-  if(loading||(state!=='play'&&state!=='room')||document.pointerLockElement!==canvas)return;
+  const drag=(state==='title'||state==='room')&&(e.buttons&2);
+  if(loading||!['title','play','room'].includes(state)||(!drag&&document.pointerLockElement!==canvas))return;
   const mx=e.movementX,my=e.movementY;
   if(!isFinite(mx)||!isFinite(my)||Math.abs(mx)>600||Math.abs(my)>600)return;
+  if(state==='title'){hub.look(mx*MOVE.mouse*sens,my*MOVE.mouse*sens);return}
   if(state==='room'){if(mx||my)roomDevice='keyboard';ROOMS.look(mx*MOVE.mouse*sens,my*MOVE.mouse*sens);return}
   if(glLook(mx*MOVE.mouse*sens,-my*MOVE.mouse*sens))return;
   lookBy(P,mx*MOVE.mouse*sens,my*MOVE.mouse*sens,MOVE.pitch);
@@ -3462,7 +3608,15 @@ $('roomHud').addEventListener('click',e=>{
   const choice=e.target.closest('button[data-room-choice]');
   if(state==='room'&&choice)ROOMS.choose(Number(choice.dataset.roomChoice));
 });
-canvas.addEventListener('click',()=>{if((state==='play'||state==='room'&&!onMooseTable())&&!document.pointerLockElement)lock()});
+canvas.addEventListener('click',e=>{
+  if(loading)return;
+  if(state==='title'){
+    initAudio();
+    if(document.pointerLockElement)hub.interact();
+    else if(hub.tap(e.clientX/innerWidth*2-1,1-e.clientY/innerHeight*2))return;
+    else if(!document.pointerLockElement&&!touch.on){closeStation();lock()}
+  }else if((state==='play'||state==='room'&&!onMooseTable())&&!document.pointerLockElement)lock();
+});
 const selectMooseTile=e=>ROOMS.tap(e.clientX/innerWidth*2-1,1-e.clientY/innerHeight*2);
 canvas.addEventListener('pointerdown',e=>{
   if(!loading&&onMooseTable()&&e.button===0)selectMooseTile(e);
@@ -3470,7 +3624,6 @@ canvas.addEventListener('pointerdown',e=>{
 canvas.addEventListener('mousedown',e=>{if(loading)return;if(state==='room'&&!onMooseTable()&&e.button===0)mouseL=true;if(state!=='play'||document.pointerLockElement!==canvas)return;if(e.button===0)act();else if(e.button===2)P.jumpQ=MOVE.jumpBuffer});
 addEventListener('mouseup',e=>{if(e.button===0)mouseL=false});
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
-$('startBtn').addEventListener('click',()=>{startFromMenu($('seedIn').value.trim());lock()});
 $('resumeBtn').addEventListener('click',()=>resume(true));
 $('againBtn').addEventListener('click',()=>{startFromMenu();lock()});
 // touch controls
@@ -3484,6 +3637,7 @@ if(window.matchMedia&&matchMedia('(pointer:coarse)').matches)enableTouch();
 addEventListener('touchstart',()=>{enableTouch();if(state==='room')roomDevice='touch';initAudio()},{passive:true});
 {
   const layer=$('touch'),base=$('stickBase'),knob=$('stickKnob'),SR=52;
+  const sceneTaps=new Map();
   const setStick=(x,y)=>{
     let dx=x-touch.sx,dy=y-touch.sy;const l=Math.hypot(dx,dy);
     if(l>SR){dx*=SR/l;dy*=SR/l}
@@ -3495,8 +3649,10 @@ addEventListener('touchstart',()=>{enableTouch();if(state==='room')roomDevice='t
   layer.addEventListener('touchstart',e=>{
     e.preventDefault();
     for(const t of e.changedTouches){
+      const dragToLook=state==='title'||onMooseTable();
+      if(dragToLook)sceneTaps.set(t.identifier,[t.clientX,t.clientY]);
       // in the kiln hall a tap right on a button within reach presses it
-      if(state==='room'&&touch.tapId===null&&ROOMS.tap(t.clientX/innerWidth*2-1,1-t.clientY/innerHeight*2)){touch.tapId=t.identifier;continue}
+      if(state==='room'&&!dragToLook&&touch.tapId===null&&ROOMS.tap(t.clientX/innerWidth*2-1,1-t.clientY/innerHeight*2)){touch.tapId=t.identifier;continue}
       if(touch.stickId===null&&t.clientX<innerWidth*0.45&&!(state==='room'&&ROOMS.controlMode()==='look')){
         touch.stickId=t.identifier;touch.sx=t.clientX;touch.sy=t.clientY;
         base.style.left=knob.style.left=t.clientX+'px';base.style.top=knob.style.top=t.clientY+'px';
@@ -3507,15 +3663,28 @@ addEventListener('touchstart',()=>{enableTouch();if(state==='room')roomDevice='t
   layer.addEventListener('touchmove',e=>{
     e.preventDefault();
     for(const t of e.changedTouches){
+      const start=sceneTaps.get(t.identifier);
+      if(start&&Math.hypot(t.clientX-start[0],t.clientY-start[1])>12)sceneTaps.delete(t.identifier);
       if(t.identifier===touch.stickId)setStick(t.clientX,t.clientY);
       else if(t.identifier===touch.lookId){
+        if(state==='title')hub.look((t.clientX-touch.lx)*MOVE.touchX*sens,(t.clientY-touch.ly)*MOVE.touchY*sens);
         if(state==='room')ROOMS.look((t.clientX-touch.lx)*MOVE.touchX*sens,(t.clientY-touch.ly)*MOVE.touchY*sens);
         if(state==='play'&&!glLook((t.clientX-touch.lx)*MOVE.touchX*sens,-(t.clientY-touch.ly)*MOVE.touchY*sens))lookBy(P,(t.clientX-touch.lx)*MOVE.touchX*sens,(t.clientY-touch.ly)*MOVE.touchY*sens,MOVE.pitch)
         touch.lx=t.clientX;touch.ly=t.clientY;
       }
     }
   },{passive:false});
-  const end=e=>{for(const t of e.changedTouches){if(t.identifier===touch.stickId)endStick();else if(t.identifier===touch.lookId)touch.lookId=null;else if(t.identifier===touch.tapId){touch.tapId=null;ROOMS.untap()}}};
+  const end=e=>{
+    for(const t of e.changedTouches){
+      if(t.identifier===touch.stickId)endStick();
+      else if(t.identifier===touch.lookId)touch.lookId=null;
+      else if(t.identifier===touch.tapId){touch.tapId=null;ROOMS.untap()}
+      if(sceneTaps.delete(t.identifier)&&e.type==='touchend'){
+        if(state==='title')hub.tap(t.clientX/innerWidth*2-1,1-t.clientY/innerHeight*2);
+        else if(onMooseTable())selectMooseTile(t);
+      }
+    }
+  };
   layer.addEventListener('touchend',end);layer.addEventListener('touchcancel',end);
   const btn=(id,down,up)=>{const el=$(id);
     el.addEventListener('touchstart',e=>{e.preventDefault();e.stopPropagation();el.classList.add('on');down()},{passive:false});
@@ -3523,7 +3692,11 @@ addEventListener('touchstart',()=>{enableTouch();if(state==='room')roomDevice='t
     el.addEventListener('touchend',u);el.addEventListener('touchcancel',u);
     el.addEventListener('touchmove',e=>{e.preventDefault();e.stopPropagation()},{passive:false});};
   btn('tJump',()=>{touch.jump=true;if(state==='play')P.jumpQ=MOVE.jumpBuffer},()=>{touch.jump=false});
-  btn('tFlash',()=>{touch.act=true;if(state==='play')act()},()=>{touch.act=false});
+  btn('tFlash',()=>{
+    touch.act=true;
+    if(state==='play')act();
+    else if(state==='title')hub.interact();
+  },()=>{touch.act=false});
   btn('tPause',()=>{touch.jump=false;endStick();touch.lookId=null;touch.tapId=null;ROOMS.untap();pause()});
   btn('tMap',()=>{mapBig=!mapBig});
   btn('tPick',()=>{usePick()});
@@ -3564,6 +3737,7 @@ function pollPad(){
   pad.lx=lx*(0.45+0.55*Math.abs(lx))*sens;pad.ly=ly*(0.45+0.55*Math.abs(ly))*sens;
   if(state==='room'&&(pad.roomButtons.some(Boolean)||pad.mx||pad.my||lx||ly))roomDevice='controller';
   if(state==='play'){
+    if(archiveRun&&hit(8)){finishArchive();pad.prev[8]=true;return}
     pad.jump=B(0)&&performance.now()>padHold;
     if(B(6)||B(4))pad.sprint=true;
     if(hit(10))pad.sprintLatch=!pad.sprintLatch;
@@ -3577,9 +3751,23 @@ function pollPad(){
     if(hit(9))pause();
     if(hit(14))setBright(bright-0.15);
     if(hit(15))setBright(bright+0.15);
-  }else if(state==='title'){if(hit(0)||hit(9))startFromMenu($('seedIn').value.trim());
-    const sel=$('startSel');if(hit(14)&&+sel.value>1){sel.value=+sel.value-1;store.set('startDepth',+sel.value)}
-    if(hit(15)&&+sel.value<deepest){sel.value=+sel.value+1;store.set('startDepth',+sel.value)}}
+  }else if(state==='title'){
+    pad.sprint=B(6)||B(4);
+    if(activeStation){
+      if(hit(1)||hit(8))closeStation();
+      else if(hit(0)||hit(2)){
+        const controls=stationControls();
+        (controls.includes(document.activeElement)?document.activeElement:controls[0])?.click();
+      }
+      else if(hit(12)||hit(13)){
+        const controls=stationControls(),i=controls.indexOf(document.activeElement);
+        controls[i<0?0:(i+(hit(12)?-1:1)+controls.length)%controls.length]?.focus();
+      }else if(hit(14)||hit(15))adjustStationControl(hit(14)?-1:1);
+    }else{
+      if(hit(2)||hit(7)||hit(9))hub.interact();
+    }
+  }
+  else if(state==='room'&&archiveRun&&hit(8))finishArchive();
   else if(state==='talk'){
     const sy=(gp.axes[1]||0)>0.6?1:(gp.axes[1]||0)<-0.6?-1:0;
     if(hit(12)||(sy<0&&pad.psy!==-1))moveTalk(-1);else if(hit(13)||(sy>0&&pad.psy!==1))moveTalk(1);
@@ -3809,6 +3997,7 @@ function update(dt){
   const pfx=Math.cos(P.yaw),pfz=Math.sin(P.yaw);
   const TG=MP.guest?null:mpTargets(), MD=MP.guest?null:mpDist(TG);
   for(const s of F.shades){
+    rememberMob(s.type,s);
     s.ph+=dt*3;
     if(s.type===3){if(!P.down&&!followMoose(s,dt,1.9)){watcher(s,dt,pfx,pfz);if(state==='dead')return}continue}
     const cx=Math.floor(s.x),cz=Math.floor(s.z);
@@ -3892,6 +4081,8 @@ function update(dt){
     }
   }
   if(TG)mimicHost(dt,TG);
+  if(archiveMimic())mimicTick(dt);
+  if(MP.on&&MIM.st)rememberMob('mimic',MIM);
   // heartbeat when hunted
   if(chasing){beatT-=dt;if(beatT<=0){beatT=clamp(0.35+nearest*0.05,0.4,1.0);sfx('beat')}}
   glTick(dt,chasing);
@@ -3918,10 +4109,11 @@ function update(dt){
 const GL={cd:60,used:{},frz:0,frzAfter:null,buzz:null,hist:[],histT:0,rb:null,rbN:0,figs:[],hole:null,fall:null,loop:null,
   ghosts:[],walked:null,queued:null,qT:0,peerH:new Map(),hudOv:{},hudSeq:null,chatT:0,dip:0,netEl:null,netT:0};
 function glReset(){
-  glFallEnd();GL.queued=null;
+  glFallEnd();glClearFreeze();GL.queued=null;
   GL.cd=F.back?28+Math.random()*30:55+Math.random()*60;GL.used={};GL.frz=0;GL.frzAfter=null;GL.hist=[];GL.rb=null;
   GL.figs=[];GL.ghosts=[];GL.fall=null;GL.loop=null;GL.hudOv={};GL.hudSeq=null;GL.dip=0;GL.walked=new Uint8Array(F.W*F.H);
   glHoleOff();
+  GL.loop=null;GL.archiveRewind=null;
   for(const p of MP.peers.values())p.glRep=null;
 }
 const glOpen=(x,y)=>x>0&&y>0&&x<F.W-1&&y<F.H-1&&F.g[y*F.W+x]===0&&!F.safeMask[y*F.W+x]&&!F.pocketMask[y*F.W+x];
@@ -3955,7 +4147,12 @@ function glTick(dt,chasing){
   for(const g of GL.ghosts){g.t-=dt;if(Math.hypot(g.x-P.x,g.z-P.z)<1.8)g.t=Math.min(g.t,0.05)}
   GL.ghosts=GL.ghosts.filter(g=>g.t>0);
   for(const p of MP.peers.values())if(p.glRep){p.glRep.i+=dt*10;if(p.glRep.i>=p.glRep.h.length)p.glRep=null}
+  if(GL.archiveRewind){
+    GL.archiveRewind.i+=dt*10;
+    if(GL.archiveRewind.i>=GL.archiveRewind.h.length)GL.archiveRewind=null;
+  }
   // the director: every so often, if the moment is right, something goes wrong
+  if(archiveRun)return;
   if(!glCalm(chasing)){if(chasing)GL.cd=Math.max(GL.cd,8);return}
   GL.cd-=dt;
   if(GL.cd>0)return;
@@ -3975,8 +4172,28 @@ function glTest(k){
   if(state==='pause'||state==='trans'){GL.queued=k;GL.qT=0.6;return 'queued: click Resume and it starts'}
   return 'not now: start a run first';
 }
-function glStart(k,forced){
+function glStart(k,forced,snapshot){
   if(state!=='play')return false;
+  if(snapshot?.rubber){
+    GL.rb=structuredClone(snapshot.rubber);
+    glNet('Reconnecting…',GL.rb.fwd?1.2:1.7);
+    return true;
+  }
+  if(snapshot?.rewind){
+    GL.archiveRewind={h:snapshot.rewind,i:0};
+    glNet('Reconnecting…',1.5);
+    return true;
+  }
+  if(snapshot?.hud)return glHud(snapshot.hud);
+  const started=glStartEffect(k,forced);
+  if(started&&k!=='replay'&&!archiveRun){
+    const rubber=k==='rubber'||k==='rubberfwd'?structuredClone(GL.rb):undefined;
+    remember('glitches',rubber?.fwd?'rubberfwd':k,{...encounterSnapshot(),rubber,
+      hud:k==='hud'?GL.hudEvent:undefined});
+  }
+  return started;
+}
+function glStartEffect(k,forced){
   switch(k){
     case 'freeze':return glFreeze();
     case 'rubber':return glRubber(GL.rbN%2===1);
@@ -4025,8 +4242,11 @@ function glWallBehind(){
   }
   return false;
 }
-function glUnfreeze(){
+function glClearFreeze(){
   if(GL.buzz){try{GL.buzz.stop()}catch(e){}GL.buzz=null;if(master)master.gain.setValueAtTime(muted?0:0.55,ac.currentTime)}
+}
+function glUnfreeze(){
+  glClearFreeze();
   const a=GL.frzAfter;GL.frzAfter=null;
   if(a==='figure'&&!glFigure('pale'))P.yaw+=Math.PI;
   else if(a==='turned')P.yaw+=Math.PI;
@@ -4084,6 +4304,7 @@ function glReplay(){
     if(d<bd&&h&&h.length>=20&&((p.rx-P.x)*fx+(p.rz-P.z)*fz)/Math.max(d,0.1)>0.5&&los(P.x,P.z,p.rx,p.rz)){bd=d;best=p}}
   if(!best)return false;
   best.glRep={h:GL.peerH.get(best.id).slice(-20),i:0};
+  remember('glitches','replay',{...encounterSnapshot(),rewind:best.glRep.h.map(pose=>pose.slice())});
   glNet(`Reconnecting to ${best.name}…`,1.5);
   return true;
 }
@@ -4091,22 +4312,28 @@ function glReplay(){
 /* 3. the HUD lies */
 const GL_LINES=()=>[`The seal holds. ${4+((Math.random()*3)|0)} shards to go.`,'A sanctuary. Nothing can follow you here.','You rise again',`Depth ${R.depth}: ${F.name}`,'Your torch is out'];
 function glGarble(s){const c='▒░█▓';let o='';for(const ch of s){const r=Math.random();o+=r<0.1?c[(Math.random()*4)|0]:r<0.14?ch+ch:r<0.17?'':ch}return o}
-function glHud(){
-  const r=Math.random();
-  if(r<0.4){
-    const wrong=['Depth 0','Depth -1','Depth '+(-R.depth),'Depth ∞','Depth '+(R.depth+Math.floor(20+Math.random()*60))][(Math.random()*5)|0];
-    GL.hudSeq={t:0,end:2.4,k:'depthLine',a:wrong};
-  }else if(r<0.62){
-    GL.hudSeq={t:0,end:2,k:'shards',a:'◆ '+(P.shards+1)+' / 3 shards'};
-    if(P.shards>=2)GL.hudSeq.a='◆ '+P.shards+' / 4 shards';
-  }else if(r<0.8){const L=GL_LINES();say(glGarble(L[(Math.random()*L.length)|0]),2.4)}
+function glHud(event){
+  if(!event)event=randomHudEvent();
+  GL.hudEvent=event;
+  if(event.seq)GL.hudSeq={t:0,...event.seq};
+  else if(event.toast)say(event.toast,2.4);
   else{
-    // a line in the chat from somebody who is not in your game. In a shared game, it is you.
+    // A fake chat line uses the local display name in multiplayer.
     const nm=MP.on?myName():'Delver',col=MP.on?toHex(MP_COLS[hashStr(MP.id||'')%MP_COLS.length]):'#8f8a80';
-    GL.chatT=15;chatLine(nm,col,['is anyone else down here','hello?','i can hear you walking','which way did you go'][(Math.random()*4)|0]);
+    GL.chatT=15;chatLine(nm,col,event.chat);
     sfx('pick');
   }
   return true;
+}
+function randomHudEvent(){
+  const r=Math.random();
+  if(r<0.4){
+    const wrong=['Depth 0','Depth -1','Depth '+(-R.depth),'Depth ∞','Depth '+(R.depth+Math.floor(20+Math.random()*60))][(Math.random()*5)|0];
+    return {seq:{end:2.4,k:'depthLine',a:wrong}};
+  }
+  if(r<0.62)return {seq:{end:2,k:'shards',a:P.shards>=2?'◆ '+P.shards+' / 4 shards':'◆ '+(P.shards+1)+' / 3 shards'}};
+  if(r<0.8){const lines=GL_LINES();return {toast:glGarble(lines[(Math.random()*lines.length)|0])}}
+  return {chat:['is anyone else down here','hello?','i can hear you walking','which way did you go'][(Math.random()*4)|0]};
 }
 function glHudTick(dt){
   const S=GL.hudSeq;if(!S)return;
@@ -4172,6 +4399,13 @@ function buildTpose(f,t){
 }
 function glDraw(t,ex,ez,fwx,fwz){
   for(const f of GL.figs)buildTpose(f,t);
+  const rewind=GL.archiveRewind;
+  if(rewind){
+    const [rx,rz,ryaw,ry]=rewind.h[Math.floor(rewind.i)];
+    const p={id:'archive',col:MP_COLS[2],rx,rz,ryaw,ry,rpitch:0,spd:1.5,walk:t*8};
+    const {torch:q}=buildPlayer(p,t);
+    spr(q[0],q[1],q[2],0.38,0.38,7,1,0.5,0.15,0.45,1);
+  }
   // the copy of a friend left behind by a rubber band, flame frozen mid-flicker
   for(const g of GL.ghosts){
     if((g.x-ex)**2+(g.z-ez)**2>18*18||(g.x-ex)*fwx+(g.z-ez)*fwz<-1.5)continue;
@@ -4326,7 +4560,7 @@ function glLoopTry(forced){
 }
 function glLoopTick(dt,chasing){
   if(!GL.loop){
-    if(F.back&&!GL.used.loop&&GL.cd<25&&glCalm(chasing)&&(Math.abs(P.vx)+Math.abs(P.vz))>1&&glLoopTry()){GL.used.loop=1}
+    if(!archiveRun&&F.back&&!GL.used.loop&&GL.cd<25&&glCalm(chasing)&&(Math.abs(P.vx)+Math.abs(P.vz))>1&&glStart('loop')){GL.used.loop=1}
     return;
   }
   const Lp=GL.loop,pos=Lp.ax?P.z:P.x,cross=Lp.ax?P.x:P.z,rel=(pos-(Lp.b+0.5))*Lp.dir;
@@ -4428,7 +4662,7 @@ function render(t){
   UT.value=t;
   const title=state==='title';
   const SC=STUDIO&&STUDIO.cam;
-  const yaw=SC?SC.yaw:title?titleYaw:P.yaw, pitch=SC?SC.pitch:title?0:P.pitch;
+  const yaw=SC?SC.yaw:P.yaw, pitch=SC?SC.pitch:title?0:P.pitch;
   const riding=P.mounted&&!P.down&&!P.away;
   const ex=SC?SC.x:P.x, ez=SC?SC.z:P.z, ey=SC?SC.y:Math.min(CAM_TOP,EYE+(title?0:P.y+bobY(P,1)+(riding?.16:0)));
   {const cp=Math.cos(pitch);camera.position.set(ex,ey,ez);camera.lookAt(ex+cp*Math.cos(yaw),ey+Math.sin(pitch),ez+cp*Math.sin(yaw))}
@@ -4630,7 +4864,6 @@ function render(t){
   sprIB.clearUpdateRanges();sprIB.addUpdateRange(0,o);sprIB.needsUpdate=true;sprGeo.setDrawRange(0,n*6);
   renderer.toneMappingExposure=Math.pow(bright/1.3,1.6);
   if(composer)composer.render();else renderer.render(scene,camera);
-  if(title&&++titleFrames===20)selfCheck();
 }
 
 /* ---------- self-check: is the picture actually there? ---------- */
@@ -4739,7 +4972,8 @@ function step(now){
   const dt=Math.min(raw,0.05);
   pollPad();
   if(loading){mpTick(raw);return raw}
-  if((state==='play'||state==='room')!==wasPlaying){wasPlaying=state==='play'||state==='room';document.body.classList.toggle('playing',wasPlaying)}
+  const moving=state==='play'||state==='room'||state==='title';
+  if(moving!==wasPlaying){wasPlaying=moving;document.body.classList.toggle('playing',wasPlaying)}
   roomWatch();
   if(state==='room'){ROOMS.update(dt,roomInput());if(state==='room'){$('fade').style.opacity=ROOMS.fade();$('roomCross').classList.toggle('on',ROOMS.aimed());mirrorBtns()}}
   else if(ROOMS.watching){ROOMS.update(dt,NOIN);$('fade').style.opacity=ROOMS.fade()}
@@ -4751,7 +4985,12 @@ function step(now){
     if(raw>0.1&&MP.host&&document.hidden){let left=Math.min(raw,1);while(left>0&&live()){const s=Math.min(left,0.05);update(s);left-=s}}
     else update(dt);
   }
-  else if(state==='title')titleYaw+=dt*0.15;
+  else if(state==='title'){
+    hub.update(dt,roomInput(),raw);
+    hub.syncVisitors(MP.on?[...MP.peers.values()].filter(p=>p.hub&&now-p.hub.at<15000):[],dt,now/1000);
+    updateSettingsScreen();
+    $('hubCross').classList.toggle('ready',hub.aimed);
+  }
   mpTick(raw);
   return raw;
 }
@@ -4763,7 +5002,14 @@ function frame(now){
   if(state==='play'&&!STUDIO&&!loading)adapt(raw);
   setHum();updateAmbience(Math.min(raw,0.1),{F,state,hold:GL.frz>0||!!GL.fall||P.away});
   if(GL.frz<=0){
-    if(!window.__norender){if((state==='room'||ROOMS.watching)&&ROOMS.active){resize();renderer.toneMappingExposure=1;ROOMS.render()}else render(now/1000)}
+    if(!window.__norender){
+      if(state==='title'){
+        resize();hub.render(Math.sqrt(bright/1.3),now/1000);
+        if(++titleFrames===20)selfCheck();
+      }
+      else if((state==='room'||ROOMS.watching)&&ROOMS.active){resize();renderer.toneMappingExposure=1;ROOMS.render()}
+      else render(now/1000);
+    }
     if(state!=='title'){drawHUD();if(state!=='room'&&!ROOMS.watching)drawMap()}
     mpTags();
   }
@@ -4773,10 +5019,527 @@ setInterval(()=>{
   if(!document.hidden)return;
   const now=performance.now();
   advanceLoading(now);
-  if(MP.host&&now-last>200)step(now);
+  if((MP.host||MP.on&&state==='title')&&now-last>200)step(now);
 },100);
-// a backdrop maze behind the title screen
-R.seed=randSeed();loadFloor(1);titleYaw=P.yaw;showBest();achLine();
+/* ---------- entrance hall and discovery archives ---------- */
+const archiveCatalog={
+  doors:{title:'Door Archive',action:'Enter',hint:'Open strange doors during a descent to record them.',entries:Object.fromEntries(
+    Object.entries(DOOR_KINDS).map(([id,door])=>[id,door.name[0].toUpperCase()+door.name.slice(1)]))},
+  floors:{title:'Floor Archive',action:'Explore',hint:'Reach a floor type during a descent to record it.',entries:{
+    maze:'Stone Maze',cave:'The Hollow',back:'The Humming Rooms',dark:'The Black Hush',forest:'The Dark Forest'}},
+  mobs:{title:'Mob Archive',action:'Encounter',hint:'Spot creatures during a descent to record them.',entries:{
+    0:'Shade',1:'Stalker',2:'Wisp',3:'Watcher',mimic:'Mimic'}},
+  glitches:{title:'Glitch Archive',action:'Replay',hint:'Experience anomalies during a descent to record them.',entries:{
+    freeze:'Frozen Frame',rubber:'Rubber Band',rubberfwd:'Fast Forward',replay:'Player Rewind',
+    hud:'Corrupted HUD',tpose:'Rigid Figure',hole:'Unloaded Wall',fall:'Falling Through the World',loop:'Repeating Hall'}}
+};
+const archive=Object.fromEntries(Object.keys(archiveCatalog).map(kind=>{
+  const saved=store.get('archive.'+kind,{});
+  return [kind,saved&&typeof saved==='object'&&!Array.isArray(saved)?saved:{}];
+}));
+const hub=createMenuRoom(renderer,{sfx,asset:exhibitAsset,activate:useMenuAsset,enterLanding:startFromLanding,
+  sampleFloor:genFloor,prepareLanding,onLeavePanel:()=>closeStation(),createVisitor:buildHubVisitor});
+const board=$('title');
+const stationPanels=[...document.querySelectorAll('[data-station-panel]')];
+let activeStation=null;
+const sharedLift={selection:null,pending:0,trip:null,waiting:[]};
+const terminalPlayerName=id=>id===MP.id?myName():MP.peers.get(id)?.name||'Delver';
+const terminalSession=createTerminalSession({
+  playerId:()=>MP.id,playerName:terminalPlayerName,
+  canReach(id){
+    const p=id===MP.id?(state==='title'&&!hub.riding&&hub.presence):MP.peers.get(id)?.hub;
+    return !!p&&(p.at===undefined||performance.now()-p.at<15000)&&hub.settingsInReach(p);
+  },
+  publish:(session,revision)=>mpSend({k:'terminalState',session,revision}),
+  apply:applySharedSetting,
+  read:()=>settingsScreen.read(),
+});
+const settingsScreen=createSettingsScreen(board,{
+  close:closeStation,enabled:()=>hub.settingsInReach(hub.presence),
+  select(key,value,highlight){
+    if(!MP.on||activeStation!=='settings')return;
+    const action={k:'terminalSelect',key,value,highlight,initial:settingsScreen.read()};
+    if(MP.host)terminalSession.select(MP.id,action);
+    else if(MP.hostId){sendHubPresence(MP.hostId);mpSend(action,MP.hostId)}
+  },
+});
+hub.sharedSettings(settingsScreen.screen,settingsScreen.display);
+
+const liftFloorLimit=()=>Math.max(40,deepest);
+const defaultLiftFloor=()=>URL_DEPTH||+$('startSel').value||1;
+const validLiftDepth=depth=>Number.isSafeInteger(depth)&&depth>=1;
+
+function resetSharedLift(){
+  Object.assign(sharedLift,{selection:MP.host?{depth:defaultLiftFloor(),max:liftFloorLimit(),by:''}:null,pending:0,trip:null,waiting:[]});
+  hub.setSharedLift(sharedLift.selection,false);
+}
+
+function updateLiftScreen(){
+  const selection=sharedLift.selection;
+  hub.setSharedLift(selection,!!sharedLift.trip&&!hub.riding&&!MP.run&&state==='title');
+  if(activeStation!=='lift')return;
+  const field=$('liftDepth');
+  field.max=selection?.max||liftFloorLimit();
+  if(MP.on&&selection&&field.valueAsNumber!==selection.depth)field.value=selection.depth;
+  $('liftRunType').textContent=MP.on?(selection?.pending?'Departing · riders on the platform go together':
+    selection?.by?selection.by+' selected floor '+selection.depth:'Shared destination · all aboard ride together'):'Solo descent';
+  field.disabled=$('liftGo').disabled=!!(MP.on&&(selection?.pending||MP.guest&&!MP.hostId));
+}
+
+function publishLiftSelection(to){
+  if(!sharedLift.selection)return;
+  mpSend({k:'liftSelection',...sharedLift.selection},to);
+  if(!to)updateLiftScreen();
+}
+
+function aboardSharedLift(id){
+  if(id===MP.id)return state==='title'&&hub.boarded&&!hub.riding;
+  const p=MP.peers.get(id)?.hub;
+  return !!p&&!p.ride&&onLiftPlatform(p);
+}
+
+function selectLiftDepth(id,depth){
+  const max=sharedLift.selection?.max||liftFloorLimit();
+  if(state!=='title'||sharedLift.pending||sharedLift.trip||!aboardSharedLift(id)||!validLiftDepth(depth)||depth>max)return;
+  sharedLift.selection={depth,max,by:terminalPlayerName(id)};
+  publishLiftSelection();
+}
+
+function requestLiftDeparture(id){
+  if(state!=='title'||sharedLift.pending||sharedLift.trip||!aboardSharedLift(id))return;
+  sharedLift.pending=performance.now()+420;
+  sharedLift.selection={...sharedLift.selection,pending:true};
+  publishLiftSelection();
+}
+
+function startSharedLift(packet){
+  if(state!=='title'||sharedLift.trip||typeof packet.id!=='string'||typeof packet.seed!=='string'||
+    !validLiftDepth(packet.depth)||!validLiftDepth(packet.max)||packet.depth>packet.max||
+    !Array.isArray(packet.members)||!packet.members.includes(packet.pilot))return;
+  const {id,depth,max,seed,pilot,members}=packet;
+  const trip={id,depth,pilot,members,packet,motion:null,started:performance.now()};
+  sharedLift.trip=trip;
+  sharedLift.pending=0;
+  sharedLift.selection={depth,max,by:sharedLift.selection?.by||''};
+  MP.host=pilot===MP.id;
+  MP.guest=!MP.host;
+  MP.hostId=MP.host?null:pilot;
+  MP.wantJoin=false;
+  if(members.includes(MP.id)&&hub.boarded){
+    const ready=()=>members.every(member=>{
+      if(member===MP.id)return true;
+      const peer=MP.peers.get(member),pose=peer?.hub;
+      // A player who left before departure, disconnected or closed the game
+      // must not keep the platform suspended.
+      if(pose?.ride===id)return pose.ready||!mpFresh(peer);
+      return performance.now()-trip.started>1700;
+    });
+    hub.engageLift(depth,seed,MP.host?{id,ready}:{id,follow:()=>trip.motion});
+    closeStation();
+  }
+  mpTitle();
+  if(MP.host){
+    mpSend({k:'hi',n:myName(),h:true});
+    if(!hub.riding){
+      mpSend({k:'liftAbort',id});resetSharedLift();publishLiftSelection();
+    }
+  }
+  sendHubPresence();
+}
+
+function tickSharedLift(){
+  if(!sharedLift.pending||performance.now()<sharedLift.pending)return;
+  sharedLift.pending=0;
+  const members=[MP.id,...MP.peers.keys()].filter(aboardSharedLift);
+  if(!members.length){
+    sharedLift.selection={...sharedLift.selection,pending:false};
+    publishLiftSelection();
+    return;
+  }
+  const {depth,max}=sharedLift.selection;
+  const seed=($('seedIn').value.trim()||randSeed()).toUpperCase();
+  // The run must be hosted by someone on the platform. Keep the current
+  // host whenever they are among the riders.
+  const packet={id:newRoomCode(),depth,max,seed,pilot:members[0],members};
+  mpSend({k:'liftStart',...packet});
+  startSharedLift(packet);
+}
+
+function publishLiftMotion(){
+  const motion=hub.liftMotion;
+  if(motion&&sharedLift.trip)mpSend({k:'liftMotion',id:sharedLift.trip.id,...motion});
+}
+
+function sendLiftAction(message){
+  if(MP.host){
+    if(message.k==='liftPick')selectLiftDepth(MP.id,message.depth);
+    else requestLiftDeparture(MP.id);
+  }else if(MP.hostId){
+    sendHubPresence(MP.hostId);
+    mpSend(message,MP.hostId);
+  }
+}
+
+function applySharedSetting(key,value){
+  const control=settingsScreen.source[key];
+  if(!control)return;
+  if(control.type==='checkbox')control.checked=value;
+  else control.value=value;
+  if(key==='qSel'||key==='gtx'){
+    lsSet(key==='qSel'?'quality':'gtx',value);lsSet('safe',0);
+    return;
+  }
+  control.dispatchEvent(new Event(control.matches('select')?'change':'input'));
+}
+
+function updateSettingsScreen(){
+  const session=terminalSession.session,interactive=MP.on&&activeStation==='settings';
+  const changed=settingsScreen.render({
+    visible:MP.on&&(interactive||!!session),interactive,session,
+    ownerName:session?terminalPlayerName(session.owner):'',
+    near:hub.settingsInReach(hub.presence),
+  });
+  hub.updateSettingsDisplay(MP.on&&!!session,changed);
+  board.classList.toggle('hidden',!activeStation||interactive);
+}
+
+function remember(kind,id,data){
+  if(archiveRun||!Object.hasOwn(archiveCatalog[kind].entries,id)||Object.hasOwn(archive[kind],id))return;
+  archive[kind][id]=data;
+  store.set('archive.'+kind,archive[kind]);
+}
+function rememberFloor(){
+  remember('floors',F.kind,{seed:R.seed,depth:R.depth,label:floorTag()});
+}
+function encounterSnapshot(){
+  return {seed:R.seed,depth:R.depth,pose:[P.x,P.z,P.yaw,P.pitch],gate:F.doorOpen,breaks:R.pk[R.depth]?.slice(),blackout:F.blk};
+}
+function rememberMob(id,mob){
+  if(archiveRun||P.down||state!=='play'||Object.hasOwn(archive.mobs,id))return;
+  const x=mob.x,z=mob.z,dx=x-P.x,dz=z-P.z,d=Math.hypot(dx,dz);
+  if(x<0||d>9||dx*Math.cos(P.yaw)+dz*Math.sin(P.yaw)<d*0.52||!los(P.x,P.z,x,z))return;
+  remember('mobs',id,{...encounterSnapshot(),mob:[x,z]});
+}
+function refreshHub(){
+  hub.syncArchives(Object.fromEntries(Object.entries(archiveCatalog).map(([kind,catalog])=>[kind,
+    Object.entries(catalog.entries).map(([id,name])=>({kind,id,name,data:archive[kind][id]}))])));
+}
+function showHub(on){
+  closeStation();
+  if(!on)settingsScreen.screen.hidden=true;
+  $('menuHub').hidden=!on;
+  document.body.classList.toggle('hub-room',on);
+  if(on){refreshHub();$('tFlash').textContent='USE'}
+  else $('tFlash').textContent='FLASH';
+}
+function openStation(id){
+  if(state!=='title'||loading||hub.riding)return;
+  activeStation=id;
+  board.toggleAttribute('data-lift',id==='lift');
+  hub.focusPanel(id);
+  initAudio();
+  if(document.pointerLockElement){usingLock=false;document.exitPointerLock()}
+  $('stationTitle').textContent=id==='settings'?'Settings':id==='lift'?'Descent Control':'Field Guide';
+  if(id==='lift'){
+    $('liftDepth').value=sharedLift.selection?.depth||defaultLiftFloor();
+    updateLiftScreen();
+  }
+  for(const panel of stationPanels)panel.hidden=panel.dataset.stationPanel!==id;
+  board.classList.remove('hidden');
+  board.scrollTop=0;
+  document.body.classList.add('hub-panel');
+  updateSettingsScreen();
+}
+function stationControls(){
+  const surface=MP.on&&activeStation==='settings'?settingsScreen.screen:board;
+  return [...surface.querySelectorAll('button, select, input')].filter(el=>!el.disabled&&el.getClientRects().length);
+}
+function adjustStationControl(direction){
+  const el=document.activeElement;
+  if(el.tagName==='SELECT'){
+    el.selectedIndex=clamp(el.selectedIndex+direction,0,el.options.length-1);
+    el.dispatchEvent(new Event('change'));
+  }else if(el.type==='range'||el.type==='number'){
+    if(direction<0)el.stepDown();else el.stepUp();
+    el.dispatchEvent(new Event('input'));
+  }
+}
+function closeStation(){
+  const previous=activeStation;
+  activeStation=null;
+  hub.focusPanel(null);
+  board.classList.add('hidden');
+  document.body.classList.remove('hub-panel');
+  if(previous&&(board.contains(document.activeElement)||settingsScreen.screen.contains(document.activeElement)))document.activeElement.blur();
+  updateSettingsScreen();
+}
+function useMenuAsset(entry){
+  if(state!=='title'||loading)return;
+  initAudio();
+  if(entry.station){openStation(entry.station);return}
+  if(entry.lift){
+    if(!hub.boarded||hub.riding)return;
+    if(MP.guest&&MP.run){mpJoinClick();return}
+    openStation('lift');
+    return;
+  }
+  if(entry.data&&!MP.on)startArchive(entry.kind,entry.id,entry.data);
+}
+function startFromLanding(depth,seed,floor,position,tripId){
+  if(loading||state!=='title')return;
+  const {tx,ty,yaw}=floor.start,fx=Math.cos(yaw),fz=Math.sin(yaw);
+  const side=position.x*EYE/1.62,forward=(landingMazeZ-position.z)*EYE/1.62-0.5;
+  const pose={x:tx+0.5+fx*forward-fz*side,z:ty+0.5+fz*forward+fx*side,
+    yaw:yaw+position.yaw,pitch:clamp(position.pitch,-MOVE.pitch,MOVE.pitch)};
+  if(tripId){
+    if(MP.host)publishLiftMotion();
+    if(MP.guest)MP.wantJoin=true;
+  }
+  enterRun(seed,depth,floor,pose,tripId);
+}
+function buildHubVisitor(peer){
+  const pose={id:peer.id,col:peer.col,rx:0,ry:0,rz:0,ryaw:0,rpitch:0,spd:0,walk:0};
+  const avatar=exhibitModel((time,stride)=>{pose.spd=stride*2.7;buildPlayer(pose,time)},true);
+  const animate=avatar.userData.pose;
+  avatar.userData.pose=(time,stride,pace)=>{pose.walk=pace;animate(time,stride)};
+  avatar.scale.setScalar(1.62/EYE);
+  return avatar;
+}
+function landingGeometry(floor){
+  const source=worldMesh.geometry,{position,normal,uv}=source.attributes;
+  const {tx,ty,yaw}=floor.start,fx=Math.cos(yaw),fz=Math.sin(yaw);
+  const ex=tx+0.5-fx*0.5,ez=ty+0.5-fz*0.5;
+  const points=[],normals=[],coords=[],geometry=new THREE.BufferGeometry();
+  for(const group of source.groups){
+    const start=points.length/3;
+    for(let i=group.start;i<group.start+group.count;i+=3){
+      let min=Infinity,max=-Infinity,maxSide=0;
+      for(let j=i;j<i+3;j++){
+        const x=position.getX(j)-ex,z=position.getZ(j)-ez,d=x*fx+z*fz;
+        min=Math.min(min,d);max=Math.max(max,d);
+        maxSide=Math.max(maxSide,Math.abs(-x*fz+z*fx));
+      }
+      if(min< -0.001||max<0.001||min>18||maxSide>8)continue;
+      for(let j=i;j<i+3;j++){
+        points.push(position.getX(j),position.getY(j),position.getZ(j));
+        normals.push(normal.getX(j),normal.getY(j),normal.getZ(j));
+        coords.push(uv.getX(j),uv.getY(j));
+      }
+    }
+    if(points.length/3>start)geometry.addGroup(start,points.length/3-start,group.materialIndex);
+  }
+  geometry.setAttribute('position',new THREE.Float32BufferAttribute(points,3));
+  geometry.setAttribute('normal',new THREE.Float32BufferAttribute(normals,3));
+  geometry.setAttribute('uv',new THREE.Float32BufferAttribute(coords,2));
+  const group=new THREE.Group(),mesh=new THREE.Mesh(geometry,worldMesh.material);
+  group.name='Prepared maze entrance';
+  const angle=yaw+Math.PI/2,k=1.62/EYE;
+  mesh.rotation.y=angle;mesh.scale.setScalar(k);
+  mesh.position.set(-k*(Math.cos(angle)*ex+Math.sin(angle)*ez),0,-k*(-Math.sin(angle)*ex+Math.cos(angle)*ez));
+  group.add(mesh);
+  return group;
+}
+function prepareLanding(seed,depth){
+  let stage=0;
+  const task={floor:null,model:null,progress:0,ready:false,
+    advance(){
+      if(stage===0){task.floor=genFloor(seed,depth);task.progress=0.25}
+      else if(stage===1){buildMesh(task.floor);task.model=landingGeometry(task.floor);task.progress=0.56}
+      else if(stage===2){buildStatic(task.floor);buildSdf(task.floor);task.progress=0.78}
+      else if(stage===3){
+        renderer.compileAsync(scene,camera).catch(()=>{}).then(()=>{task.progress=1;task.ready=true});
+      }else return;
+      stage++;
+    },
+    dispose(){
+      if(task.model){task.model.removeFromParent();task.model.children[0].geometry.dispose()}
+    }
+  };
+  return task;
+}
+$('liftDestination').addEventListener('submit',event=>{
+  event.preventDefault();
+  if(state!=='title'||activeStation!=='lift'||!hub.boarded)return;
+  const depth=$('liftDepth').valueAsNumber;
+  if(!Number.isInteger(depth)||depth<1||depth>+$('liftDepth').max)return;
+  if(MP.on){sendLiftAction({k:'liftDepart'});return}
+  const seed=($('seedIn').value.trim()||randSeed()).toUpperCase();
+  if(hub.engageLift(depth,seed))closeStation();
+});
+$('liftDepth').addEventListener('input',()=>{
+  const depth=$('liftDepth').valueAsNumber;
+  if(MP.on&&activeStation==='lift'&&hub.boarded&&validLiftDepth(depth)&&depth<=+$('liftDepth').max)sendLiftAction({k:'liftPick',depth});
+});
+let exhibitBuffer=null;
+function exhibitModel(draw,animated=false){
+  exhibitBuffer??={buf:new Float32Array(13*60000),n:0,cap:60000};
+  function bake(time,stride){
+    const previous=TB;
+    exhibitBuffer.n=0;
+    TB=exhibitBuffer;
+    try{draw(time,stride)}finally{TB=previous}
+  }
+  bake(0,0);
+  const vertices=new THREE.InterleavedBuffer(exhibitBuffer.buf.slice(0,exhibitBuffer.n*13),13);
+  const geometry=new THREE.BufferGeometry();
+  geometry.setAttribute('position',new THREE.InterleavedBufferAttribute(vertices,3,0));
+  geometry.setAttribute('normal',new THREE.InterleavedBufferAttribute(vertices,3,3));
+  geometry.setAttribute('color',new THREE.InterleavedBufferAttribute(vertices,3,6));
+  const mat=new THREE.MeshStandardMaterial({vertexColors:true,roughness:0.76,side:THREE.DoubleSide});
+  const mesh=new THREE.Mesh(geometry,mat);
+  if(animated){
+    vertices.setUsage(THREE.DynamicDrawUsage);
+    mesh.userData.pose=(time,stride)=>{
+      bake(time,stride);
+      vertices.array.set(exhibitBuffer.buf.subarray(0,Math.min(vertices.array.length,exhibitBuffer.n*13)));
+      geometry.setDrawRange(0,Math.min(vertices.count,exhibitBuffer.n));
+      vertices.needsUpdate=true;
+    };
+  }
+  return mesh;
+}
+function followInCase(group,pose,float=false){
+  const viewer=new THREE.Vector3();
+  let last=0,frame=-1,pace=0;
+  group.userData.animateExhibit=(time,position)=>{
+    group.parent.worldToLocal(viewer.copy(position));
+    const dt=Math.min(0.12,Math.max(0,time-last));
+    last=time;
+    if(viewer.z<0.05||viewer.lengthSq()>55)return;
+    const nextX=clamp(viewer.x*0.3,-0.43,0.43);
+    const speed=Math.min(1,dt*(float?3.0:5.0));
+    const previous=group.position.x;
+    group.position.x+=(nextX-group.position.x)*speed;
+    group.position.z+=(0.13-group.position.z)*speed;
+    const stride=clamp(Math.abs(group.position.x-previous)/Math.max(dt,0.001),0,1);
+    pace+=dt*(2.4+stride*7);
+    group.position.y=0.97+(float?0.09:0.012+0.025*stride)*Math.sin(pace);
+    const yaw=clamp(Math.atan2(viewer.x-group.position.x,viewer.z),-1.36,1.36);
+    group.rotation.y+=(yaw-group.rotation.y)*speed;
+    group.rotation.z=(float?0.09:0.035*stride)*Math.cos(pace);
+    const tick=Math.floor(time*24);
+    if(frame!==tick){frame=tick;pose(time,stride)}
+  };
+  return group;
+}
+function exhibitAsset({kind,id,data}){
+  if(kind==='floors')return floorDiorama(genFloor(data.seed,data.depth));
+  if(kind==='doors'){
+    let look=data?.look||DOOR_KINDS[id].look;
+    const disguises=DOOR_KINDS[id].disguise?doorDisguises():[];
+    if(!look)look=disguises[(data?.seed??hashStr(id))%disguises.length]||'wood';
+    const door={kind:id,tx:data?.tx??1,ty:data?.ty??1,ph:data?.ph??0.5};
+    const color=data?.stone||[0.33,0.30,0.34];
+    const model=skin=>exhibitModel(()=>buildStrangeDoor({p:ZERO3,R:rYaw(Math.PI/2)},
+      {...door,look:skin},[...color,9],[...color.map(v=>v*0.8),9]));
+    if(!data||disguises.length<2)return model(look);
+    const skins=disguises.filter(skin=>skin!==look);
+    skins.splice(Math.ceil(skins.length/2),0,look);
+    return lenticularDoor(skins.map(model));
+  }
+  const group=new THREE.Group();
+  if(id==='2'){
+    const glow=new THREE.Mesh(new THREE.IcosahedronGeometry(0.11,2),new THREE.MeshBasicMaterial({color:0x8dd0ff}));
+    glow.position.y=0.66;group.add(glow);
+    const light=new THREE.PointLight(0x519dff,4.5,1.5);light.position.copy(glow.position);group.add(light);
+    const halo=new THREE.Mesh(new THREE.SphereGeometry(0.2,16,10),
+      new THREE.MeshBasicMaterial({color:0x3789ff,transparent:true,opacity:0.23,depthWrite:false,blending:THREE.AdditiveBlending}));
+    halo.position.copy(glow.position);group.add(halo);
+    return followInCase(group,(time)=>{
+      glow.rotation.y=time*1.9;glow.rotation.z=time*0.72;
+      halo.scale.setScalar(1+0.16*Math.sin(time*5));
+      light.intensity=4.4+0.8*Math.sin(time*5);
+    },true);
+  }
+  const mob={x:0,z:0,face:Math.PI/2,ph:0,state:0,stun:0};
+  const player={id:'exhibit',col:[0.55,0.26,0.31],rx:0,ry:0,rz:0,ryaw:Math.PI/2,rpitch:0,spd:0,walk:0};
+  let eyes=[];
+  const model=exhibitModel((time,stride)=>{
+    mob.ph=Math.sin(time*2.2)*0.8;
+    if(id==='0')eyes=buildShade(mob,time,0,4).eyes;
+    else if(id==='1')buildStalker(mob,time,0,4);
+    else if(id==='3')eyes=buildWatcher(mob,time,0,4);
+    else{
+      player.walk=time*7;player.spd=stride;player.rpitch=Math.sin(time*2.0)*0.17;
+      buildPlayer(player,time,0.62+0.11*Math.sin(time*2.1),0.9);
+    }
+  },true);
+  group.add(model);
+  const lights=eyes.map(eye=>{
+    const light=new THREE.Mesh(new THREE.SphereGeometry(0.014,8,6),new THREE.MeshBasicMaterial({color:id==='3'?0xffefb9:0xc4a5ff}));
+    light.position.set(...eye);group.add(light);
+    return light;
+  });
+  return followInCase(group,(time,stride)=>{
+    model.userData.pose(time,stride);
+    lights.forEach((light,i)=>light.position.set(...eyes[i]));
+  });
+}
+function startArchive(kind,id,data){
+  if(loading||state!=='title'||MP.on||archiveRun)return;
+  if(document.pointerLockElement){usingLock=false;document.exitPointerLock()}
+  archiveRun={kind,id,wallet,up:{...up}};
+  showLoading('Opening the '+archiveCatalog[kind].title,[['Preparing the replay',()=>{
+    try{
+      const seed=kind==='doors'?'ARCHIVE':data.seed,floor=genFloor(seed,data.depth);
+      enterRun(seed,data.depth,floor);
+      $('archiveBack').hidden=false;
+      if(kind==='doors'){
+        previewStamina={stam:P.stam,winded:P.winded,spikeTraps:P.spikeTraps,mooseGems:wallet};
+        beginRoom(id,finishArchive,data.seed);
+      }else if(kind==='mobs'||kind==='glitches'){
+        restoreEncounter(data);
+        if(kind==='mobs')replayMob(id,data);
+        else if(!glStart(id,true,data))say('This anomaly could not be restored in this layout.',4);
+      }
+    }catch(error){
+      finishArchive();
+      throw error;
+    }
+  }]]);
+}
+function restoreEncounter(data){
+  if(data.gate&&F.door)openDoor(true);
+  for(const tile of data.breaks||[])pkApply(tile[0],tile[1],true);
+  F.blk=data.blackout||0;
+  F.shades=[];
+  const [x,z,yaw,pitch]=data.pose;
+  if(!blocked(x,z)){Object.assign(P,{x,z,yaw,pitch});onTileChange()}
+  P.inSafe=F.safeMask[P.ty*F.W+P.tx]===1;
+}
+function replayMob(id,data){
+  const [x,z]=data.mob;
+  const gx=Math.floor(x),gy=Math.floor(z);
+  if(id==='mimic'){
+    Object.assign(MIM,{x,z,gx,gy,st:1,depth:R.depth,as:'archive',vic:MP.id,sayT:Infinity});
+  }else{
+    F.shades.push({type:Number(id),x,z,gx,gy,px:-1,py:-1,state:0,stun:0,think:0,vis:false,
+      frozen:false,ph:0,d:99,snd:0,hid:0,seen:0,life:16});
+  }
+}
+const archiveMimic=()=>archiveRun?.kind==='mobs'&&archiveRun.id==='mimic';
+function finishArchive(){
+  if(!archiveRun)return;
+  const {wallet:bank,up:upgrades}=archiveRun;
+  wallet=bank;
+  Object.assign(up,upgrades);
+  glReset();
+  glNet('');
+  GL.chatT=0;
+  chatLog.textContent='';
+  mimicReset();
+  $('scare').style.opacity=0;
+  $('chill').style.opacity=0;
+  $('hurt').style.opacity=0;
+  $('archiveBack').hidden=true;
+  archiveRun=null;
+  toTitle();
+}
+$('closeStation').addEventListener('click',()=>closeStation());
+$('archiveBack').addEventListener('click',finishArchive);
+
+// Initialize game state without recording a visit to the default floor.
+R.seed=randSeed();loadFloor(1);showBest();achLine();showHub(true);mpTitle();
 {const rc=cleanCode(new URLSearchParams(location.search).get('room'));if(rc)mpPrepareJoin(rc)}
 // NPC photo studio for tools/npc_shot.mjs. Moves (or spawns) one NPC into a straight corridor far from
 // braziers, sconces and glowing items, freezes gameplay, and fixes the camera. Lit only by the player's
@@ -4824,5 +5587,5 @@ function gripProbe(ts,talking){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='
   for(const t of ts){buildNpc(n,t,P.x,0.7,P.z,0.016);res.push({t,...GRIP_DBG})}talk=save;return res}
 function benchNpc(iters){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='keeper');const e=[P.x,0.7,P.z];buildNpc(n,1,e[0],e[1],e[2],0.016);let t0=performance.now();
   for(let i=0;i<iters;i++){CH.n=0;buildNpc(n,1+i*0.016,e[0],e[1],e[2],0.016)}return (performance.now()-t0)/iters}
-window.__game={previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);

@@ -93,10 +93,9 @@ temporary `table`, `choice`, or `read` focus.
 | Additional tool (`tool`) | Z | RB | Labeled action button. |
 | Start a ready round (`start`) | Enter | Menu | Start round button. |
 
-- Keep walking available until the player deliberately engages a station.
-  A focused tabletop can freeze walking, looking, and jumping while arrows
-  and D-pad select tiles. A choice overlay can reserve arrows for selection
-  while the player still walks with WASD or the left stick.
+- Keep walking and looking available at stations. A tabletop or choice
+  overlay can reserve arrows and D-pad for selection while the player still
+  walks with WASD or the left stick. Let the player step away to disengage.
 - Reserve Space and A for jumping, and consume each confirm, back, and
   purchase once per press. Repeat only for an action that benefits from a
   hold, such as a console's soft drop. Leave Tab and focused buttons'
@@ -119,7 +118,7 @@ temporary `table`, `choice`, or `read` focus.
 - The Mirror Room uses Interact on objects and exits. In its timed choice,
   use left/right and confirm, or select the visible option directly.
   Back closes the optional book.
-- Mosquito Outpost uses Interact to lean over the table, build a tower
+- Mosquito Outpost uses Interact to operate the table, build a tower
   on a selected snow tile, or open the physical exit when walking.
   Alternate places spikes, Tool pours syrup, and Start launches a round.
   Back returns to walking while a wave continues.

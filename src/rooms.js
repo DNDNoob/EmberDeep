@@ -1537,7 +1537,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
   A.cam=cam;
   // test hooks for the picture house: inject a mic level or recognised words, force the house reel
   A.theaterTest=q=>cur&&cur.test&&cur.test.api?cur.test.api(q):null;
-  A.look=(dx,dy)=>{if(cur&&!A.watching&&cur.yaw!==undefined&&A.controlMode()!=='table')lookBy(cur,dx,dy,MOVE.roomPitch)};
+  A.look=(dx,dy)=>{if(cur&&!A.watching&&cur.yaw!==undefined)lookBy(cur,dx,dy,MOVE.roomPitch)};
   // how black the screen overlay should be: fades in at the start, out at the end
   A.fade=()=>cur?Math.max(cur.fade||0,1-ss(0,DOOR_KINDS[A.kind]?.fadeIn||0.7,cur.in)):0;
   A.state=()=>cur;
