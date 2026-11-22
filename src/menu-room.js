@@ -140,9 +140,6 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   });
   for(const x of [-3.08,3.08])for(const y of [3.68,4.34])box(lobby,gold,x,y,wallZ+0.28,0.047,0.047,0.04);
   mounted(lobby,'DESCENT LIFT',0,3.47,wallZ+0.28,2.26,0.32,{font:'bold 105px Georgia'});
-  const boardingLabel=mounted(lobby,['BOARD LIFT','Select a floor inside'],2.63,1.62,wallZ+0.16,1.15,0.37,{
-    font:'700 86px Georgia',subFont:'500 47px "Segoe UI"'
-  });
 
   for(const [id,x,z,name,sub] of [
     ['settings',-9.35,-3.5,'Settings','Run setup · audio · graphics'],
@@ -265,7 +262,6 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       liftAway=away;awayGate.visible=away;
       if(!ride)cabin.visible=!away;
       if(away&&channel==='lift'){channel=null;walker.b.z=wallZ+0.05}
-      boardingLabel.setLabel(away?['LIFT AWAY','Floor '+selection.depth]:['BOARD LIFT','Select a floor inside']);
     }
     if(sharedLift!==selection){sharedLift=selection;liftMode(guest,hosting)}
   }
