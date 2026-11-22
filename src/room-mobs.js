@@ -1,5 +1,8 @@
 // Strange-door creatures recorded in the Mob Archive. Maze shades stay in game.js.
+// A creature that exists only behind a strange door is added here by default.
 // Order is the order of the exhibits: keep new ids at the end.
+// Each entry needs a spotted o.mob(id, seed) call in its room and a case model
+// in room-mob-exhibits.js. See "Record a room-only creature" in docs/strange-doors.md.
 export const ROOM_MOBS={
   guest:{name:'The Guest',room:'mirror'},
   teens:{name:'Teenagers',room:'theater'},
