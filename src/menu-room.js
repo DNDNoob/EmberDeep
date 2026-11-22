@@ -17,7 +17,7 @@ const screenWidth=900,screenHeight=596;
 const clamp=THREE.MathUtils.clamp;
 export const onLiftPlatform=({x,z})=>Math.abs(x)<1.66&&z<wallZ-0.3&&z>liftGateZ;
 
-export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleFloor,prepareLanding,onLeavePanel,createVisitor}){
+export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleFloor,prepareLanding,landingGlimpse,onLeavePanel,createVisitor}){
   const scene=new THREE.Scene();
   scene.background=new THREE.Color(0x14121d);
   scene.fog=new THREE.Fog(0x17151f,24,64);
@@ -289,11 +289,6 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       return;
     }
     const destination=ride.depth*interval;
-    // Build the floors the shaft is about to pass before they scroll into view,
-    // one floor per frame, so the pass itself does not generate a maze.
-    if(ride.warm==null)ride.warm=1;
-    const warmTo=Math.min(ride.depth,Math.floor(ride.travel/interval)+4);
-    if(ride.warm<=warmTo)sampleFloor(ride.seed,ride.warm++);
     if(ride.task&&!ride.task.ready){
       const steps=ride.travel<destination*0.55?2:1;
       for(let s=0;s<steps&&!ride.task.ready;s++)ride.task.advance();
@@ -326,8 +321,10 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     for(let number=base;number<base+shaftSections.length;number++){
       const section=shaftSections[number%shaftSections.length];
       section.group.position.y=-number*interval-(number>=ride.depth?ride.extra:0);
-      section.update(ride.seed,number,number===ride.depth?ride.task.floor:undefined);
-      section.setMaze(number===ride.depth?ride.task.model:null);
+      const showMouth=number>0&&number<=ride.depth&&!(number===ride.depth&&ride.task.model);
+      const glimpse=showMouth?landingGlimpse(ride.seed,number):null;
+      section.update(ride.seed,number,number===ride.depth&&ride.task.floor?ride.task.floor:glimpse?.userData.floor);
+      section.setMaze(number===ride.depth&&ride.task.model?ride.task.model:glimpse);
     }
     if(arriving){
       ride.docked=true;

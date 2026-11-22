@@ -129,6 +129,7 @@ export function createMineLanding({height,numberSign,sampleFloor}){
   const minerals=new THREE.InstancedMesh(boulderGeometry,calcite,42);
   const terrain=new THREE.InstancedMesh(boxGeometry,floorMaterial,rows*columns*2);
   stones.frustumCulled=minerals.frustumCulled=terrain.frustumCulled=false;
+  terrain.visible=false;
   const tile=new THREE.Object3D(),shade=new THREE.Color(),base=new THREE.Color();
   const alcove=new THREE.Group();
   alcove.add(terrain);group.add(stones,minerals,alcove);
@@ -137,6 +138,7 @@ export function createMineLanding({height,numberSign,sampleFloor}){
   const lantern=new THREE.PointLight(0xffcda4,38,10);
   lantern.position.set(-1.34,2.27,socket-0.45);
   alcove.add(lantern);
+  for(const child of alcove.children)if(child!==terrain&&!child.isLight)child.visible=false;
   const mazeMount=new THREE.Group();mazeMount.position.z=landingMazeZ;group.add(mazeMount);
   const landingFace=new THREE.Group();
   landingFace.visible=false;
@@ -180,38 +182,20 @@ export function createMineLanding({height,numberSign,sampleFloor}){
       minerals.setColorAt(i,shade.setHex(cluster%3===0?0xa7a1d9:cluster%3===1?0x8fc4b4:0xcf8f56));
     }
     minerals.instanceMatrix.needsUpdate=true;minerals.instanceColor.needsUpdate=true;
-    const floor=prepared||(depth>0?sampleFloor(seed,depth):null);
+    const floor=prepared||null;
     lastFloor=floor;
     plaque.setLabel(floor?['FLOOR '+depth,floor.name]:['L','ENTRANCE HALL']);
     alcove.visible=!!floor;
     if(!floor)return;
-    const fx=Math.round(Math.cos(floor.start.yaw)),fz=Math.round(Math.sin(floor.start.yaw));
-    base.setRGB(...floor.stone);
     lantern.color.setHex(floor.forest?0x9eeab8:floor.dark?0x97aaff:floor.back?0xe8e7a1:floor.kind==='cave'?0xaabeff:0xffc294);
-    let n=0;
-    for(let row=0;row<rows;row++)for(let col=-2;col<=2;col++){
-      const x=floor.start.tx+fx*row-fz*col,z=floor.start.ty+fz*row+fx*col;
-      const tileIndex=z*floor.W+x;
-      const open=x>=0&&z>=0&&x<floor.W&&z<floor.H&&floor.g[tileIndex]===0;
-      const wx=col*dimension,wz=socket-platformDepth-row*dimension;
-      assign(terrain,n,wx,-0.061,wz,dimension*0.988,0.127,dimension*0.988);
-      shade.copy(base).multiplyScalar((floor.safeMask[tileIndex]?1.28:0.78)+hash(n,12)*0.24);
-      terrain.setColorAt(n++,shade);
-      if(!open){
-        const h=floor.kind==='cave'?1.1+hash(n,13)*0.45:1.89+hash(n,13)*0.36;
-        assign(terrain,n,wx,h/2,wz,dimension*0.986,h,dimension*0.986);
-        terrain.setColorAt(n++,shade.copy(base).multiplyScalar(0.84+hash(n,14)*0.36));
-      }
-    }
-    terrain.count=n;terrain.instanceMatrix.needsUpdate=true;terrain.instanceColor.needsUpdate=true;
   }
   return {group,update,setMaze(model){
-    if((mazeMount.children[0]||null)===model&&terrain.visible===!model)return;
+    if((mazeMount.children[0]||null)===model)return;
     mazeMount.clear();
     if(model)mazeMount.add(model);
     landingFace.visible=!!model;
-    terrain.visible=!model;
-    for(const child of alcove.children)if(child!==terrain&&!child.isLight)child.visible=!model;
+    terrain.visible=false;
+    for(const child of alcove.children)if(child!==terrain&&!child.isLight)child.visible=false;
   }};
 }
 

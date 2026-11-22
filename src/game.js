@@ -832,7 +832,7 @@ const SURFS=makeSurfaces(renderer,Q>=2?1024:Q>=1?512:256,NORMALMAP), spriteTex=m
 /* ---------- world mesh ---------- */
 let worldMesh=null,forestGrp=null;
 const FOREST=createForest({UT,Q,shadows:SHADOWS>0});
-function buildMesh(F){
+function buildMesh(F,preview=false){
   const v=[],{W,H,g}=F,Y=WALL_H;
   const quad=(p,n,uv,layer)=>{for(const i of[0,1,2,0,2,3])v.push(p[i][0],p[i][1],p[i][2],n[0],n[1],n[2],uv[i][0],uv[i][1],layer)};
   const wall=(x,y)=>x<0||y<0||x>=W||y>=H||g[y*W+x]===1;
@@ -907,11 +907,14 @@ function buildMesh(F){
   if(curK>=0)geo.addGroup(gStart,o-gStart,mats.length-1);
   geo.setAttribute('position',new THREE.BufferAttribute(pos,3));geo.setAttribute('normal',new THREE.BufferAttribute(nor,3));geo.setAttribute('uv',new THREE.BufferAttribute(uv,2));
   geo.computeBoundingSphere();
+  const mesh=new THREE.Mesh(geo,mats);mesh.castShadow=true;mesh.receiveShadow=true;mesh.frustumCulled=false;
+  // A passing landing only needs this mesh. Do not touch the playable world.
+  if(preview)return mesh;
+  mesh.matrixAutoUpdate=false;
   if(worldMesh){scene.remove(worldMesh);worldMesh.geometry.dispose()}
-  worldMesh=new THREE.Mesh(geo,mats);worldMesh.castShadow=true;worldMesh.receiveShadow=true;worldMesh.frustumCulled=false;worldMesh.matrixAutoUpdate=false;
-  scene.add(worldMesh);
+  worldMesh=mesh;scene.add(worldMesh);
   if(forestGrp){FOREST.dispose(forestGrp);forestGrp=null}
-  if(fr){forestGrp=FOREST.build(F);scene.add(forestGrp);F.fo.stats=forestGrp.userData.stats}
+  if(fr&&!preview){forestGrp=FOREST.build(F);scene.add(forestGrp);F.fo.stats=forestGrp.userData.stats}
   for(const l of shadLights)l.userData.key='';
 }
 function buildSdf(){}
@@ -5066,7 +5069,7 @@ const archive=Object.fromEntries(Object.keys(archiveCatalog).map(kind=>{
   return [kind,saved&&typeof saved==='object'&&!Array.isArray(saved)?saved:{}];
 }));
 const hub=createMenuRoom(renderer,{sfx,asset:exhibitAsset,activate:useMenuAsset,enterLanding:startFromLanding,
-  sampleFloor:memoFloor,prepareLanding,onLeavePanel:()=>closeStation(),createVisitor:buildHubVisitor});
+  sampleFloor:memoFloor,prepareLanding,landingGlimpse,onLeavePanel:()=>closeStation(),createVisitor:buildHubVisitor});
 const board=$('title');
 const stationPanels=[...document.querySelectorAll('[data-station-panel]')];
 let activeStation=null;
@@ -5391,6 +5394,46 @@ function landingGeometry(floor){
   mesh.rotation.y=angle;mesh.scale.setScalar(k);
   mesh.position.set(-k*(Math.cos(angle)*ex+Math.sin(angle)*ez),0,-k*(-Math.sin(angle)*ex+Math.cos(angle)*ez));
   group.add(mesh);
+  return group;
+}
+const glimpseCache=new Map();
+// The mouth of a floor the car only passes: same surfaces as the real maze, only the few tiles the doorway shows.
+function landingGlimpse(seed,depth){
+  const key=seed+'#'+depth;
+  const hit=glimpseCache.get(key);
+  if(hit)return hit;
+  if(glimpseCache.size>24){
+    for(const [k,old] of glimpseCache){
+      if(old.parent)continue;
+      old.traverse(o=>{if(o.geometry)o.geometry.dispose()});
+      glimpseCache.delete(k);break;
+    }
+  }
+  const kind=floorKind(depth);
+  const bi=kind==='back'?4:kind==='forest'?8:biomeIx(depth);
+  const variant=pickVariant(mulberry32(hashStr(seed+'#var#'+depth)),bi);
+  const B=BIOMES[bi],forest=kind==='forest';
+  const W=5,H=6,g=new Uint8Array(W*H).fill(1);
+  for(let y=1;y<=2;y++)for(let x=1;x<=3;x++)g[y*W+x]=0;
+  g[3*W+2]=0;g[4*W+2]=0;
+  const turn=hashStr(seed+'#mouth'+depth)%3;
+  if(turn===0)g[4*W+1]=0;else if(turn===2)g[4*W+3]=0;
+  const look={
+    W,H,g,kind:forest?'forest':kind,forest,dark:kind==='dark',back:kind==='back',
+    base:B.base,biome:B,wet:clamp(B.wet*(variant.wetK||1),0,1),
+    stone:B.stone.map((c,i)=>c*variant.stone[i]),
+    tex:{v:variant.tex|0,seed:variant.seed||0,tint:variant.tint||[1,1,1]},
+    panelAt:new Uint8Array(W*H),pocketMask:new Uint8Array(W*H),phantoms:[],door:null,frames:[],
+    name:kind==='cave'?'The Hollow':kind==='dark'?'The Black Hush':B.name
+  };
+  const mesh=buildMesh(look,true);
+  const tx=2,ty=1,yaw=Math.PI/2,fx=Math.cos(yaw),fz=Math.sin(yaw);
+  const ex=tx+0.5-fx*0.5,ez=ty+0.5-fz*0.5,angle=yaw+Math.PI/2,k=1.62/EYE;
+  mesh.rotation.y=angle;mesh.scale.setScalar(k);
+  mesh.position.set(-k*(Math.cos(angle)*ex+Math.sin(angle)*ez),0,-k*(-Math.sin(angle)*ex+Math.cos(angle)*ez));
+  const group=new THREE.Group();
+  group.name='Passing floor';group.add(mesh);group.userData.floor=look;
+  glimpseCache.set(key,group);
   return group;
 }
 const floorMemo=new Map();
