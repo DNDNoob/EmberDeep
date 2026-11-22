@@ -68,7 +68,7 @@ From depth 2, every minute or two, something goes wrong on purpose. It only happ
 - **A wall that never loaded:** a gap showing a grey floor that goes on forever and one lit doorway. Walk up and the wall pops back in.
 - **Falling through the floor** (depth 3 and deeper): you sink under the maze, fall toward a dark grid, and wake at the start of the floor, with the map showing only the path you walked.
 - **A hall that loops** (the Humming Rooms only): you are quietly put back at the start of a long hall. On the third pass a light is dead. On the fourth, something is standing at the far end.
-- **A wall that is not there:** a small chance, once each time you slam into a wall at a full sprint, that you pass through it into the open cell beyond. It never opens a locked gate. The maze may say the wall was not there.
+- **A wall that is not there:** a small chance, once each time you slam into a wall at a full sprint, that the stone takes you. You are held inside it and cannot breathe, and then you are pushed through into the open cell beyond. It never opens a locked gate.
 
 From depth 2, some floors also hide a neighbor whose shadow is wrong. It wears a cartographer's or a delver's face and wanders. It does not hunt unless you look at it for too long. The shadow on the floor is a different, worse shape.
 

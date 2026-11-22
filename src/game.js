@@ -2539,6 +2539,7 @@ function showTips(){
 function toTitle(){
   if(archiveRun){finishArchive();return}
   if(loading)closeLoading();
+  endWallClip();
   roomLeave();glFallEnd();GL.queued=null;
   if(MP.on)mpLeave(false);
   state='title';
@@ -2574,6 +2575,7 @@ function say(t,secs){const el=$('toast');el.textContent=t;el.style.opacity=1;cle
 function die(){
   if(archiveRun){state='dead';queueMicrotask(finishArchive);return}
   if(loading)closeLoading();
+  endWallClip();
   roomLeave();GL.queued=null;R.xray=0;R.guide=0;
   if(MP.on&&!MP.wiping){mpDown();return}
   state='dead';clearPrompt();
@@ -4006,6 +4008,45 @@ function watcher(s,dt,pfx,pfz){
 /* ---------- update ---------- */
 // speed modifiers shared by the maze and the rooms: the cold slows you, boots speed you up
 const moveMul=()=>(P.chill>0?0.55:1)*(1+0.06*(up.boots|0));
+// A sprint clip does not pop you through. You are caught in the stone, the air goes, then you are shoved out.
+let wallClip=null;
+function endWallClip(){
+  if(!wallClip)return;
+  wallClip=null;
+  const f=$('fade').style;f.transition='opacity .35s';f.opacity='0';
+}
+function beginWallClip(dest,vx,vz,yaw){
+  if(wallClip)return false;
+  const x=(Math.floor(P.x)+Math.floor(dest.x))*0.5+0.5,z=(Math.floor(P.z)+Math.floor(dest.z))*0.5+0.5;
+  wallClip={x,z,hx:x,hz:z,dx:dest.x,dz:dest.z,vx,vz,yaw,t:0,hold:0.7,shove:0.26};
+  P.x=x;P.z=z;P.vx=P.vz=P.vy=0;P.y=0;P.wallTouch=true;
+  if(yaw!=null)P.yaw=yaw;
+  const f=$('fade').style;f.transition='none';f.opacity='0.55';
+  tone(52,0.9,'sine',0.2,0,-18);noise(0.75,0.22,110,0.4);tone(140,0.16,'sine',0.05,0.28,-30);
+  return true;
+}
+function wallClipTick(dt){
+  const C=wallClip;if(!C)return;
+  C.t+=dt;
+  const f=$('fade').style;f.transition='none';
+  if(C.t<C.hold){
+    C.hx=C.x;C.hz=C.z;
+    f.opacity=String(0.42+0.48*Math.sin(C.t/C.hold*Math.PI*3)**2);
+  }else{
+    const u=clamp((C.t-C.hold)/C.shove,0,1),e=u*u*(3-2*u);
+    C.hx=C.x+(C.dx-C.x)*e;C.hz=C.z+(C.dz-C.z)*e;
+    f.opacity=String(0.9*(1-u));
+    if(u>=1){
+      P.x=C.dx;P.z=C.dz;P.vx=C.vx;P.vz=C.vz;P.y=0;
+      if(C.yaw!=null)P.yaw=C.yaw;
+      wallClip=null;
+      f.transition='opacity .3s';f.opacity='0';
+      sfx('noclip');onTileChange();
+      return;
+    }
+  }
+  P.x=C.hx;P.z=C.hz;P.vx=P.vz=P.vy=0;P.y=0;
+}
 function update(dt){
   R.time+=dt;xrayTick(dt);guideTick(dt);mooseLureTick(dt);scoutTick(dt);
   // in a shared game the world keeps going while you pause or talk, but you stand still
@@ -4015,6 +4056,8 @@ function update(dt){
   else{
   // look and move: the shared movement system (src/movement.js), the same one the rooms use
   lookStep(P,dt,ctl?(keys.ArrowRight?1:0)-(keys.ArrowLeft?1:0)+pad.lx*MOVE.padTurn:0,ctl?pad.ly:0,MOVE.pitch);
+  if(wallClip)wallClipTick(dt);
+  else{
   const fwd=ctl?((keys.KeyW||keys.ArrowUp)?1:0)-((keys.KeyS||keys.ArrowDown)?1:0)-pad.my-touch.my:0;
   const str=ctl?(keys.KeyD?1:0)-(keys.KeyA?1:0)+pad.mx+touch.mx:0;
   const ev=stepMove(P,dt,{fwd,str,fx:Math.cos(P.yaw),fz:Math.sin(P.yaw),ctl,
@@ -4028,16 +4071,17 @@ function update(dt){
       const full=MOVE.sprint*(1+0.06*(up.boots|0))*(P.mounted?1.25:1);
       const dest=!ev.sprint||P.chill>0?null:noclipDest({x:P.x,z:P.z,hitVX:ev.hitVX,hitVZ:ev.hitVZ,sprint:true,fullSpeed:full,roll:Math.random(),cell:mazeCell,W:F.W,H:F.H});
       if(dest&&!blocked(dest.x,dest.z)){
-        P.x=dest.x;P.z=dest.z;P.vx=ev.hitVX;P.vz=ev.hitVZ;
-        sfx('noclip');say('The wall was not there.',1.8);onTileChange();
         remember('glitches','clip',encounterSnapshot());
+        beginWallClip(dest,ev.hitVX,ev.hitVZ);
       }
     }
   }else P.wallTouch=false;
+  }
   for(const q of F.pillars){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=0.2+PR;if(dd<m&&dd>1e-4){P.x=q[0]+ddx/dd*m;P.z=q[1]+ddz/dd*m}}
   if(F.safe){const ddx=P.x-F.safe.x,ddz=P.z-F.safe.z,dd=Math.hypot(ddx,ddz),m=0.3+PR;if(dd<m&&dd>1e-4){P.x=F.safe.x+ddx/dd*m;P.z=F.safe.z+ddz/dd*m}}
   for(const q of F.discs){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=q[2]+PR;if(dd<m&&dd>1e-4){const nx2=q[0]+ddx/dd*m,nz2=q[1]+ddz/dd*m;if(!blocked(nx2,nz2)){P.x=nx2;P.z=nz2}}}
   for(const n of F.npcs){const X=n.x+(n.ox||0),Z=n.z+(n.oz||0),ddx=P.x-X,ddz=P.z-Z,dd=Math.hypot(ddx,ddz),m=0.16+PR;if(dd<m&&dd>1e-4){const nx2=X+ddx/dd*m,nz2=Z+ddz/dd*m;if(!blocked(nx2,nz2)){P.x=nx2;P.z=nz2}}}
+  if(wallClip){P.x=wallClip.hx;P.z=wallClip.hz;P.vx=P.vz=P.vy=0;P.y=0}
   if(Math.floor(P.x)!==P.tx||Math.floor(P.z)!==P.ty)onTileChange();
   // torch
   // sanctuary: the brazier feeds the torch and nothing hunts you here
@@ -4237,6 +4281,7 @@ function lurkTick(dt){
 const GL={cd:60,used:{},frz:0,frzAfter:null,buzz:null,hist:[],histT:0,rb:null,rbN:0,figs:[],hole:null,fall:null,loop:null,
   ghosts:[],walked:null,queued:null,qT:0,peerH:new Map(),hudOv:{},hudSeq:null,chatT:0,dip:0,netEl:null,netT:0};
 function glReset(){
+  endWallClip();
   glFallEnd();glClearFreeze();GL.queued=null;
   GL.cd=F.back?28+Math.random()*30:55+Math.random()*60;GL.used={};GL.frz=0;GL.frzAfter=null;GL.hist=[];GL.rb=null;
   GL.figs=[];GL.ghosts=[];GL.fall=null;GL.loop=null;GL.hudOv={};GL.hudSeq=null;GL.dip=0;GL.walked=new Uint8Array(F.W*F.H);
@@ -4718,9 +4763,7 @@ function glClipForce(){
   for(let i=0;i<8;i++){
     const a=P.yaw+i*Math.PI/4;
     const dest=noclipDest({x:P.x,z:P.z,hitVX:Math.cos(a)*MOVE.sprint,hitVZ:Math.sin(a)*MOVE.sprint,sprint:true,fullSpeed:MOVE.sprint*0.9,roll:0,chance:1,cell:mazeCell,W:F.W,H:F.H});
-    if(dest&&!blocked(dest.x,dest.z)){
-      P.x=dest.x;P.z=dest.z;P.yaw=a;sfx('noclip');say('The wall was not there.',1.8);onTileChange();return true;
-    }
+    if(dest&&!blocked(dest.x,dest.z))return beginWallClip(dest,Math.cos(a)*MOVE.sprint,Math.sin(a)*MOVE.sprint,a);
   }
   return false;
 }
