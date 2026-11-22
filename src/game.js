@@ -17,7 +17,7 @@ import {roomActions,roomControlLabel} from './room-controls.js';
 import {bakeRecipe,bakeRecipeIdle,bakeIsDone,bakeStarted,bakeExport,bakePrime,KIT_HASH} from './npc_kit.js';
 import {loadBake,saveBake,cacheStats} from './npc_cache.js';
 import {hairAtlas,ATLAS_TILES} from './npc_hair.js';
-import {KEEPER} from './npc_recipes.js';
+import {KEEPER,ILSE,BRAKK} from './npc_recipes.js';
 import {createBabyFace,createFallVoid} from './babyface.js';
 import {pickVariant,VARIANTS} from './variants.js';
 import {createForest,coreFaces,INSET,CORE_H} from './forest.js';
@@ -1204,6 +1204,33 @@ function buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,lod){
   out.lantern=fpt(SB,q3(0.07,0.918,0));
   out.top=1.05*S;
 }
+function buildIlseSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,lod){
+  const K=bakeRecipe(ILSE),A=K.anchors,fr=humanoidFrames(ILSE,n,B,t,ph,breath,nod,jaw);
+  const S=ILSE.proportions.height||1,q3=(x,y,z)=>[x*S,y*S,z*S];
+  fr.map=subF(fr.U,q3(...A.mapAt),A.mapR);
+  fr.hip=subF(fr.U,q3(...A.hipAt),A.hipR);
+  drawRecipe(K,lod,fr,blink,n);
+  const paper=[0.9,0.84,0.66,2],tie=[0.62,0.14,0.12,2],g=A.scroll;
+  const p0=[g.p[0]-g.d[0]*0.1,g.p[1]-g.d[1]*0.1,g.p[2]-g.d[2]*0.1],p1=[g.p[0]+g.d[0]*0.12,g.p[1]+g.d[1]*0.12,g.p[2]+g.d[2]*0.12];
+  seg(fr.map,q3(...p0),q3(...p1),0.012*S,0.012*S,paper);
+  seg(fr.map,q3(g.p[0]-g.d[0]*0.012,g.p[1]-g.d[1]*0.012,g.p[2]-g.d[2]*0.012),q3(g.p[0]+g.d[0]*0.012,g.p[1]+g.d[1]*0.012,g.p[2]+g.d[2]*0.012),0.014*S,0.014*S,tie);
+  out.top=1.02*S;
+}
+function buildBrakkSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,lod){
+  const K=bakeRecipe(BRAKK),A=K.anchors,fr=humanoidFrames(BRAKK,n,B,t,ph,breath,nod,jaw);
+  const S=BRAKK.proportions.height||1,q3=(x,y,z)=>[x*S,y*S,z*S];
+  fr.knee=subF(fr.U,q3(...A.kneeAt),A.kneeR);
+  fr.wound=subF(fr.U,q3(...A.woundAt),A.woundR);
+  drawRecipe(K,lod,fr,blink,n);
+  const iron=[0.42,0.44,0.48,4],wood=[0.33,0.21,0.11,6],pack=[0.33,0.27,0.16,2];
+  ball(fr.H,q3(...A.lamp),0.012*S,[2.4,1.7,0.55,7],true);
+  out.lamp=fpt(fr.H,q3(...A.lamp));
+  ball(B,[0.16,0.28,-0.1],[0.016,0.01,0.012],[0.45,0.05,0.05],true);
+  seg(B,[0.02,0.02,0.28],[0.42,0.02,0.36],0.014,0.012,wood);
+  seg(B,[0.42,0.02,0.36],[0.38,0.03,0.5],0.018,0.004,iron);seg(B,[0.42,0.02,0.36],[0.46,0.03,0.22],0.018,0.004,iron);
+  ball(B,[-0.04,0.07,-0.26],[0.09,0.07,0.08],pack);
+  out.top=0.74*S;
+}
 function buildNpc(n,t,ex,ey,ez,dtR){
   const dxp=ex-n.x,dzp=ez-n.z,dist=Math.hypot(dxp,dzp),toP=Math.atan2(dzp,dxp);
   const seated=n.type==='delver';
@@ -1215,11 +1242,14 @@ function buildNpc(n,t,ex,ey,ez,dtR){
   }
   const wrap=a=>{while(a>Math.PI)a-=Math.PI*2;while(a<-Math.PI)a+=Math.PI*2;return a};
   if(n.type==='keeper'&&dist<30)keeperWarm();
+  else if(n.type==='map'&&dist<30)ilseWarm();
+  else if(n.type==='delver'&&dist<30)brakkWarm();
   const talking=talk&&talk.npc===n;
   let diff=wrap(toP-n.yaw);
   if(!seated&&!n.lock&&dist<5&&(Math.abs(diff)>0.45||talking)){const st=Math.sign(diff)*Math.min(Math.abs(diff),2.6*dtR);n.yaw+=st;diff-=st}
   const lim=seated?1.25:1.0,wantY=n.lockHead?0:dist<6?clamp(diff,-lim,lim):Math.sin(t*0.4+n.ph)*0.35;
-  const headY0=seated?0.62:n.type==='keeper'?0.968*(KEEPER.proportions.height||1):0.84,wantP=dist<6?clamp(Math.atan2(ey-headY0,Math.max(dist,0.3)),-0.45,0.4):0;
+  const sculptHead=n.type==='keeper'?0.968*(KEEPER.proportions.height||1):n.type==='map'?0.86:0.55;
+  const headY0=sculptHead,wantP=dist<6?clamp(Math.atan2(ey-headY0,Math.max(dist,0.3)),-0.45,0.4):0;
   const k=Math.min(1,dtR*6);n.hy+=(wantY-n.hy)*k;n.hp+=(wantP-n.hp)*k;
   if(n.pose){n.hy=n.pose[0];n.hp=n.pose[1]}
   const ph=n.ph,br=Math.sin(t*1.7+ph),breath=br*0.004;
@@ -1227,7 +1257,10 @@ function buildNpc(n,t,ex,ey,ez,dtR){
   const nod=talking?Math.sin(t*5.5)*0.05:0,jaw=talking?Math.max(0,Math.sin(t*9))*0.006:0;
   const B={p:[n.x+(n.ox||0),0,n.z+(n.oz||0)],R:rYaw(n.yaw)};
   const out={top:1,lantern:null};
-  if(n.type==='keeper'&&!NPC_CLASSIC&&dist<14&&keeperReady())buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,STUDIO&&STUDIO.lod!=null?STUDIO.lod:Q>=1?(dist<6?0:dist<9.5?1:2):(dist<8?1:2)); // near / mid / far; low quality never uses the near LOD
+  const lod=STUDIO&&STUDIO.lod!=null?STUDIO.lod:Q>=1?(dist<6?0:dist<9.5?1:2):(dist<8?1:2);
+  if(n.type==='keeper'&&!NPC_CLASSIC&&dist<14&&keeperReady())buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,lod);
+  else if(n.type==='map'&&!NPC_CLASSIC&&dist<14&&ilseReady())buildIlseSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,lod);
+  else if(n.type==='delver'&&!NPC_CLASSIC&&dist<14&&brakkReady())buildBrakkSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,lod);
   else if(n.type==='keeper'){
     const robe=[0.36,0.1,0.07,2],robeD=[0.24,0.07,0.06,2],gold=[0.8,0.58,0.18,2],skin=[0.8,0.6,0.47,1],white=[0.9,0.9,0.86,5],wood=[0.3,0.2,0.12,6];
     seg(B,[0,0,0],[0,0.05,0],0.178,0.172,gold);
@@ -2411,6 +2444,8 @@ function installFloor(depth,nextFloor,prepared=false){
   R.xray=0;R.guide=0;GD.have=false;GD.key='';F=nextFloor;panelLvl=1;P.grab=null;clearMooseLures();mimicReset();
   if(!prepared){buildMesh(F);buildStatic(F);buildSdf(F)}
   sweepWorld();if(F.npcs&&F.npcs.some(q=>q.type==='keeper'))keeperWarm();
+  if(F.npcs&&F.npcs.some(q=>q.type==='map'))ilseWarm();
+  if(F.npcs&&F.npcs.some(q=>q.type==='delver'))brakkWarm();
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
   P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;P.inSafe=false;nearNpc=nearDoor=null;
   sealMsgT=0;doorMsgT=0;
@@ -5588,6 +5623,17 @@ $('closeStation').addEventListener('click',()=>closeStation());
 $('archiveBack').addEventListener('click',finishArchive);
 
 // Initialize game state without recording a visit to the default floor.
+// Slots are built before the first floor: installFloor calls ilseWarm/brakkWarm, and a const later in the file would still be unset.
+const SCULPT_SLOT=rec=>{
+  const key=rec.id+':'+KIT_HASH,slot={rec,key,warm:false,wrote:false};
+  slot.load=NPC_CLASSIC?Promise.resolve():loadBake(key).then(pl=>{try{if(pl)bakePrime(rec,pl)}catch(e){console.error(e)}});
+  slot.save=()=>{if(slot.wrote||!bakeIsDone(rec))return;slot.wrote=true;if(bakeRecipe(rec).cached)return;const pl=bakeExport(rec);if(pl)saveBake(key,pl)};
+  slot.warm=()=>{if(NPC_CLASSIC||slot.started)return;slot.started=true;slot.load.then(()=>{if(bakeIsDone(rec))return;try{bakeRecipeIdle(rec,()=>slot.save())}catch(e){console.error(e)}})};
+  slot.ready=()=>{if(bakeIsDone(rec))return true;if(STUDIO||PROBE_SYNC){bakeRecipe(rec);slot.save();return true}slot.warm();return false};
+  return slot;
+};
+const ILSE_SLOT=SCULPT_SLOT(ILSE),BRAKK_SLOT=SCULPT_SLOT(BRAKK);
+const ilseWarm=()=>ILSE_SLOT.warm(),ilseReady=()=>ILSE_SLOT.ready(),brakkWarm=()=>BRAKK_SLOT.warm(),brakkReady=()=>BRAKK_SLOT.ready();
 R.seed=randSeed();loadFloor(1);showBest();achLine();showHub(true);mpTitle();
 {const rc=cleanCode(new URLSearchParams(location.search).get('room'));if(rc)mpPrepareJoin(rc)}
 // NPC photo studio for tools/npc_shot.mjs. Moves (or spawns) one NPC into a straight corridor far from

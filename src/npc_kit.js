@@ -196,25 +196,38 @@ export function ears(H, p = {}) {
       o[0] = 0.3 + 0.5 * Math.exp(-(((a - 0.0115) / 0.008) ** 2 + ((v + 0.006) / 0.012) ** 2)) + 0.2 * smoothstep(-0.02, -0.03, v); o[1] = 0; }};
 }
 
-/* ---------- hair on the head: a fringe round the back and sides, bald crown (horseshoe) ---------- */
-// p: {thick, crown (height of the bald line), front (x where the hair stops), hang (hair below the skull at the back)}
+/* ---------- hair on the head ---------- */
+// Horseshoe fringe by default (bald crown). p.full covers the scalp: bangs, side locks and a nape, for a full head of hair.
+// p: {thick, crown (height of the bald line), front (x where the hair stops), hang, full}
 export function hairCap(H, p = {}) {
-  const thick = p.thick ?? 0.005, crown = p.crown ?? 0.128, front = p.front ?? 0.03, hang = p.hang ?? 0.012;
+  const thick = p.thick ?? (p.full ? 0.012 : 0.005), crown = p.crown ?? 0.128, front = p.front ?? (p.full ? 0.09 : 0.03), hang = p.hang ?? 0.012;
+  const full = !!p.full, E = H.eye;
   function sdf(x, y, z) {
     let d = H.skull(x, y, z) - thick;
-    d = smin(d, sdRoundCone(x, y, z, -0.055, 0.04, 0, -0.06, 0.03 - hang * 2, 0, 0.045, 0.03 + hang * 0.2), 0.03);
-    d = smax(d, y - crown - 0.03 * smoothstep(0.0, -0.08, x), 0.02);              // bald line rises towards the back
-    d = smax(d, x - front + 0.02 * smoothstep(0.07, 0.11, y), 0.015);              // nothing on the face
-    d = smax(d, -(y - 0.035), 0.02);
-    d = smax(d, 0.07 - Math.hypot(x - 0.005, (y - 0.08) * 0.8) - (Math.abs(z) < 0.06 ? 0.06 : 0), 0.001) ; // clear the ears
-    if (d < 0.015) d += 0.0028 * Math.sin(55 * Math.atan2(z, x + 0.02) + 30 * y + 4 * fbm(x * 30, y * 30, z * 30, 2)) + 0.002 * fbm(x * 60, y * 20, z * 60, 2);
+    if (!full) {
+      d = smin(d, sdRoundCone(x, y, z, -0.055, 0.04, 0, -0.06, 0.03 - hang * 2, 0, 0.045, 0.03 + hang * 0.2), 0.03);
+      d = smax(d, y - crown - 0.03 * smoothstep(0.0, -0.08, x), 0.02);              // bald line rises towards the back
+      d = smax(d, x - front + 0.02 * smoothstep(0.07, 0.11, y), 0.015);              // nothing on the face
+      d = smax(d, -(y - 0.035), 0.02);
+      d = smax(d, 0.07 - Math.hypot(x - 0.005, (y - 0.08) * 0.8) - (Math.abs(z) < 0.06 ? 0.06 : 0), 0.001); // clear the ears
+    } else {
+      // Scalp shell stopped short of the eyes. Bangs are a thick volume of their own, so the hairline cannot shred into holes.
+      d = smax(d, x - 0.05, 0.012);
+      d = smax(d, 0.02 - y, 0.012);
+      d = smin(d, sdEllipsoid(x - 0.055, y - (E.y + 0.032), z, 0.034, 0.022, 0.06), 0.014);
+      d = smin(d, sdRoundCone(x, y, z, -0.015, 0.13, 0, -0.05, -0.01 - hang, 0, thick + 0.01, 0.014), 0.016);
+      d = smin(d, sdRoundCone(x, y, z, -0.005, E.y + 0.015, 0.072, -0.02, -0.015, 0.042, 0.02, 0.006), 0.012);
+      d = smin(d, sdRoundCone(x, y, z, -0.005, E.y + 0.015, -0.072, -0.02, -0.015, -0.042, 0.02, 0.006), 0.012);
+      d = smax(d, 0.015 - Math.hypot(x + 0.002, (y - 0.072) * 1.2, Math.abs(z) - 0.08), 0.005);
+    }
+    if (d < 0.012 && !(full && x > 0.02)) d += (full ? 0.0012 : 0.0028) * Math.sin(55 * Math.atan2(z, x + 0.02) + 22 * y) + 0.001 * fbm(x * 40, y * 16, z * 40, 2);
     return d;
   }
   const held = {}, shells = {gen: function* () { yield; if (!held.m) throw new Error('hair shells need the cap baked first'); const NS = p.shells || [6, 3, 1]; return held.m.map((m, i) => shellStack(m, {n: NS[Math.min(i, NS.length - 1)], T: p.shellT ?? 0.007, inset: 0.002, bend: 0.002, paint: 0.3, ao0: 0.85})); }};
-  return {shells, onBaked: o => { held.m = o; }, sdf, bounds: [-0.13, -0.06, -0.1, 0.07, 0.17, 0.1], cell: p.cell || 0.007, tris: p.tris || [340, 120], cull: (x, y, z) => H.sdf(x, y, z) < -0.001, project: 0.003,
+  return {shells, onBaked: o => { held.m = o; }, sdf, bounds: full ? [-0.14, -0.08, -0.13, 0.12, 0.21, 0.13] : [-0.13, -0.06, -0.1, 0.07, 0.17, 0.1], cell: p.cell || (full ? 0.0042 : 0.007), tris: p.tris || (full ? [640, 260, 80] : [340, 120]), cull: (x, y, z) => H.sdf(x, y, z) < -0.001, project: 0.003,
     ao: 0.006, aoFloor: 0.6,
-    band: (x, y, z, o) => { o[0] = -y; o[1] = Math.atan2(z, x + 0.02) * 0.05; o[2] = 1 - smoothstep(0.0004, 0.006, H.sdf(x, y, z)); },   // strands run down the head: u = -y, v round the head
-    paint: (x, y, z, o) => { o[0] = 0.25; }};
+    band: (x, y, z, o) => { o[0] = -y; o[1] = Math.atan2(z, x + 0.02) * 0.05; o[2] = 1 - smoothstep(0.0004, 0.006, H.sdf(x, y, z)); },
+    paint: (x, y, z, o) => { o[0] = full ? 0.15 + 0.35 * smoothstep(0.12, -0.02, y) : 0.25; }};
 }
 
 /* ---------- eyebrows: a low bed plus short cards growing up and out from the brow ridge (npc_hair.js cards) ---------- */
@@ -625,9 +638,141 @@ export function robeSkirt(p = {}) {
     { const w = smoothstep(0, 0.06, x), sd = z - 0.034 * (0.6 + 0.4 * t), step = smoothstep(-0.004, 0.004, sd); R += w * dep * (0.0035 * step - 0.0022 * Math.exp(-(sd * sd) / 0.000006) * smoothstep(0.0, 0.1, y)); }
     let d = (rho - R) * 0.8;
     d = smax(d, y - Hh, 0.01);
-    return smax(d, 0.45 * lift(x, z) - y, 0.003);
+    if (p.y0 != null) d = smax(d, p.y0 - y, 0.01);   // optional lower cut: a hip-length coat instead of a skirt to the floor
+    d = smax(d, 0.45 * lift(x, z) - y, 0.003);
+    if (p.shell) d = Math.abs(d - p.shell * 0.5) - p.shell * 0.5;   // hollow garment: a wall, not a filled skirt
+    return d;
   }
-  return {sdf, base, bounds: [-hem * 1.3, -0.02, -hem * 1.3, hem * 1.3, Hh + 0.02, hem * 1.3], cell: p.cell || 0.012, tris: p.tris || [480, 180, 180], cull: (x, y, z) => y < 0.0035 + 0.45 * lift(x, z), project: 0.004, lift};
+  const yMin = p.y0 != null ? p.y0 - 0.02 : -0.02;
+  const shellCut = p.shell ? (p.y0 != null ? p.y0 - 0.006 : -0.004) : (p.y0 != null ? p.y0 + 0.004 : null);
+  return {sdf, base, bounds: [-hem * 1.3, yMin, -hem * 1.3, hem * 1.3, Hh + 0.02, hem * 1.3], cell: p.cell || 0.012, tris: p.tris || [480, 180, 180], cull: (x, y, z) => y < (shellCut != null ? shellCut : 0.0035 + 0.45 * lift(x, z)), project: 0.004, lift};
+}
+
+// Trousers and boots over posed legs (frame B, feet at y = 0). The body is not drawn; these shells are.
+// p.legs: [{pts:[hip, knee, ankle, toe], r:[thigh, knee, ankle, toe]}]. p.seat: {c, r} ellipsoid joining the hips.
+// p.bootRise: how far up the shin (towards the knee) the boot climbs. Boots are ankle-to-toe plus that shin.
+// Cull is only below the floor. A world-Y band used to slice the underside off a seated, nearly horizontal leg.
+export function legwear(p = {}) {
+  const legs = p.legs || [], ease = p.ease ?? 0.006, bootEase = p.bootEase ?? 0.01, rise = p.bootRise ?? 0.09;
+  const bootTop = L => {
+    const pts = L.pts, ankle = pts[pts.length - 2], knee = pts[Math.max(0, pts.length - 3)];
+    const ux = knee[0] - ankle[0], uy = knee[1] - ankle[1], uz = knee[2] - ankle[2], ul = Math.hypot(ux, uy, uz) || 1;
+    const t = Math.min(rise, ul * 0.92);
+    return [ankle[0] + ux / ul * t, ankle[1] + uy / ul * t, ankle[2] + uz / ul * t];
+  };
+  const legField = (e) => (x, y, z) => {
+    let d = 9;
+    for (const L of legs) {
+      for (let i = 0; i < L.pts.length - 1; i++) {
+        const a = L.pts[i], b = L.pts[i + 1], ra = (L.r[i] ?? L.r[L.r.length - 1]) + e, rb = (L.r[i + 1] ?? L.r[L.r.length - 1]) + e;
+        d = smin(d, sdRoundCone(x, y, z, a[0], a[1], a[2], b[0], b[1], b[2], ra, rb), 0.02);
+      }
+    }
+    if (p.seat) { const s = p.seat; d = smin(d, sdEllipsoid(x - s.c[0], y - s.c[1], z - s.c[2], s.r[0], s.r[1], s.r[2]) - e * 0.4, 0.03); }
+    return d;
+  };
+  const cloth0 = legField(ease);
+  const cloth = (x, y, z) => {
+    let d = cloth0(x, y, z);
+    if (d < 0.025) d += (p.folds ?? 0.7) * 0.0024 * Math.sin(y * 55 + z * 28 + 3 * fbm(x * 16, y * 10, z * 16, 2));
+    return d;
+  };
+  const boot = (x, y, z) => {
+    let d = 9;
+    for (const L of legs) {
+      const pts = L.pts, ankle = pts[pts.length - 2], toe = pts[pts.length - 1], top = bootTop(L);
+      const shin = (L.r[pts.length - 2] ?? 0.03) + bootEase;
+      d = smin(d, sdRoundCone(x, y, z, top[0], top[1], top[2], ankle[0], ankle[1], ankle[2], shin + 0.008, shin), 0.014);
+      d = smin(d, sdRoundCone(x, y, z, ankle[0], ankle[1], ankle[2], toe[0], toe[1] + 0.008, toe[2], shin * 0.92, 0.022 + bootEase * 0.4), 0.014);
+      d = smin(d, sdEllipsoid(x - toe[0] * 0.15 - ankle[0] * 0.85, y - Math.min(ankle[1], toe[1]) - 0.004, z - (ankle[2] + toe[2]) * 0.5, 0.05, 0.018, 0.034), 0.01); // sole
+    }
+    return d;
+  };
+  const cuff = (x, y, z) => {
+    let d = 9;
+    for (const L of legs) {
+      const top = bootTop(L);
+      d = smin(d, sdEllipsoid(x - top[0], y - top[1], z - top[2], 0.05 + bootEase, 0.014, 0.046 + bootEase), 0.008);
+    }
+    return d;
+  };
+  let min = [9, 9, 9], max = [-9, -9, -9];
+  for (const L of legs) for (const q of L.pts) for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], q[k] - 0.12); max[k] = Math.max(max[k], q[k] + 0.12); }
+  if (p.seat) { const s = p.seat; for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], s.c[k] - s.r[k] - 0.04); max[k] = Math.max(max[k], s.c[k] + s.r[k] + 0.04); } }
+  max[1] = Math.max(max[1], 0.08); min[1] = Math.min(min[1], -0.02);
+  const bounds = [min[0], min[1], min[2], max[0], max[1], max[2]];
+  const trousers = {sdf: cloth, bounds, cell: p.cell || 0.006, tris: p.tris || [700, 300, 90], project: 0.0035,
+    paint: (x, y, z, o) => { o[0] = cl(0.25 * smoothstep(0.42, 0.08, y) + (p.wear ? p.wear(x, y, z) : 0), 0, 1); },
+    cull: (x, y, z) => y < -0.004 || boot(x, y, z) < 0.002};
+  const boots = {sdf: boot, bounds, cell: p.bootCell || 0.0042, tris: p.bootTris || [420, 180, 50], project: 0.003,
+    paint: (x, y, z, o) => { o[0] = 0.06 * smoothstep(0.16, 0.02, y); },
+    cull: (x, y, z) => y < -0.006};
+  const cuffs = {sdf: cuff, bounds, cell: p.cuffCell || 0.0036, tris: p.cuffTris || [160, 70, 24], project: 0.002,
+    paint: (x, y, z, o) => { o[0] = 0.15; },
+    cull: (x, y, z) => y < -0.004};
+  return {trousers, boots, cuffs, sdf: cloth};
+}
+
+// A tail of hair off the back of the skull (ponytail, queue). Frame H. pts in head space, thick at the tie, thin at the tip.
+export function hairTail(H, p = {}) {
+  const pts = p.pts || [[-0.04, 0.115, 0], [-0.062, 0.05, 0.008], [-0.078, -0.03, 0.012], [-0.084, -0.11, 0.006]];
+  const r0 = p.r0 ?? 0.02, r1 = p.r1 ?? 0.007;
+  const sdf = (x, y, z) => {
+    let d = chain(x, y, z, pts, r0, r1, 0.016);
+    d = smin(d, sdEllipsoid(x - pts[0][0], y - pts[0][1], z - pts[0][2], r0 * 1.15, r0 * 0.7, r0 * 1.15), 0.01);   // the tie
+    if (d < 0.012) d += 0.0016 * Math.sin(48 * y + 5 * fbm(x * 24, y * 24, z * 24, 2));
+    return d;
+  };
+  let min = [9, 9, 9], max = [-9, -9, -9];
+  for (const q of pts) for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], q[k] - 0.04); max[k] = Math.max(max[k], q[k] + 0.04); }
+  return {sdf, bounds: [...min, ...max], cell: p.cell || 0.0045, tris: p.tris || [280, 120, 40], project: 0.002, ao: 0.008,
+    cull: (x, y, z) => H.sdf(x, y, z) < -0.002,
+    band: (x, y, z, o) => { o[0] = -y; o[1] = z; o[2] = 0.4; },
+    paint: (x, y, z, o) => { o[0] = cl(0.2 + 0.6 * smoothstep(0.08, -0.1, y), 0, 1); }};
+}
+
+// Open-faced helm (frame H). A skull cap with a face window cut BELOW the brow, so the forehead dome survives.
+// Nasal guard, cheek plates and a lamp housing sit on that shell. Returns .lamp, a point in head space for the glow.
+export function helm(H, p = {}) {
+  const gap = p.gap ?? 0.006, th = p.thick ?? 0.01, E = H.eye, nt = H.noseTip || [E.x + 0.02, E.y - 0.04, 0];
+  const lamp = p.lamp || [E.x + 0.016, E.y + 0.03, 0];
+  const sdf = (x, y, z) => {
+    const sk = H.skull(x, y, z);
+    let d = Math.abs(sk - gap - th * 0.5) - th * 0.5;
+    // face window: inside an ellipsoid over the eyes and cheeks, and only below the brow line
+    const face = sdEllipsoid(x - (E.x - 0.008), y - (E.y - 0.008), z, 0.062, 0.058, 0.072);
+    const window = smax(face, y - (E.y + 0.014), 0.006);
+    d = smax(d, -window, 0.005);
+    d = smax(d, (E.y - 0.062) - y, 0.01);   // the beard owns the jaw
+    // brow band, crest, nasal, cheek plates, lamp box
+    d = smin(d, sdCapsule(x, y, z, -0.03, E.y + 0.02, 0, 0.02, E.y + 0.022, 0, 0.012, 0.009), 0.006);
+    d = smin(d, sdCapsule(x, y, z, -0.015, 0.185, 0, 0.02, 0.168, 0, 0.007, 0.004), 0.005);
+    d = smin(d, sdCapsule(x, y, z, E.x - 0.004, E.y + 0.022, 0, nt[0] - 0.008, nt[1] + 0.018, 0, 0.0052, 0.0032), 0.004);
+    d = smin(d, sdEllipsoid(x + 0.004, y - (E.y - 0.012), Math.abs(z) - 0.078, 0.014, 0.016, 0.008), 0.005);
+    d = smin(d, sdBox(x - lamp[0], y - lamp[1], z - lamp[2], 0.011, 0.012, 0.016, 0.003), 0.004);
+    if (d < 0.012) d += 0.0007 * Math.sin(y * 150 + 3 * Math.atan2(z, x)) * smoothstep(0.06, 0.14, y);
+    return d;
+  };
+  return {sdf, lamp, bounds: [-0.13, -0.02, -0.13, 0.14, 0.22, 0.13], cell: p.cell || 0.003, tris: p.tris || [680, 280, 80], project: 0.002, ao: 0.01,
+    cull: (x, y, z) => H.skull(x, y, z) - gap < -0.002,
+    paint: (x, y, z, o) => { o[0] = 0.2 + 0.45 * smoothstep(0.14, 0.02, y) + 0.25 * smoothstep(0.04, 0.0, Math.hypot(x - lamp[0], y - lamp[1], z - lamp[2])); }};
+}
+
+// Iron shoulder caps in frame U. p.at: [{S:[x,y,z]}...] usually the recipe arms. Both shoulders, one mesh.
+export function pauldrons(arms, p = {}) {
+  const rx = p.rx ?? 0.058, ry = p.ry ?? 0.034, rz = p.rz ?? 0.064, lift = p.lift ?? 0.018;
+  const sdf = (x, y, z) => {
+    let d = 9;
+    for (const a of arms) d = Math.min(d, sdEllipsoid(x - a.S[0], y - (a.S[1] + lift), z - a.S[2], rx, ry, rz));
+    return d;
+  };
+  let min = [9, 9, 9], max = [-9, -9, -9];
+  for (const a of arms) {
+    const c = [a.S[0], a.S[1] + lift, a.S[2]], r = [rx, ry, rz];
+    for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], c[k] - r[k] - 0.01); max[k] = Math.max(max[k], c[k] + r[k] + 0.01); }
+  }
+  return {sdf, bounds: [...min, ...max], cell: p.cell || 0.004, tris: p.tris || [220, 90, 30], project: 0.002,
+    paint: (x, y, z, o) => { o[0] = 0.35; }};
 }
 
 // A band of trim (hem, sash, cuff) laid over a cloth surface: the shell between `out` and `out+thick` outside
@@ -752,7 +897,8 @@ export function dress(B, list) {
     const band = smax(Math.abs(bowl(x, y, z) - 0.002) - ct * 0.62, d0 - 0.004, 0.004);   // collar band: a rolled edge standing ~6 mm off the cloth
     d = smin(d, band, 0.006);
     d = smin(d, sdEllipsoid(x + 0.052 - B.stoop * 0.3, y - nl.y + 0.045, z, 0.042, 0.03, 0.07), 0.035); // cowl bunched at the back, below the neck
-    return smax(d, -(y + 0.012), 0.004);
+    const hem = robe.hemY ?? -0.012;
+    return smax(d, hem - y, 0.004);
   };
   const sl = sleeves.map(sg => {
     // Loose fabric hanging from the shoulder seam under gravity: the sleeve's top follows the arm line with a small ease, the cloth
@@ -831,7 +977,7 @@ export function dress(B, list) {
   };
   const crease = (x, y, z, other) => smoothstep(0.014, -0.002, other(x, y, z));  // 0..1 near the other shell
   const parts = {}, ends = [];
-  parts.torso = {sdf: torsoFold, bounds: robe.bounds || [-0.16, -0.05, -0.2, 0.2, B.Y.neck + 0.06, 0.2], cell: robe.cell || 0.0095, tris: robe.tris || [620, 230], project: 0.004,
+  parts.torso = {sdf: torsoFold, bounds: robe.bounds || [-0.16, (robe.hemY ?? -0.05) - 0.03, -0.2, 0.2, B.Y.neck + 0.06, 0.2], cell: robe.cell || 0.0095, tris: robe.tris || [620, 230], project: 0.004,
     aoSdf: (x, y, z) => Math.min(torsoFold(x, y, z), sleeveMin(x, y, z) + 0.002), paint: (x, y, z, o) => { o[0] = cl(0.85 * crease(x, y, z, sleeveMin) + (robe.wear ? robe.wear(x, y, z) : 0), 0, 1); },
     cull: (x, y, z) => sleeveMin(x, y, z) < -0.003};
   const trims = {};

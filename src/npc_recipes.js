@@ -15,6 +15,8 @@
 //             Runs once (cached), at load, in plain JS: no THREE, no DOM, so `node tools/npc_stats.mjs` can bake it.
 import * as K from './npc_kit.js';
 import {clothDress, clothParts} from './npc_cloth.js';
+import {anthro} from './anthro.js';
+import {smin, smax, sdEllipsoid} from './sculpt.js';
 
 /* ---------- The Keeper: old robed shopkeeper, white beard, lantern staff ---------- */
 // Arm joint centres in U coords (waist origin): shoulder, elbow, wrist, and radii of the bare arm [deltoid, elbow, wrist].
@@ -142,3 +144,206 @@ export const KEEPER = {
     };
   }
 };
+
+/* ---------- Ilse the Mapmaker: standing, teal coat, auburn hair, rolled map ---------- */
+const FEM = anthro('female', 'p50').ratios;
+const ILSE_UP = [Math.sin(0.05), Math.cos(0.05), 0];
+const ILSE_ARMS = [
+  {S: [0.006, 0.30, 0.088], E: [0.055, 0.14, 0.12], W: [0.145, 0.22, 0.04], r: [0.026, 0.02, 0.014], back: 0.024},  // map arm, elbow low, wrist up
+  {S: [0.006, 0.30, -0.088], E: [0.0, 0.16, -0.155], W: [0.045, 0.09, -0.1], r: [0.026, 0.02, 0.014], back: 0.02} // fist at the belt
+];
+const ILSE_LEGS = [
+  {pts: [[0.008, 0.46, 0.055], [0.018, 0.25, 0.06], [0.01, 0.048, 0.062], [0.105, 0.02, 0.064]], r: [0.05, 0.038, 0.028, 0.022]},
+  {pts: [[0.008, 0.46, -0.055], [0.006, 0.25, -0.06], [0.01, 0.048, -0.062], [0.105, 0.02, -0.064]], r: [0.05, 0.038, 0.028, 0.022]}
+];
+const WEAR_ILSE = K.wearPaint({vary: 0.18, freq: 7, dirt: 0.35, dirtY: 0.22, seed: 17});
+export const ILSE = {
+  id: 'ilse-v5', seed: 7701,
+  proportions: {headScale: 0.56, frames: ['H', 'J'], height: 0.96},
+  palette: {
+    skin: [0.90, 0.68, 0.54], skinDeep: [0.70, 0.38, 0.32],
+    coat: [0.07, 0.34, 0.36], coatDeep: [0.03, 0.16, 0.18],
+    cream: [0.86, 0.78, 0.62], creamDeep: [0.55, 0.46, 0.32],
+    cloth: [0.16, 0.13, 0.11], clothDeep: [0.08, 0.06, 0.05],
+    boot: [0.28, 0.16, 0.08], bootDeep: [0.12, 0.07, 0.04],
+    hair: [0.48, 0.16, 0.06], hairDeep: [0.20, 0.06, 0.03],
+    brass: [0.72, 0.52, 0.18], brassDeep: [0.40, 0.26, 0.08],
+    nail: [0.92, 0.72, 0.64], nailDeep: [0.78, 0.52, 0.48],
+    sclera: [0.92, 0.9, 0.86], iris: [0.16, 0.42, 0.28], pupil: [0.02, 0.015, 0.012]
+  },
+  rig: {waist: [0, 0.48, 0], lean: 0.05, neck: [0.004, 0.37, 0], jaw: 0.003, headTilt: 0.03, drape: {follow: 0.2, push: 0.006}},
+  parts: [
+    {part: 'trousers', frame: 'B', mat: 'cloth', col: 'cloth', col2: 'clothDeep'},
+    {part: 'boots', frame: 'B', mat: 'cloth', col: 'boot', col2: 'bootDeep'},
+    {part: 'bootCuff', frame: 'B', mat: 'trim', col: 'cream', col2: 'creamDeep'},
+    {part: 'torso', frame: 'U', mat: 'cloth', col: 'coat', col2: 'coatDeep'},
+    {part: 'sleeve0', frame: 'U', mat: 'cloth', col: 'coat', col2: 'coatDeep'},
+    {part: 'sleeve1', frame: 'U', mat: 'cloth', col: 'coat', col2: 'coatDeep'},
+    {part: 'cuff0', frame: 'U', mat: 'trim', col: 'cream', col2: 'creamDeep'},
+    {part: 'cuff1', frame: 'U', mat: 'trim', col: 'cream', col2: 'creamDeep'},
+    {part: 'belt', frame: 'U', mat: 'trim', col: 'brass', col2: 'brassDeep'},
+    {part: 'neck', frame: 'H', mat: 'skin', col: 'skin', col2: 'skinDeep', drape: [-0.04, -0.15]},
+    {part: 'head', frame: 'H', mat: 'skin', col: 'skin', col2: 'skinDeep'},
+    {part: 'ears', frame: 'H', mat: 'skin', col: 'skin', col2: 'skinDeep'},
+    {part: 'hair', frame: 'H', mat: 'hair', col: 'hair', col2: 'hairDeep'},
+    {part: 'hairShells', frame: 'H', mat: 'hair', col: 'hair', col2: 'hairDeep', cards: true},
+    {part: 'tail', frame: 'H', mat: 'hair', col: 'hair', col2: 'hairDeep'},
+    {part: 'tie', frame: 'H', mat: 'trim', col: 'cream', col2: 'creamDeep'},
+    {part: 'brows', frame: 'H', mat: 'hair', col: 'hair', col2: 'hairDeep'},
+    {part: 'browCards', frame: 'H', mat: 'hair', col: 'hair', col2: 'hairDeep', cards: true},
+    {part: 'mapHand', frame: 'map', mat: 'skin', col: 'skin', col2: 'skinDeep'},
+    {part: 'hipHand', frame: 'hip', mat: 'skin', col: 'skin', col2: 'skinDeep'}
+  ],
+  body: {ratios: FEM, y: {neck: 0.37, shoulder: 0.30}, stoop: 0.01, belly: 0.06, narrow: 0.88, waistNarrow: 0.72, arms: ILSE_ARMS},
+  garments: [
+    {type: 'robe', ease: 0.014, hang: -0.02, hemY: -0.2, folds: 0.35, collar: {rx: 0.042, ry: 0.048, rz: 0.04}, bounds: [-0.22, -0.24, -0.2, 0.2, 0.48, 0.2], tris: [900, 380, 110], cell: 0.0055, wear: WEAR_ILSE},
+    {type: 'sleeve', arm: 0, tris: [420, 180, 55], cell: 0.0046, ease: 0.005, pouch: 0.012, drop: 0.012, up: ILSE_UP, folds: 0.4, wear: WEAR_ILSE, cuff: {len: 0.018, tris: [100, 44, 18], cell: 0.0032}},
+    {type: 'sleeve', arm: 1, tris: [400, 170, 50], cell: 0.0046, ease: 0.005, pouch: 0.01, drop: 0.01, up: ILSE_UP, folds: 0.35, wear: WEAR_ILSE, cuff: {len: 0.018, tris: [100, 44, 18], cell: 0.0032}},
+    {type: 'sash', y: 0.012, h: 0.011, thick: 0.005, tris: [150, 64, 24], cell: 0.0038, motif: 2, rib: 0.001}
+  ],
+  eyes: {frame: 'H', sclera: 'sclera', iris: 'iris', pupil: 'pupil', lid: 'skin', lid2: 'skinDeep'},
+  build() {
+    const H = K.head({age: 0.12, brow: 0.55, jaw: 0.84, chin: 0.88, ears: 0.9, neck: 0.95, nose: {len: 0.86, width: 0.8, droop: 0.08, bulb: 0.78}, cheek: {bone: 0.55, sag: 0.02}, tris: [1900, 780, 210], cell: 0.0031});
+    const B = K.body(this.body), D = K.dress(B, this.garments);
+    const legs = K.legwear({legs: ILSE_LEGS, ease: 0.004, bootEase: 0.007, bootRise: 0.16, seat: {c: [0.01, 0.44, 0], r: [0.05, 0.035, 0.07]}, tris: [640, 260, 80], cell: 0.0048, bootTris: [680, 260, 70], bootCell: 0.0032, wear: WEAR_ILSE});
+    const hcap = K.hairCap(H, {full: true, hang: 0.05, thick: 0.016, tris: [860, 340, 90], cell: 0.0034});
+    const brw = K.brows(H, {size: 0.8, droop: 0.1, lift: 0.005});
+    const grip = K.hand({pose: 'grip', side: -1, gripR: 0.012, age: 0.1, size: 0.9, tris: [800, 340, 90], cell: 0.0019});
+    const hip = K.hand({pose: 'rest', side: 1, age: 0.1, size: 0.9, curl: 2.1, tris: [800, 340, 90], cell: 0.0019});
+    const hideWrist = sp => { sp.cull = (x, y, z) => x < -0.016; return sp; };
+    const [e0, e1] = D.ends;
+    const {sash, ...Drest} = D.parts;
+    const tie = {sdf: (x, y, z) => sdEllipsoid(x + 0.055, y - 0.1, z, 0.01, 0.012, 0.016), bounds: [-0.08, 0.08, -0.025, -0.03, 0.125, 0.025], cell: 0.0026, tris: [80, 36, 14], paint: (x, y, z, o) => { o[0] = 0.2; }};
+    return {
+      parts: {trousers: legs.trousers, boots: legs.boots, bootCuff: legs.cuffs, ...Drest, belt: sash,
+        head: H, ears: K.ears(H, {size: 0.92, tris: [480, 220, 60], cell: 0.0017}), hair: hcap, hairShells: hcap.shells,
+        tail: K.hairTail(H, {pts: [[-0.05, 0.105, 0], [-0.072, 0.03, 0.01], [-0.088, -0.07, 0.016], [-0.092, -0.17, 0.01]], r0: 0.022, r1: 0.007, tris: [320, 140, 40], cell: 0.0038}),
+        tie, brows: brw, browCards: {cardsDirect: brw.cardsPart.cardsDirect},
+        neck: K.neck(H, {tris: [240, 110, 36], cell: 0.0036, neck: 0.95}),
+        mapHand: hideWrist(grip), hipHand: hideWrist(hip)},
+      eyes: {r: H.eye.r, iris: 0.52, open: 20, low: -14, arch: 6, lidT: 0.0016},
+      anchors: {
+        eye: [H.eye.x, H.eye.y, H.eye.z],
+        mapAt: e0.at, mapR: K.mul3(K.rotX(Math.PI / 2), K.rotY(-grip.grip.alpha)), scroll: grip.grip,
+        hipAt: e1.at, hipR: K.basis(e1.dir, [0.15, 0.95, 0.2])
+      }
+    };
+  }
+};
+
+/* ---------- Brakk: seated, wounded, open helm, leather and a short beard ---------- */
+const MALE = anthro('male', 'p50').ratios;
+const BRAKK_LEAN = 0.07;
+const BRAKK_UP = [Math.sin(BRAKK_LEAN), Math.cos(BRAKK_LEAN), 0];
+const BRAKK_ARMS = [
+  {S: [0.0, 0.28, 0.11], E: [0.1, 0.16, 0.16], W: [0.2, 0.14, 0.1], r: [0.038, 0.028, 0.02], back: 0.02},   // hand on the good thigh
+  {S: [0.0, 0.28, -0.12], E: [0.02, 0.24, -0.2], W: [0.16, 0.3, -0.12], r: [0.038, 0.028, 0.02], back: 0.016}  // fist on the raised knee, elbow out
+];
+const BRAKK_LEGS = [
+  {pts: [[0.02, 0.15, 0.07], [0.2, 0.17, 0.09], [0.34, 0.05, 0.1], [0.44, 0.028, 0.1]], r: [0.058, 0.046, 0.034, 0.028]},
+  {pts: [[0.02, 0.15, -0.07], [0.14, 0.36, -0.1], [0.3, 0.09, -0.12], [0.4, 0.034, -0.12]], r: [0.06, 0.048, 0.034, 0.028]}
+];
+const WEAR_BRAKK = K.wearPaint({vary: 0.32, freq: 6, dirt: 0.7, dirtY: 0.22, seed: 29});
+// A short solid wrap just under the knee. A thin shell shredded; a long one read as a pad.
+function bandageWrap(A, B) {
+  const dx = B[0] - A[0], dy = B[1] - A[1], dz = B[2] - A[2], len = Math.hypot(dx, dy, dz) || 1;
+  const ux = dx / len, uy = dy / len, uz = dz / len, R = 0.056, t0 = 0.7, t1 = 0.94;
+  const midT = (t0 + t1) * 0.5, half = (t1 - t0) * 0.5;
+  const sdf = (x, y, z) => {
+    const vx = x - A[0], vy = y - A[1], vz = z - A[2], along = vx * ux + vy * uy + vz * uz;
+    const t = along / len;
+    const rad = Math.hypot(vx - ux * along, vy - uy * along, vz - uz * along);
+    let d = rad - R;
+    d = smax(d, Math.abs(t - midT) - half, 0.012);
+    if (d < 0.016) d += 0.0016 * Math.sin(t * 40);
+    return d;
+  };
+  const mid = [A[0] + ux * len * midT, A[1] + uy * len * midT, A[2] + uz * len * midT];
+  return {sdf, bounds: [mid[0] - 0.1, mid[1] - 0.1, mid[2] - 0.1, mid[0] + 0.1, mid[1] + 0.1, mid[2] + 0.1], cell: 0.0032, tris: [220, 90, 30], project: 0.0016,
+    paint: (x, y, z, o) => {
+      const t = ((x - A[0]) * ux + (y - A[1]) * uy + (z - A[2]) * uz) / len;
+      o[0] = 0.15 + 0.5 * Math.exp(-((t - midT) * (t - midT)) / 0.004);
+    }};
+}
+export const BRAKK = {
+  id: 'brakk-v6', seed: 8811,
+  proportions: {headScale: 0.62, frames: ['H', 'J'], height: 1},
+  palette: {
+    skin: [0.72, 0.5, 0.38], skinDeep: [0.5, 0.26, 0.2],
+    leather: [0.34, 0.2, 0.1], leatherDeep: [0.16, 0.09, 0.05],
+    cloth: [0.22, 0.21, 0.17], clothDeep: [0.1, 0.09, 0.07],
+    iron: [0.45, 0.47, 0.5], ironDeep: [0.16, 0.17, 0.19],
+    boot: [0.16, 0.1, 0.06], bootDeep: [0.08, 0.05, 0.03],
+    hair: [0.28, 0.14, 0.07], hairDeep: [0.1, 0.05, 0.03],
+    band: [0.84, 0.8, 0.72], bandDeep: [0.55, 0.32, 0.24],
+    nail: [0.7, 0.5, 0.42], nailDeep: [0.5, 0.32, 0.26],
+    sclera: [0.84, 0.78, 0.7], iris: [0.32, 0.22, 0.12], pupil: [0.02, 0.012, 0.01]
+  },
+  rig: {waist: [0, 0.16, 0], lean: BRAKK_LEAN, neck: [0.01, 0.34, 0], jaw: 0.0036, headTilt: -0.02, drape: {follow: 0.25, push: 0.006}},
+  parts: [
+    {part: 'trousers', frame: 'B', mat: 'cloth', col: 'cloth', col2: 'clothDeep'},
+    {part: 'boots', frame: 'B', mat: 'cloth', col: 'boot', col2: 'bootDeep'},
+    {part: 'bandage', frame: 'B', mat: 'cloth', col: 'band', col2: 'bandDeep'},
+    {part: 'torso', frame: 'U', mat: 'cloth', col: 'leather', col2: 'leatherDeep'},
+    {part: 'sleeve0', frame: 'U', mat: 'cloth', col: 'cloth', col2: 'clothDeep'},
+    {part: 'sleeve1', frame: 'U', mat: 'cloth', col: 'cloth', col2: 'clothDeep'},
+    {part: 'belt', frame: 'U', mat: 'trim', col: 'leather', col2: 'leatherDeep'},
+    {part: 'pauldrons', frame: 'U', mat: 'trim', col: 'iron', col2: 'ironDeep'},
+    {part: 'neck', frame: 'H', mat: 'skin', col: 'skin', col2: 'skinDeep', drape: [-0.03, -0.12]},
+    {part: 'head', frame: 'H', mat: 'skin', col: 'skin', col2: 'skinDeep'},
+    {part: 'ears', frame: 'H', mat: 'skin', col: 'skin', col2: 'skinDeep'},
+    {part: 'hair', frame: 'H', mat: 'hair', col: 'hair', col2: 'hairDeep'},
+    {part: 'brows', frame: 'H', mat: 'hair', col: 'hair', col2: 'hairDeep'},
+    {part: 'browCards', frame: 'H', mat: 'hair', col: 'hair', col2: 'hairDeep', cards: true},
+    {part: 'moustache', frame: 'H', mat: 'hair', col: 'hair', col2: 'hairDeep'},
+    {part: 'mousCards', frame: 'H', mat: 'hair', col: 'hair', col2: 'hairDeep', cards: true},
+    {part: 'beard', frame: 'J', mat: 'hair', col: 'hair', col2: 'hairDeep', drape: [-0.008, -0.05]},
+    {part: 'beardCards', frame: 'J', mat: 'hair', col: 'hair', col2: 'hairDeep', drape: [-0.008, -0.05], cards: true},
+    {part: 'helm', frame: 'H', mat: 'trim', col: 'iron', col2: 'ironDeep'},
+    {part: 'kneeHand', frame: 'knee', mat: 'skin', col: 'skin', col2: 'skinDeep'},
+    {part: 'woundHand', frame: 'wound', mat: 'skin', col: 'skin', col2: 'skinDeep'}
+  ],
+  body: {ratios: MALE, y: {neck: 0.34, shoulder: 0.26, pelvis: -0.01}, stoop: 0.03, belly: 0.22, narrow: 1.08, waistNarrow: 0.95, arms: BRAKK_ARMS},
+  garments: [
+    {type: 'robe', ease: 0.007, hang: 0.04, folds: 0.28, tris: [560, 240, 70], cell: 0.006, wear: WEAR_BRAKK},
+    {type: 'sleeve', arm: 0, tris: [360, 150, 46], cell: 0.005, ease: 0.006, pouch: 0.008, drop: 0.008, up: BRAKK_UP, folds: 0.3, wear: WEAR_BRAKK},
+    {type: 'sleeve', arm: 1, tris: [360, 150, 46], cell: 0.005, ease: 0.006, pouch: 0.008, drop: 0.008, up: BRAKK_UP, folds: 0.3, wear: WEAR_BRAKK},
+    {type: 'sash', y: 0.0, h: 0.016, thick: 0.007, tris: [140, 60, 22], cell: 0.004, motif: 5, rib: 0.0012}
+  ],
+  eyes: {frame: 'H', sclera: 'sclera', iris: 'iris', pupil: 'pupil', lid: 'skin', lid2: 'skinDeep'},
+  build() {
+    const H = K.head({age: 0.7, brow: 1.2, jaw: 1.06, ears: 1.0, neck: 1.2, nose: {len: 1.02, width: 1.05, droop: 0.4, bulb: 1.0}, tris: [1900, 780, 210], cell: 0.0031});
+    const B = K.body(this.body), D = K.dress(B, this.garments);
+    const legs = K.legwear({legs: BRAKK_LEGS, ease: 0.004, bootEase: 0.008, bootRise: 0.1, seat: {c: [0.02, 0.13, 0], r: [0.08, 0.045, 0.1]}, tris: [720, 280, 80], cell: 0.0046, bootTris: [560, 220, 60], bootCell: 0.0032, wear: WEAR_BRAKK});
+    const wound = BRAKK_LEGS[1];
+    const band = bandageWrap(wound.pts[0], wound.pts[1]);
+    const hcap = K.hairCap(H, {crown: 0.105, front: 0.015, hang: 0.006, thick: 0.006, tris: [220, 90, 30], cell: 0.005});
+    const brw = K.brows(H, {size: 1.05, droop: 0.85});
+    const mou = K.moustache(H, {size: 1.05, droop: 0.7});
+    const brd = K.beard(H, {length: 0.045, width: 0.9, thick: 0.005, fork: 0, cheekLine: -0.008, tris: [420, 180, 50], cell: 0.0036});
+    const helm = K.helm(H, {tris: [720, 300, 80], cell: 0.0028});
+    const knee = K.hand({pose: 'rest', side: -1, age: 0.85, size: 1.02, curl: 0.85, tris: [800, 320, 80], cell: 0.0019});
+    const woundH = K.hand({pose: 'rest', side: 1, age: 0.85, size: 1.02, curl: 1.55, tris: [800, 320, 80], cell: 0.0019});
+    const hideWrist = sp => { sp.cull = (x, y, z) => x < -0.014; return sp; };
+    const [e0, e1] = D.ends;
+    const {sash, ...Drest} = D.parts;
+    return {
+      parts: {trousers: legs.trousers, boots: legs.boots, bandage: band, ...Drest, belt: sash,
+        pauldrons: K.pauldrons(BRAKK_ARMS, {rx: 0.052, ry: 0.02, rz: 0.058, lift: 0.01, tris: [240, 90, 30]}),
+        head: H, ears: K.ears(H, {tris: [420, 190, 50], cell: 0.0017}), hair: hcap,
+        brows: brw, browCards: {cardsDirect: brw.cardsPart.cardsDirect},
+        moustache: mou, mousCards: {cardsDirect: mou.cardsPart.cardsDirect},
+        beard: brd, beardCards: {cardsDirect: brd.cardsPart.cardsDirect},
+        helm, neck: K.neck(H, {tris: [200, 90, 32], cell: 0.0038, neck: 1.15}),
+        kneeHand: hideWrist(knee), woundHand: hideWrist(woundH)},
+      eyes: {r: H.eye.r, iris: 0.48, open: 12, low: -20, arch: 8, lidT: 0.002},
+      anchors: {
+        eye: [H.eye.x, H.eye.y, H.eye.z],
+        lamp: helm.lamp,
+        kneeAt: e0.at, kneeR: K.basis(e0.dir, [0.15, 0.95, 0.1]),
+        woundAt: e1.at, woundR: K.basis(e1.dir, [0.1, 0.95, -0.15])
+      }
+    };
+  }
+};
+
