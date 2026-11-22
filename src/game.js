@@ -2454,7 +2454,7 @@ function installFloor(depth,nextFloor,prepared=false){
   if(!prepared){buildMesh(F);buildStatic(F);buildSdf(F)}
   sweepWorld();if(F.npcs&&F.npcs.some(q=>q.type==='keeper'))keeperWarm();
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
-  P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;P.inSafe=false;nearNpc=nearDoor=null;
+  P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;P.inSafe=false;P.unseen=false;nearNpc=nearDoor=null;
   sealMsgT=0;doorMsgT=0;
   onTileChange();
   pkReapply();
@@ -3010,7 +3010,7 @@ function mpRecv(m,from){
     case 'p':{
       const a=m.a;if(!Array.isArray(a))return;
       p.hub=null;
-      p.d=m.d;p.x=+a[0];p.z=+a[1];p.y=+a[2];p.yaw=+a[3];p.pitch=+a[4];p.fu=+a[5];p.down=!!(a[6]&1);p.safe=!!(a[6]&2);p.run=!!(a[6]&4);p.away=!!(a[6]&8);p.mounted=!!(a[6]&16);p.hp=a[7];
+      p.d=m.d;p.x=+a[0];p.z=+a[1];p.y=+a[2];p.yaw=+a[3];p.pitch=+a[4];p.fu=+a[5];p.down=!!(a[6]&1);p.safe=!!(a[6]&2);p.run=!!(a[6]&4);p.away=!!(a[6]&8);p.mounted=!!(a[6]&16);p.unseen=!!(a[6]&32);p.hp=a[7];
       if(p.rx===undefined||p.rd!==p.d||Math.hypot(p.x-p.rx,p.z-p.rz)>3){p.rx=p.x;p.rz=p.z;p.ry=p.y;p.ryaw=p.yaw;p.rpitch=p.pitch;p.rd=p.d}
       break;}
     case 'm':{
@@ -3143,7 +3143,7 @@ function mpSpectate(){
 }
 function mpCycle(){const L=mpAlive();if(L.length<2)return;const i=L.findIndex(p=>p.id===MP.follow);MP.follow=L[(i+1)%L.length].id}
 const mpFresh=p=>performance.now()-(p.seen||0)<15000;
-const mpShown=p=>MP.on&&p.run&&!p.away&&p.d===R.depth&&p.rx!==undefined&&state!=='title'&&mpFresh(p);
+const mpShown=p=>MP.on&&p.run&&!p.away&&!p.unseen&&p.d===R.depth&&p.rx!==undefined&&state!=='title'&&mpFresh(p);
 function sendHubPresence(to){
   const {x,y,z,yaw,station,ride,ready}=hub.presence;
   mpSend({k:'hub',a:[r3(x),r3(y),r3(z),r3(wrapA(yaw))],station,ride,ready,deepest},to);
@@ -3176,7 +3176,7 @@ function mpTick(raw){
   MP.pt-=raw;
   if(MP.pt<=0){
     MP.pt=1/15;
-    mpSend({k:'p',d:R.depth,a:[r3(P.x),r3(P.z),r3(P.y),r3(P.yaw),r3(P.pitch),Math.round(P.fuel),(P.down?1:0)|(P.inSafe||P.away?2:0)|4|(P.away?8:0)|(P.mounted?16:0),P.hp]});
+    mpSend({k:'p',d:R.depth,a:[r3(P.x),r3(P.z),r3(P.y),r3(P.yaw),r3(P.pitch),Math.round(P.fuel),(P.down?1:0)|(P.inSafe||P.away?2:0)|4|(P.away?8:0)|(P.mounted?16:0)|(P.unseen?32:0),P.hp]});
   }
   rvT-=raw;
   if(state==='room'&&rvT<=0&&MP.peers.size){rvT=0.1;const q=ROOMS.snap();if(q)mpSend({k:'rv',d:R.depth,w:ROOMS.kind,q})}
@@ -4019,7 +4019,7 @@ function beginWallClip(dest,vx,vz,yaw){
   if(wallClip)return false;
   const x=(Math.floor(P.x)+Math.floor(dest.x))*0.5+0.5,z=(Math.floor(P.z)+Math.floor(dest.z))*0.5+0.5;
   wallClip={x,z,hx:x,hz:z,dx:dest.x,dz:dest.z,vx,vz,yaw,t:0,hold:0.7,shove:0.26};
-  P.x=x;P.z=z;P.vx=P.vz=P.vy=0;P.y=0;P.wallTouch=true;
+  P.x=x;P.z=z;P.vx=P.vz=P.vy=0;P.y=0;P.wallTouch=true;P.unseen=true;
   if(yaw!=null)P.yaw=yaw;
   const f=$('fade').style;f.transition='none';f.opacity='0.55';
   tone(52,0.9,'sine',0.2,0,-18);noise(0.75,0.22,110,0.4);tone(140,0.16,'sine',0.05,0.28,-30);
@@ -4465,8 +4465,9 @@ function glRubberTick(dt){
   }
 }
 // friends see a copy of you left standing where you were, torch flame stuck mid-flicker
-function glTellRoom(from){if(MP.on)mpSend({k:'gl',w:'rb',d:R.depth,x:r2(from[0]),z:r2(from[1]),yaw:r2(from[2])})}
+function glTellRoom(from){if(MP.on&&!P.unseen)mpSend({k:'gl',w:'rb',d:R.depth,x:r2(from[0]),z:r2(from[1]),yaw:r2(from[2])})}
 function glRecv(m,p){
+  if(p.unseen)return;
   if(m.w==='rb'&&m.d===R.depth&&state!=='title'&&state!=='dead'&&isFinite(+m.x)&&isFinite(+m.z))
     GL.ghosts.push({x:+m.x,z:+m.z,yaw:+m.yaw||0,col:p.col,id:p.id,t:7+Math.random()*3});
 }
@@ -4474,7 +4475,7 @@ function glRecv(m,p){
 function glReplay(){
   let best=null,bd=13;
   const fx=Math.cos(P.yaw),fz=Math.sin(P.yaw);
-  for(const p of mpAlive()){const d=Math.hypot(p.rx-P.x,p.rz-P.z),h=GL.peerH.get(p.id);
+  for(const p of mpAlive()){if(p.unseen)continue;const d=Math.hypot(p.rx-P.x,p.rz-P.z),h=GL.peerH.get(p.id);
     if(d<bd&&h&&h.length>=20&&((p.rx-P.x)*fx+(p.rz-P.z)*fz)/Math.max(d,0.1)>0.5&&los(P.x,P.z,p.rx,p.rz)){bd=d;best=p}}
   if(!best)return false;
   best.glRep={h:GL.peerH.get(best.id).slice(-20),i:0};
