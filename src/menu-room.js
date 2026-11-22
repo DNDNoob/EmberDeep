@@ -403,15 +403,33 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   }
   function pose(){
     const {x,y,z}=walker.b;
-    camera.position.set(x,eye+y+bobY(walker.b,walker.scale)+cabin.position.y,z);
+    camera.position.set(x,eye+y+bobY(walker.b,walker.scale)+(ride?cabin.position.y:0),z);
     camera.rotation.set(view.pitch,-view.yaw,0,'YXZ');camera.updateMatrixWorld();
+  }
+  function watchLift(motion){
+    if(ride)return;
+    if(!motion){
+      if(cabin.position.y!==0||well.visible){
+        cabin.position.y=0;well.visible=cage.visible=awayGate.visible=false;lobby.visible=true;
+        cabin.visible=!liftAway;
+      }
+      return;
+    }
+    const y=-(motion.travel||0)-(motion.extra||0);
+    const gone=y<-3.2;
+    cabin.visible=true;well.visible=true;cage.visible=y<-0.15;awayGate.visible=gone;
+    cabin.position.y=y;
+    // The hall stays put for whoever did not board. Only the car and its riders drop.
+    if(gone&&channel==='lift'){channel=null;walker.b.z=Math.max(walker.b.z,wallZ+0.05)}
   }
   function syncVisitors(peers,dt,time){
     const seen=new Set(),users={};
     for(const peer of peers){
       const p=peer.hub;
-      if(ride?p.ride!==ride.group?.id:!!p.ride)continue;
-      const parent=ride?cabin:lobby;
+      // In the car, only the people who boarded are in here. From the hall, riders
+      // stay visible inside the cabin so a departure doesn't blink them out.
+      if(ride&&p.ride!==ride.group?.id)continue;
+      const parent=(ride||p.ride)?cabin:lobby;
       seen.add(peer.id);
       let visitor=visitors.get(peer.id);
       if(!visitor){
@@ -473,11 +491,11 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       if(ride||terminals.settings.f*(walker.b.z-terminals.settings.z)<=0.08)sharedSettings.style.visibility='hidden';
       else if(!projectPanel(width,height,'settings',sharedSettings)&&panel==='settings')onLeavePanel();
     }
-    if(panel&&!(sharedVisible&&panel==='settings')&&!projectPanel(width,height,panel,stationForm))onLeavePanel();
+    if(panel&&!(sharedVisible&&panel==='settings')&&!projectPanel(width,height,panel,stationForm))stationForm.style.visibility='hidden';
     if(!ride)for(const hall of galleries.values())hall.animate(time,camera.position);
     renderer.toneMappingExposure=exposure;renderer.setRenderTarget(null);renderer.render(scene,camera);
   }
-  return {update,render,syncArchives,syncVisitors,liftMode,setSharedLift,engageLift,reset,resetLift,
+  return {update,render,syncArchives,syncVisitors,watchLift,liftMode,setSharedLift,engageLift,reset,resetLift,
     sharedSettings(screen,display){
       sharedSettings=screen;
       sharedTexture=new THREE.CanvasTexture(display);

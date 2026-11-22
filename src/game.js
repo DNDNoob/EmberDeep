@@ -2875,7 +2875,23 @@ function mpSendRun(to,liftTrip){
   mpSend({k:'run',seed:R.seed,d:R.depth,sd:R.startDepth,t:r2(R.time),got,door:F.doorOpen?1:0,sdo:F.sdoors.map(q=>q.used?1:0),pk:(R.pk[R.depth]||[]).slice(0,64),sh:P.shards,ke:P.keys,blk:F.blk|0,liftTrip},to);
 }
 function mpApplyRun(r){
-  startRun(r.seed,r.d,true,true,()=>mpRestoreRun(r));
+  startRun(r.seed,r.d,true,true,()=>{
+    mpRestoreRun(r);
+    const host=MP.peers.get(MP.hostId);
+    if(!host||host.d!==R.depth||!Number.isFinite(host.x)||!Number.isFinite(host.z)||host.away)return;
+    const spot=mpBeside(host.x,host.z,host.yaw||0);
+    if(!spot)return;
+    Object.assign(P,spot);onTileChange();
+  });
+}
+// stand next to a friend instead of the floor's far entrance, so joining doesn't look like vanishing
+function mpBeside(x,z,yaw){
+  const spots=[[0.75,0],[-0.75,0],[0,0.75],[0,-0.75],[1.15,0.45],[-1.15,-0.45],[1.2,-0.3]];
+  for(const [ox,oz] of spots){
+    const nx=x+ox,nz=z+oz;
+    if(!blocked(nx,nz))return {x:nx,z:nz,yaw,pitch:0};
+  }
+  return null;
 }
 function mpRestoreRun(r){
   R.startDepth=r.sd;R.time=r.t;
@@ -2924,7 +2940,11 @@ function mpRecv(m,from){
       const [x,y,z,yaw]=a;
       if(Math.abs(x)>21||y< -10000||y>3||z< -34||z>16||Math.abs(yaw)>1e4)return;
       const station=['settings','guide','lift'].includes(m.station)?m.station:null;
-      const ride=m.ride===sharedLift.trip?.id&&sharedLift.trip?.members.includes(from)?m.ride:null;
+      let ride=null;
+      if(m.ride&&sharedLift.trip&&m.ride===sharedLift.trip.id){
+        ride=m.ride;
+        if(!sharedLift.trip.members.includes(from))sharedLift.trip.members.push(from);
+      }
       p.hub={x,y,z,yaw,station,ride,ready:!!m.ready,at:performance.now()};
       if(validLiftDepth(m.deepest))p.deepest=m.deepest;
       if(MP.host)terminalSession.expire();
@@ -2974,11 +2994,17 @@ function mpRecv(m,from){
         else if(hub.riding)mpSend({k:'liftStart',...sharedLift.trip.packet},from);
       }
       mpTitle();break;
-    case 'run':
+    case 'run':{
       if(!fromHost)return;
       MP.run=m;
-      if(MP.wantJoin&&!hub.riding&&(!m.liftTrip||m.liftTrip!==sharedLift.trip?.id))mpApplyRun(m);
-      mpTitle();break;
+      const sameTrip=!!(m.liftTrip&&sharedLift.trip&&m.liftTrip===sharedLift.trip.id);
+      // Same trip and already aboard: the landing walk enters the maze. Don't restart it.
+      if(MP.wantJoin&&!hub.riding&&!sameTrip)mpApplyRun(m);
+      // Anyone still in the hall gets the lift back, so they can catch up.
+      if(!hub.riding&&sharedLift.trip){
+        sharedLift.trip=null;sharedLift.pending=0;hub.watchLift(null);updateLiftScreen();
+      }
+      mpTitle();break;}
     case 'p':{
       const a=m.a;if(!Array.isArray(a))return;
       p.hub=null;
@@ -5139,6 +5165,8 @@ function step(now){
   }
   else if(state==='title'){
     hub.update(dt,roomInput(),raw);
+    if(sharedLift.trip&&!hub.riding)hub.watchLift(sharedLift.trip.motion);
+    else if(!hub.riding)hub.watchLift(null);
     hub.syncVisitors(MP.on?[...MP.peers.values()].filter(p=>p.hub&&now-p.hub.at<15000):[],dt,now/1000);
     updateSettingsScreen();
     $('hubCross').classList.toggle('ready',hub.aimed);
@@ -5231,15 +5259,28 @@ function resetSharedLift(){
 
 function updateLiftScreen(){
   const selection=sharedLift.selection;
-  hub.setSharedLift(selection,!!sharedLift.trip&&!hub.riding&&!MP.run&&state==='title');
+  // The cabin stays in the world while a car is away. watchLift moves it for anyone still in the hall.
+  hub.setSharedLift(selection,false);
   if(activeStation!=='lift')return;
-  const field=$('liftDepth');
+  const field=$('liftDepth'),go=$('liftGo');
+  const joining=!!(MP.guest&&MP.run&&!sharedLift.trip);
   field.max=selection?.max||liftFloorLimit();
+  if(joining){
+    field.value=MP.run.d;
+    field.disabled=$('liftDeepest').disabled=true;
+    go.disabled=false;
+    go.textContent='Join floor '+MP.run.d;
+    $('liftDeepest').textContent='Deepest reached · '+(selection?.deepest||deepest);
+    $('liftRunType').textContent=hostName()+' is on this floor. You will arrive beside them.';
+    return;
+  }
+  go.textContent='Descend';
   if(MP.on&&selection&&field.valueAsNumber!==selection.depth)field.value=selection.depth;
   $('liftDeepest').textContent='Deepest reached · '+(MP.on?selection?.deepest||deepest:deepest);
   $('liftRunType').textContent=MP.on?(selection?.pending?'Departing · riders on the platform go together':
     selection?.by?selection.by+' selected floor '+selection.depth:'Shared destination · all aboard ride together'):'Solo descent';
-  field.disabled=$('liftGo').disabled=$('liftDeepest').disabled=!!(MP.on&&(selection?.pending||MP.guest&&!MP.hostId));
+  // A guest can still press Descend; the click explains itself if the host has not answered yet.
+  field.disabled=go.disabled=$('liftDeepest').disabled=!!(MP.on&&selection?.pending);
 }
 
 function publishLiftSelection(to){
@@ -5287,12 +5328,13 @@ function startSharedLift(packet){
   MP.guest=!MP.host;
   MP.hostId=MP.host?null:pilot;
   MP.wantJoin=false;
-  if(members.includes(MP.id)&&hub.boarded){
+  // Anyone actually standing on the platform rides, even if their last pose
+  // had not reached the host when the member list was sealed.
+  if(state==='title'&&hub.boarded&&!hub.riding){
+    if(!members.includes(MP.id))members.push(MP.id);
     const ready=()=>members.every(member=>{
       if(member===MP.id)return true;
       const peer=MP.peers.get(member),pose=peer?.hub;
-      // A player who left before departure, disconnected or closed the game
-      // must not keep the platform suspended.
       if(pose?.ride===id)return pose.ready||!mpFresh(peer);
       return performance.now()-trip.started>1700;
     });
@@ -5449,7 +5491,6 @@ function useMenuAsset(entry){
   if(entry.station){openStation(entry.station);return}
   if(entry.lift){
     if(!hub.boarded||hub.riding)return;
-    if(MP.guest&&MP.run){mpJoinClick();return}
     openStation('lift');
     return;
   }
@@ -5529,6 +5570,11 @@ function prepareLanding(seed,depth){
 }
 function departFromLift(shortcut=false){
   if(state!=='title'||activeStation!=='lift'||!hub.boarded)return;
+  if(MP.guest&&MP.run&&!sharedLift.trip){
+    if(!MP.hostId){say('Still looking for the host. Keep this page open.',2.5);return}
+    closeStation();mpJoinClick();return;
+  }
+  if(MP.on&&!MP.host&&!MP.hostId){say('Still looking for the host. Keep this page open.',2.5);return}
   if(MP.on&&shortcut){sendLiftAction({k:'liftDepart',shortcut:true});return}
   const depth=shortcut?deepest:$('liftDepth').valueAsNumber;
   if(!Number.isInteger(depth)||depth<1||depth>+$('liftDepth').max)return;
