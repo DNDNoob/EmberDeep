@@ -120,6 +120,7 @@ function rockFace(parent,side,z0,z1,bottom,top,seed){
 function observationWindow(parent){
   const shader=new THREE.ShaderMaterial({
     side:THREE.DoubleSide,
+    uniforms:{uTime:{value:0}},
     vertexShader:`
       varying vec3 world;
       varying vec2 pane;
@@ -131,6 +132,7 @@ function observationWindow(parent){
     fragmentShader:`
       varying vec3 world;
       varying vec2 pane;
+      uniform float uTime;
       float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
       vec3 stars(vec2 p,float scale,float chance,float seed){
         vec2 cell=floor(p*scale),uv=fract(p*scale);
@@ -161,18 +163,30 @@ function observationWindow(parent){
       void main(){
         vec3 ray=normalize(world-cameraPosition);
         vec2 p=ray.zy/max(ray.x,0.05);
-        float dust=exp(-pow((p.y+0.11*p.x-0.028)*6.5,2.0))*exp(-dot(p,p)*0.43);
-        dust*=0.56+0.21*sin(13.0*p.x+18.0*p.y)+0.11*sin(32.0*p.x-21.0*p.y);
+        // The station's orbit carries the star field past the glass.
+        vec2 sky=p-vec2(uTime*0.012,sin(uTime*0.004)*0.018);
+        float dust=exp(-pow((sky.y+0.11*sky.x-0.028)*6.5,2.0))*exp(-dot(sky,sky)*0.43);
+        dust*=0.56+0.21*sin(13.0*sky.x+18.0*sky.y)+0.11*sin(32.0*sky.x-21.0*sky.y);
         vec3 color=vec3(0.003,0.005,0.014)+dust*vec3(0.020,0.017,0.048);
-        color+=stars(p,115.0,0.953,4.8)*0.52+stars(p,59.0,0.983,8.7)*0.91;
-        vec2 gold=vec2(-0.069,0.094);
-        vec2 ring=(p-gold)/0.023;
+        color+=stars(sky,115.0,0.953,4.8)*0.52+stars(sky,59.0,0.983,8.7)*0.91;
+        // Each world: angle = phase + time * k / a^1.5, and the disc grows as the range closes.
+        float gA=0.38+0.04*sin(uTime*0.037);
+        float gTh=1.15+uTime*(0.09/pow(gA,1.5));
+        vec2 gold=vec2(cos(gTh),sin(gTh)*0.55)*gA+vec2(0.02,0.03);
+        float gR=0.020*(0.78+0.45*sin(gTh));
+        vec2 ring=(p-gold)/gR;
         float r=rings(ring);
         color=mix(color,vec3(0.45,0.30,0.18),r*0.64);
-        color=planet(color,p,gold,0.023,vec3(0.42,0.24,0.12),vec3(0.95,0.68,0.38),0.55);
+        color=planet(color,p,gold,gR,vec3(0.42,0.24,0.12),vec3(0.95,0.68,0.38),0.55);
         color=mix(color,vec3(0.61,0.41,0.25),r*smoothstep(0.0,0.14,ring.y)*0.52);
-        color=planet(color,p,vec2(0.18,0.048),0.034,vec3(0.079,0.28,0.46),vec3(0.48,0.78,0.97),0.63);
-        color=planet(color,p,vec2(0.315,0.143),0.014,vec3(0.36,0.115,0.085),vec3(0.87,0.45,0.29),0.43);
+        float bA=0.26+0.05*sin(uTime*0.051+1.7);
+        float bTh=2.4+uTime*(0.11/pow(bA,1.5));
+        vec2 blue=vec2(cos(bTh),sin(bTh)*0.48)*bA+vec2(-0.04,0.01);
+        float sA=0.52+0.03*sin(uTime*0.029+0.6);
+        float sTh=0.4+uTime*(0.07/pow(sA,1.5));
+        vec2 small=vec2(cos(sTh),sin(sTh)*0.42)*sA+vec2(0.05,-0.02);
+        color=planet(color,p,blue,0.030*(0.8+0.35*sin(bTh)),vec3(0.079,0.28,0.46),vec3(0.48,0.78,0.97),0.63);
+        color=planet(color,p,small,0.013*(0.75+0.4*sin(sTh+1.0)),vec3(0.36,0.115,0.085),vec3(0.87,0.45,0.29),0.43);
         float glassEdge=pow(1.0-max(0.0,ray.x),3.0);
         float glare=exp(-pow((pane.y-0.87+0.27*pane.x)*44.0,2.0));
         float lower=exp(-pow((pane.y-0.11+0.09*pane.x)*84.0,2.0));
@@ -194,15 +208,17 @@ function observationWindow(parent){
     block(parent,blueLight,20.3,0.59,z,0.045,0.04,0.29);
     block(parent,blueLight,20.3,5.0,z,0.045,0.04,0.29);
   }
+  return shader;
 }
 
 export function buildAsteroidLobby(parent){
   vault(parent);
   const floor=()=>-0.1,roof=()=>spring+0.08;
   rockFace(parent,-1,front,rear,floor,roof,3);
-  observationWindow(parent);
+  const sky=observationWindow(parent);
   rockFace(parent,1,front,-5.65,floor,roof,5);
   rockFace(parent,1,13.65,rear,floor,roof,9);
   rockFace(parent,1,-5.95,13.95,floor,z=>0.61+0.20*Math.sin(z*0.86)+0.14*Math.sin(z*2.14),7);
   rockFace(parent,1,-5.95,13.95,z=>5.03-0.20*Math.sin(z*0.96)-0.13*Math.sin(z*2.51),roof,11);
+  return sky;
 }

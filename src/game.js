@@ -21,7 +21,8 @@ import {KEEPER} from './npc_recipes.js';
 import {createBabyFace,createFallVoid} from './babyface.js';
 import {pickVariant,VARIANTS} from './variants.js';
 import {createForest,coreFaces,INSET,CORE_H} from './forest.js';
-import {MOVE,stepMove,lookStep,lookBy,bobY} from './movement.js';
+import {MOVE,stepMove,lookStep,lookBy,bobY,noclipDest} from './movement.js';
+import {lurkStep} from './lurk.js';
 import {initAmbience,updateAmbience,amb} from './ambience.js';
 import {initMusic,useStore,updateMusic,setVolumes,getVolumes,onVolumes,music} from './music.js';
 import {createMenuRoom,onLiftPlatform} from './menu-room.js';
@@ -304,6 +305,12 @@ function genFloor(seedStr,depth,look){
     if(wt&&pool.length){const c=pool.pop(),w={type:wt,x:c[0]+0.5,z:c[1]+0.5,ph:rng()*6.28,used:false,gift:ri(3),tip:ri(6)};
       for(const d of DIRS)if(g[idx(c[0]+d[0],c[1]+d[1])]===1){w.ox=d[0]*0.27;w.oz=d[1]*0.27;w.wy=Math.atan2(-d[1],-d[0]);break}
       npcs.push(w)}}
+  // someone who looks like a neighbor, and is not one
+  if(depth>=2&&rng()<0.7&&pool.length){
+    const c=pool.pop(),guise=rng()<0.4?'delver':'map';
+    npcs.push({type:'lurk',guise,x:c[0]+0.5,z:c[1]+0.5,ph:rng()*6.28,gift:0,tip:0,
+      gx:c[0],gy:c[1],px:-1,py:-1,stare:0,aggro:false,face:rng()*6.28,hitT:0,used:true});
+  }
   take('gem',Math.round(nCells/6));
   // spike traps
   const traps=[];
@@ -474,12 +481,12 @@ if(Q>=1&&!SAFE){
   scene.environmentIntensity=0.05;pm.dispose();
 }
 const torchLight=new THREE.PointLight(0xffffff,0,8,1.0);
-if(SHADOWS){torchLight.castShadow=true;torchLight.shadow.mapSize.set(Q>=2?1024:512,Q>=2?1024:512);torchLight.shadow.camera.near=0.04;torchLight.shadow.camera.far=9;torchLight.shadow.bias=-0.003;torchLight.shadow.normalBias=0.025}
+if(SHADOWS){torchLight.castShadow=true;torchLight.shadow.mapSize.set(Q>=2?1024:512,Q>=2?1024:512);torchLight.shadow.camera.near=0.04;torchLight.shadow.camera.far=9;torchLight.shadow.bias=-0.003;torchLight.shadow.normalBias=0.025;torchLight.shadow.camera.layers.enable(1)}
 scene.add(torchLight);
 const flashLight=new THREE.PointLight(0xd9edff,0,9,1);scene.add(flashLight);
 const poolLights=[],shadLights=[];
 for(let i=0;i<NPOOL;i++){const l=new THREE.PointLight(0xffffff,0,4,1.25);scene.add(l);poolLights.push(l)}
-for(let i=0;i<NSHAD;i++){const l=new THREE.PointLight(0xffffff,0,4,1.25);l.castShadow=true;l.shadow.mapSize.set(512,512);l.shadow.camera.near=0.05;l.shadow.camera.far=8;l.shadow.bias=-0.004;l.shadow.normalBias=0.03;l.shadow.autoUpdate=false;l.userData.key='';scene.add(l);shadLights.push(l)}
+for(let i=0;i<NSHAD;i++){const l=new THREE.PointLight(0xffffff,0,4,1.25);l.castShadow=true;l.shadow.mapSize.set(512,512);l.shadow.camera.near=0.05;l.shadow.camera.far=8;l.shadow.bias=-0.004;l.shadow.normalBias=0.03;l.shadow.autoUpdate=false;l.shadow.camera.layers.enable(1);l.userData.key='';scene.add(l);shadLights.push(l)}
 // flames are not points: cap how hot a surface right next to one can get, and let light fade out more gently toward its reach
 THREE.ShaderChunk.lights_pars_begin=THREE.ShaderChunk.lights_pars_begin
   .replace('max( pow( lightDistance, decayExponent ), 0.01 )','max( pow( lightDistance, decayExponent ), 0.6 )')
@@ -1206,20 +1213,23 @@ function buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,lod){
 }
 function buildNpc(n,t,ex,ey,ez,dtR){
   const dxp=ex-n.x,dzp=ez-n.z,dist=Math.hypot(dxp,dzp),toP=Math.atan2(dzp,dxp);
-  const seated=n.type==='delver';
+  const kind=n.type==='lurk'?(n.guise==='delver'?'delver':'map'):n.type;
+  const seated=kind==='delver';
   if(n.yaw===undefined){
     n.hy=0;n.hp=0;
     if(seated){ // sit with the back to a wall when there is one
       n.yaw=n.wy!==undefined?n.wy:toP;
-    }else n.yaw=n.type==='keeper'&&F.safe?Math.atan2(F.safe.z-n.z,F.safe.x-n.x):toP;
+    }else n.yaw=kind==='keeper'&&F.safe?Math.atan2(F.safe.z-n.z,F.safe.x-n.x):toP;
   }
+  if(!Number.isFinite(n.hy))n.hy=0;
+  if(!Number.isFinite(n.hp))n.hp=0;
   const wrap=a=>{while(a>Math.PI)a-=Math.PI*2;while(a<-Math.PI)a+=Math.PI*2;return a};
-  if(n.type==='keeper'&&dist<30)keeperWarm();
+  if(kind==='keeper'&&dist<30)keeperWarm();
   const talking=talk&&talk.npc===n;
   let diff=wrap(toP-n.yaw);
   if(!seated&&!n.lock&&dist<5&&(Math.abs(diff)>0.45||talking)){const st=Math.sign(diff)*Math.min(Math.abs(diff),2.6*dtR);n.yaw+=st;diff-=st}
   const lim=seated?1.25:1.0,wantY=n.lockHead?0:dist<6?clamp(diff,-lim,lim):Math.sin(t*0.4+n.ph)*0.35;
-  const headY0=seated?0.62:n.type==='keeper'?0.968*(KEEPER.proportions.height||1):0.84,wantP=dist<6?clamp(Math.atan2(ey-headY0,Math.max(dist,0.3)),-0.45,0.4):0;
+  const headY0=seated?0.62:kind==='keeper'?0.968*(KEEPER.proportions.height||1):0.84,wantP=dist<6?clamp(Math.atan2(ey-headY0,Math.max(dist,0.3)),-0.45,0.4):0;
   const k=Math.min(1,dtR*6);n.hy+=(wantY-n.hy)*k;n.hp+=(wantP-n.hp)*k;
   if(n.pose){n.hy=n.pose[0];n.hp=n.pose[1]}
   const ph=n.ph,br=Math.sin(t*1.7+ph),breath=br*0.004;
@@ -1227,8 +1237,8 @@ function buildNpc(n,t,ex,ey,ez,dtR){
   const nod=talking?Math.sin(t*5.5)*0.05:0,jaw=talking?Math.max(0,Math.sin(t*9))*0.006:0;
   const B={p:[n.x+(n.ox||0),0,n.z+(n.oz||0)],R:rYaw(n.yaw)};
   const out={top:1,lantern:null};
-  if(n.type==='keeper'&&!NPC_CLASSIC&&dist<14&&keeperReady())buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,STUDIO&&STUDIO.lod!=null?STUDIO.lod:Q>=1?(dist<6?0:dist<9.5?1:2):(dist<8?1:2)); // near / mid / far; low quality never uses the near LOD
-  else if(n.type==='keeper'){
+  if(kind==='keeper'&&!NPC_CLASSIC&&dist<14&&keeperReady())buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,STUDIO&&STUDIO.lod!=null?STUDIO.lod:Q>=1?(dist<6?0:dist<9.5?1:2):(dist<8?1:2)); // near / mid / far; low quality never uses the near LOD
+  else if(kind==='keeper'){
     const robe=[0.36,0.1,0.07,2],robeD=[0.24,0.07,0.06,2],gold=[0.8,0.58,0.18,2],skin=[0.8,0.6,0.47,1],white=[0.9,0.9,0.86,5],wood=[0.3,0.2,0.12,6];
     seg(B,[0,0,0],[0,0.05,0],0.178,0.172,gold);
     seg(B,[0,0.05,0],[0,0.5,0],0.172,0.092,robe);
@@ -1261,7 +1271,7 @@ function buildNpc(n,t,ex,ey,ez,dtR){
     ball(H,[0.045,0.0,0],[0.045,0.045,0.062],white);
     seg(H,[0.05,-0.01-jaw,0],[0.085,-0.21-jaw,0],0.048,0.01,white);
     out.top=1.0;
-  }else if(n.type==='map'){
+  }else if(kind==='map'){
     const S=0.94,v=(x,y,z)=>[x*S,y*S,z*S];
     const teal=[0.08,0.4,0.42,2],tealD=[0.05,0.27,0.3,2],cream=[0.86,0.8,0.66,2],leg=[0.2,0.14,0.11,2],boot=[0.36,0.21,0.1,3],belt=[0.3,0.17,0.08,3],
           hair=[0.55,0.2,0.07,5],skin=[0.92,0.71,0.57,1],must=[0.9,0.62,0.14,2];
@@ -1670,6 +1680,17 @@ const DOOR_LOOKS={
       doorKnob(f,[0.55,0.72,0.48,4]);
     },
     glow(D,t){return[0.45,0.9,0.62,0.38+0.16*Math.sin(t*1.7+D.ph)]}
+  },
+  hamlet:{
+    leaf(f,D){
+      slab(f,[0.02,0.52,0],[0.04,1.04,0.52],[0.72,0.28,0.22,6]);
+      slab(f,[0.045,0.55,0],[0.02,0.78,0.36],[0.95,0.86,0.62,6]);
+      slab(f,[0.06,0.95,0],[0.012,0.22,0.22],[0.35,0.7,0.95,11]);
+      slab(f,[0.06,0.62,-0.16],[0.012,0.18,0.16],[0.98,0.78,0.3,11]);
+      slab(f,[0.06,0.62,0.16],[0.012,0.18,0.16],[0.45,0.78,0.42,11]);
+      doorKnob(f,[0.95,0.78,0.28,4]);
+    },
+    glow(D,t){return[1,0.72,0.35,0.42+0.12*Math.sin(t*2+D.ph)]}
   },
 };
 const DOOR_EXPLORE_PER_MIN=150;
@@ -2313,6 +2334,20 @@ function roomEnd(res){
     onTileChange();sfx('noclip');
     return;
   }
+  if(res.why==='hamlet'){
+    if(res.k==='win'){
+      achieve('hamlet','Limb from limb','Cut the night thing apart with an obsidian-glass sword');
+      say('You step back through. The village keeps the dark.',3.5);
+      sfx('door');
+    }else if(res.k==='dead'){
+      mpSend({k:'sdr',r:'hamlet'});mpSys(myName()+' was taken by the thing in the village');
+      P.hp=0;$('deadTitle').textContent='THE NIGHT TAKES YOU';die();
+    }else{
+      say('You leave the village with the sun behind you.',3);
+      sfx('door');
+    }
+    return;
+  }
   if(res.why==='stillwood'){
     achieve('stillwood','Held in the water','Saw the door behind you in a still pond, and walked back out');
     say('You step back through. The wood does not follow.',3.5);
@@ -2395,6 +2430,14 @@ function solidAt(x,z){const tx=Math.floor(x),ty=Math.floor(z);return tx<0||ty<0|
 let panelLvl=1;
 function torchRadius(fu){if(fu===undefined)fu=state==='title'?100:P.fuel;return (1.6+6.0*Math.sqrt(Math.max(0,fu)/100))*(F.dark?0.5:1)*(F.back?0.45:1)}
 function blocked(x,z){return solidAt(x-PR,z-PR)||solidAt(x+PR,z-PR)||solidAt(x-PR,z+PR)||solidAt(x+PR,z+PR)}
+function mazeCell(x,z){
+  if(!F||x<0||z<0||x>=F.W||z>=F.H)return 2;
+  if(F.door&&F.door.tx===x&&F.door.ty===z)return 2;
+  const g=F.g[z*F.W+x];
+  if(g===2)return 2;
+  if((g&3)===1)return 1;
+  return 0;
+}
 function los(x0,z0,x1,z1){
   const dx=x1-x0,dz=z1-z0,l=Math.hypot(dx,dz),n=Math.ceil(l/0.2);
   for(let i=1;i<n;i++){const t=i/n;if(solidAt(x0+dx*t,z0+dz*t))return false}
@@ -3953,6 +3996,18 @@ function update(dt){
     {scale:1,speedMul:moveMul()*(P.mounted?1.25:1),lungs:up.lungs|0,blocked});
   if(ev.jumped)sfx('jump');
   if(ev.landed>0||ev.step)sfx('step');
+  if(ctl&&ev.ground&&(ev.blockedX||ev.blockedZ)){
+    if(!P.wallTouch){
+      P.wallTouch=true;
+      const full=MOVE.sprint*(1+0.06*(up.boots|0))*(P.mounted?1.25:1);
+      const dest=!ev.sprint||P.chill>0?null:noclipDest({x:P.x,z:P.z,hitVX:ev.hitVX,hitVZ:ev.hitVZ,sprint:true,fullSpeed:full,roll:Math.random(),cell:mazeCell,W:F.W,H:F.H});
+      if(dest&&!blocked(dest.x,dest.z)){
+        P.x=dest.x;P.z=dest.z;P.vx=ev.hitVX;P.vz=ev.hitVZ;
+        sfx('noclip');say('The wall was not there.',1.8);onTileChange();
+        remember('glitches','clip',encounterSnapshot());
+      }
+    }
+  }else P.wallTouch=false;
   for(const q of F.pillars){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=0.2+PR;if(dd<m&&dd>1e-4){P.x=q[0]+ddx/dd*m;P.z=q[1]+ddz/dd*m}}
   if(F.safe){const ddx=P.x-F.safe.x,ddz=P.z-F.safe.z,dd=Math.hypot(ddx,ddz),m=0.3+PR;if(dd<m&&dd>1e-4){P.x=F.safe.x+ddx/dd*m;P.z=F.safe.z+ddz/dd*m}}
   for(const q of F.discs){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=q[2]+PR;if(dd<m&&dd>1e-4){const nx2=q[0]+ddx/dd*m,nz2=q[1]+ddz/dd*m;if(!blocked(nx2,nz2)){P.x=nx2;P.z=nz2}}}
@@ -3966,7 +4021,7 @@ function update(dt){
     else if(!F.back)P.fuel=Math.max(0,P.fuel-0.85*(1-0.15*(up.lamp|0))*dt);}
   // who is close enough to talk to
   {let best=null,bd=1.45;
-    for(const n of F.npcs){const d=Math.hypot(n.x-P.x,n.z-P.z);if(d<bd&&los(P.x,P.z,n.x,n.z)){bd=d;best=n}}
+    for(const n of F.npcs){if(n.type==='lurk')continue;const d=Math.hypot(n.x-P.x,n.z-P.z);if(d<bd&&los(P.x,P.z,n.x,n.z)){bd=d;best=n}}
     let nd=null;
     if(!best&&ctl){let dd=0.72;for(const D of F.sdoors){if(D.used)continue;const d=Math.hypot(D.x-P.x,D.z-P.z);if(d<dd&&(D.x-P.x)*Math.cos(P.yaw)+(D.z-P.z)*Math.sin(P.yaw)>d*0.45){dd=d;nd=D}}}
     if(best!==nearNpc||nd!==nearDoor){nearNpc=best;nearDoor=nd;if(state!=='room')$('tFlash').textContent=best?'TALK':nd?'OPEN':'FLASH'}
@@ -4109,6 +4164,7 @@ function update(dt){
       }
     }
   }
+  lurkTick(dt);if(state==='dead')return;
   if(TG)mimicHost(dt,TG);
   if(archiveMimic())mimicTick(dt);
   if(MP.on&&MIM.st)rememberMob('mimic',MIM);
@@ -4132,10 +4188,26 @@ function update(dt){
   }
 }
 
+function lurkTick(dt){
+  if(!F||P.away||!F.npcs)return;
+  for(const n of F.npcs){
+    if(n.type!=='lurk'||n.x<0)continue;
+    const r=lurkStep(n,dt,{x:P.x,z:P.z,yaw:P.yaw,down:!!P.down||state!=='play'},{
+      los:(x,z)=>los(P.x,P.z,x,z),
+      open:(x,z)=>x>0&&z>0&&x<F.W-1&&z<F.H-1&&F.g[z*F.W+x]===0&&!F.safeMask[z*F.W+x]&&!F.pocketMask[z*F.W+x],
+      rand:()=>Math.random(),
+    });
+    if(n.aggro&&!n.said){n.said=1;sfx('growl');say('It noticed you looking.',2.4)}
+    if(r.looking)rememberMob('lurk',n);
+    if(n.face!=null)n.yaw=n.face;
+    if(r.hurt&&!MP.guest&&state==='play'&&!P.down)hurt(null);
+  }
+}
+
 /* ---------- fake glitches: things that look like bugs and are not ---------- */
 // Every one of these is deliberate. They are rare, they happen only on your own screen, and they
 // never start while something is hunting you, so they unsettle without ever costing a life.
-// __game.glitch('freeze'|'rubber'|'rubberfwd'|'replay'|'hud'|'tpose'|'hole'|'fall'|'loop') forces one for testing.
+// __game.glitch('freeze'|'rubber'|'rubberfwd'|'replay'|'hud'|'tpose'|'hole'|'fall'|'loop'|'clip') forces one for testing.
 const GL={cd:60,used:{},frz:0,frzAfter:null,buzz:null,hist:[],histT:0,rb:null,rbN:0,figs:[],hole:null,fall:null,loop:null,
   ghosts:[],walked:null,queued:null,qT:0,peerH:new Map(),hudOv:{},hudSeq:null,chatT:0,dip:0,netEl:null,netT:0};
 function glReset(){
@@ -4234,6 +4306,7 @@ function glStartEffect(k,forced){
     case 'hole':return glHole();
     case 'fall':return glFall();
     case 'loop':return glLoopTry(forced);
+    case 'clip':return glClipForce();
   }
   return false;
 }
@@ -4614,12 +4687,55 @@ function glLoopTick(dt,chasing){
     }
   }else if(rel>0&&Lp.pass>=4&&rel>1.5)glLoopEnd();
 }
+function glClipForce(){
+  if(!F)return false;
+  for(let i=0;i<8;i++){
+    const a=P.yaw+i*Math.PI/4;
+    const dest=noclipDest({x:P.x,z:P.z,hitVX:Math.cos(a)*MOVE.sprint,hitVZ:Math.sin(a)*MOVE.sprint,sprint:true,fullSpeed:MOVE.sprint*0.9,roll:0,chance:1,cell:mazeCell,W:F.W,H:F.H});
+    if(dest&&!blocked(dest.x,dest.z)){
+      P.x=dest.x;P.z=dest.z;P.yaw=a;sfx('noclip');say('The wall was not there.',1.8);onTileChange();return true;
+    }
+  }
+  return false;
+}
 function glLoopEnd(){if(!GL.loop)return;for(const q of F.panels)q.dead=false;GL.loop=null}
 
 /* ---------- render ---------- */
 let rs=1,rsCeil=1,fAcc=0,fN=0,goodSecs=0,lastRaise=-99,clock=0,fpsShown=0;
 let composer=null,fxaaPass=null,bloomPass=null,gtaoPass=null,viewKey='';
 const charMesh=paintedMesh(CH.buf,true,0.012),decorMesh=paintedMesh(DEC.buf,false,0);
+const LURK={buf:new Float32Array(13*24000),n:0,cap:24000};
+const lurkMesh=paintedMesh(LURK.buf,true,0.012);
+lurkMesh.name='lurk-body';
+lurkMesh.castShadow=false;
+const lurkShadeMat=new THREE.MeshBasicMaterial({color:0x000000,colorWrite:!SHADOWS,depthWrite:false,transparent:!SHADOWS,opacity:SHADOWS?1:0.82});
+const lurkShadow=new THREE.Group();
+function lurkBox(w,h,d,x,y,z){
+  const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),lurkShadeMat);
+  m.position.set(x,y,z);m.castShadow=!!SHADOWS;m.layers.set(SHADOWS?1:0);lurkShadow.add(m);return m;
+}
+const lurkArmL=lurkBox(0.16,0.78,0.14,-0.38,0.72,0.08);
+const lurkArmR=lurkBox(0.16,0.82,0.14,0.4,0.68,-0.04);
+lurkBox(0.46,0.62,0.3,0,0.78,0);
+lurkBox(0.34,0.36,0.32,0.04,1.22,0.12);
+lurkBox(0.08,0.26,0.08,-0.12,1.48,0.06);
+lurkBox(0.08,0.24,0.08,0.14,1.46,0);
+lurkBox(0.22,0.1,0.26,-0.4,0.28,0.2);
+lurkBox(0.22,0.1,0.26,0.42,0.24,0.16);
+lurkBox(0.14,0.55,0.14,-0.12,0.28,0);
+lurkBox(0.14,0.5,0.14,0.14,0.26,0.04);
+lurkBox(0.12,0.16,0.42,0,0.62,-0.32);
+lurkBox(0.22,0.12,0.2,0.06,1.02,0.28);
+lurkShadow.visible=false;lurkShadow.name='lurk-shadow';scene.add(lurkShadow);
+function poseLurkShadow(n,t){
+  lurkShadow.visible=true;
+  lurkShadow.position.set(n.x+(n.ox||0),SHADOWS?0:0.02,n.z+(n.oz||0));
+  lurkShadow.rotation.y=-(n.yaw||n.face||0);
+  const k=n.aggro?1.15:0.4;
+  lurkArmL.rotation.z=Math.sin(t*3+(n.ph||0))*k;
+  lurkArmR.rotation.z=-Math.sin(t*3.3+(n.ph||0))*k;
+  lurkShadow.scale.set(1.28,SHADOWS?1.28:0.045,1.28);
+}
 // the torch hand is lit by its own flame, so it never blows out against the light it carries
 const HB={buf:new Float32Array(13*6000),n:0,cap:6000};
 const handMat=new THREE.ShaderMaterial({
@@ -4776,13 +4892,18 @@ function render(t){
     emit(mesh6('octa'),{p:[it.x,sh?y:y-0.12,it.z],R:rYaw((sh?t*1.4:t*2)+it.ph),lo:ZERO3},ZERO3,sh?[0.1,0.23,0.1]:[0.075,0.09,0.075],[c[0],c[1],c[2],11]);
   }
   {const dtR=Math.min(0.1,Math.max(0,t-(CH.lt||t)));CH.lt=t;
+  LURK.n=0;lurkShadow.visible=false;
   for(const n of F.npcs){
     const d2=(n.x-ex)**2+(n.z-ez)**2;if(d2>16*16)continue;
+    const lurk=n.type==='lurk';
+    if(lurk&&d2<144)poseLurkShadow(n,t);
     if((n.x-ex)*fwx+(n.z-ez)*fwz<-1.5)continue;
+    if(lurk)TB=LURK;
     const tN=performance.now();const o=buildNpc(n,t,ex,ey,ez,dtR);NPC_T.ms+=performance.now()-tN;NPC_T.n++;
+    if(lurk)TB=CH;
     if(o.lantern){const q=o.lantern,fl=1+Math.sin(t*10+n.ph)*0.1;spr(q[0],q[1]+0.012,q[2],0.045*fl,0.07*fl,11,1.0,0.6,0.2,1,1);spr(q[0],q[1],q[2],0.5,0.5,7,1.0,0.5,0.15,0.3,1)}
     if(o.lamp){const q=o.lamp;spr(q[0],q[1],q[2],0.22,0.22,7,1.0,0.75,0.3,0.4,1)}
-    if(!n.used&&n.type!=='keeper'){const y=o.top+0.08+Math.sin(t*3+n.ph)*0.03,X=n.x+(n.ox||0),Z=n.z+(n.oz||0);spr(X,y,Z,0.08,0.08,7,1.0,0.85,0.4,1,1);spr(X,y,Z,0.32,0.32,7,1.0,0.7,0.2,0.3,1)}
+    if(!lurk&&!n.used&&n.type!=='keeper'){const y=o.top+0.08+Math.sin(t*3+n.ph)*0.03,X=n.x+(n.ox||0),Z=n.z+(n.oz||0);spr(X,y,Z,0.08,0.08,7,1.0,0.85,0.4,1,1);spr(X,y,Z,0.32,0.32,7,1.0,0.7,0.2,0.3,1)}
   }}
   drawMoose(t,title||!!STUDIO);drawScout(t,title||!!STUDIO);mpDrawPlayers(t,ex,ez,fwx,fwz);mimicDraw(t,ex,ez);glDraw(t,ex,ez,fwx,fwz);
   if(F.safe&&(F.safe.x-ex)**2+(F.safe.z-ez)**2<22*22){
@@ -4808,6 +4929,7 @@ function render(t){
   }
 
   upload(charMesh,CH);
+  upload(lurkMesh,LURK);
   // the torch in your hand, drawn close to the eye so it never pokes through a wall
   HB.n=0;
   if(!title&&state!=='dead'&&!P.down){
@@ -4968,7 +5090,7 @@ function drawMap(){
     dot(it.x,it.z,(it.type==='shard'||it.type==='key')?Math.max(3,ts*0.4):Math.max(1.6,ts*0.22),it.type==='shard'?'#7fe9ff':it.type==='key'?'#ffd35a':it.type==='oil'?'#ff9a2e':it.type==='gem'?'#ffd84a':it.type==='heart'?'#ff5a6a':'#ffffff');
   }
   if(F.safe&&F.seen[F.safe.ty*F.W+F.safe.tx+1])dot(F.safe.x,F.safe.z,Math.max(2.5,ts*0.3),'#ff8a2a');
-  for(const n of F.npcs)if(F.seen[Math.floor(n.z)*F.W+Math.floor(n.x)]){c.fillStyle=n.type==='keeper'?'#ffe0a0':'#8ff0d0';c.fillRect(ox+n.x*ts-2.5,oy+n.z*ts-2.5,5,5)}
+  for(const n of F.npcs)if(F.seen[Math.floor(n.z)*F.W+Math.floor(n.x)]){c.fillStyle=n.type==='lurk'&&n.aggro?'#ff2a4a':n.type==='keeper'?'#ffe0a0':'#8ff0d0';c.fillRect(ox+n.x*ts-2.5,oy+n.z*ts-2.5,5,5)}
   for(const s of F.shades)if(s.vis)dot(s.x,s.z,Math.max(3,ts*0.4),s.type===1?'#e6e0d2':s.type===2?'#5aa8ff':s.state===1?'#ff2a4a':'#a07cff');
   for(const p of MP.peers.values()){if(!mpShown(p))continue;
     c.save();c.translate(ox+p.rx*ts,oy+p.rz*ts);c.rotate(p.ryaw);c.fillStyle=p.down?'#777':p.hex;
@@ -5059,10 +5181,11 @@ const archiveCatalog={
   floors:{title:'Floor Archive',action:'Explore',hint:'Reach a floor type during a descent to record it.',entries:{
     maze:'Stone Maze',cave:'The Hollow',back:'The Humming Rooms',dark:'The Black Hush',forest:'The Dark Forest'}},
   mobs:{title:'Mob Archive',action:'Encounter',hint:'Spot creatures during a descent to record them.',entries:{
-    0:'Shade',1:'Stalker',2:'Wisp',3:'Watcher',mimic:'Mimic'}},
+    0:'Shade',1:'Stalker',2:'Wisp',3:'Watcher',mimic:'Mimic',lurk:'Wrong Shadow'}},
   glitches:{title:'Glitch Archive',action:'Replay',hint:'Experience anomalies during a descent to record them.',entries:{
     freeze:'Frozen Frame',rubber:'Rubber Band',rubberfwd:'Fast Forward',replay:'Player Rewind',
-    hud:'Corrupted HUD',tpose:'Rigid Figure',hole:'Unloaded Wall',fall:'Falling Through the World',loop:'Repeating Hall'}}
+    hud:'Corrupted HUD',tpose:'Rigid Figure',hole:'Unloaded Wall',fall:'Falling Through the World',loop:'Repeating Hall',
+    clip:'Passed Through a Wall'}}
 };
 const archive=Object.fromEntries(Object.keys(archiveCatalog).map(kind=>{
   const saved=store.get('archive.'+kind,{});
@@ -5511,12 +5634,22 @@ function exhibitAsset({kind,id,data}){
     if(id==='0')eyes=buildShade(mob,time,0,4).eyes;
     else if(id==='1')buildStalker(mob,time,0,4);
     else if(id==='3')eyes=buildWatcher(mob,time,0,4);
+    else if(id==='lurk')buildNpc({type:'lurk',guise:'map',x:0,z:0,ph:0.4,yaw:Math.PI/2,hy:0,hp:0,used:true},time,0,1.2,4,0.016);
     else{
       player.walk=time*7;player.spd=stride;player.rpitch=Math.sin(time*2.0)*0.17;
       buildPlayer(player,time,0.62+0.11*Math.sin(time*2.1),0.9);
     }
   },true);
   group.add(model);
+  if(id==='lurk'){
+    const mat=new THREE.MeshBasicMaterial({color:0x07060a});
+    const slab=(w,h,d,x,y,z)=>{const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);m.position.set(x,0.03,z);m.scale.y=0.08;group.add(m);return m};
+    slab(0.5,1.1,0.34,0.72,0,0.05);
+    slab(0.16,0.9,0.16,0.28,0,0.22);
+    slab(0.16,0.95,0.16,1.05,0,-0.08);
+    slab(0.22,0.2,0.28,0.55,0,0.48);
+    slab(0.14,0.45,0.4,0.7,0,-0.38);
+  }
   const lights=eyes.map(eye=>{
     const light=new THREE.Mesh(new THREE.SphereGeometry(0.014,8,6),new THREE.MeshBasicMaterial({color:id==='3'?0xffefb9:0xc4a5ff}));
     light.position.set(...eye);group.add(light);
@@ -5564,6 +5697,10 @@ function replayMob(id,data){
   const gx=Math.floor(x),gy=Math.floor(z);
   if(id==='mimic'){
     Object.assign(MIM,{x,z,gx,gy,st:1,depth:R.depth,as:'archive',vic:MP.id,sayT:Infinity});
+  }else if(id==='lurk'){
+    const n={type:'lurk',guise:'map',x,z,ph:1.1,used:true,gx,gy,px:-1,py:-1,stare:0,aggro:false,face:0,hitT:0,yaw:0};
+    const i=F.npcs.findIndex(q=>q.type==='lurk');
+    if(i>=0)F.npcs[i]=n;else F.npcs.push(n);
   }else{
     F.shades.push({type:Number(id),x,z,gx,gy,px:-1,py:-1,state:0,stun:0,think:0,vis:false,
       frozen:false,ph:0,d:99,snd:0,hid:0,seen:0,life:16});
@@ -5639,5 +5776,5 @@ function gripProbe(ts,talking){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='
   for(const t of ts){buildNpc(n,t,P.x,0.7,P.z,0.016);res.push({t,...GRIP_DBG})}talk=save;return res}
 function benchNpc(iters){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='keeper');const e=[P.x,0.7,P.z];buildNpc(n,1,e[0],e[1],e[2],0.016);let t0=performance.now();
   for(let i=0;i<iters;i++){CH.n=0;buildNpc(n,1+i*0.016,e[0],e[1],e[2],0.016)}return (performance.now()-t0)/iters}
-window.__game={music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 requestAnimationFrame(frame);

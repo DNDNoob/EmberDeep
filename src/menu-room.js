@@ -98,7 +98,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   light(lobby,0xc3b4f4,163,0,7.9,4,30);
   box(lobby,dark,0,-0.19,3.97,41.1,0.35,21.94);
   box(lobby,stone,0,2.29,15.03,41.4,4.62,0.18);
-  buildAsteroidLobby(lobby);
+  const skyMat=buildAsteroidLobby(lobby);
 
   const tiles=new THREE.InstancedMesh(cube,stone,680);
   const tile=new THREE.Object3D(),shade=new THREE.Color();
@@ -456,6 +456,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     focus=aim();
   }
   function render(exposure,time){
+    if(skyMat&&skyMat.uniforms)skyMat.uniforms.uTime.value=time||0;
     const width=innerWidth,height=innerHeight;
     const aspect=width/height;
     const baseFov=Math.min(105,Math.max(61,THREE.MathUtils.radToDeg(2*Math.atan(0.78/aspect))));
@@ -497,6 +498,8 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     get riding(){return !!ride},
     get liftMotion(){return ride&&{travel:ride.travel,extra:ride.extra,docked:ride.docked}},
     get aimed(){return !!focus},
+    setSkyTime(t){if(skyMat&&skyMat.uniforms)skyMat.uniforms.uTime.value=t},
+    get skyTime(){return skyMat&&skyMat.uniforms?skyMat.uniforms.uTime.value:0},
     get position(){return {x:walker.b.x,z:walker.b.z,y:cabin.position.y,depth:indication,docked:!!ride?.docked}},
     get presence(){return {x:walker.b.x,y:walker.b.y,z:walker.b.z,yaw:view.yaw,station:panel,ride:ride?.group?.id,ready:!!ride?.task.ready}},
     look:(dx,dy)=>lookBy(view,dx,dy),focusPanel:id=>{

@@ -128,6 +128,10 @@ temporary `table`, `choice`, or `read` focus.
   The star room is look-only, and the falling room is cinematic.
 - The still wood is ordinary walking. Look down into the pond to pin the
   door that hides behind you, then walk back through it.
+- The little village is ordinary walking. Villagers run the paths until the
+  sun sets and a thing comes out. A chest in the square holds an obsidian-glass
+  sword. Each hit takes one limb. Kill it, then walk back through the door
+  behind where you arrived. Leaving before it dies is a retreat.
 
 ## Preview and check
 
