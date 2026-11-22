@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import {bobY, createRoomWalker, lookBy, lookStep} from './movement.js';
 import {createArchiveHall, worldSign} from './archive-hall.js';
 import {buildAsteroidLobby} from './asteroid-lobby.js';
-import {advanceLiftMotion,createMineLanding,createMineRockGap,createShaftHead,landingMazeZ} from './mine-shaft.js';
+import {createMineLanding,createMineRockGap,createShaftHead,landingMazeZ} from './mine-shaft.js';
 
 const portals=[
   {id:'doors',x:-15.35,name:'Door Archive',color:0xb9c4ff},
@@ -10,7 +10,7 @@ const portals=[
   {id:'mobs',x:6.55,name:'Mob Archive',color:0xf3b29b},
   {id:'glitches',x:15.35,name:'Glitch Archive',color:0xd9b3f9}
 ];
-const wallZ=-7,eye=1.62,interval=18;
+const wallZ=-7,eye=1.62,floorMin=8.2,floorMax=14;
 const liftGateZ=-10.75,landingEntranceZ=landingMazeZ-0.8,liftExitHalfWidth=0.47;
 const terminalWidth=4.5,terminalHeight=2.98;
 const screenWidth=900,screenHeight=596;
@@ -235,12 +235,12 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   target(cabin,{lift:true},liftDesk.x,liftDesk.y,liftDesk.z+0.025,liftDesk.w,liftDesk.h,0.07);
   const shaftSections=[];
   for(let i=0;i<5;i++){
-    const section=createMineLanding({height:interval,sampleFloor,numberSign:(parent,z)=>
+    const section=createMineLanding({height:floorMin,sampleFloor,numberSign:(parent,z)=>
       mounted(parent,'',0,3.33,z,1.72,0.39,{font:'bold 96px monospace',subFont:'500 43px monospace'})});
     well.add(section.group);shaftSections.push(section);
   }
-  const rockGap=createMineRockGap();
-  well.add(rockGap.group);
+  const sleeves=[];
+  for(let i=0;i<shaftSections.length;i++){const sleeve=createMineRockGap();well.add(sleeve.group);sleeves.push(sleeve)}
   well.visible=false;
   let indication=null;
   function indicators(depth){
@@ -271,11 +271,26 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   }
   function engageLift(depth,seed,group=null){
     if(ride||liftAway||!onLiftPlatform(walker.b))return false;
-    ride={depth,travel:0,extra:0,speed:0,seed,group,task:prepareLanding(seed,depth),docked:false,gate:0,onLanding:false,count:group?.follow?0:3,countAt:0,warm:1};
-    cage.visible=true;well.visible=true;
+    const solo=!group?.follow;
+    ride={depth,travel:0,extra:0,speed:0,seed,group,task:prepareLanding(seed,depth),docked:false,gate:0,onLanding:false,
+      count:solo?3:0,countAt:0,warm:1,defer:solo?2:0,shown:!solo,stretch:new Float64Array(depth+1)};
+    cage.visible=true;
+    if(!solo)well.visible=true;
     liftLabel.setLabel(ride.count?['3','FLOOR '+depth]:['FLOOR '+depth,'PREPARING MAZE'],true,0);
     indicators(1);sfx(ride.count?'ding':'door');
     return true;
+  }
+  function floorDist(n){
+    let d=0;
+    for(let i=1;i<=n;i++)d+=floorMin+ride.stretch[i];
+    return d;
+  }
+  function tickCountdown(dt){
+    if(ride.count<=0)return;
+    ride.countAt+=dt;
+    if(ride.countAt<1)return;
+    ride.countAt-=1;ride.count--;
+    if(ride.count>0){sfx('ding');liftLabel.setLabel([String(ride.count),'FLOOR '+ride.depth],true,(3-ride.count)/3)}
   }
   function tickLift(dt,previousZ){
     if(!ride)return;
@@ -288,62 +303,89 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       }
       return;
     }
-    const destination=ride.depth*interval;
     const following=!!ride.group?.follow;
-    const before=ride.task?ride.task.progress:1;
-    if(ride.task&&!ride.task.ready)ride.task.advance();
-    if((!ride.task||ride.task.ready||ride.task.progress===before)&&ride.warm<=ride.depth)
-      renderer.compileAsync(landingGlimpse(ride.seed,ride.warm++),camera).catch(()=>{});
-    if(ride.count>0&&!following){
-      ride.countAt+=dt;
-      if(ride.countAt>=1){
-        ride.countAt-=1;ride.count--;
-        if(ride.count>0){sfx('ding');liftLabel.setLabel([String(ride.count),'FLOOR '+ride.depth],true,(3-ride.count)/3)}
-      }
-      if(ride.count>0){placeShaft();return}
+    if(!following&&!ride.shown){
+      // The click only starts the count. Reveal the shaft, then load, on later frames.
+      if(ride.defer>0)ride.defer--;
+      tickCountdown(dt);
+      if(ride.defer>0)return;
+      ride.shown=true;well.visible=true;
+      placeShaft(true);return;
     }
+    const before=ride.task?ride.task.progress:1;
+    if(ride.task&&!ride.task.ready&&ride.task.progress<0.8)ride.task.advance();
+    else if(ride.warm<=ride.depth)landingGlimpse(ride.seed,ride.warm++);
+    else if(ride.task&&!ride.task.ready&&ride.task.progress===before)ride.task.advance();
+    if(ride.count>0&&!following){tickCountdown(dt);if(ride.count>0){placeShaft(false);return}}
     let arriving;
-    if(ride.group?.follow){
+    if(following){
       const motion=ride.group.follow();
       if(!motion)return;
-      // Match the pilot's car. Local generation can continue during transit.
+      if(motion.gaps&&ride.stretch)for(let i=0;i<ride.stretch.length&&i<motion.gaps.length;i++)ride.stretch[i]=motion.gaps[i];
       const k=1-Math.exp(-Math.min(dt,0.055)*8);
+      const destination=floorDist(ride.depth);
       ride.travel+=(motion.travel-ride.travel)*k;
-      ride.extra+=(motion.extra-ride.extra)*k;
-      arriving=motion.docked&&ride.task.ready&&destination-ride.travel<0.015&&motion.extra-ride.extra<0.015;
-      if(arriving){ride.travel=destination;ride.extra=motion.extra}
+      arriving=motion.docked&&ride.task.ready&&destination-ride.travel<0.04;
+      if(arriving)ride.travel=destination;
     }else{
-      const ready=ride.task.ready&&(!ride.group||ride.group.ready());
-      arriving=advanceLiftMotion(ride,dt,destination,ready);
+      const step=Math.min(dt,0.055);
+      const destination=floorDist(ride.depth);
+      const cruise=THREE.MathUtils.clamp(Math.max(destination,floorMin)/18,2.4,5);
+      let next=1,acc=0;
+      while(next<=ride.depth&&acc+floorMin+ride.stretch[next]<=ride.travel+0.04){acc+=floorMin+ride.stretch[next];next++}
+      next=Math.min(next,ride.depth);
+      const loaded=next<ride.depth?ride.warm>next&&!!landingGlimpse(ride.seed,next,false):!!(ride.task&&ride.task.ready&&(!ride.group||ride.group.ready()));
+      const open=floorMax-floorMin-ride.stretch[next];
+      const remaining=Math.max(0,destination-ride.travel);
+      const hold=!loaded&&next===ride.depth&&open<=0.001;
+      const desired=hold?0:!loaded&&open>0.001?cruise:Math.min(cruise,Math.sqrt(2*1.6*remaining));
+      const prev=ride.speed;
+      ride.speed=prev+THREE.MathUtils.clamp(desired-prev,-2.1*step,2.1*step);
+      const movement=Math.max(0,(prev+ride.speed)*0.5*step);
+      if(!loaded&&open>0.001){
+        const add=Math.min(open,movement);
+        ride.stretch[next]+=add;
+        ride.travel+=add;
+      }else ride.travel=Math.min(destination,ride.travel+movement);
+      arriving=loaded&&next===ride.depth&&destination-ride.travel<=0.03;
+      if(arriving)ride.travel=floorDist(ride.depth);
     }
-    const current=Math.max(1,Math.ceil(ride.travel/interval));
-    indicators(current);
-    cabin.position.y=-ride.travel-ride.extra;
+    let passed=0,cursor=0;
+    while(passed<ride.depth&&cursor+floorMin+ride.stretch[passed+1]<=ride.travel+0.2){cursor+=floorMin+ride.stretch[passed+1];passed++}
+    indicators(Math.max(1,Math.min(ride.depth,passed+1)));
+    cabin.position.y=-ride.travel;
     lobby.visible=cabin.position.y>-4.5;
-    rockGap.resize(-destination+interval,ride.extra);
-    const progress=Math.round(Math.min(0.99,(ride.travel/destination)*0.68+ride.task.progress*0.32)*100);
+    const destination=floorDist(ride.depth);
+    const progress=Math.round(Math.min(0.99,(ride.travel/Math.max(destination,1))*0.68+(ride.task?ride.task.progress:1)*0.32)*100);
     if(progress!==ride.progress){
       ride.progress=progress;
       liftLabel.setLabel(['FLOOR '+ride.depth,'DESCENDING  '+progress+'%'],true,progress/100);
     }
-    placeShaft();
-    function placeShaft(){
-      const base=Math.max(0,Math.floor(ride.travel/interval)-1);
-      for(let number=base;number<base+shaftSections.length;number++){
-        const section=shaftSections[number%shaftSections.length];
-        section.group.position.y=-number*interval-(number>=ride.depth?ride.extra:0);
-        const destined=number===ride.depth&&ride.task.model;
-        const showMouth=number>0&&number<=ride.depth&&!destined;
-        const glimpse=showMouth?landingGlimpse(ride.seed,number,false):null;
-        const look=number===ride.depth&&ride.task.floor?ride.task.floor:(showMouth?passingLook(number):null);
-        section.update(ride.seed,number,look);
-        section.setMaze(destined?ride.task.model:glimpse);
-      }
-    }
+    placeShaft(false);
     if(arriving){
       ride.docked=true;
       liftLabel.setLabel(['FLOOR '+ride.depth,'WALK INTO MAZE'],true,1);
       sfx('descend');
+    }
+    function placeShaft(reveal){
+      let budget=reveal?1:1,acc=0,base=0;
+      while(base<ride.depth&&acc+floorMin+ride.stretch[base+1]<=ride.travel){acc+=floorMin+ride.stretch[base+1];base++}
+      base=Math.max(0,base-1);
+      for(let number=base;number<base+shaftSections.length;number++){
+        const section=shaftSections[number%shaftSections.length];
+        const y=number===0?0:-floorDist(Math.min(number,ride.depth));
+        section.group.position.y=number>ride.depth?y-(number-ride.depth)*floorMin:y;
+        section.group.visible=number<=ride.depth;
+        const destined=number===ride.depth&&ride.task.model;
+        const showMouth=number>0&&number<=ride.depth&&!destined;
+        const glimpse=showMouth?landingGlimpse(ride.seed,number,false):null;
+        const look=number===ride.depth&&ride.task.floor?ride.task.floor:(showMouth?passingLook(number):null);
+        if(budget>0&&section.update(ride.seed,number,look))budget--;
+        section.setMaze(destined?ride.task.model:glimpse);
+        const sleeve=sleeves[number%shaftSections.length];
+        if(number>=1&&number<=ride.depth)sleeve.resize(-floorDist(number-1),ride.stretch[number]);
+        else sleeve.resize(0,0);
+      }
     }
   }
   function resetLift(){
@@ -514,7 +556,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     },
     get boarded(){return !liftAway&&onLiftPlatform(walker.b)},
     get riding(){return !!ride},
-    get liftMotion(){return ride&&{travel:ride.travel,extra:ride.extra,docked:ride.docked}},
+    get liftMotion(){return ride&&{travel:ride.travel,extra:0,docked:ride.docked,gaps:Array.from(ride.stretch)}},
     get aimed(){return !!focus},
     get position(){return {x:walker.b.x,z:walker.b.z,y:cabin.position.y,depth:indication,docked:!!ride?.docked}},
     get presence(){return {x:walker.b.x,y:walker.b.y,z:walker.b.z,yaw:view.yaw,station:panel,ride:ride?.group?.id,ready:!!ride?.task.ready}},

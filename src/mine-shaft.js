@@ -138,7 +138,6 @@ export function createMineLanding({height,numberSign,sampleFloor}){
   const lantern=new THREE.PointLight(0xffcda4,38,10);
   lantern.position.set(-1.34,2.27,socket-0.45);
   alcove.add(lantern);
-  for(const child of alcove.children)if(child!==terrain&&!child.isLight)child.visible=false;
   const mazeMount=new THREE.Group();mazeMount.position.z=landingMazeZ;group.add(mazeMount);
   const landingFace=new THREE.Group();
   landingFace.visible=false;
@@ -156,7 +155,7 @@ export function createMineLanding({height,numberSign,sampleFloor}){
   }
   function update(seed,depth,prepared){
     const key=seed+':'+depth;
-    if(key===lastKey&&(!prepared||prepared===lastFloor))return;
+    if(key===lastKey&&(!prepared||prepared===lastFloor))return false;
     lastKey=key;
     const hash=(i,s)=>{
       const n=Math.sin(i*127.1+s*81.77+depth*19.13)*43758.5453;
@@ -186,8 +185,9 @@ export function createMineLanding({height,numberSign,sampleFloor}){
     lastFloor=floor;
     plaque.setLabel(floor?['FLOOR '+depth,floor.name]:['L','ENTRANCE HALL']);
     alcove.visible=!!floor;
-    if(!floor)return;
+    if(!floor)return true;
     lantern.color.setHex(floor.forest?0x9eeab8:floor.dark?0x97aaff:floor.back?0xe8e7a1:floor.kind==='cave'?0xaabeff:0xffc294);
+    return true;
   }
   return {group,update,setMaze(model){
     if((mazeMount.children[0]||null)===model)return;
@@ -195,7 +195,6 @@ export function createMineLanding({height,numberSign,sampleFloor}){
     if(model)mazeMount.add(model);
     landingFace.visible=!!model;
     terrain.visible=false;
-    for(const child of alcove.children)if(child!==terrain&&!child.isLight)child.visible=false;
   }};
 }
 

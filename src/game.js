@@ -2916,7 +2916,7 @@ function mpRecv(m,from){
       if(fromHost&&sharedLift.trip?.id===m.id&&[m.travel,m.extra].every(Number.isFinite)){
         const previous=sharedLift.trip.motion;
         if(previous&&(m.travel<previous.travel||m.extra<previous.extra||previous.docked&&!m.docked))return;
-        sharedLift.trip.motion={travel:m.travel,extra:m.extra,docked:!!m.docked};
+        sharedLift.trip.motion={travel:m.travel,extra:m.extra,docked:!!m.docked,gaps:Array.isArray(m.gaps)?m.gaps:null};
         if(m.docked)updateLiftScreen();
       }
       break;
