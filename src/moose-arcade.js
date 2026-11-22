@@ -3,8 +3,8 @@ import {drawCanadianRanger} from './art/canadian-ranger.js';
 import {drawUncleSam} from './art/uncle-sam.js';
 import {bobY,createRoomWalker,lookStep,MOVE} from './movement.js';
 
-export const TABLE_SCALE=.42,TABLE_HEIGHT=1.06;
-const HALF_W=6.55,HALF_D=5.5,HEIGHT=3.65,TABLE_W=3.34,TABLE_D=2.09,EYE=1.61;
+export const TABLE_SCALE=.42,TABLE_HEIGHT=1.06,EYE=1.61;
+const HALF_W=6.55,HALF_D=5.5,HEIGHT=3.65,TABLE_W=3.34,TABLE_D=2.09;
 const PANEL_W=1.24,PANEL_FRONT=2.59;
 const clamp=THREE.MathUtils.clamp;
 

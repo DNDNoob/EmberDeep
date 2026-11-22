@@ -6,6 +6,7 @@
 // The screen plays an allow-listed YouTube video (a DOM player laid over the canvas, see THEATER_VIDEOS) and falls back to a drawn "house reel".
 import * as THREE from 'three';
 import {RoundedBoxGeometry} from 'three/addons/geometries/RoundedBoxGeometry.js';
+import {spotted} from './room-mobs.js';
 
 /* ---------- the allow-list ----------
    ONLY these videos are ever played, and nothing else can be reached: the player is created with no controls, no keyboard, no suggestions,
@@ -92,8 +93,9 @@ export function createTheater(env){
 
   return function theater(seed){
     const group=getGroup();
-    const rng=(()=>{let a=(seed>>>0)||1;return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}})();
-    const S={t:0,st:'calm',stT:0,px:SPAWN.x,pz:SPAWN.z,yaw:0,pitch:-0.02,ux:0,uz:0,vx:SPAWN.x,vz:SPAWN.z,vyaw:0,vpitch:-0.02,tx:SPAWN.x,tz:SPAWN.z,tjy:0,wjy:0,tyaw:0,tpitch:-0.02,hasPose:false,
+    const roomSeed=seed>>>0;
+    const rng=(()=>{let a=roomSeed||1;return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}})();
+    const S={t:0,st:'calm',stT:0,seed:roomSeed,noted:false,px:SPAWN.x,pz:SPAWN.z,yaw:0,pitch:-0.02,ux:0,uz:0,vx:SPAWN.x,vz:SPAWN.z,vyaw:0,vpitch:-0.02,tx:SPAWN.x,tz:SPAWN.z,tjy:0,wjy:0,tyaw:0,tpitch:-0.02,hasPose:false,
       bob:0,bobP:0,eyeY:EYE+FY(SPAWN.z),shake:0,fade:0,over:null,overT:0,
       tv:'reel',np:null,mic:'idle',lvl:0,speechT:0,yellT:0,insults:0,hits:0,insT:0,lastIns:-1,hint:'',hintT:0,unlocked:false,rattleT:0,entLocked:false,
       keyHold:0,teens:[],bubbles:[],test:{level:null},heard:[],watching:A.watching};
@@ -697,6 +699,10 @@ export function createTheater(env){
       S.signFace.material.color.setRGB(sg[0],sg[1],sg[2]);S.signLight.color.setRGB(S.unlocked?0.3:1,S.unlocked?1:0.15,S.unlocked?0.5:0.1);S.signLight.intensity=(S.unlocked?7:4+0.8*Math.sin(S.t*2.5));
       // the teens
       for(const T of S.teens)teenPose(T,dt);
+      if(live&&!S.noted){
+        const cp=Math.cos(S.pitch),dir=[Math.sin(S.yaw)*cp,Math.sin(S.pitch),-Math.cos(S.yaw)*cp],eye=[S.vx,S.eyeY,S.vz];
+        for(const T of S.teens)if(spotted(eye,dir,[T.x,T.y+1.25,T.z],14)){S.noted=true;o.mob?.('teens',S.seed);break}
+      }
       if(live&&!S.over){
         // The primary action also simulates speaking, with or without a microphone.
         let lv=0,keyYell=false;

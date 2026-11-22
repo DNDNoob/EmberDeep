@@ -13,6 +13,8 @@ import {createVoice} from './voice.js';
 import {guidePath,guideBeacon,GUIDE_RANGE} from './guide.js';
 import {createRooms,kilnGame,KILN,DOOR_KINDS} from './rooms.js';
 import {animalHitEffects,mooseModel,scoutGooseModel,MOOSE_ACH,MOOSE_SPIKE_PRICE} from './moose-defense.js';
+import {ROOM_MOBS} from './room-mobs.js';
+import {roomMobExhibit} from './room-mob-exhibits.js';
 import {roomActions,roomControlLabel} from './room-controls.js';
 import {bakeRecipe,bakeRecipeIdle,bakeIsDone,bakeStarted,bakeExport,bakePrime,KIT_HASH} from './npc_kit.js';
 import {loadBake,saveBake,cacheStats} from './npc_cache.js';
@@ -2187,6 +2189,7 @@ const ROOMS=createRooms(renderer,{post:POST,low:Q===0,ao:Q>=2,
   },
   rewardMooseGems:n=>{if(previewStamina)previewStamina.mooseGems+=n;else{wallet+=n;R.gems+=n;store.set('wallet',wallet)}},
   sta:P,speedMul:()=>moveMul(),lungs:()=>up.lungs|0,   // rooms share the player's stamina and the boots / cold modifiers
+  mob:(id,seed)=>rememberRoomMob(id,seed),
 
   control:roomControl,
   inputDevice:roomInputDevice,
@@ -5252,8 +5255,9 @@ const archiveCatalog={
     Object.entries(DOOR_KINDS).map(([id,door])=>[id,door.name[0].toUpperCase()+door.name.slice(1)]))},
   floors:{title:'Floor Archive',action:'Explore',hint:'Reach a floor type during a descent to record it.',entries:{
     maze:'Stone Maze',cave:'The Hollow',back:'The Humming Rooms',dark:'The Black Hush',forest:'The Dark Forest'}},
-  mobs:{title:'Mob Archive',action:'Encounter',hint:'Spot creatures during a descent to record them.',entries:{
-    0:'Shade',1:'Stalker',2:'Wisp',3:'Watcher',mimic:'Mimic',lurk:'Wrong Shadow'}},
+  mobs:{title:'Mob Archive',action:'Encounter',hint:'Spot creatures during a descent, in the maze or behind a strange door, to record them.',entries:{
+    0:'Shade',1:'Stalker',2:'Wisp',3:'Watcher',mimic:'Mimic',lurk:'Wrong Shadow',
+    ...Object.fromEntries(Object.entries(ROOM_MOBS).map(([id,mob])=>[id,mob.name]))}},
   glitches:{title:'Glitch Archive',action:'Replay',hint:'Experience anomalies during a descent to record them.',entries:{
     freeze:'Frozen Frame',rubber:'Rubber Band',rubberfwd:'Fast Forward',replay:'Player Rewind',
     hud:'Corrupted HUD',tpose:'Rigid Figure',hole:'Unloaded Wall',fall:'Falling Through the World',loop:'Repeating Hall',
@@ -5475,6 +5479,17 @@ function rememberMob(id,mob){
   const x=mob.x,z=mob.z,dx=x-P.x,dz=z-P.z,d=Math.hypot(dx,dz);
   if(x<0||d>9||dx*Math.cos(P.yaw)+dz*Math.sin(P.yaw)<d*0.52||!los(P.x,P.z,x,z))return;
   remember('mobs',id,{...encounterSnapshot(),mob:[x,z]});
+}
+function rememberRoomMob(id,seed){
+  const spec=ROOM_MOBS[id];
+  if(!spec||state!=='room')return;
+  const door=archive.doors[spec.room]||{};
+  const roomSeed=Number.isInteger(seed)?seed>>>0:Number.isInteger(door.seed)?door.seed>>>0:0;
+  remember('mobs',id,{
+    seed:roomSeed,depth:R.depth||door.depth||1,room:spec.room,
+    pose:[P.x,P.z,P.yaw,P.pitch],gate:!!F?.doorOpen,breaks:R.pk?.[R.depth]?.slice(),blackout:F?.blk||0,
+    look:door.look,tx:door.tx,ty:door.ty,ph:door.ph,stone:door.stone||F?.stone?.slice()
+  });
 }
 function refreshHub(){
   hub.syncArchives(Object.fromEntries(Object.entries(archiveCatalog).map(([kind,catalog])=>[kind,
@@ -5702,6 +5717,10 @@ function exhibitAsset({kind,id,data}){
     skins.splice(Math.ceil(skins.length/2),0,look);
     return lenticularDoor(skins.map(model));
   }
+  if(kind==='mobs'&&ROOM_MOBS[id]){
+    const model=roomMobExhibit(id);
+    return followInCase(model,time=>model.userData.pose?.(time));
+  }
   const group=new THREE.Group();
   if(id==='2'){
     const glow=new THREE.Mesh(new THREE.IcosahedronGeometry(0.11,2),new THREE.MeshBasicMaterial({color:0x8dd0ff}));
@@ -5756,12 +5775,13 @@ function startArchive(kind,id,data){
   archiveRun={kind,id,wallet,up:{...up}};
   showLoading('Opening the '+archiveCatalog[kind].title,[['Preparing the replay',()=>{
     try{
-      const seed=kind==='doors'?'ARCHIVE':data.seed,floor=genFloor(seed,data.depth);
+      const roomReplay=kind==='doors'||!!data?.room;
+      const seed=roomReplay?'ARCHIVE':data.seed,floor=genFloor(seed,data.depth);
       enterRun(seed,data.depth,floor);
       $('archiveBack').hidden=false;
-      if(kind==='doors'){
+      if(roomReplay){
         previewStamina={stam:P.stam,winded:P.winded,spikeTraps:P.spikeTraps,mooseGems:wallet};
-        beginRoom(id,finishArchive,data.seed);
+        beginRoom(kind==='doors'?id:data.room,finishArchive,data.seed);
       }else if(kind==='mobs'||kind==='glitches'){
         restoreEncounter(data);
         if(kind==='mobs')replayMob(id,data);
