@@ -11,18 +11,28 @@ export const WOF_SLICES=[
   {name:'Dog Days',col:'#f0a21c'},
   {name:'Ratatouille',col:'#7a4b9c'},
   {name:'Biggest Loser',col:'#2e9e4f'},
-  {name:'Double or Nothing',col:'#d8c21f'},
+  {name:'Double or Nothing',col:'#d8c21f',dark:true},
   {name:'Nothing',col:'#2a2a2e'},
   {name:'Hearing Aids',col:'#1fa6b8'},
   {name:'Tinnitus',col:'#c33a8a'},
   {name:'Black Plague',col:'#3d4a2a'},
   {name:'Tickle Monster',col:'#ff7ab8'},
   {name:'First Thanksgiving',col:'#b5651d'},
+  {name:'DMV',col:'#5b6b7a'},
+  {name:'Terms & Conditions',col:'#e9e1c8',dark:true},
+  {name:'Moonwalk',col:'#26338a'},
+  {name:'Bobblehead',col:'#f06a3a'},
+  {name:'Lights Out',col:'#141414'},
+  {name:'Timeshare Salesman',col:'#1fae9a'},
+  {name:'Hedgehog',col:'#7a5230'},
+  {name:'Circle of Life',col:'#f2a8b8',dark:true},
+  {name:'Russian Roulette',col:'#7a0e14'},
+  {name:'Bomb',col:'#ff8a1a',dark:true},
 ];
 export const WOF_N=WOF_SLICES.length;
 export const WOF_W=Math.PI*2/WOF_N;              // one slice
-export const WOF_R=0.4;                          // disc radius (m)
-export const WOF_HUB=0.86;                       // height of the axle above the floor
+export const WOF_R=0.48;                         // disc radius (m)
+export const WOF_HUB=0.8;                        // height of the axle above the floor
 const TAU=Math.PI*2;
 const mod=(a,n)=>((a%n)+n)%n;
 
@@ -31,7 +41,7 @@ export const sliceAt=a=>Math.floor(mod(a,TAU)/WOF_W)%WOF_N;
 // rest inside the slice, clear of the pegs at its edges (the flapper must hang free when the wheel stops)
 export function planSpin(index,from,rnd=Math.random){
   const turns=6+Math.floor(rnd()*3);
-  const inSlice=0.24+rnd()*0.18;                  // radians past the slice's leading peg
+  const inSlice=0.13+rnd()*0.1;                   // radians past the slice's leading peg (the pegs hold the flapper from W-0.05 to 0.11; W is 0.3 with 21 slices)
   const base=from-mod(from,TAU)+TAU*turns;
   const to=base+index*WOF_W+inSlice;
   return {from,to,dur:12+rnd()*2.5};
@@ -44,7 +54,7 @@ export function spinAngle(plan,t){
 
 // the flapper is pushed aside by the peg coming up under it, slips off and swings back.
 // q: how far the disc has turned past the last peg. Returns the deflection while a peg holds it (0..1), else -1.
-const C_IN=0.07,C_OUT=0.19;
+const C_IN=0.05,C_OUT=0.11;
 export function pegPush(angle){
   const q=mod(angle,WOF_W);
   if(q>=WOF_W-C_IN)return (q-(WOF_W-C_IN))/(C_IN+C_OUT);
@@ -80,13 +90,13 @@ export function drawWheelFace(){
     const lines=words.length>2?[words.slice(0,2).join(' '),words.slice(2).join(' ')]:words.length===2&&WOF_SLICES[i].name.length>11?words:[words.join(' ')];
     g.save();g.translate(cx,cy);g.rotate(a);   // -y of this frame points out through the middle of the slice
     g.textAlign='center';g.textBaseline='middle';
-    const len=330,fs=Math.min(50,Math.floor(len/Math.max(...lines.map(s=>s.length))/0.74));
+    const len=340,fs=Math.min(40,Math.floor(len/Math.max(...lines.map(s=>s.length))/0.74));
     g.font=`900 ${fs}px "Arial Black",Impact,Arial,sans-serif`;
     lines.forEach((s,k)=>{
       const off=((lines.length-1)/2-k)*(fs*1.05);
       g.save();g.translate(off,-(R*0.6));g.rotate(Math.PI/2);   // text runs along the radius, rim to hub
       g.lineWidth=Math.max(4,fs*0.16);g.strokeStyle='#120c05';g.lineJoin='round';g.strokeText(s,0,0);
-      g.fillStyle=i===5?'#2a1a05':'#fffaf0';if(i===5){g.strokeStyle='#fff3b0';g.lineWidth=3;g.strokeText(s,0,0)}
+      g.fillStyle=WOF_SLICES[i].dark?'#2a1a05':'#fffaf0';if(WOF_SLICES[i].dark){g.strokeStyle='#fff3b0';g.lineWidth=3;g.strokeText(s,0,0)}
       g.fillText(s,0,0);g.restore();
     });
     g.restore();
@@ -127,7 +137,7 @@ export function wheelModel(){
   // stand: a plinth, two posts and an arch that carries the banner and the pointer
   box(0.98,0.08,0.4,woodD,0,0.04,-0.02);
   box(0.9,0.012,0.34,woodD,0,0.086,-0.02);
-  const top=HUB+R+0.34;
+  const top=HUB+R+0.3;
   for(const s of[-1,1]){box(0.07,top-0.08,0.07,wood,s*(R+0.1),0.08+(top-0.08)/2,-0.06);box(0.09,0.04,0.09,brass,s*(R+0.1),top+0.01,-0.06)}
   box(0.07,0.07,0.06,wood,0,HUB,-0.09).scale.x=(2*R+0.2)/0.07;           // crossbar behind the axle
   box(2*R+0.27,0.06,0.06,wood,0,top-0.22,-0.06);                          // arch over the wheel
@@ -135,7 +145,7 @@ export function wheelModel(){
   const bulbMats=[0,1].map(()=>new THREE.MeshStandardMaterial({color:0xffe9a8,emissive:0xffc860,emissiveIntensity:1.2,roughness:0.3}));
   const bulbG=new THREE.SphereGeometry(0.014,8,6),ring=new THREE.Mesh(new THREE.TorusGeometry(R+0.045,0.016,8,64),brass);
   ring.position.set(0,HUB,-0.015);root.add(ring);
-  for(let i=0;i<24;i++){const a=i/24*Math.PI*2,b=new THREE.Mesh(bulbG,bulbMats[i&1]);b.position.set(Math.sin(a)*(R+0.045),HUB+Math.cos(a)*(R+0.045),0.008);root.add(b)}
+  for(let i=0;i<36;i++){const a=i/36*Math.PI*2,b=new THREE.Mesh(bulbG,bulbMats[i&1]);b.position.set(Math.sin(a)*(R+0.045),HUB+Math.cos(a)*(R+0.045),0.008);root.add(b)}
   // the spinning disc: painted face, wooden edge, brass rim and the pegs between the slices
   const spin=new THREE.Group();spin.position.set(0,HUB,0);root.add(spin);
   const edge=cyl(R,R,0.035,woodD,64);edge.rotation.x=Math.PI/2;spin.add(edge);
@@ -161,10 +171,10 @@ export function wheelModel(){
     const tip=new THREE.Mesh(new THREE.ConeGeometry(0.014,0.03,4),brass);tip.rotation.z=Math.PI;tip.position.y=-L-0.012;links[2].add(tip);
   }
   // banner on the arch
-  const ban=new THREE.Mesh(new THREE.PlaneGeometry(1.02,0.22),new THREE.MeshStandardMaterial({map:tex(drawBanner()),emissive:0xffffff,roughness:0.6}));
+  const ban=new THREE.Mesh(new THREE.PlaneGeometry(1.16,0.25),new THREE.MeshStandardMaterial({map:tex(drawBanner()),emissive:0xffffff,roughness:0.6}));
   ban.material.emissiveMap=ban.material.map;ban.material.emissiveIntensity=0.45;
   ban.position.set(0,top-0.05,-0.02);root.add(ban);
-  const banBack=box(1.04,0.24,0.025,woodD,0,top-0.05,-0.037);
+  const banBack=box(1.18,0.27,0.025,woodD,0,top-0.05,-0.037);
   void clamp;void banBack;
   let bulbT=0;
   root.userData={

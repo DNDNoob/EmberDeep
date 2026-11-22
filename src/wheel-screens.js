@@ -24,7 +24,14 @@ body.wofbreak #hud,body.wofbreak #map,body.wofbreak #prompt,body.wofbreak #toast
 #wofCall{position:absolute;left:50%;top:18%;transform:translateX(-50%);font:900 34px "Arial Black",Arial,sans-serif;color:#ffde3a;-webkit-text-stroke:2px #000;text-shadow:0 3px 0 #000}
 #wofAdTag{position:absolute;left:16px;top:14px;font:600 14px Arial,sans-serif;color:#fff;background:rgba(0,0,0,.6);padding:4px 10px;border-radius:3px}
 #wofAdBar{position:absolute;left:0;right:0;bottom:0;height:5px;background:rgba(255,255,255,.25)}#wofAdProg{height:100%;width:0;background:#ffcc00}
-#wofBreak.walmart #wofAdTag,#wofBreak.walmart #wofAdBar{display:none}
+#wofBreak.walmart #wofAdTag,#wofBreak.walmart #wofAdBar,#wofBreak.dmv #wofAdTag,#wofBreak.dmv #wofAdBar{display:none}
+#wofFlash{position:fixed;inset:0;z-index:36;background:#fff;opacity:0;pointer-events:none}
+#wofRR{position:fixed;left:50%;bottom:120px;transform:translateX(-50%);z-index:34;display:none;text-align:center;font-family:Georgia,serif}
+#wofRR .i{color:#e8d8c0;font-size:15px;margin-bottom:10px;text-shadow:0 2px 4px #000}
+#wofRR button{font:700 17px Georgia,serif;margin:0 6px;padding:12px 22px;border-radius:6px;border:2px solid #b89a6a;background:rgba(30,18,10,.85);color:#f4e4c8;cursor:pointer}
+#wofRR button.go{border-color:#c03030;background:rgba(90,10,10,.9)}
+#wofRR button:disabled{opacity:.4;cursor:default}
+#wofBreak.roulette #wofBar,#wofBreak.roulette #wofAdTag,#wofBreak.roulette #wofAdBar,#wofBreak.birth #wofAdTag,#wofBreak.birth #wofAdBar{display:none}
 #wofSkip{position:fixed;right:24px;bottom:44px;z-index:34;font:600 18px Arial,sans-serif;
   color:#9a9a9a;background:rgba(0,0,0,.72);border:1px solid #555;padding:10px 18px 10px 22px;cursor:default;display:none;user-select:none}
 #wofSkip.lit{color:#fff;border-color:#eee;cursor:pointer}
@@ -47,7 +54,7 @@ function setup(){
     <div id="wofPlague" class="wofTint"></div><div id="wofTickle" class="wofTint"></div><div id="wofFat" class="wofTint"></div>
     <canvas id="wofPox" class="wofTint" width="320" height="180" style="width:100%;height:100%"></canvas>
     <div id="wofBreak"><div id="wofAdTag"></div><div id="wofCall"></div><div id="wofCap"></div><div id="wofBar"><span id="wofBarL"></span><span id="wofBarR"></span></div><div id="wofAdBar"><div id="wofAdProg"></div></div></div>
-    <div id="wofSkip">Skip Ad</div>
+    <div id="wofSkip">Skip Ad</div><div id="wofFlash"></div><div id="wofRR"></div>
     <div id="wofCoin"><div class="c"><div class="f">HEADS</div><div class="f t">TAILS</div></div><p></p></div>`);
   // smallpox: red pustules crowding in from the edges of the view
   const g=$('wofPox').getContext('2d');let s=99;const r=()=>(s=(s*16807)%2147483647)/2147483647;
@@ -78,7 +85,18 @@ let skipT=0;
 export const breakUI={
   open(kind){setup();document.body.classList.add('wofbreak');$('wofBreak').className='on '+kind;this.caption('');this.callout('');this.bar('','');
     const sk=$('wofSkip');sk.classList.remove('lit');sk.style.display=kind==='ad'?'block':'none';sk.innerHTML='Skip Ad in 5';sk.onclick=e=>{e.stopPropagation()}},  // it does nothing. That is the joke.
-  close(){setup();document.body.classList.remove('wofbreak');$('wofBreak').className='';$('wofSkip').style.display='none'},
+  close(){setup();document.body.classList.remove('wofbreak');$('wofBreak').className='';$('wofSkip').style.display='none';$('wofRR').style.display='none';this.flash(0)},
+  // 1: a white flash that fades; 2: white, then black, and it stays black; 0: clear
+  flash(k){setup();const f=$('wofFlash');f.style.transition='none';f.style.background=k===2?'#fff':'#fff';f.style.opacity=k?1:0;
+    if(k){void f.offsetWidth;f.style.transition=k===2?'background 1.2s 0.15s':'opacity 1.6s';if(k===2)f.style.background='#000';else f.style.opacity=0}},
+  // the roulette controls: shown on your turn
+  rr(o){setup();const el=$('wofRR');
+    const key=[o.mine,o.spun,o.left==null?'':Math.ceil(o.left),o.chambers].join('|');if(el.dataset.k===key)return;el.dataset.k=key;
+    el.style.display='block';
+    el.innerHTML=`<div class="i">${o.chambers} chambers · 1 round · ${o.players} player${o.players>1?'s':''}${o.left!=null?' · '+Math.ceil(o.left)+' s':''}</div>`+
+      (o.mine?`<button data-a="spin" ${o.spun?'disabled':''}>Spin the cylinder${o.spun?' (spun)':''}</button><button data-a="shoot" class="go">Pull the trigger</button>`:'');
+    el.querySelectorAll('button').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();if(!b.disabled)o.act(b.dataset.a)}));
+  },
   caption(t){const el=$('wofCap');el.textContent=t;el.style.display=t?'':'none'},
   callout(t){const el=$('wofCall');el.textContent=t;el.style.display=t?'':'none'},
   bar(a,b){$('wofBarL').textContent=a;$('wofBarR').textContent=b},
