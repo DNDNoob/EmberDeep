@@ -126,6 +126,8 @@ temporary `table`, `choice`, or `read` focus.
   speak and yell. Walk through an available exit.
 - The Whispering Monoliths use ordinary walking through the passage.
   The star room is look-only, and the falling room is cinematic.
+- The still wood is ordinary walking. Look down into the pond to pin the
+  door that hides behind you, then walk back through it.
 
 ## Preview and check
 

@@ -15,6 +15,7 @@ import {FXAAShader} from 'three/addons/shaders/FXAAShader.js';
 import {createTheater} from './theater.js';
 import {monolithRoom} from './monoliths.js';
 import {mooseDefenseRoom} from './moose-defense.js';
+import {stillwoodRoom} from './stillwood.js';
 import {MOVE,lookStep,lookBy,bobAdvance,bobY,createRoomWalker} from './movement.js';
 
 // Order is part of seeded door rotation. Add new IDs at the end.
@@ -26,6 +27,7 @@ export const DOOR_KINDS={
   theater:{name:'the picture house',look:'theater',action:'TALK'},
   monoliths:{name:'the whispering monoliths',look:'monoliths',touchUse:false},
   moose:{name:'Mosquito Outpost',look:'moose',css:'mooseroom'}, // walkable arcade with a tabletop camera
+  stillwood:{name:'a door into the still wood',look:'stillwood',touchUse:false},
 };
 const modeOf=k=>DOOR_KINDS[k]?.mode||'walk';
 
@@ -1497,7 +1499,8 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
   const theater=createTheater({renderer,scene,cam,o,A,canvasTex,glow,clamp,ss,lerp,nf,rnd,getGroup:()=>group,onClear:fn=>clearHooks.push(fn),finish:r=>finish(r),createRoomWalker,MOVE,lookStep,bobAdvance,bobY});
   const monoliths=(seed=7)=>monolithRoom({group,cam,o,A,finish,rand:rng32(seed),seed});
   const moose=()=>mooseDefenseRoom({group,scene,cam,o,A,finish,onClear:fn=>clearHooks.push(fn)});
-  const KINDS={galaxy,fall,kiln,mirror,theater,monoliths,moose};
+  const stillwood=(seed=7)=>stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear:fn=>clearHooks.push(fn),seed});
+  const KINDS={galaxy,fall,kiln,mirror,theater,monoliths,moose,stillwood};
   for(const kind of Object.keys(DOOR_KINDS))if(!Object.hasOwn(KINDS,kind))throw new Error('Missing room factory for '+kind);
   A.mode=modeOf;
   A.controlMode=()=>cur?.controlMode?.()||modeOf(A.kind);
