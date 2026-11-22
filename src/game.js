@@ -3880,6 +3880,7 @@ function sfx(n){
     case 'scout':tone(780,.09,'sine',.027);tone(1040,.12,'sine',.022,.09);break;
     case 'seal':tone(110,0.4,'square',0.08,0,-30);break;
     case 'descend':[440,330,247,165].forEach((f,i)=>tone(f,0.6,'triangle',0.14,i*0.12));break;
+    case 'ding':tone(1046,0.22,'sine',0.16);tone(1568,0.32,'sine',0.11,0.07);break;
     case 'die':tone(220,1.6,'sawtooth',0.2,0,-180);break;
     case 'jump':tone(190,0.13,'sine',0.07,0,140);break;
     case 'spike':noise(0.07,0.22,3200,3);break;
@@ -5069,7 +5070,7 @@ const archive=Object.fromEntries(Object.keys(archiveCatalog).map(kind=>{
   return [kind,saved&&typeof saved==='object'&&!Array.isArray(saved)?saved:{}];
 }));
 const hub=createMenuRoom(renderer,{sfx,asset:exhibitAsset,activate:useMenuAsset,enterLanding:startFromLanding,
-  sampleFloor:memoFloor,prepareLanding,landingGlimpse,onLeavePanel:()=>closeStation(),createVisitor:buildHubVisitor});
+  sampleFloor:memoFloor,prepareLanding,landingGlimpse,passingLook,onLeavePanel:()=>closeStation(),createVisitor:buildHubVisitor});
 const board=$('title');
 const stationPanels=[...document.querySelectorAll('[data-station-panel]')];
 let activeStation=null;
@@ -5396,43 +5397,48 @@ function landingGeometry(floor){
   group.add(mesh);
   return group;
 }
-const glimpseCache=new Map();
-// The mouth of a floor the car only passes: same surfaces as the real maze, only the few tiles the doorway shows.
-function landingGlimpse(seed,depth){
-  const key=seed+'#'+depth;
-  const hit=glimpseCache.get(key);
+const glimpseCache=new Map(),glimpseProto=new Map();
+const lookMemo=new Map();
+function passingLook(depth){
+  const hit=lookMemo.get(depth);
   if(hit)return hit;
-  if(glimpseCache.size>24){
-    for(const [k,old] of glimpseCache){
-      if(old.parent)continue;
-      old.traverse(o=>{if(o.geometry)o.geometry.dispose()});
-      glimpseCache.delete(k);break;
-    }
-  }
   const kind=floorKind(depth);
   const bi=kind==='back'?4:kind==='forest'?8:biomeIx(depth);
-  const variant=pickVariant(mulberry32(hashStr(seed+'#var#'+depth)),bi);
-  const B=BIOMES[bi],forest=kind==='forest';
-  const W=5,H=6,g=new Uint8Array(W*H).fill(1);
-  for(let y=1;y<=2;y++)for(let x=1;x<=3;x++)g[y*W+x]=0;
-  g[3*W+2]=0;g[4*W+2]=0;
+  const B=BIOMES[bi];
+  const look={kind:kind==='forest'?'forest':kind,forest:kind==='forest',dark:kind==='dark',back:kind==='back',
+    stone:B.stone,name:kind==='cave'?'The Hollow':kind==='dark'?'The Black Hush':B.name,biome:B,base:B.base,wet:B.wet};
+  lookMemo.set(depth,look);
+  return look;
+}
+// The mouth of a floor the car only passes. Surfaces are shared by biome, so a landing does not bake a new texture.
+function landingGlimpse(seed,depth,build=true){
+  const key=seed+'#'+depth;
+  const hit=glimpseCache.get(key);
+  if(hit||!build)return hit||null;
+  const kind=floorKind(depth);
+  const bi=kind==='back'?4:kind==='forest'?8:biomeIx(depth);
+  const forest=kind==='forest';
   const turn=hashStr(seed+'#mouth'+depth)%3;
-  if(turn===0)g[4*W+1]=0;else if(turn===2)g[4*W+3]=0;
-  const look={
-    W,H,g,kind:forest?'forest':kind,forest,dark:kind==='dark',back:kind==='back',
-    base:B.base,biome:B,wet:clamp(B.wet*(variant.wetK||1),0,1),
-    stone:B.stone.map((c,i)=>c*variant.stone[i]),
-    tex:{v:variant.tex|0,seed:variant.seed||0,tint:variant.tint||[1,1,1]},
-    panelAt:new Uint8Array(W*H),pocketMask:new Uint8Array(W*H),phantoms:[],door:null,frames:[],
-    name:kind==='cave'?'The Hollow':kind==='dark'?'The Black Hush':B.name
-  };
-  const mesh=buildMesh(look,true);
-  const tx=2,ty=1,yaw=Math.PI/2,fx=Math.cos(yaw),fz=Math.sin(yaw);
-  const ex=tx+0.5-fx*0.5,ez=ty+0.5-fz*0.5,angle=yaw+Math.PI/2,k=1.62/EYE;
-  mesh.rotation.y=angle;mesh.scale.setScalar(k);
-  mesh.position.set(-k*(Math.cos(angle)*ex+Math.sin(angle)*ez),0,-k*(-Math.sin(angle)*ex+Math.cos(angle)*ez));
+  const surf=bi+':'+kind+':'+turn;
+  let proto=glimpseProto.get(surf);
+  if(!proto){
+    const W=5,H=6,g=new Uint8Array(W*H).fill(1);
+    for(let y=1;y<=2;y++)for(let x=1;x<=3;x++)g[y*W+x]=0;
+    g[3*W+2]=0;g[4*W+2]=0;
+    if(turn===0)g[4*W+1]=0;else if(turn===2)g[4*W+3]=0;
+    const look={...passingLook(depth),W,H,g,forest,
+      tex:{v:0,seed:0,tint:[1,1,1]},
+      panelAt:new Uint8Array(W*H),pocketMask:new Uint8Array(W*H),phantoms:[],door:null,frames:[]};
+    proto=buildMesh(look,true);
+    const tx=2,ty=1,yaw=Math.PI/2,fx=Math.cos(yaw),fz=Math.sin(yaw);
+    const ex=tx+0.5-fx*0.5,ez=ty+0.5-fz*0.5,angle=yaw+Math.PI/2,k=1.62/EYE;
+    proto.rotation.y=angle;proto.scale.setScalar(k);
+    proto.position.set(-k*(Math.cos(angle)*ex+Math.sin(angle)*ez),0,-k*(-Math.sin(angle)*ex+Math.cos(angle)*ez));
+    proto.userData.floor=look;
+    glimpseProto.set(surf,proto);
+  }
   const group=new THREE.Group();
-  group.name='Passing floor';group.add(mesh);group.userData.floor=look;
+  group.name='Passing floor';group.add(proto.clone());group.userData.floor=proto.userData.floor;
   glimpseCache.set(key,group);
   return group;
 }

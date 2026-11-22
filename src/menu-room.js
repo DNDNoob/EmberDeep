@@ -10,14 +10,14 @@ const portals=[
   {id:'mobs',x:6.55,name:'Mob Archive',color:0xf3b29b},
   {id:'glitches',x:15.35,name:'Glitch Archive',color:0xd9b3f9}
 ];
-const wallZ=-7,eye=1.62,interval=8.2;
+const wallZ=-7,eye=1.62,interval=18;
 const liftGateZ=-10.75,landingEntranceZ=landingMazeZ-0.8,liftExitHalfWidth=0.47;
 const terminalWidth=4.5,terminalHeight=2.98;
 const screenWidth=900,screenHeight=596;
 const clamp=THREE.MathUtils.clamp;
 export const onLiftPlatform=({x,z})=>Math.abs(x)<1.66&&z<wallZ-0.3&&z>liftGateZ;
 
-export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleFloor,prepareLanding,landingGlimpse,onLeavePanel,createVisitor}){
+export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleFloor,prepareLanding,landingGlimpse,passingLook,onLeavePanel,createVisitor}){
   const scene=new THREE.Scene();
   scene.background=new THREE.Color(0x14121d);
   scene.fog=new THREE.Fog(0x17151f,24,64);
@@ -271,10 +271,10 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   }
   function engageLift(depth,seed,group=null){
     if(ride||liftAway||!onLiftPlatform(walker.b))return false;
-    ride={depth,travel:0,extra:0,speed:0,seed,group,task:prepareLanding(seed,depth),docked:false,gate:0,onLanding:false};
+    ride={depth,travel:0,extra:0,speed:0,seed,group,task:prepareLanding(seed,depth),docked:false,gate:0,onLanding:false,count:group?.follow?0:3,countAt:0,warm:1};
     cage.visible=true;well.visible=true;
-    liftLabel.setLabel(['FLOOR '+depth,'PREPARING MAZE'],true,0);
-    indicators(1);sfx('door');
+    liftLabel.setLabel(ride.count?['3','FLOOR '+depth]:['FLOOR '+depth,'PREPARING MAZE'],true,0);
+    indicators(1);sfx(ride.count?'ding':'door');
     return true;
   }
   function tickLift(dt,previousZ){
@@ -289,9 +289,18 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       return;
     }
     const destination=ride.depth*interval;
-    if(ride.task&&!ride.task.ready){
-      const steps=ride.travel<destination*0.55?2:1;
-      for(let s=0;s<steps&&!ride.task.ready;s++)ride.task.advance();
+    const following=!!ride.group?.follow;
+    const before=ride.task?ride.task.progress:1;
+    if(ride.task&&!ride.task.ready)ride.task.advance();
+    if((!ride.task||ride.task.ready||ride.task.progress===before)&&ride.warm<=ride.depth)
+      renderer.compileAsync(landingGlimpse(ride.seed,ride.warm++),camera).catch(()=>{});
+    if(ride.count>0&&!following){
+      ride.countAt+=dt;
+      if(ride.countAt>=1){
+        ride.countAt-=1;ride.count--;
+        if(ride.count>0){sfx('ding');liftLabel.setLabel([String(ride.count),'FLOOR '+ride.depth],true,(3-ride.count)/3)}
+      }
+      if(ride.count>0){placeShaft();return}
     }
     let arriving;
     if(ride.group?.follow){
@@ -317,14 +326,19 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       ride.progress=progress;
       liftLabel.setLabel(['FLOOR '+ride.depth,'DESCENDING  '+progress+'%'],true,progress/100);
     }
-    const base=Math.max(0,Math.floor(ride.travel/interval)-1);
-    for(let number=base;number<base+shaftSections.length;number++){
-      const section=shaftSections[number%shaftSections.length];
-      section.group.position.y=-number*interval-(number>=ride.depth?ride.extra:0);
-      const showMouth=number>0&&number<=ride.depth&&!(number===ride.depth&&ride.task.model);
-      const glimpse=showMouth?landingGlimpse(ride.seed,number):null;
-      section.update(ride.seed,number,number===ride.depth&&ride.task.floor?ride.task.floor:glimpse?.userData.floor);
-      section.setMaze(number===ride.depth&&ride.task.model?ride.task.model:glimpse);
+    placeShaft();
+    function placeShaft(){
+      const base=Math.max(0,Math.floor(ride.travel/interval)-1);
+      for(let number=base;number<base+shaftSections.length;number++){
+        const section=shaftSections[number%shaftSections.length];
+        section.group.position.y=-number*interval-(number>=ride.depth?ride.extra:0);
+        const destined=number===ride.depth&&ride.task.model;
+        const showMouth=number>0&&number<=ride.depth&&!destined;
+        const glimpse=showMouth?landingGlimpse(ride.seed,number,false):null;
+        const look=number===ride.depth&&ride.task.floor?ride.task.floor:(showMouth?passingLook(number):null);
+        section.update(ride.seed,number,look);
+        section.setMaze(destined?ride.task.model:glimpse);
+      }
     }
     if(arriving){
       ride.docked=true;
