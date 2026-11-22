@@ -288,8 +288,16 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       }
       return;
     }
-    ride.task.advance();
     const destination=ride.depth*interval;
+    // Build the floors the shaft is about to pass before they scroll into view,
+    // one floor per frame, so the pass itself does not generate a maze.
+    if(ride.warm==null)ride.warm=1;
+    const warmTo=Math.min(ride.depth,Math.floor(ride.travel/interval)+4);
+    if(ride.warm<=warmTo)sampleFloor(ride.seed,ride.warm++);
+    if(ride.task&&!ride.task.ready){
+      const steps=ride.travel<destination*0.55?2:1;
+      for(let s=0;s<steps&&!ride.task.ready;s++)ride.task.advance();
+    }
     let arriving;
     if(ride.group?.follow){
       const motion=ride.group.follow();

@@ -5066,7 +5066,7 @@ const archive=Object.fromEntries(Object.keys(archiveCatalog).map(kind=>{
   return [kind,saved&&typeof saved==='object'&&!Array.isArray(saved)?saved:{}];
 }));
 const hub=createMenuRoom(renderer,{sfx,asset:exhibitAsset,activate:useMenuAsset,enterLanding:startFromLanding,
-  sampleFloor:genFloor,prepareLanding,onLeavePanel:()=>closeStation(),createVisitor:buildHubVisitor});
+  sampleFloor:memoFloor,prepareLanding,onLeavePanel:()=>closeStation(),createVisitor:buildHubVisitor});
 const board=$('title');
 const stationPanels=[...document.querySelectorAll('[data-station-panel]')];
 let activeStation=null;
@@ -5339,7 +5339,17 @@ function startFromLanding(depth,seed,floor,position,tripId){
     if(MP.host)publishLiftMotion();
     if(MP.guest)MP.wantJoin=true;
   }
-  enterRun(seed,depth,floor,pose,tripId);
+  const fade=$('fade');
+  if(!fade){enterRun(seed,depth,floor,pose,tripId);return}
+  fade.style.transition='opacity .16s';
+  fade.style.opacity='1';
+  setTimeout(()=>{
+    enterRun(seed,depth,floor,pose,tripId);
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      fade.style.transition='opacity .28s';
+      fade.style.opacity='0';
+    }));
+  },170);
 }
 function buildHubVisitor(peer){
   const pose={id:peer.id,col:peer.col,rx:0,ry:0,rz:0,ryaw:0,rpitch:0,spd:0,walk:0};
@@ -5383,20 +5393,36 @@ function landingGeometry(floor){
   group.add(mesh);
   return group;
 }
+const floorMemo=new Map();
+function memoFloor(seed,depth,look){
+  const key=seed+'#'+depth+'#'+(look?((look.bi??'')+':'+(look.ix??'')):'');
+  let floor=floorMemo.get(key);
+  if(!floor){floor=genFloor(seed,depth,look);floorMemo.set(key,floor)}
+  return floor;
+}
 function prepareLanding(seed,depth){
   let stage=0;
   const task={floor:null,model:null,progress:0,ready:false,
     advance(){
-      if(stage===0){task.floor=genFloor(seed,depth);task.progress=0.25}
-      else if(stage===1){buildMesh(task.floor);task.model=landingGeometry(task.floor);task.progress=0.56}
-      else if(stage===2){buildStatic(task.floor);buildSdf(task.floor);task.progress=0.78}
-      else if(stage===3){
-        renderer.compileAsync(scene,camera).catch(()=>{}).then(()=>{task.progress=1;task.ready=true});
+      if(task.ready)return;
+      if(stage===0){task.floor=memoFloor(seed,depth);task.progress=0.2}
+      else if(stage===1){buildMesh(task.floor);task.progress=0.45}
+      else if(stage===2){task.model=landingGeometry(task.floor);task.progress=0.6}
+      else if(stage===3){buildStatic(task.floor);buildSdf(task.floor);task.progress=0.8}
+      else if(stage===4){
+        const finish=()=>{task.progress=1;task.ready=true};
+        if(task.model){
+          scene.add(task.model);
+          renderer.compileAsync(scene,camera).catch(()=>{}).finally(()=>{
+            if(task.model&&task.model.parent===scene)scene.remove(task.model);
+            finish();
+          });
+        }else renderer.compileAsync(scene,camera).catch(()=>{}).then(finish);
       }else return;
       stage++;
     },
     dispose(){
-      if(task.model){task.model.removeFromParent();task.model.children[0].geometry.dispose()}
+      if(task.model){task.model.removeFromParent();if(task.model.children[0])task.model.children[0].geometry.dispose()}
     }
   };
   return task;

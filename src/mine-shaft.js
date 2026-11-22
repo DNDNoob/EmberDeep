@@ -128,6 +128,7 @@ export function createMineLanding({height,numberSign,sampleFloor}){
   const stones=new THREE.InstancedMesh(boulderGeometry,rock,92);
   const minerals=new THREE.InstancedMesh(boulderGeometry,calcite,42);
   const terrain=new THREE.InstancedMesh(boxGeometry,floorMaterial,rows*columns*2);
+  stones.frustumCulled=minerals.frustumCulled=terrain.frustumCulled=false;
   const tile=new THREE.Object3D(),shade=new THREE.Color(),base=new THREE.Color();
   const alcove=new THREE.Group();
   alcove.add(terrain);group.add(stones,minerals,alcove);
@@ -171,14 +172,14 @@ export function createMineLanding({height,numberSign,sampleFloor}){
       shade.setHex(i%19===0?0xbbb9ce:i%8===0?0xc79c8f:0x9d8f9d).multiplyScalar(0.55+hash(i,11)*0.58);
       stones.setColorAt(i,shade);
     }
-    stones.instanceMatrix.needsUpdate=true;stones.instanceColor.needsUpdate=true;stones.computeBoundingSphere();
+    stones.instanceMatrix.needsUpdate=true;stones.instanceColor.needsUpdate=true;
     for(let i=0;i<minerals.count;i++){
       const cluster=Math.floor(i/7),side=cluster%2===0?1:-1;
       assign(minerals,i,side*(2.87-hash(i,1)*0.16),0.65+cluster*height/7+hash(i,3)*0.48,
         -10.7+hash(cluster,5)*3.44+hash(i,6)*0.52,0.06+hash(i,6)*0.08,0.11+hash(i,7)*0.20,0.05+hash(i,8)*0.10,hash(i,2)*5.5);
       minerals.setColorAt(i,shade.setHex(cluster%3===0?0xa7a1d9:cluster%3===1?0x8fc4b4:0xcf8f56));
     }
-    minerals.instanceMatrix.needsUpdate=true;minerals.instanceColor.needsUpdate=true;minerals.computeBoundingSphere();
+    minerals.instanceMatrix.needsUpdate=true;minerals.instanceColor.needsUpdate=true;
     const floor=prepared||(depth>0?sampleFloor(seed,depth):null);
     lastFloor=floor;
     plaque.setLabel(floor?['FLOOR '+depth,floor.name]:['L','ENTRANCE HALL']);
@@ -203,7 +204,6 @@ export function createMineLanding({height,numberSign,sampleFloor}){
       }
     }
     terrain.count=n;terrain.instanceMatrix.needsUpdate=true;terrain.instanceColor.needsUpdate=true;
-    terrain.computeBoundingSphere();
   }
   return {group,update,setMaze(model){
     if((mazeMount.children[0]||null)===model&&terrain.visible===!model)return;
