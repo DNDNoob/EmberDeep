@@ -150,45 +150,45 @@ export function createMineLanding({height,numberSign,sampleFloor}){
   const cap=new THREE.Mesh(boxGeometry,rock);
   cap.position.set(0,1.12,-12.5);cap.scale.set(4.9,2.24,0.18);vestibule.add(cap);
   vestibule.visible=false;
-  let lastKey='',lastFloor;
+  let lastKey='',lastFloor,cursor=1e9,workKey='',workFloor=null;
+  const stoneN=stones.count,mineralN=minerals.count,batch=24;
   function assign(mesh,i,x,y,z,w,h,d,r=0){
     tile.position.set(x,y,z);tile.scale.set(w,h,d);tile.rotation.set(r*0.62,r,r*0.32);
     tile.updateMatrix();mesh.setMatrixAt(i,tile.matrix);
   }
   function update(seed,depth,prepared){
     const key=seed+':'+depth;
-    if(key===lastKey&&(!prepared||prepared===lastFloor))return false;
-    lastKey=key;
+    if(key!==workKey){workKey=key;cursor=0;workFloor=prepared||null}
+    else if(cursor>=stoneN+mineralN)return false;
     const hash=(i,s)=>{
       const n=Math.sin(i*127.1+s*81.77+depth*19.13)*43758.5453;
       return n-Math.floor(n);
     };
-    for(let i=0;i<stones.count;i++){
-      const side=i%2===0?-1:1,broad=i>=68;
-      const x=broad?(hash(i,2)-0.5)*5.65:side*(3.18+hash(i,3)*0.31);
-      const y=broad?4.04+hash(i,3)*(height-4.9):hash(i,4)*height-0.2;
-      const z=broad?socket-0.78-hash(i,4)*0.26:-11.04+hash(i,5)*4.60;
-      const w=0.34+hash(i,6)*(broad?0.31:0.71);
-      const h=0.25+hash(i,7)*(broad?0.35:0.43);
-      const d=0.32+hash(i,8)*(broad?0.32:0.63);
-      assign(stones,i,x,y,z,w,h,d,hash(i,9)*6.28);
-      shade.setHex(i%19===0?0xbbb9ce:i%8===0?0xc79c8f:0x9d8f9d).multiplyScalar(0.55+hash(i,11)*0.58);
-      stones.setColorAt(i,shade);
+    const end=Math.min(cursor+batch,stoneN+mineralN);
+    for(let n=cursor;n<end;n++){
+      if(n<stoneN){
+        const i=n,side=i%2===0?-1:1,broad=i>=68;
+        const x=broad?(hash(i,2)-0.5)*5.65:side*(3.18+hash(i,3)*0.31);
+        const y=broad?4.04+hash(i,3)*(height-4.9):hash(i,4)*height-0.2;
+        const z=broad?socket-0.78-hash(i,4)*0.26:-11.04+hash(i,5)*4.60;
+        assign(stones,i,x,y,z,0.34+hash(i,6)*(broad?0.31:0.71),0.25+hash(i,7)*(broad?0.35:0.43),0.32+hash(i,8)*(broad?0.32:0.63),hash(i,9)*6.28);
+        shade.setHex(i%19===0?0xbbb9ce:i%8===0?0xc79c8f:0x9d8f9d).multiplyScalar(0.55+hash(i,11)*0.58);
+        stones.setColorAt(i,shade);
+      }else{
+        const i=n-stoneN,cluster=Math.floor(i/7),side=cluster%2===0?1:-1;
+        assign(minerals,i,side*(2.87-hash(i,1)*0.16),0.65+cluster*height/7+hash(i,3)*0.48,
+          -10.7+hash(cluster,5)*3.44+hash(i,6)*0.52,0.06+hash(i,6)*0.08,0.11+hash(i,7)*0.20,0.05+hash(i,8)*0.10,hash(i,2)*5.5);
+        minerals.setColorAt(i,shade.setHex(cluster%3===0?0xa7a1d9:cluster%3===1?0x8fc4b4:0xcf8f56));
+      }
     }
-    stones.instanceMatrix.needsUpdate=true;stones.instanceColor.needsUpdate=true;
-    for(let i=0;i<minerals.count;i++){
-      const cluster=Math.floor(i/7),side=cluster%2===0?1:-1;
-      assign(minerals,i,side*(2.87-hash(i,1)*0.16),0.65+cluster*height/7+hash(i,3)*0.48,
-        -10.7+hash(cluster,5)*3.44+hash(i,6)*0.52,0.06+hash(i,6)*0.08,0.11+hash(i,7)*0.20,0.05+hash(i,8)*0.10,hash(i,2)*5.5);
-      minerals.setColorAt(i,shade.setHex(cluster%3===0?0xa7a1d9:cluster%3===1?0x8fc4b4:0xcf8f56));
-    }
-    minerals.instanceMatrix.needsUpdate=true;minerals.instanceColor.needsUpdate=true;
-    const floor=prepared||null;
-    lastFloor=floor;
-    plaque.setLabel(floor?['FLOOR '+depth,floor.name]:['L','ENTRANCE HALL']);
-    alcove.visible=vestibule.visible=!!floor;
-    if(!floor)return true;
-    lantern.color.setHex(floor.forest?0x9eeab8:floor.dark?0x97aaff:floor.back?0xe8e7a1:floor.kind==='cave'?0xaabeff:0xffc294);
+    cursor=end;
+    stones.instanceMatrix.needsUpdate=stones.instanceColor.needsUpdate=true;
+    minerals.instanceMatrix.needsUpdate=minerals.instanceColor.needsUpdate=true;
+    if(cursor<stoneN+mineralN)return true;
+    lastKey=key;lastFloor=workFloor;
+    plaque.setLabel(workFloor?['FLOOR '+depth,workFloor.name]:['L','ENTRANCE HALL']);
+    alcove.visible=vestibule.visible=!!workFloor;
+    if(workFloor)lantern.color.setHex(workFloor.forest?0x9eeab8:workFloor.dark?0x97aaff:workFloor.back?0xe8e7a1:workFloor.kind==='cave'?0xaabeff:0xffc294);
     return true;
   }
   return {group,update,setMaze(model){

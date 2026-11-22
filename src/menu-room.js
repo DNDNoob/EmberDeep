@@ -311,12 +311,8 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       placeShaft(true);
       return;
     }
-    const before=ride.task?ride.task.progress:1;
     if(ride.settle)for(let i=1;i<ride.settle.length;i++)if(ride.settle[i]===2)ride.settle[i]=1;
-    if(!following&&ride.calm>0)ride.calm=Math.max(0,ride.calm-dt);
-    else if(ride.task&&!ride.task.ready&&ride.task.progress<0.8)ride.task.advance();
-    else if(ride.warm<=ride.depth){landingGlimpse(ride.seed,ride.warm);if(ride.settle)ride.settle[ride.warm]=2;ride.warm++}
-    else if(ride.task&&!ride.task.ready&&ride.task.progress===before)ride.task.advance();
+    // Building stays off this frame. A missing floor only copies rock ahead of the car.
     let arriving;
     if(following){
       const motion=ride.group.follow();
@@ -342,12 +338,10 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       const prev=ride.speed;
       ride.speed=prev+THREE.MathUtils.clamp(desired-prev,-2.1*step,2.1*step);
       const movement=Math.max(0,(prev+ride.speed)*0.5*step);
-      const hitch=Math.max(0,dt-0.028);
-      let add=0;
-      if(!loaded&&open>0)add+=Math.min(open,movement+step*10);
-      if(hitch>0&&open>add)add+=Math.min(open-add,hitch*48);
-      if(add>0){ride.stretch[next]+=add;ride.travel+=add}
-      else ride.travel=Math.min(floorDist(ride.depth),ride.travel+movement);
+      if(!loaded&&open>0){
+        const copy=Math.min(open,Math.max(movement,step*3.2));
+        ride.stretch[next]+=copy;ride.travel+=copy;
+      }else ride.travel=Math.min(floorDist(ride.depth),ride.travel+movement);
       const destNow=floorDist(ride.depth);
       arriving=loaded&&next===ride.depth&&destNow-ride.travel<=0.03;
       if(arriving)ride.travel=destNow;

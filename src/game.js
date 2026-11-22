@@ -5018,8 +5018,8 @@ function step(now){
   }
   else if(state==='title'){
     hub.update(dt,roomInput(),raw);
-    if(shaftQueue.length&&raw<0.028)shaftQueue.shift()();
-    else if(warmed&&warmed.left>0&&raw<0.028){warmed.task.advance();warmed.left--}
+    if(shaftQueue.length&&raw<0.02&&!hub.riding)shaftQueue.shift()();
+    else if(warmed&&warmed.left>0&&raw<0.02&&!hub.riding){warmed.task.advance();warmed.left--}
     hub.syncVisitors(MP.on?[...MP.peers.values()].filter(p=>p.hub&&now-p.hub.at<15000):[],dt,now/1000);
     updateSettingsScreen();
     $('hubCross').classList.toggle('ready',hub.aimed);
@@ -5467,10 +5467,9 @@ function prepareLanding(seed,depth){
       else if(stage===2){task.model=landingGeometry(task.floor);task.progress=0.6}
       else if(stage===3){buildStatic(task.floor);buildSdf(task.floor);task.progress=0.8}
       else if(stage===4){
-        const finish=()=>{task.progress=1;task.ready=true};
         const target=worldMesh||task.model;
-        if(target)renderer.compileAsync(target,camera).catch(()=>{}).then(finish);
-        else finish();
+        try{if(target)renderer.compile(target,camera)}catch(e){}
+        task.progress=1;task.ready=true;
       }else return;
       stage++;
     },
@@ -5505,7 +5504,7 @@ function startShaftWarm(){
     if(seen.has(surf))continue;
     seen.add(surf);
     const floor=n,mouth=turn;
-    stages.push(['Opening landing '+n,()=>buildGlimpseProto(floor,mouth)]);
+    stages.push(['Opening landing '+n,()=>{const mesh=buildGlimpseProto(floor,mouth);try{renderer.compile(mesh,camera)}catch(e){}}]);
   }
   rememberShaft(seed,depth);
   for(let i=0;i<5;i++)stages.push(['Preparing the maze',()=>warmed.task.advance()]);
@@ -5527,6 +5526,27 @@ function retargetShaft(){
   if(!seed||(warmed&&warmed.seed===seed&&warmed.depth===depth))return;
   rememberShaft(seed,depth);
 }
+function shaftReady(seed,depth){
+  return !!(warmed&&warmed.seed===seed&&warmed.depth===depth&&warmed.task&&warmed.task.ready);
+}
+function ensureShaft(seed,depth,then){
+  if(shaftReady(seed,depth)){then();return}
+  if(loading)return;
+  rememberShaft(seed,depth);
+  const stages=[];
+  const seen=new Set();
+  for(let n=1;n<=Math.min(depth,12);n++){
+    const turn=hashStr(seed+'#mouth'+n)%3,surf=glimpseSurf(n,turn);
+    if(glimpseProto.has(surf)||seen.has(surf))continue;
+    seen.add(surf);
+    const floor=n,mouth=turn;
+    stages.push(['Copying landing '+n,()=>{const mesh=buildGlimpseProto(floor,mouth);try{renderer.compile(mesh,camera)}catch(e){}}]);
+  }
+  for(let i=0;i<5;i++)stages.push(['Preparing the maze',()=>warmed.task.advance()]);
+  warmed.left=0;
+  stages.push(['Ready',then]);
+  showLoading('Preparing the shaft',stages);
+}
 function departFromLift(shortcut=false){
   if(state!=='title'||activeStation!=='lift'||!hub.boarded)return;
   if(MP.on&&shortcut){sendLiftAction({k:'liftDepart',shortcut:true});return}
@@ -5534,7 +5554,7 @@ function departFromLift(shortcut=false){
   if(!Number.isInteger(depth)||depth<1||depth>+$('liftDepth').max)return;
   if(MP.on){sendLiftAction({k:'liftDepart'});return}
   const seed=($('seedIn').value.trim()||randSeed()).toUpperCase();
-  if(hub.engageLift(depth,seed))closeStation();
+  ensureShaft(seed,depth,()=>{if(hub.engageLift(depth,seed))closeStation()});
 }
 $('liftDestination').addEventListener('submit',event=>{
   event.preventDefault();
