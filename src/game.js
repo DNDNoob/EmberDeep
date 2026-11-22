@@ -5018,6 +5018,8 @@ function step(now){
   }
   else if(state==='title'){
     hub.update(dt,roomInput(),raw);
+    if(shaftQueue.length&&raw<0.028)shaftQueue.shift()();
+    else if(warmed&&warmed.left>0&&raw<0.028){warmed.task.advance();warmed.left--}
     hub.syncVisitors(MP.on?[...MP.peers.values()].filter(p=>p.hub&&now-p.hub.at<15000):[],dt,now/1000);
     updateSettingsScreen();
     $('hubCross').classList.toggle('ready',hub.aimed);
@@ -5070,7 +5072,7 @@ const archive=Object.fromEntries(Object.keys(archiveCatalog).map(kind=>{
   return [kind,saved&&typeof saved==='object'&&!Array.isArray(saved)?saved:{}];
 }));
 const hub=createMenuRoom(renderer,{sfx,asset:exhibitAsset,activate:useMenuAsset,enterLanding:startFromLanding,
-  sampleFloor:memoFloor,prepareLanding,landingGlimpse,passingLook,onLeavePanel:()=>closeStation(),createVisitor:buildHubVisitor});
+  sampleFloor:memoFloor,prepareLanding:preparedLanding,landingGlimpse,passingLook,onLeavePanel:()=>closeStation(),createVisitor:buildHubVisitor});
 const board=$('title');
 const stationPanels=[...document.querySelectorAll('[data-station-panel]')];
 let activeStation=null;
@@ -5410,33 +5412,39 @@ function passingLook(depth){
   lookMemo.set(depth,look);
   return look;
 }
+function glimpseSurf(depth,turn){
+  const kind=floorKind(depth);
+  const bi=kind==='back'?4:kind==='forest'?8:biomeIx(depth);
+  return bi+':'+kind+':'+turn;
+}
+function buildGlimpseProto(depth,turn){
+  const surf=glimpseSurf(depth,turn);
+  const hit=glimpseProto.get(surf);
+  if(hit)return hit;
+  const kind=floorKind(depth);
+  const forest=kind==='forest';
+  const W=5,H=6,g=new Uint8Array(W*H).fill(1);
+  for(let y=1;y<=2;y++)for(let x=1;x<=3;x++)g[y*W+x]=0;
+  g[3*W+2]=0;g[4*W+2]=0;
+  if(turn===0)g[4*W+1]=0;else if(turn===2)g[4*W+3]=0;
+  const look={...passingLook(depth),W,H,g,forest,
+    tex:{v:0,seed:0,tint:[1,1,1]},
+    panelAt:new Uint8Array(W*H),pocketMask:new Uint8Array(W*H),phantoms:[],door:null,frames:[]};
+  const proto=buildMesh(look,true);
+  const tx=2,ty=1,yaw=Math.PI/2,fx=Math.cos(yaw),fz=Math.sin(yaw);
+  const ex=tx+0.5-fx*0.5,ez=ty+0.5-fz*0.5,angle=yaw+Math.PI/2,k=1.62/EYE;
+  proto.rotation.y=angle;proto.scale.setScalar(k);
+  proto.position.set(-k*(Math.cos(angle)*ex+Math.sin(angle)*ez),0,-k*(-Math.sin(angle)*ex+Math.cos(angle)*ez));
+  proto.userData.floor=look;
+  glimpseProto.set(surf,proto);
+  return proto;
+}
 // The mouth of a floor the car only passes. Surfaces are shared by biome, so a landing does not bake a new texture.
 function landingGlimpse(seed,depth,build=true){
   const key=seed+'#'+depth;
   const hit=glimpseCache.get(key);
   if(hit||!build)return hit||null;
-  const kind=floorKind(depth);
-  const bi=kind==='back'?4:kind==='forest'?8:biomeIx(depth);
-  const forest=kind==='forest';
-  const turn=hashStr(seed+'#mouth'+depth)%3;
-  const surf=bi+':'+kind+':'+turn;
-  let proto=glimpseProto.get(surf);
-  if(!proto){
-    const W=5,H=6,g=new Uint8Array(W*H).fill(1);
-    for(let y=1;y<=2;y++)for(let x=1;x<=3;x++)g[y*W+x]=0;
-    g[3*W+2]=0;g[4*W+2]=0;
-    if(turn===0)g[4*W+1]=0;else if(turn===2)g[4*W+3]=0;
-    const look={...passingLook(depth),W,H,g,forest,
-      tex:{v:0,seed:0,tint:[1,1,1]},
-      panelAt:new Uint8Array(W*H),pocketMask:new Uint8Array(W*H),phantoms:[],door:null,frames:[]};
-    proto=buildMesh(look,true);
-    const tx=2,ty=1,yaw=Math.PI/2,fx=Math.cos(yaw),fz=Math.sin(yaw);
-    const ex=tx+0.5-fx*0.5,ez=ty+0.5-fz*0.5,angle=yaw+Math.PI/2,k=1.62/EYE;
-    proto.rotation.y=angle;proto.scale.setScalar(k);
-    proto.position.set(-k*(Math.cos(angle)*ex+Math.sin(angle)*ez),0,-k*(-Math.sin(angle)*ex+Math.cos(angle)*ez));
-    proto.userData.floor=look;
-    glimpseProto.set(surf,proto);
-  }
+  const proto=buildGlimpseProto(depth,hashStr(seed+'#mouth'+depth)%3);
   const group=new THREE.Group();
   group.name='Passing floor';group.add(proto.clone());group.userData.floor=proto.userData.floor;
   glimpseCache.set(key,group);
@@ -5472,6 +5480,53 @@ function prepareLanding(seed,depth){
   };
   return task;
 }
+let warmed=null,shaftQueue=[];
+function preparedLanding(seed,depth){
+  if(warmed&&warmed.seed===seed&&warmed.depth===depth&&warmed.task){
+    const task=warmed.task;warmed.left=0;warmed.task=null;return task;
+  }
+  return prepareLanding(seed,depth);
+}
+function rememberShaft(seed,depth){
+  warmed?.task?.dispose();
+  const task=prepareLanding(seed,depth);
+  warmed={seed,depth,task,left:5};
+}
+function startShaftWarm(){
+  if(state!=='title')return;
+  const field=$('seedIn');
+  let seed=(field.value||'').trim().toUpperCase();
+  if(!seed){seed=randSeed();field.value=seed}
+  const depth=defaultLiftFloor();
+  if(!$('liftDepth').value)$('liftDepth').value=depth;
+  const stages=[],seen=new Set();
+  for(let n=1;n<=4;n++)for(let turn=0;turn<3;turn++){
+    const surf=glimpseSurf(n,turn);
+    if(seen.has(surf))continue;
+    seen.add(surf);
+    const floor=n,mouth=turn;
+    stages.push(['Opening landing '+n,()=>buildGlimpseProto(floor,mouth)]);
+  }
+  rememberShaft(seed,depth);
+  for(let i=0;i<5;i++)stages.push(['Preparing the maze',()=>warmed.task.advance()]);
+  warmed.left=0;
+  for(let n=5;n<=10;n++)for(let turn=0;turn<3;turn++){
+    const surf=glimpseSurf(n,turn);
+    if(seen.has(surf))continue;
+    seen.add(surf);
+    const floor=n,mouth=turn;
+    shaftQueue.push(()=>buildGlimpseProto(floor,mouth));
+  }
+  showLoading('Opening the entrance hall',stages);
+}
+function retargetShaft(){
+  if(state!=='title'||hub.riding||loading)return;
+  const seed=($('seedIn').value||'').trim().toUpperCase();
+  const typed=+$('liftDepth').value;
+  const depth=Number.isInteger(typed)&&typed>=1?typed:defaultLiftFloor();
+  if(!seed||(warmed&&warmed.seed===seed&&warmed.depth===depth))return;
+  rememberShaft(seed,depth);
+}
 function departFromLift(shortcut=false){
   if(state!=='title'||activeStation!=='lift'||!hub.boarded)return;
   if(MP.on&&shortcut){sendLiftAction({k:'liftDepart',shortcut:true});return}
@@ -5489,7 +5544,9 @@ $('liftDeepest').addEventListener('click',()=>departFromLift(true));
 $('liftDepth').addEventListener('input',()=>{
   const depth=$('liftDepth').valueAsNumber;
   if(MP.on&&activeStation==='lift'&&hub.boarded&&validLiftDepth(depth)&&depth<=+$('liftDepth').max)sendLiftAction({k:'liftPick',depth});
+  retargetShaft();
 });
+$('seedIn').addEventListener('change',retargetShaft);
 let exhibitBuffer=null;
 function exhibitModel(draw,animated=false){
   exhibitBuffer??={buf:new Float32Array(13*60000),n:0,cap:60000};
@@ -5708,4 +5765,5 @@ function gripProbe(ts,talking){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='
 function benchNpc(iters){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='keeper');const e=[P.x,0.7,P.z];buildNpc(n,1,e[0],e[1],e[2],0.016);let t0=performance.now();
   for(let i=0;i<iters;i++){CH.n=0;buildNpc(n,1+i*0.016,e[0],e[1],e[2],0.016)}return (performance.now()-t0)/iters}
 window.__game={music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+if(state==='title')startShaftWarm();
 requestAnimationFrame(frame);

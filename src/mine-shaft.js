@@ -139,15 +139,17 @@ export function createMineLanding({height,numberSign,sampleFloor}){
   lantern.position.set(-1.34,2.27,socket-0.45);
   alcove.add(lantern);
   const mazeMount=new THREE.Group();mazeMount.position.z=landingMazeZ;group.add(mazeMount);
-  const landingFace=new THREE.Group();
-  landingFace.visible=false;
-  group.add(landingFace);
-  // Dress the cut around the preview mesh without covering its walkable mouth.
-  beam(landingFace,rock,0,2.9,landingMazeZ+0.05,5.05,1.32,0.22);
-  for(const side of [-1,1]){
-    beam(landingFace,rock,side*1.79,1.14,landingMazeZ+0.05,1.48,2.28,0.22);
-  }
-  beam(landingFace,steel,0,-0.10,landingMazeZ+0.06,5.05,0.18,0.26);
+  // A thick rock collar from the car to the landing mouth, so the cut is not a window onto the void.
+  const vestibule=new THREE.Group();
+  group.add(vestibule);
+  const zNear=-11.06,zFar=-12.74,span=zNear-zFar,zMid=(zNear+zFar)/2;
+  beam(vestibule,rock,-2.84,1.5,zMid,0.66,3.0,span);
+  beam(vestibule,rock,2.84,1.5,zMid,0.66,3.0,span);
+  beam(vestibule,rock,0,3.02,zMid,5.75,1.7,span);
+  beam(vestibule,steel,0,-0.03,(-11.02+-12.46)/2,5.2,0.08,-11.02-(-12.46));
+  const cap=new THREE.Mesh(boxGeometry,rock);
+  cap.position.set(0,1.12,-12.5);cap.scale.set(4.9,2.24,0.18);vestibule.add(cap);
+  vestibule.visible=false;
   let lastKey='',lastFloor;
   function assign(mesh,i,x,y,z,w,h,d,r=0){
     tile.position.set(x,y,z);tile.scale.set(w,h,d);tile.rotation.set(r*0.62,r,r*0.32);
@@ -184,7 +186,7 @@ export function createMineLanding({height,numberSign,sampleFloor}){
     const floor=prepared||null;
     lastFloor=floor;
     plaque.setLabel(floor?['FLOOR '+depth,floor.name]:['L','ENTRANCE HALL']);
-    alcove.visible=!!floor;
+    alcove.visible=vestibule.visible=!!floor;
     if(!floor)return true;
     lantern.color.setHex(floor.forest?0x9eeab8:floor.dark?0x97aaff:floor.back?0xe8e7a1:floor.kind==='cave'?0xaabeff:0xffc294);
     return true;
@@ -193,7 +195,7 @@ export function createMineLanding({height,numberSign,sampleFloor}){
     if((mazeMount.children[0]||null)===model)return;
     mazeMount.clear();
     if(model)mazeMount.add(model);
-    landingFace.visible=!!model;
+    cap.visible=!model;
     terrain.visible=false;
   }};
 }
