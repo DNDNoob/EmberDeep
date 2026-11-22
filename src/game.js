@@ -5460,13 +5460,9 @@ function prepareLanding(seed,depth){
       else if(stage===3){buildStatic(task.floor);buildSdf(task.floor);task.progress=0.8}
       else if(stage===4){
         const finish=()=>{task.progress=1;task.ready=true};
-        if(task.model){
-          scene.add(task.model);
-          renderer.compileAsync(scene,camera).catch(()=>{}).finally(()=>{
-            if(task.model&&task.model.parent===scene)scene.remove(task.model);
-            finish();
-          });
-        }else renderer.compileAsync(scene,camera).catch(()=>{}).then(finish);
+        const target=worldMesh||task.model;
+        if(target)renderer.compileAsync(target,camera).catch(()=>{}).then(finish);
+        else finish();
       }else return;
       stage++;
     },

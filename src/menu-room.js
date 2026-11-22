@@ -273,7 +273,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     if(ride||liftAway||!onLiftPlatform(walker.b))return false;
     const solo=!group?.follow;
     ride={depth,travel:0,extra:0,speed:0,seed,group,task:prepareLanding(seed,depth),docked:false,gate:0,onLanding:false,
-      count:solo?3:0,countAt:0,warm:1,defer:solo?2:0,shown:!solo,stretch:new Float64Array(depth+1)};
+      count:solo?3:0,countAt:0,warm:1,calm:solo?0.45:0,shown:!solo,stretch:new Float64Array(depth+1)};
     cage.visible=true;
     if(!solo)well.visible=true;
     liftLabel.setLabel(ride.count?['3','FLOOR '+depth]:['FLOOR '+depth,'PREPARING MAZE'],true,0);
@@ -304,19 +304,18 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       return;
     }
     const following=!!ride.group?.follow;
-    if(!following&&!ride.shown){
-      // The click only starts the count. Reveal the shaft, then load, on later frames.
-      if(ride.defer>0)ride.defer--;
+    // The count is only the numbers and the ding. Loading starts after the car is released.
+    if(!following&&ride.count>0){
       tickCountdown(dt);
-      if(ride.defer>0)return;
-      ride.shown=true;well.visible=true;
-      placeShaft(true);return;
+      if(!ride.shown){ride.shown=true;well.visible=true}
+      placeShaft(true);
+      return;
     }
     const before=ride.task?ride.task.progress:1;
-    if(ride.task&&!ride.task.ready&&ride.task.progress<0.8)ride.task.advance();
+    if(!following&&ride.calm>0)ride.calm=Math.max(0,ride.calm-dt);
+    else if(ride.task&&!ride.task.ready&&ride.task.progress<0.8)ride.task.advance();
     else if(ride.warm<=ride.depth)landingGlimpse(ride.seed,ride.warm++);
     else if(ride.task&&!ride.task.ready&&ride.task.progress===before)ride.task.advance();
-    if(ride.count>0&&!following){tickCountdown(dt);if(ride.count>0){placeShaft(false);return}}
     let arriving;
     if(following){
       const motion=ride.group.follow();
@@ -361,14 +360,14 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       ride.progress=progress;
       liftLabel.setLabel(['FLOOR '+ride.depth,'DESCENDING  '+progress+'%'],true,progress/100);
     }
-    placeShaft(false);
+    placeShaft(true);
     if(arriving){
       ride.docked=true;
       liftLabel.setLabel(['FLOOR '+ride.depth,'WALK INTO MAZE'],true,1);
       sfx('descend');
     }
-    function placeShaft(reveal){
-      let budget=reveal?1:1,acc=0,base=0;
+    function placeShaft(dress){
+      let budget=dress?1:0,acc=0,base=0;
       while(base<ride.depth&&acc+floorMin+ride.stretch[base+1]<=ride.travel){acc+=floorMin+ride.stretch[base+1];base++}
       base=Math.max(0,base-1);
       for(let number=base;number<base+shaftSections.length;number++){
