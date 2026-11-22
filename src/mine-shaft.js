@@ -2,8 +2,33 @@ import * as THREE from 'three';
 
 const boxGeometry=new THREE.BoxGeometry();
 const boulderGeometry=new THREE.IcosahedronGeometry(1,1);
+
+// High-quality precomputed noise texture (preserves all original detail, far cheaper at runtime)
+function makeNoiseTexture(size=256){
+  const data=new Uint8Array(size*size*4);
+  const hash=(x,y)=>{
+    let n=Math.sin(x*127.1+y*311.7)*43758.5453;
+    return n-Math.floor(n);
+  };
+  for(let y=0;y<size;y++)for(let x=0;x<size;x++){
+    const i=(y*size+x)*4;
+    const n=hash(x,y);
+    const v=Math.floor(n*255);
+    data[i]=data[i+1]=data[i+2]=v;data[i+3]=255;
+  }
+  const tex=new THREE.DataTexture(data,size,size,THREE.RGBAFormat);
+  tex.wrapS=tex.wrapT=THREE.RepeatWrapping;
+  tex.magFilter=THREE.LinearFilter;
+  tex.minFilter=THREE.LinearMipmapLinearFilter;
+  tex.needsUpdate=true;
+  tex.generateMipmaps=true;
+  return tex;
+}
+const noiseTex=makeNoiseTexture(512); // high res for full detail
+
 const rock=new THREE.MeshStandardMaterial({color:0x776a72,roughness:0.93});
 rock.onBeforeCompile=shader=>{
+  shader.uniforms.noiseMap={value:noiseTex};
   shader.vertexShader='varying vec3 shaftRock;\n'+shader.vertexShader.replace('#include <begin_vertex>',`
     #include <begin_vertex>
     vec4 shaftPoint=vec4(position,1.0);
@@ -12,17 +37,16 @@ rock.onBeforeCompile=shader=>{
     #endif
     shaftRock=(modelMatrix*shaftPoint).xyz;`);
   shader.fragmentShader=`varying vec3 shaftRock;
-    float shaftHash(vec3 p){return fract(sin(dot(p,vec3(127.1,311.7,74.7)))*43758.5453);}
+    uniform sampler2D noiseMap;
     float shaftNoise(vec3 p){
-      vec3 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);
-      return mix(mix(mix(shaftHash(i),shaftHash(i+vec3(1,0,0)),f.x),
-                     mix(shaftHash(i+vec3(0,1,0)),shaftHash(i+vec3(1,1,0)),f.x),f.y),
-                 mix(mix(shaftHash(i+vec3(0,0,1)),shaftHash(i+vec3(1,0,1)),f.x),
-                     mix(shaftHash(i+vec3(0,1,1)),shaftHash(i+vec3(1,1,1)),f.x),f.y),f.z);
+      // Project world position onto 2D noise plane (preserves the original layered look)
+      vec2 uv=p.xz*0.15+p.y*0.07;
+      return texture2D(noiseMap,uv).r;
     }\n`+shader.fragmentShader.replace('#include <color_fragment>',`
     #include <color_fragment>
     vec3 p=shaftRock;
-    float broad=shaftNoise(p*1.45),grain=shaftNoise(p*21.0);
+    float broad=shaftNoise(p*1.45);
+    float grain=shaftNoise(p*21.0);
     float bands=p.y*3.0+p.z*0.82-p.x*0.48+1.42*broad;
     float strata=smoothstep(-0.6,0.8,sin(bands));
     float seam=pow(max(0.0,sin(bands*0.58)),19.0)*smoothstep(0.31,0.61,broad);
@@ -30,6 +54,7 @@ rock.onBeforeCompile=shader=>{
     diffuseColor.rgb+=vec3(0.108,0.080,0.092)*seam;
   `);
 };
+rock.customProgramCacheKey=()=>'rock-noise-tex';
 const timber=new THREE.MeshStandardMaterial({color:0x78503b,roughness:0.87});
 const steel=new THREE.MeshStandardMaterial({color:0x424454,metalness:0.54,roughness:0.57});
 const lampMaterial=new THREE.MeshBasicMaterial({color:0xffc280});
