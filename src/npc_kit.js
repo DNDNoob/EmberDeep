@@ -59,12 +59,63 @@ export function chain(x, y, z, pts, r0, r1, k) {
   return d;
 }
 
+/* ---------- a younger face. Opt-in (p.face === 'soft'). The default head() is the Keeper and must stay put. ---------- */
+// The eyes are a window onto the eyeball, not a pit, and the mouth is a lip crease, not a hole, so a torch does not turn her into a skull.
+function headSoft(p) {
+  const age = p.age ?? 0.12, jaw = p.jaw ?? 0.96, brow = p.brow ?? 0.35, chin = p.chin ?? 1;
+  const nose = {len: 1, width: 0.82, droop: 0, bulb: 0.82, ...(p.nose || {})};
+  const cheek = {bone: 1, sag: 0, ...(p.cheek || {})};
+  const er0 = ANTHRO.eyeball / 2 * HEAD_H, ez0 = ANTHRO.interpupillary / 2 * HEAD_H;
+  const E = {x: 0.074, y: 0.096, z: ez0 * 0.96, r: er0, ...(p.eye || {})};
+  const neck = p.neck ?? 1;
+  const ex = E.x, ey = E.y, ez = E.z, er = E.r;
+  const nb = [ex + 0.004, ey + 0.010];
+  const nt = [ex + 0.006 + 0.016 * nose.len, ey - 0.032 * nose.len - 0.004 * nose.droop];
+  const mouthX = nt[0] - 0.010, mouthY = nt[1] - 0.012;
+  // round cranium plus a short wide face. The chin is its own soft ball so the jaw does not taper to a spike.
+  const skull = (x, y, z) => smin(sdEllipsoid(x + 0.004, y - 0.108, z, 0.076, 0.078, 0.072), sdEllipsoid(x - 0.016, y - 0.050, z, 0.056, 0.064, 0.064 * jaw), 0.026);
+  const jawSdf = (x, y, z) => smin(skull(x, y, z), sdEllipsoid(x - (mouthX - 0.002), y - (mouthY - 0.020 * chin), z, 0.018, 0.016 * chin, 0.026 * jaw), 0.018);
+  function sdf(x, y, z) {
+    const zs = Math.abs(z);
+    let d = jawSdf(x, y, z);
+    d = smin(d, sdCapsule(x, y, zs, ex + 0.008, ey + 0.020, 0.004, ex - 0.002, ey + 0.016, ez + 0.020, 0.0034 * (0.65 + brow)), 0.006);
+    d = smin(d, sdSphere(x - (ex - 0.006), y - (ey - 0.022), zs - (ez + 0.012), 0.020 * cheek.bone), 0.016);
+    d = smin(d, sdSphere(x - (ex - 0.001), y - ey, zs - ez, er * 1.15), 0.010);
+    d = smin(d, sdRoundCone(x, y, zs, nb[0], nb[1], 0, nt[0] - 0.001, nt[1] + 0.005, 0, 0.0044 * nose.width, 0.0066 * nose.width), 0.006);
+    d = smin(d, sdSphere(x - nt[0], y - (nt[1] - 0.001), zs, 0.0074 * nose.bulb), 0.006);
+    d = smin(d, sdSphere(x - (nt[0] - 0.005), y - (nt[1] - 0.001), zs - 0.0082 * nose.width, 0.0052 * nose.width), 0.005);
+    d = ssub(d, sdCapsule(x, y, zs, nt[0] - 0.003, nt[1] - 0.001, 0.0016, mouthX + 0.001, mouthY + 0.007, 0, 0.0014), 0.0025);
+    d = smin(d, sdEllipsoid(x - (mouthX + 0.003), y - (mouthY + 0.0055), z, 0.008, 0.0050, 0.020), 0.007);
+    d = smin(d, sdEllipsoid(x - (mouthX + 0.005), y - (mouthY + 0.0072), zs - 0.007, 0.0036, 0.0028, 0.006), 0.004);
+    d = smin(d, sdEllipsoid(x - (mouthX + 0.004), y - (mouthY - 0.0048), z, 0.009, 0.0062, 0.018), 0.006);
+    d = ssub(d, sdEllipsoid(x - (mouthX + 0.002), y - mouthY, z, 0.003, 0.0010, 0.015), 0.0014);
+    d = smin(d, sdEllipsoid(x - (mouthX - 0.001), y - (mouthY - 0.018 * chin), z, 0.014, 0.013, 0.018), 0.012);
+    d = smin(d, sdRoundCone(x, y, z, 0, 0.010, 0, -0.002, -0.058, 0, 0.030 * neck, 0.038 * neck), 0.016);
+    d = smin(d, sdEllipsoid(x - (ex + 0.002), y - (ey - er * 0.55), zs - ez, er * 0.50, er * 0.14, er * 0.90), 0.004);
+    d = ssub(d, sdEllipsoid(x - (ex + 0.005), y - (ey + 0.001), zs - ez, er * 0.62, er * 0.70, er * 0.95), 0.005);
+    const ripple = 0.00022 * fbm(x * 26, y * 26, z * 26, 2);
+    const inEye = Math.exp(-((x - ex) ** 2 * 8000 + (y - ey) ** 2 * 9000 + (zs - ez) ** 2 * 7000));
+    return d + ripple * (1 - inEye);
+  }
+  const paint = (x, y, z, o) => {
+    const zs = Math.abs(z);
+    o[0] = cl(0.72 * gauss(x, y, zs, [mouthX + 0.003, mouthY, 0], 0.016) + 0.28 * gauss(x, y, zs, [ex - 0.004, ey - 0.028, ez + 0.006], 0.018) + 0.16 * gauss(x, y, zs, [nt[0], nt[1], 0], 0.012), 0, 1);
+    o[1] = 0.04 * age;
+  };
+  return {
+    sdf, skull, jawSdf, paint, bounds: [-0.10, -0.08, -0.100, 0.130, 0.200, 0.100], cell: p.cell || 0.0024, tris: p.tris || [2200, 880],
+    cull: (x, y) => y < -0.036, project: 0.002, ao: 0.006, aoFloor: 0.64,
+    eye: E, noseTip: nt, noseRoot: nb, mouth: [mouthX, mouthY, 0], age
+  };
+}
+
 /* =====================================================================================
    HEAD  (frame H: origin at the top of the neck; the old face() layout, head centre ~ (0.005,0.085,0))
    ===================================================================================== */
 // p: {age 0..1, jaw 0.8..1.2 (width), chin, nose:{len, width, droop, bulb}, brow 0..1.5 (heaviness),
 //     cheek:{bone, sag}, ears (size), eye:{x,y,z (centre, z = half spacing), r}, skull:[rx,ry,rz], neck}
 export function head(p = {}) {
+  if (p.face === 'soft') return headSoft(p);
   const age = p.age ?? 0.8, jaw = p.jaw ?? 1, brow = p.brow ?? 1, ears = p.ears ?? 1, chin = p.chin ?? 1;
   const nose = {len: 1, width: 1, droop: 0.5, bulb: 1, ...(p.nose || {})}, cheek = {bone: 1, sag: age, ...(p.cheek || {})};
   const E = {x: 0.0735, y: 0.088, z: ANTHRO.interpupillary / 2 * HEAD_H, r: ANTHRO.eyeball / 2 * HEAD_H, ...(p.eye || {})};   // eyeball 24 mm, IPD 64 mm (ANTHRO)
@@ -212,9 +263,10 @@ export function hairCap(H, p = {}) {
       d = smax(d, 0.07 - Math.hypot(x - 0.005, (y - 0.08) * 0.8) - (Math.abs(z) < 0.06 ? 0.06 : 0), 0.001); // clear the ears
     } else {
       // Scalp shell stopped short of the eyes. Bangs are a thick volume of their own, so the hairline cannot shred into holes.
-      d = smax(d, x - 0.05, 0.012);
+      d = smax(d, x - (p.front ?? 0.05), 0.012);
       d = smax(d, 0.02 - y, 0.012);
-      d = smin(d, sdEllipsoid(x - 0.055, y - (E.y + 0.032), z, 0.034, 0.022, 0.06), 0.014);
+      const bang = p.bangs || {x: 0.055, y: E.y + 0.032, rx: 0.034, ry: 0.022, rz: 0.06};
+      d = smin(d, sdEllipsoid(x - bang.x, y - bang.y, z, bang.rx, bang.ry, bang.rz), 0.014);
       d = smin(d, sdRoundCone(x, y, z, -0.015, 0.13, 0, -0.05, -0.01 - hang, 0, thick + 0.01, 0.014), 0.016);
       d = smin(d, sdRoundCone(x, y, z, -0.005, E.y + 0.015, 0.072, -0.02, -0.015, 0.042, 0.02, 0.006), 0.012);
       d = smin(d, sdRoundCone(x, y, z, -0.005, E.y + 0.015, -0.072, -0.02, -0.015, -0.042, 0.02, 0.006), 0.012);
