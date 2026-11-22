@@ -10,7 +10,7 @@ const portals=[
   {id:'mobs',x:6.55,name:'Mob Archive',color:0xf3b29b},
   {id:'glitches',x:15.35,name:'Glitch Archive',color:0xd9b3f9}
 ];
-const wallZ=-7,eye=1.62,floorMin=8.2,floorMax=14;
+const wallZ=-7,eye=1.62,floorMin=8.2,floorMax=17;
 const liftGateZ=-10.75,landingEntranceZ=landingMazeZ-0.8,liftExitHalfWidth=0.47;
 const terminalWidth=4.5,terminalHeight=2.98;
 const screenWidth=900,screenHeight=596;
@@ -273,7 +273,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     if(ride||liftAway||!onLiftPlatform(walker.b))return false;
     const solo=!group?.follow;
     ride={depth,travel:0,extra:0,speed:0,seed,group,task:prepareLanding(seed,depth),docked:false,gate:0,onLanding:false,
-      count:solo?3:0,countAt:0,warm:1,calm:solo?0.45:0,shown:!solo,stretch:new Float64Array(depth+1)};
+      count:solo?3:0,countAt:0,warm:1,calm:solo?0.45:0,shown:!solo,stretch:new Float64Array(depth+1),settle:new Uint8Array(depth+1)};
     cage.visible=true;
     if(!solo)well.visible=true;
     liftLabel.setLabel(ride.count?['3','FLOOR '+depth]:['FLOOR '+depth,'PREPARING MAZE'],true,0);
@@ -312,9 +312,10 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       return;
     }
     const before=ride.task?ride.task.progress:1;
+    if(ride.settle)for(let i=1;i<ride.settle.length;i++)if(ride.settle[i]===2)ride.settle[i]=1;
     if(!following&&ride.calm>0)ride.calm=Math.max(0,ride.calm-dt);
     else if(ride.task&&!ride.task.ready&&ride.task.progress<0.8)ride.task.advance();
-    else if(ride.warm<=ride.depth)landingGlimpse(ride.seed,ride.warm++);
+    else if(ride.warm<=ride.depth){landingGlimpse(ride.seed,ride.warm);if(ride.settle)ride.settle[ride.warm]=2;ride.warm++}
     else if(ride.task&&!ride.task.ready&&ride.task.progress===before)ride.task.advance();
     let arriving;
     if(following){
@@ -333,21 +334,23 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       let next=1,acc=0;
       while(next<=ride.depth&&acc+floorMin+ride.stretch[next]<=ride.travel+0.04){acc+=floorMin+ride.stretch[next];next++}
       next=Math.min(next,ride.depth);
-      const loaded=next<ride.depth?ride.warm>next&&!!landingGlimpse(ride.seed,next,false):!!(ride.task&&ride.task.ready&&(!ride.group||ride.group.ready()));
-      const open=floorMax-floorMin-ride.stretch[next];
-      const remaining=Math.max(0,destination-ride.travel);
-      const hold=!loaded&&next===ride.depth&&open<=0.001;
-      const desired=hold?0:!loaded&&open>0.001?cruise:Math.min(cruise,Math.sqrt(2*1.6*remaining));
+      if(next<ride.depth&&ride.settle[next]===0&&landingGlimpse(ride.seed,next,false))ride.settle[next]=1;
+      const loaded=next<ride.depth?ride.settle[next]===1:!!(ride.task&&ride.task.ready&&(!ride.group||ride.group.ready()));
+      const open=Math.max(0,floorMax-floorMin-ride.stretch[next]);
+      const closing=loaded||open<=0;
+      const desired=closing?Math.min(cruise,Math.sqrt(2*1.6*Math.max(0,destination-ride.travel))):cruise;
       const prev=ride.speed;
       ride.speed=prev+THREE.MathUtils.clamp(desired-prev,-2.1*step,2.1*step);
       const movement=Math.max(0,(prev+ride.speed)*0.5*step);
-      if(!loaded&&open>0.001){
-        const add=Math.min(open,movement);
-        ride.stretch[next]+=add;
-        ride.travel+=add;
-      }else ride.travel=Math.min(destination,ride.travel+movement);
-      arriving=loaded&&next===ride.depth&&destination-ride.travel<=0.03;
-      if(arriving)ride.travel=floorDist(ride.depth);
+      const hitch=Math.max(0,dt-0.028);
+      let add=0;
+      if(!loaded&&open>0)add+=Math.min(open,movement+step*10);
+      if(hitch>0&&open>add)add+=Math.min(open-add,hitch*48);
+      if(add>0){ride.stretch[next]+=add;ride.travel+=add}
+      else ride.travel=Math.min(floorDist(ride.depth),ride.travel+movement);
+      const destNow=floorDist(ride.depth);
+      arriving=loaded&&next===ride.depth&&destNow-ride.travel<=0.03;
+      if(arriving)ride.travel=destNow;
     }
     let passed=0,cursor=0;
     while(passed<ride.depth&&cursor+floorMin+ride.stretch[passed+1]<=ride.travel+0.2){cursor+=floorMin+ride.stretch[passed+1];passed++}
