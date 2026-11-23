@@ -158,10 +158,10 @@ const ILSE_LEGS = [
 ];
 const WEAR_ILSE = K.wearPaint({vary: 0.18, freq: 7, dirt: 0.35, dirtY: 0.22, seed: 17});
 export const ILSE = {
-  id: 'ilse-v7', seed: 7701,
-  proportions: {headScale: 0.58, frames: ['H', 'J'], height: 0.96},
+  id: 'ilse-v8', seed: 7701,
+  proportions: {headScale: 0.56, frames: ['H', 'J'], height: 0.96},
   palette: {
-    skin: [0.90, 0.66, 0.52], skinDeep: [0.70, 0.40, 0.34],
+    skin: [0.86, 0.64, 0.52], skinDeep: [0.58, 0.34, 0.30],
     coat: [0.07, 0.34, 0.36], coatDeep: [0.03, 0.16, 0.18],
     cream: [0.86, 0.78, 0.62], creamDeep: [0.55, 0.46, 0.32],
     cloth: [0.16, 0.13, 0.11], clothDeep: [0.08, 0.06, 0.05],
@@ -169,9 +169,9 @@ export const ILSE = {
     hair: [0.48, 0.16, 0.06], hairDeep: [0.20, 0.06, 0.03],
     brass: [0.72, 0.52, 0.18], brassDeep: [0.40, 0.26, 0.08],
     nail: [0.92, 0.72, 0.64], nailDeep: [0.78, 0.52, 0.48],
-    sclera: [0.96, 0.93, 0.88], iris: [0.24, 0.50, 0.28], pupil: [0.04, 0.03, 0.025]
+    sclera: [0.96, 0.93, 0.88], iris: [0.18, 0.45, 0.26], pupil: [0.03, 0.02, 0.015]
   },
-  rig: {waist: [0, 0.48, 0], lean: 0.05, neck: [0.004, 0.37, 0], jaw: 0.003, headTilt: -0.06, drape: {follow: 0.2, push: 0.006}},
+  rig: {waist: [0, 0.48, 0], lean: 0.05, neck: [0.004, 0.37, 0], jaw: 0.003, headTilt: 0, drape: {follow: 0.2, push: 0.006}},
   parts: [
     {part: 'trousers', frame: 'B', mat: 'cloth', col: 'cloth', col2: 'clothDeep'},
     {part: 'boots', frame: 'B', mat: 'cloth', col: 'boot', col2: 'bootDeep'},
@@ -203,11 +203,11 @@ export const ILSE = {
   ],
   eyes: {frame: 'H', sclera: 'sclera', iris: 'iris', pupil: 'pupil', lid: 'skin', lid2: 'skinDeep'},
   build() {
-    const H = K.head({face: 'soft', age: 0.12, brow: 0.35, jaw: 0.96, chin: 1.02, neck: 1, nose: {len: 1, width: 0.82, droop: 0, bulb: 0.82}, cheek: {bone: 1}, tris: [2400, 980, 250], cell: 0.0023});
+    const H = K.head({age: 0.08, brow: 0.5, jaw: 0.92, chin: 0.94, neck: 0.95, calm: true, ao: 0.005, aoFloor: 0.72, nose: {len: 0.9, width: 0.8, droop: 0.06, bulb: 0.78}, cheek: {bone: 0.85, sag: 0}, tris: [2000, 820, 220], cell: 0.0028});
     const B = K.body(this.body), D = K.dress(B, this.garments);
     const legs = K.legwear({legs: ILSE_LEGS, ease: 0.004, bootEase: 0.007, bootRise: 0.16, seat: {c: [0.01, 0.44, 0], r: [0.05, 0.035, 0.07]}, tris: [640, 260, 80], cell: 0.0048, bootTris: [680, 260, 70], bootCell: 0.0032, wear: WEAR_ILSE});
-    const hcap = K.hairCap(H, {full: true, hang: 0.04, thick: 0.011, front: 0.042, bangs: {x: 0.062, y: H.eye.y + 0.048, rx: 0.016, ry: 0.011, rz: 0.046}, tris: [860, 340, 90], cell: 0.0034});
-    const brw = K.brows(H, {size: 0.62, droop: 0.12, lift: 0.012});
+    const hcap = K.hairCap(H, {full: true, hang: 0.05, thick: 0.016, tris: [860, 340, 90], cell: 0.0034});
+    const brw = K.brows(H, {size: 0.7, droop: 0.15, lift: 0.006});
     const grip = K.hand({pose: 'grip', side: -1, gripR: 0.012, age: 0.1, size: 0.9, tris: [800, 340, 90], cell: 0.0019});
     const hip = K.hand({pose: 'rest', side: 1, age: 0.1, size: 0.9, curl: 2.1, tris: [800, 340, 90], cell: 0.0019});
     const hideWrist = sp => { sp.cull = (x, y, z) => x < -0.016; return sp; };
@@ -216,12 +216,12 @@ export const ILSE = {
     const tie = {sdf: (x, y, z) => sdEllipsoid(x + 0.055, y - 0.1, z, 0.01, 0.012, 0.016), bounds: [-0.08, 0.08, -0.025, -0.03, 0.125, 0.025], cell: 0.0026, tris: [80, 36, 14], paint: (x, y, z, o) => { o[0] = 0.2; }};
     return {
       parts: {trousers: legs.trousers, boots: legs.boots, bootCuff: legs.cuffs, ...Drest, belt: sash,
-        head: H, ears: K.ears(H, {size: 0.92, y: 0.078, tris: [480, 220, 60], cell: 0.0017}), hair: hcap, hairShells: hcap.shells,
+        head: H, ears: K.ears(H, {size: 0.72, tris: [480, 220, 60], cell: 0.0017}), hair: hcap, hairShells: hcap.shells,
         tail: K.hairTail(H, {pts: [[-0.05, 0.105, 0], [-0.072, 0.03, 0.01], [-0.088, -0.07, 0.016], [-0.092, -0.17, 0.01]], r0: 0.022, r1: 0.007, tris: [320, 140, 40], cell: 0.0038}),
         tie, brows: brw, browCards: {cardsDirect: brw.cardsPart.cardsDirect},
         neck: K.neck(H, {tris: [240, 110, 36], cell: 0.0036, neck: 0.95}),
         mapHand: hideWrist(grip), hipHand: hideWrist(hip)},
-      eyes: {r: H.eye.r, iris: 0.46, open: 22, low: -20, arch: 16, lidT: 0.0016},
+      eyes: {r: H.eye.r, iris: 0.55, open: 12, low: -12, arch: 10, lidT: 0.0018},
       anchors: {
         eye: [H.eye.x, H.eye.y, H.eye.z],
         mapAt: e0.at, mapR: K.mul3(K.rotX(Math.PI / 2), K.rotY(-grip.grip.alpha)), scroll: grip.grip,

@@ -60,51 +60,44 @@ export function chain(x, y, z, pts, r0, r1, k) {
 }
 
 /* ---------- a younger face. Opt-in (p.face === 'soft'). The default head() is the Keeper and must stay put. ---------- */
-// The eyes are a window onto the eyeball, not a pit, and the mouth is a lip crease, not a hole, so a torch does not turn her into a skull.
+// Same layout as the Keeper (that one reads as a person). What made Ilse a skull or a puppet is left out:
+// no brow cave, no dark ring around the lids, no bags, and the mouth is a crease in the lips, not a hole.
 function headSoft(p) {
-  const age = p.age ?? 0.12, jaw = p.jaw ?? 0.96, brow = p.brow ?? 0.35, chin = p.chin ?? 1;
-  const nose = {len: 1, width: 0.82, droop: 0, bulb: 0.82, ...(p.nose || {})};
-  const cheek = {bone: 1, sag: 0, ...(p.cheek || {})};
-  const er0 = ANTHRO.eyeball / 2 * HEAD_H, ez0 = ANTHRO.interpupillary / 2 * HEAD_H;
-  const E = {x: 0.074, y: 0.096, z: ez0 * 0.96, r: er0, ...(p.eye || {})};
-  const neck = p.neck ?? 1;
+  const age = p.age ?? 0.05, jaw = p.jaw ?? 0.94, brow = p.brow ?? 0.45, chin = p.chin ?? 0.96;
+  const nose = {len: 0.85, width: 0.75, droop: 0.05, bulb: 0.7, ...(p.nose || {})};
+  const cheek = {bone: 0.75, sag: 0, ...(p.cheek || {})};
+  const E = {x: 0.0735, y: 0.088, z: ANTHRO.interpupillary / 2 * HEAD_H, r: ANTHRO.eyeball / 2 * HEAD_H, ...(p.eye || {})};
+  const sk = p.skull || [0.080, 0.086, 0.072], neck = p.neck ?? 0.95;
+  const nb = [E.x + 0.010, E.y + 0.006];
+  const nt = [E.x + 0.010 + 0.018 * nose.len, E.y - 0.032 * nose.len - 0.003 * nose.droop];
   const ex = E.x, ey = E.y, ez = E.z, er = E.r;
-  const nb = [ex + 0.004, ey + 0.010];
-  const nt = [ex + 0.006 + 0.016 * nose.len, ey - 0.032 * nose.len - 0.004 * nose.droop];
-  const mouthX = nt[0] - 0.010, mouthY = nt[1] - 0.012;
-  // round cranium plus a short wide face. The chin is its own soft ball so the jaw does not taper to a spike.
-  const skull = (x, y, z) => smin(sdEllipsoid(x + 0.004, y - 0.108, z, 0.076, 0.078, 0.072), sdEllipsoid(x - 0.016, y - 0.050, z, 0.056, 0.064, 0.064 * jaw), 0.026);
-  const jawSdf = (x, y, z) => smin(skull(x, y, z), sdEllipsoid(x - (mouthX - 0.002), y - (mouthY - 0.020 * chin), z, 0.018, 0.016 * chin, 0.026 * jaw), 0.018);
+  const mouthY = nt[1] - 0.022, mouthX = nt[0] - 0.012;
+  const skull = (x, y, z) => smin(sdEllipsoid(x + 0.004, y - 0.1, z, sk[0], sk[1], sk[2]), sdEllipsoid(x - 0.030, y - 0.055, z, 0.052, 0.058, 0.056 * jaw), 0.032);
+  const jawSdf = (x, y, z) => smin(skull(x, y, z), sdEllipsoid(x - (mouthX - 0.004), y - (mouthY - 0.008 * chin), z, 0.012, 0.012 * chin, 0.020 * jaw), 0.014);
   function sdf(x, y, z) {
     const zs = Math.abs(z);
     let d = jawSdf(x, y, z);
-    d = smin(d, sdCapsule(x, y, zs, ex + 0.008, ey + 0.020, 0.004, ex - 0.002, ey + 0.016, ez + 0.020, 0.0034 * (0.65 + brow)), 0.006);
-    d = smin(d, sdSphere(x - (ex - 0.006), y - (ey - 0.022), zs - (ez + 0.012), 0.020 * cheek.bone), 0.016);
-    d = smin(d, sdSphere(x - (ex - 0.001), y - ey, zs - ez, er * 1.15), 0.010);
-    d = smin(d, sdRoundCone(x, y, zs, nb[0], nb[1], 0, nt[0] - 0.001, nt[1] + 0.005, 0, 0.0044 * nose.width, 0.0066 * nose.width), 0.006);
-    d = smin(d, sdSphere(x - nt[0], y - (nt[1] - 0.001), zs, 0.0074 * nose.bulb), 0.006);
-    d = smin(d, sdSphere(x - (nt[0] - 0.005), y - (nt[1] - 0.001), zs - 0.0082 * nose.width, 0.0052 * nose.width), 0.005);
-    d = ssub(d, sdCapsule(x, y, zs, nt[0] - 0.003, nt[1] - 0.001, 0.0016, mouthX + 0.001, mouthY + 0.007, 0, 0.0014), 0.0025);
-    d = smin(d, sdEllipsoid(x - (mouthX + 0.003), y - (mouthY + 0.0055), z, 0.008, 0.0050, 0.020), 0.007);
-    d = smin(d, sdEllipsoid(x - (mouthX + 0.005), y - (mouthY + 0.0072), zs - 0.007, 0.0036, 0.0028, 0.006), 0.004);
-    d = smin(d, sdEllipsoid(x - (mouthX + 0.004), y - (mouthY - 0.0048), z, 0.009, 0.0062, 0.018), 0.006);
-    d = ssub(d, sdEllipsoid(x - (mouthX + 0.002), y - mouthY, z, 0.003, 0.0010, 0.015), 0.0014);
-    d = smin(d, sdEllipsoid(x - (mouthX - 0.001), y - (mouthY - 0.018 * chin), z, 0.014, 0.013, 0.018), 0.012);
-    d = smin(d, sdRoundCone(x, y, z, 0, 0.010, 0, -0.002, -0.058, 0, 0.030 * neck, 0.038 * neck), 0.016);
-    d = smin(d, sdEllipsoid(x - (ex + 0.002), y - (ey - er * 0.55), zs - ez, er * 0.50, er * 0.14, er * 0.90), 0.004);
-    d = ssub(d, sdEllipsoid(x - (ex + 0.005), y - (ey + 0.001), zs - ez, er * 0.62, er * 0.70, er * 0.95), 0.005);
-    const ripple = 0.00022 * fbm(x * 26, y * 26, z * 26, 2);
-    const inEye = Math.exp(-((x - ex) ** 2 * 8000 + (y - ey) ** 2 * 9000 + (zs - ez) ** 2 * 7000));
-    return d + ripple * (1 - inEye);
+    d = smin(d, sdCapsule(x, y, zs, ex + 0.008, ey + 0.014, 0.006, ex - 0.002, ey + 0.013, ez + 0.016, 0.0036 * (0.6 + brow)), 0.007);
+    d = smin(d, sdSphere(x - (ex - 0.010), y - (ey - 0.018), zs - (ez + 0.012), 0.014 * cheek.bone), 0.016);
+    d = smin(d, sdRoundCone(x, y, zs, nb[0], nb[1], 0, nt[0] - 0.002, nt[1] + 0.004, 0, 0.0052 * nose.width, 0.0074 * nose.width), 0.006);
+    d = smin(d, sdSphere(x - nt[0], y - nt[1], zs, 0.0082 * nose.bulb), 0.006);
+    d = smin(d, sdSphere(x - (nt[0] - 0.007), y - (nt[1] - 0.001), zs - 0.0075 * nose.width, 0.0048 * nose.width), 0.005);
+    d = smin(d, sdEllipsoid(x - (mouthX - 0.001), y - (mouthY + 0.0048), z, 0.007, 0.0048, 0.018), 0.008);
+    d = smin(d, sdEllipsoid(x - (mouthX - 0.001), y - (mouthY - 0.0046), z, 0.008, 0.0056, 0.017), 0.008);
+    d = ssub(d, sdEllipsoid(x - mouthX, y - mouthY, z, 0.0032, 0.0016, 0.014), 0.0014);
+    d = smin(d, sdRoundCone(x, y, z, -0.002, 0.016, 0, -0.006, -0.062, 0, 0.032 * neck, 0.038 * neck), 0.022);
+    d = ssub(d, sdSphere(x - ex, y - ey, zs - ez, er * 1.02), 0.003);
+    d = smin(d, sdEllipsoid(x - (ex + 0.001), y - (ey - er * 0.85), zs - ez, er * 0.7, er * 0.22, er * 1.05), 0.003);
+    return d + 0.0002 * fbm(x * 32, y * 32, z * 32, 2);
   }
   const paint = (x, y, z, o) => {
     const zs = Math.abs(z);
-    o[0] = cl(0.72 * gauss(x, y, zs, [mouthX + 0.003, mouthY, 0], 0.016) + 0.28 * gauss(x, y, zs, [ex - 0.004, ey - 0.028, ez + 0.006], 0.018) + 0.16 * gauss(x, y, zs, [nt[0], nt[1], 0], 0.012), 0, 1);
-    o[1] = 0.04 * age;
+    o[0] = cl(0.55 * gauss(x, y, zs, [mouthX, mouthY, 0], 0.014) + 0.22 * gauss(x, y, zs, [ex - 0.004, ey - 0.026, ez + 0.008], 0.016) + 0.12 * gauss(x, y, zs, [nt[0], nt[1], 0], 0.01), 0, 1);
+    o[1] = 0.05 * age;
   };
   return {
-    sdf, skull, jawSdf, paint, bounds: [-0.10, -0.08, -0.100, 0.130, 0.200, 0.100], cell: p.cell || 0.0024, tris: p.tris || [2200, 880],
-    cull: (x, y) => y < -0.036, project: 0.002, ao: 0.006, aoFloor: 0.64,
+    sdf, skull, jawSdf, paint, bounds: [-0.11, -0.09, -0.10, 0.125, 0.195, 0.10], cell: p.cell || 0.0026, tris: p.tris || [2000, 800],
+    cull: (x, y) => y < -0.04, project: 0.0022, ao: 0.005, aoFloor: 0.7,
     eye: E, noseTip: nt, noseRoot: nb, mouth: [mouthX, mouthY, 0], age
   };
 }
@@ -151,9 +144,11 @@ export function head(p = {}) {
     // carve: eye sockets (the eyeball fills them), orbital hollow, temples, nasolabial folds, under-eye bags
     d = ssub(d, sdSphere(x - ex, y - ey, zs - ez, er * 1.04), 0.003);
     d = smin(d, sdEllipsoid(x - (ex + 0.002), y - (ey - er * 1.02), zs - ez, er * 0.9, er * 0.32, er * 1.15), 0.003); // lower orbital rim closes the socket under the lid
-    d = ssub(d, sdEllipsoid(x - (ex + 0.013), y - (ey + 0.002), zs - (ez - 0.001), 0.004, 0.007, 0.0145), 0.008);   // shallow hollow round the lids (was a deep 6 mm pit: the dark ring)
-    d = ssub(d, sdSphere(x - 0.04, y - (ey + 0.01), zs - 0.082, 0.014), 0.012 * (0.5 + age));
-    if (age > 0) {
+    if (!p.calm) {
+      d = ssub(d, sdEllipsoid(x - (ex + 0.013), y - (ey + 0.002), zs - (ez - 0.001), 0.004, 0.007, 0.0145), 0.008);   // hollow round the lids. Left off for a young face: it reads as a dark ring.
+      d = ssub(d, sdSphere(x - 0.04, y - (ey + 0.01), zs - 0.082, 0.014), 0.012 * (0.5 + age));
+    }
+    if (age > 0 && !p.calm) {
       // fold from the nose wing down past the mouth corner
       d = ssub(d, sdCapsule(x, y, zs, nt[0] - 0.011, nt[1] - 0.004, 0.019 * nose.width, mouthX - 0.004, mouthY - 0.012, 0.026, 0.0028 * age), 0.004);
       // a soft bag under each eye, with the tear trough above it
@@ -165,14 +160,14 @@ export function head(p = {}) {
   const paint = (x, y, z, o) => {
     const zs = Math.abs(z);
     o[0] = cl(0.8 * gauss(x, y, zs, [nt[0], nt[1], 0], 0.016) + 0.45 * gauss(x, y, zs, [ex + 0.006, ey - 0.03, ez + 0.012], 0.017) +
-      0.2 * gauss(x, y, zs, [ex + 0.006, ey, ez], 0.011) + 0.5 * gauss(x, y, zs, [ex + 0.004, ey - 0.002, ez - 0.0135], 0.0035) + 0.5 * gauss(x, y, zs, [mouthX, mouthY, 0], 0.01) + 0.35 * gauss(x, y, zs, [0.006, ey + 0.012, 0.085], 0.012), 0, 1);
+      (p.calm ? 0 : 0.2 * gauss(x, y, zs, [ex + 0.006, ey, ez], 0.011)) + 0.5 * gauss(x, y, zs, [ex + 0.004, ey - 0.002, ez - 0.0135], 0.0035) + 0.5 * gauss(x, y, zs, [mouthX, mouthY, 0], 0.01) + 0.35 * gauss(x, y, zs, [0.006, ey + 0.012, 0.085], 0.012), 0, 1);
     // detail mask: forehead lines, crow's feet, under the eyes
     o[1] = cl(age * (smoothstep(ey + 0.022, ey + 0.035, y) * smoothstep(0.05, 0.075, x) * smoothstep(0.06, 0.03, zs) +
       gauss(x, y, zs, [ex - 0.002, ey, ez + 0.018], 0.01) + 0.7 * gauss(x, y, zs, [ex + 0.008, ey - 0.016, ez], 0.009)), 0, 1);
   };
   return {
     sdf, skull, jawSdf, paint, bounds: [-0.11, -0.1, -0.11, 0.135, 0.2, 0.11], cell: p.cell || 0.0056, tris: p.tris || [1250, 460],
-    cull: (x, y) => y < -0.045, project: 0.003,
+    cull: (x, y) => y < -0.045, project: 0.003, ...(p.aoFloor != null ? {ao: p.ao ?? 0.006, aoFloor: p.aoFloor} : {}),
     eye: E, noseTip: nt, noseRoot: nb, mouth: [mouthX, mouthY, 0], age
   };
 }
