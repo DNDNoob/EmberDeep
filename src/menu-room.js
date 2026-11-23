@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import {bobY, createRoomWalker, lookBy, lookStep} from './movement.js';
 import {createArchiveHall, worldSign} from './archive-hall.js';
 import {buildAsteroidLobby} from './asteroid-lobby.js';
+import {createKeplerOrrery} from './kepler-orrery.js';
 import {createMineLanding,createMineRockGap,createShaftHead,landingMazeZ} from './mine-shaft.js';
 
 const portals=[
@@ -40,6 +41,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   let sharedSettings=null;
   let sharedTexture=null,defaultSettingsTexture=null;
   let sharedLift=null,liftAway=false;
+  let orrery;
 
   function box(parent,mat,x,y,z,w,h,d){
     const mesh=new THREE.Mesh(cube,mat);
@@ -89,6 +91,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       const f=desk.f||1,d=f*(b.z-desk.z);
       if(Math.abs(b.x-desk.x)<2.48&&d>-0.45&&d<0.57)b.z=desk.z+f*0.57;
     }
+    orrery?.block(b);
   }});
 
   scene.add(new THREE.HemisphereLight(0xddd5f9,0x877075,1.22));
@@ -99,6 +102,8 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   box(lobby,dark,0,-0.19,3.97,41.1,0.35,21.94);
   box(lobby,stone,0,2.29,15.03,41.4,4.62,0.18);
   const skyMat=buildAsteroidLobby(lobby);
+  orrery=createKeplerOrrery();
+  lobby.add(orrery.group);
 
   const tiles=new THREE.InstancedMesh(cube,stone,680);
   const tile=new THREE.Object3D(),shade=new THREE.Color();
@@ -557,6 +562,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     }
     if(panel&&!(sharedVisible&&panel==='settings')&&!projectPanel(width,height,panel,stationForm))stationForm.style.visibility='hidden';
     if(!ride)for(const hall of galleries.values())hall.animate(time,camera.position);
+    orrery.animate(time);
     renderer.toneMappingExposure=exposure;renderer.setRenderTarget(null);renderer.render(scene,camera);
   }
   return {update,render,syncArchives,syncVisitors,watchLift,liftMode,setSharedLift,engageLift,reset,resetLift,
