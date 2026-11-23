@@ -24,7 +24,9 @@ function polar(a,e,period,phase,t){
   return [a*(1-e*Math.cos(E)),nu];
 }
 function flat(r,theta,tilt){
-  return new THREE.Vector3(r*Math.cos(theta),Math.sin(tilt)*r*0.22,r*Math.sin(theta));
+  // The disk stays on the wood. Bodies sit high enough that a tilted moon
+  // or the asteroid's belly never crosses the tabletop.
+  return new THREE.Vector3(r*Math.cos(theta),0.3+Math.sin(tilt)*r*0.22,r*Math.sin(theta));
 }
 
 function wire(parent,color,radius,sample){
