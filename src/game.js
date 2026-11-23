@@ -5028,9 +5028,13 @@ function step(now){
   return raw;
 }
 function frame(now){
+  try{frameBody(now)}catch(error){console.error(error)}
+  requestAnimationFrame(frame);
+}
+function frameBody(now){
   advanceLoading(now);
   const raw=step(now);
-  if(loading&&loading.index<loading.stages.length){requestAnimationFrame(frame);return}
+  if(loading&&loading.index<loading.stages.length)return;
   mpVoiceTick(Math.min(raw,0.1));chatTick();
   if(state==='play'&&!STUDIO&&!loading)adapt(raw);
   setHum();updateAmbience(Math.min(raw,0.1),{F,state,hold:GL.frz>0||!!GL.fall||P.away});
@@ -5047,7 +5051,6 @@ function frame(now){
     if(state!=='title'){drawHUD();if(state!=='room'&&!ROOMS.watching)drawMap()}
     mpTags();
   }
-  requestAnimationFrame(frame);
 }
 setInterval(()=>{
   if(!document.hidden)return;

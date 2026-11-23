@@ -182,8 +182,10 @@ export function createMineLanding({height,numberSign,sampleFloor}){
       }
     }
     cursor=end;
-    stones.instanceMatrix.needsUpdate=stones.instanceColor.needsUpdate=true;
-    minerals.instanceMatrix.needsUpdate=minerals.instanceColor.needsUpdate=true;
+    stones.instanceMatrix.needsUpdate=true;
+    if(stones.instanceColor)stones.instanceColor.needsUpdate=true;
+    minerals.instanceMatrix.needsUpdate=true;
+    if(minerals.instanceColor)minerals.instanceColor.needsUpdate=true;
     if(cursor<stoneN+mineralN)return true;
     lastKey=key;lastFloor=workFloor;
     plaque.setLabel(workFloor?['FLOOR '+depth,workFloor.name]:['L','ENTRANCE HALL']);
