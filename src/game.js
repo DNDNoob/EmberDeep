@@ -5446,8 +5446,10 @@ function buildGlimpseProto(depth,turn){
 function landingGlimpse(seed,depth,build=true){
   const key=seed+'#'+depth;
   const hit=glimpseCache.get(key);
-  if(hit||!build)return hit||null;
-  const proto=buildGlimpseProto(depth,hashStr(seed+'#mouth'+depth)%3);
+  if(hit)return hit;
+  const turn=hashStr(seed+'#mouth'+depth)%3;
+  if(!build&&!glimpseProto.has(glimpseSurf(depth,turn)))return null;
+  const proto=buildGlimpseProto(depth,turn);
   const group=new THREE.Group();
   group.name='Passing floor';group.add(proto.clone());group.userData.floor=proto.userData.floor;
   glimpseCache.set(key,group);

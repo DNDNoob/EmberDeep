@@ -318,7 +318,8 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       return;
     }
     if(ride.settle)for(let i=1;i<ride.settle.length;i++)if(ride.settle[i]===2)ride.settle[i]=1;
-    if(!following&&ride.count<=0&&ride.task&&!ride.task.ready)ride.task.advance();
+    if(!following&&ride.task&&!ride.task.ready)ride.task.advance();
+    else if(ride.warm<=ride.depth)landingGlimpse(ride.seed,ride.warm++,true);
     let arriving;
     if(following){
       const motion=ride.group.follow();
