@@ -4,7 +4,9 @@ import * as THREE from 'three';
 // Table radius is 1.34, so the center is just clear of the stone that knobs into the room.
 const X=-18.62,Z=4,REACH=1.58;
 const MA=0.957,MB=0.342,M=MA+MB;
-const DAY=1.15;
+const DAY=1.15,SIM=0.5;
+const TELESCOPE_MAG=0.9;
+export {TELESCOPE_MAG};
 
 const rockShader=new THREE.ShaderMaterial({
   vertexShader:`varying vec3 vN;varying vec3 vL;void main(){vL=position;vN=normalize(normalMatrix*normal);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
@@ -47,10 +49,9 @@ const WINDOW_TINTS=[
   [1,0.945,0.824],[1,0.541,0.271],[0.718,0.788,0.839],[0.902,0.827,0.682],
   [0.624,0.816,0.749],[0.957,0.937,0.894],[0.620,0.714,0.788],[0.831,0.537,0.361]
 ];
-const OBERA_PANE=0.022;
 
 export function windowSky(time){
-  const t=(time||0)*DAY,spin=(time||0)*0.35;
+  const t=(time||0)*DAY*SIM,spin=(time||0)*0.35*SIM;
   const station=inclined(0.493,0.018,110.93,0.9,0.18,t);
   const [rb,nub]=polar(0.08145,0.0288,7.4483648,0.2,t);
   const mora=[Math.cos(nub+Math.PI)*rb*MB/M,0,Math.sin(nub+Math.PI)*rb*MB/M];
@@ -73,8 +74,7 @@ export function windowSky(time){
   const cs=Math.cos(spin),sn=Math.sin(spin);
   const rolledRight=add3(scale3(right,cs),scale3(up,sn));
   const rolledUp=add3(scale3(up,cs),scale3(right,-sn));
-  const depthO=Math.max(dot3(sub3(obera,station),forward),0.02);
-  const mag=OBERA_PANE/(0.026/depthO);
+  const mag=TELESCOPE_MAG;
   const bodies=places.map((p,i)=>{
     const rel=sub3(p,station),depth=dot3(rel,forward);
     if(depth<0.02)return {x:0,y:0,r:0,kind:0,depth,tint:WINDOW_TINTS[i]};
@@ -279,7 +279,7 @@ export function createKeplerOrrery(){
       body.x=X+(dx/d)*REACH;body.z=Z+(dz/d)*REACH;
     },
     animate(time){
-      const t=time*DAY;
+      const t=time*DAY*SIM;
       const [rb,nub]=polar(0.08145,0.0288,7.4483648,0.2,t);
       put(B,flat(rb*MA/M,nub,0));
       put(A,flat(rb*MB/M,nub+Math.PI,0));
@@ -291,7 +291,7 @@ export function createKeplerOrrery(){
       const [rs,nus]=polar(0.493,0.018,110.93,0.9,t);
       station.position.copy(flat(rs,nus,0.18));
       station.position.y+=0.22;
-      station.rotation.y=time*0.35;
+      station.rotation.y=time*0.35*SIM;
       model.localToWorld(origin.set(0,0,0));
       b.up.set(0,1,0);b.lookAt(origin);
       for(const moon of moons){
@@ -299,7 +299,7 @@ export function createKeplerOrrery(){
         const R=moon.orbit*0.026;
         moon.mesh.position.set(Math.cos(th)*R,0,Math.sin(th)*R);
       }
-      const spin=time*0.05;
+      const spin=time*0.05*SIM;
       for(let i=0;i<bits.length;i++){
         const item=bits[i];
         const th=item.th+spin;
@@ -334,6 +334,7 @@ export function createKeplerOrrery(){
       const sky=windowSky(time);
       uniforms.uMag.value=sky.mag;
       uniforms.uRoll.value=sky.roll;
+      if(uniforms.uTime)uniforms.uTime.value=(time||0)*SIM;
       uniforms.uStation.value.set(sky.station[0],sky.station[1],sky.station[2]);
       uniforms.uForward.value.set(sky.forward[0],sky.forward[1],sky.forward[2]);
       uniforms.uRight.value.set(sky.right[0],sky.right[1],sky.right[2]);

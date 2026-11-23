@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {TELESCOPE_MAG} from './kepler-orrery.js';
 
 const halfWidth=20.65, front=-7.14, rear=15.12, spring=5.5, rise=5.65;
 const rockMaterial=new THREE.MeshStandardMaterial({vertexColors:true,roughness:0.94,side:THREE.DoubleSide});
@@ -244,11 +245,46 @@ function observationWindow(parent){
   return shader;
 }
 
+// Stands on the room side of the glass, right of the aim, so Obera stays clear.
+export const TELESCOPE_PANEL={x:19.48,y:1.46,z:7.15,w:2.4,h:1.5};
+
+function telescopePanel(parent){
+  const {x,y,z,w,h}=TELESCOPE_PANEL;
+  block(parent,ribMaterial,x+0.12,0.46,z,0.36,0.92,0.62);
+  block(parent,trimMaterial,x+0.1,0.94,z,0.5,0.06,0.78);
+  block(parent,ribMaterial,x,y,z,0.1,h+0.14,w+0.14);
+  const canvas=document.createElement('canvas');
+  canvas.width=1024;canvas.height=640;
+  const ctx=canvas.getContext('2d');
+  ctx.fillStyle='#14110e';ctx.fillRect(0,0,1024,640);
+  ctx.strokeStyle='#c6a15a';ctx.lineWidth=12;ctx.strokeRect(16,16,992,608);
+  ctx.strokeStyle='#6d522c';ctx.lineWidth=3;ctx.strokeRect(34,34,956,572);
+  ctx.textAlign='center';
+  ctx.fillStyle='#e7d3a8';ctx.font='600 52px Georgia, serif';
+  ctx.fillText('KEPLER-47 TELESCOPE',512,108);
+  ctx.fillStyle='#b89a6c';ctx.font='500 34px Georgia, serif';
+  ctx.fillText('MAGNIFICATION',512,186);
+  ctx.fillStyle='#fff1d2';ctx.font='600 124px Georgia, serif';
+  ctx.fillText(TELESCOPE_MAG.toFixed(2)+'\u00d7',512,330);
+  ctx.fillStyle='#f0d7a4';ctx.font='500 42px Georgia, serif';
+  ctx.fillText('POSITION LOCKED',512,430);
+  ctx.fillText('MAGNIFICATION LOCKED',512,490);
+  ctx.fillStyle='#d7b98a';ctx.font='500 32px Georgia, serif';
+  ctx.fillText('CONSULT TECHNICIAN MANUAL TO RESTART',512,568);
+  const map=new THREE.CanvasTexture(canvas);
+  map.colorSpace=THREE.SRGBColorSpace;
+  const face=new THREE.Mesh(new THREE.PlaneGeometry(w,h),new THREE.MeshBasicMaterial({map}));
+  face.position.set(x-0.07,y,z);
+  face.rotation.y=Math.PI/2;
+  parent.add(face);
+}
+
 export function buildAsteroidLobby(parent){
   vault(parent);
   const floor=()=>-0.1,roof=()=>spring+0.08;
   rockFace(parent,-1,front,rear,floor,roof,3);
   const sky=observationWindow(parent);
+  telescopePanel(parent);
   rockFace(parent,1,front,-5.65,floor,roof,5);
   rockFace(parent,1,13.65,rear,floor,roof,9);
   rockFace(parent,1,-5.95,13.95,floor,z=>0.61+0.20*Math.sin(z*0.86)+0.14*Math.sin(z*2.14),7);

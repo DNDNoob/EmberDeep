@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {bobY, createRoomWalker, lookBy, lookStep} from './movement.js';
 import {createArchiveHall, worldSign} from './archive-hall.js';
-import {buildAsteroidLobby} from './asteroid-lobby.js';
+import {buildAsteroidLobby,TELESCOPE_PANEL} from './asteroid-lobby.js';
 import {createKeplerOrrery} from './kepler-orrery.js';
 import {createMineLanding,createMineRockGap,createShaftHead,landingMazeZ} from './mine-shaft.js';
 
@@ -96,6 +96,8 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       if(Math.abs(b.x-desk.x)<2.48&&d>-0.45&&d<0.57)b.z=desk.z+f*0.57;
     }
     orrery?.block(b);
+    const panel=TELESCOPE_PANEL;
+    if(Math.abs(b.z-panel.z)<panel.w*0.5+0.15&&b.x>panel.x-0.42)b.x=panel.x-0.42;
   }});
 
   scene.add(new THREE.HemisphereLight(0xddd5f9,0x877075,1.22));
