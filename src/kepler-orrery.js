@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 
-// Against the left rock wall, opposite the observation window (x ≈ +21, z = 4).
-const X=-18.05,Z=4.55,REACH=1.5;
+// Left rock wall sits near x = -20.6; the observation window is the far wall at x ≈ +21, z = 4.
+// Table radius is 1.34, so the center is just clear of the stone that knobs into the room.
+const X=-18.62,Z=4,REACH=1.58;
 const MA=0.957,MB=0.342,M=MA+MB;
 const DAY=1.15;
 
@@ -54,7 +55,7 @@ function plate(){
   ctx.fillStyle='#f3e6c8';ctx.textAlign='center';ctx.font='600 46px Georgia, serif';
   ctx.fillText('KEPLER-47',256,62);
   ctx.fillStyle='#c6a15a';ctx.font='500 22px Georgia, serif';
-  ctx.fillText('ORRERY  ·  TABLE MODEL',256,98);
+  ctx.fillText('ORRERY  ·  3 MARCH 2356',256,98);
   const map=new THREE.CanvasTexture(canvas);
   map.colorSpace=THREE.SRGBColorSpace;
   const mesh=new THREE.Mesh(new THREE.BoxGeometry(0.72,0.18,0.02),new THREE.MeshBasicMaterial({map}));
@@ -80,6 +81,12 @@ export function createKeplerOrrery(){
   group.add(plate());
   const lamp=new THREE.PointLight(0xffc27a,16,7,2);
   lamp.position.y=1.7;group.add(lamp);
+  const cord=new THREE.Mesh(new THREE.CylinderGeometry(0.008,0.008,0.7,6),brass);
+  cord.position.y=2.15;group.add(cord);
+  const shade=new THREE.Mesh(new THREE.ConeGeometry(0.26,0.18,16,1,true),new THREE.MeshStandardMaterial({
+    color:0xf2bb66,emissive:0x9c4c16,emissiveIntensity:0.85,roughness:0.55,side:THREE.DoubleSide
+  }));
+  shade.position.y=1.72;group.add(shade);
 
   const model=new THREE.Group();
   model.position.y=0.84;model.scale.setScalar(0.78);group.add(model);
