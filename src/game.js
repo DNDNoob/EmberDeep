@@ -5506,6 +5506,7 @@ function startShaftWarm(){
   rememberShaft(seed,depth);
   for(let i=0;i<5;i++)stages.push(['Preparing the maze',()=>warmed.task.advance()]);
   warmed.left=0;
+  stages.push(['Lighting the shaft',()=>hub.primeShaft()]);
   for(let n=5;n<=10;n++)for(let turn=0;turn<3;turn++){
     const surf=glimpseSurf(n,turn);
     if(seen.has(surf))continue;

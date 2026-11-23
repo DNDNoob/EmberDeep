@@ -237,10 +237,16 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   for(let i=0;i<5;i++){
     const section=createMineLanding({height:floorMin,sampleFloor,numberSign:(parent,z)=>
       mounted(parent,'',0,3.33,z,1.72,0.39,{font:'bold 96px monospace',subFont:'500 43px monospace'})});
+    section.group.traverse(child=>child.layers.set(i+1));
+    camera.layers.enable(i+1);
     well.add(section.group);shaftSections.push(section);
   }
   const sleeves=[];
-  for(let i=0;i<shaftSections.length;i++){const sleeve=createMineRockGap();well.add(sleeve.group);sleeves.push(sleeve)}
+  for(let i=0;i<shaftSections.length;i++){
+    const sleeve=createMineRockGap();
+    sleeve.group.traverse(child=>child.layers.set(i+1));
+    well.add(sleeve.group);sleeves.push(sleeve);
+  }
   well.visible=false;
   let indication=null;
   function indicators(depth){
@@ -552,6 +558,14 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     },
     get boarded(){return !liftAway&&onLiftPlatform(walker.b)},
     get riding(){return !!ride},
+    primeShaft(){
+      if(ride)return;
+      const hidden=!well.visible;
+      well.visible=true;
+      camera.updateMatrixWorld();
+      try{renderer.compile(scene,camera)}catch(e){}
+      if(hidden)well.visible=false;
+    },
     get liftMotion(){return ride&&{travel:ride.travel,extra:0,docked:ride.docked,gaps:Array.from(ride.stretch)}},
     get aimed(){return !!focus},
     get position(){return {x:walker.b.x,z:walker.b.z,y:cabin.position.y,depth:indication,docked:!!ride?.docked}},

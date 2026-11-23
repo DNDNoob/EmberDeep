@@ -194,7 +194,11 @@ export function createMineLanding({height,numberSign,sampleFloor}){
   return {group,update,setMaze(model){
     if((mazeMount.children[0]||null)===model)return;
     mazeMount.clear();
-    if(model)mazeMount.add(model);
+    if(model){
+      const mask=group.layers.mask;
+      model.traverse(child=>{child.layers.mask=mask});
+      mazeMount.add(model);
+    }
     cap.visible=!model;
     terrain.visible=false;
   }};
