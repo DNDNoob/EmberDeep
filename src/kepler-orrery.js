@@ -26,7 +26,7 @@ function polar(a,e,period,phase,t){
 function flat(r,theta,tilt){
   // The disk stays on the wood. Bodies sit high enough that a tilted moon
   // or the asteroid's belly never crosses the tabletop.
-  return new THREE.Vector3(r*Math.cos(theta),0.3+Math.sin(tilt)*r*0.22,r*Math.sin(theta));
+  return new THREE.Vector3(r*Math.cos(theta),0.62+Math.sin(tilt)*r*0.22,r*Math.sin(theta));
 }
 
 function wire(parent,color,radius,sample){
@@ -140,7 +140,7 @@ export function createKeplerOrrery(){
   wire(model,0x9eb6c9,0.007,u=>{const [r,nu]=polar(0.2877,0.021,49.4643,0.4,u*49.4643);return flat(r,nu,0.04);});
   wire(model,0xd7c4a1,0.007,u=>{const [r,nu]=polar(0.6992,0.024,187.366,1.1,u*187.366);return flat(r,nu,0.12);});
   wire(model,0x7fbea8,0.007,u=>{const [r,nu]=polar(0.9638,0.044,303.227,2.2,u*303.227);return flat(r,nu,0.05);});
-  wire(model,0xc6a15a,0.005,u=>{const [r,nu]=polar(0.493,0.018,110.93,0.9,u*110.93);return flat(r,nu,0.18);});
+  wire(model,0xc6a15a,0.005,u=>{const [r,nu]=polar(0.493,0.018,110.93,0.9,u*110.93);const p=flat(r,nu,0.18);p.y+=0.22;return p;});
 
   const origin=new THREE.Vector3();
   return {
@@ -163,6 +163,7 @@ export function createKeplerOrrery(){
       }
       const [rs,nus]=polar(0.493,0.018,110.93,0.9,t);
       station.position.copy(flat(rs,nus,0.18));
+      station.position.y+=0.22;
       station.rotation.y=time*0.35;
       model.localToWorld(origin.set(0,0,0));
       b.up.set(0,1,0);b.lookAt(origin);
