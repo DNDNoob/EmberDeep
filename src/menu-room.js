@@ -592,6 +592,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     if(panel&&!(sharedVisible&&panel==='settings')&&!projectPanel(width,height,panel,stationForm))stationForm.style.visibility='hidden';
     if(!ride)for(const hall of galleries.values())hall.animate(time,camera.position);
     orrery.animate(time);
+    if(skyMat&&skyMat.uniforms&&skyMat.uniforms.uBody)orrery.fillWindow(skyMat.uniforms,time||0);
     pose();
     renderer.toneMappingExposure=exposure;renderer.setRenderTarget(null);renderer.render(scene,camera);
   }

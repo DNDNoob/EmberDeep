@@ -29,6 +29,67 @@ function flat(r,theta,tilt){
   return new THREE.Vector3(r*Math.cos(theta),0.62+Math.sin(tilt)*r*0.22,r*Math.sin(theta));
 }
 
+function inclined(a,e,period,phase,tilt,t){
+  const [r,nu]=polar(a,e,period,phase,t);
+  const x=r*Math.cos(nu),z=r*Math.sin(nu),s=Math.sin(tilt),c=Math.cos(tilt);
+  return [x,-s*z,c*z];
+}
+function add3(a,b){return [a[0]+b[0],a[1]+b[1],a[2]+b[2]];}
+function sub3(a,b){return [a[0]-b[0],a[1]-b[1],a[2]-b[2]];}
+function dot3(a,b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];}
+function cross3(a,b){return [a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];}
+function scale3(a,s){return [a[0]*s,a[1]*s,a[2]*s];}
+function norm3(a){const l=Math.hypot(a[0],a[1],a[2])||1;return scale3(a,1/l);}
+
+// Lobby glass, from the Mind Vault: Obera stays centered and large enough
+// to read, and the vault's spin rolls the view around that aim.
+const WINDOW_TINTS=[
+  [1,0.945,0.824],[1,0.541,0.271],[0.718,0.788,0.839],[0.902,0.827,0.682],
+  [0.624,0.816,0.749],[0.957,0.937,0.894],[0.620,0.714,0.788],[0.831,0.537,0.361]
+];
+const OBERA_PANE=0.022;
+
+export function windowSky(time){
+  const t=(time||0)*DAY,spin=(time||0)*0.35;
+  const station=inclined(0.493,0.018,110.93,0.9,0.18,t);
+  const [rb,nub]=polar(0.08145,0.0288,7.4483648,0.2,t);
+  const mora=[Math.cos(nub+Math.PI)*rb*MB/M,0,Math.sin(nub+Math.PI)*rb*MB/M];
+  const osi=[Math.cos(nub)*rb*MA/M,0,Math.sin(nub)*rb*MA/M];
+  const yuron=inclined(0.2877,0.021,49.4643,0.4,0.04,t);
+  const sollel=inclined(0.6992,0.024,187.366,1.1,0.12,t);
+  const obera=inclined(0.9638,0.044,303.227,2.2,0.05,t);
+  const moons=[[4.4,2.1,0.3],[6.8,5.4,0.9],[9.6,11.5,1.15]].map(([orbit,period,incl])=>{
+    const th=(t/period)*Math.PI*2+incl*2,R=orbit*0.026,lz=Math.sin(th)*R;
+    return add3(obera,[Math.cos(th)*R,-Math.sin(incl)*lz,Math.cos(incl)*lz]);
+  });
+  const places=[mora,osi,yuron,sollel,obera,...moons];
+  const radii=[0.055,0.032,0.022,0.034,0.026,0.32*0.026,0.24*0.026,0.4*0.026];
+  const kinds=[1,1,0,2,4,3,3,3];
+  let forward=norm3(sub3(obera,station));
+  let right=cross3([0,1,0],forward);
+  if(dot3(right,right)<1e-8)right=cross3([1,0,0],forward);
+  right=norm3(right);
+  const up=norm3(cross3(forward,right));
+  const cs=Math.cos(spin),sn=Math.sin(spin);
+  const rolledRight=add3(scale3(right,cs),scale3(up,sn));
+  const rolledUp=add3(scale3(up,cs),scale3(right,-sn));
+  const depthO=Math.max(dot3(sub3(obera,station),forward),0.02);
+  const mag=OBERA_PANE/(0.026/depthO);
+  const bodies=places.map((p,i)=>{
+    const rel=sub3(p,station),depth=dot3(rel,forward);
+    if(depth<0.02)return {x:0,y:0,r:0,kind:0,depth,tint:WINDOW_TINTS[i]};
+    return {
+      x:dot3(rel,rolledRight)/depth*mag,
+      y:dot3(rel,rolledUp)/depth*mag,
+      r:radii[i]/depth*mag,
+      kind:kinds[i],
+      depth,
+      tint:WINDOW_TINTS[i]
+    };
+  }).sort((a,b)=>b.depth-a.depth);
+  return {mag,roll:spin,station,forward,right:rolledRight,up:rolledUp,bodies};
+}
+
 function wire(parent,color,radius,sample){
   const pts=[];
   for(let i=0;i<96;i++)pts.push(sample(i/96));
@@ -268,6 +329,20 @@ export function createKeplerOrrery(){
       return focusV;
     },
     reach(id){return reaches[id]||0.2},
-    name(id){return names[id]||'the system'}
+    name(id){return names[id]||'the system'},
+    fillWindow(uniforms,time){
+      const sky=windowSky(time);
+      uniforms.uMag.value=sky.mag;
+      uniforms.uRoll.value=sky.roll;
+      uniforms.uStation.value.set(sky.station[0],sky.station[1],sky.station[2]);
+      uniforms.uForward.value.set(sky.forward[0],sky.forward[1],sky.forward[2]);
+      uniforms.uRight.value.set(sky.right[0],sky.right[1],sky.right[2]);
+      uniforms.uUp.value.set(sky.up[0],sky.up[1],sky.up[2]);
+      for(let i=0;i<8;i++){
+        const b=sky.bodies[i];
+        uniforms.uBody.value[i].set(b.x,b.y,b.r,b.kind);
+        uniforms.uTint.value[i].set(b.tint[0],b.tint[1],b.tint[2]);
+      }
+    }
   };
 }
