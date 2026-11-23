@@ -42,6 +42,10 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   let sharedTexture=null,defaultSettingsTexture=null;
   let sharedLift=null,liftAway=false;
   let orrery;
+  let study=null,studyYaw=0,studyPitch=0.28,studyDist=0.3,orreryAim=null;
+  const orreryHint=document.createElement('div');
+  orreryHint.style.cssText='position:fixed;left:0;right:0;bottom:22px;text-align:center;color:#ffe4bd;font:15px "Segoe UI",sans-serif;text-shadow:0 2px 6px #000;pointer-events:none;z-index:6';
+  document.body.appendChild(orreryHint);
 
   function box(parent,mat,x,y,z,w,h,d){
     const mesh=new THREE.Mesh(cube,mat);
@@ -470,7 +474,24 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     form.style.visibility='visible';
     return true;
   }
+  function beginStudy(id){
+    const anchor=orrery.focus(id);
+    if(!study)studyYaw=Math.atan2(anchor.x-camera.position.x,anchor.z-camera.position.z);
+    studyPitch=study?studyPitch:0.28;
+    studyDist=orrery.reach(id);
+    study=id;
+  }
   function pose(){
+    if(study){
+      const anchor=orrery.focus(study);
+      const cp=Math.cos(studyPitch),sp=Math.sin(studyPitch);
+      camera.position.set(anchor.x+Math.sin(studyYaw)*cp*studyDist,anchor.y+sp*studyDist,anchor.z+Math.cos(studyYaw)*cp*studyDist);
+      camera.lookAt(anchor);
+      if(camera.near!==0.008){camera.near=0.008;camera.updateProjectionMatrix()}
+      camera.updateMatrixWorld();
+      return;
+    }
+    if(camera.near!==0.06){camera.near=0.06;camera.updateProjectionMatrix()}
     const {x,y,z}=walker.b;
     camera.position.set(x,eye+y+bobY(walker.b,walker.scale)+(ride?cabin.position.y:0),z);
     camera.rotation.set(view.pitch,-view.yaw,0,'YXZ');camera.updateMatrixWorld();
@@ -530,9 +551,12 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     }
   }
   function update(dt,input=zero,elapsed=dt){
-    lookStep(view,dt,input.lx,input.ly);
+    if(study){
+      studyYaw-=input.lx*dt*2.2;
+      studyPitch=clamp(studyPitch-input.ly*dt*2.2,-1.05,1.15);
+    }else lookStep(view,dt,input.lx,input.ly);
     const previousZ=walker.b.z;
-    walker.step(dt,input,view.yaw);
+    if(!study)walker.step(dt,input,view.yaw);
     tickLift(Math.min(elapsed,0.25),previousZ);
     pose();if(ride)cabin.updateMatrixWorld(true);
     if(panel){
@@ -541,6 +565,11 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
         Math.hypot(walker.b.x-desk.x,walker.b.z-desk.z)>(panel==='lift'?4:6.5))onLeavePanel();
     }
     focus=aim();
+    raycaster.setFromCamera(pointer.set(0,0),camera);
+    orreryAim=orrery?.pick(raycaster)||null;
+    orreryHint.textContent=study
+      ? `Close view of ${orrery.name(study)}. Click another body to go there. Scroll to move closer. Q walks again.`
+      : orreryAim ? `E: look closer at ${orrery.name(orreryAim)}` : '';
   }
   function render(exposure,time){
     if(skyMat&&skyMat.uniforms)skyMat.uniforms.uTime.value=time||0;
@@ -563,6 +592,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     if(panel&&!(sharedVisible&&panel==='settings')&&!projectPanel(width,height,panel,stationForm))stationForm.style.visibility='hidden';
     if(!ride)for(const hall of galleries.values())hall.animate(time,camera.position);
     orrery.animate(time);
+    pose();
     renderer.toneMappingExposure=exposure;renderer.setRenderTarget(null);renderer.render(scene,camera);
   }
   return {update,render,syncArchives,syncVisitors,watchLift,liftMode,setSharedLift,engageLift,reset,resetLift,
@@ -598,18 +628,44 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     get skyTime(){return skyMat&&skyMat.uniforms?skyMat.uniforms.uTime.value:0},
     get position(){return {x:walker.b.x,z:walker.b.z,y:cabin.position.y,depth:indication,docked:!!ride?.docked}},
     get presence(){return {x:walker.b.x,y:walker.b.y,z:walker.b.z,yaw:view.yaw,station:panel,ride:ride?.group?.id,ready:!!ride?.task.ready}},
-    look:(dx,dy)=>lookBy(view,dx,dy),focusPanel:id=>{
+    look:(dx,dy)=>{
+      if(study){
+        studyYaw-=dx;
+        studyPitch=clamp(studyPitch-dy,-1.05,1.15);
+        return;
+      }
+      lookBy(view,dx,dy);
+    },focusPanel:id=>{
       if(!id){panel=null;return}
       stationForm.style.visibility='hidden';
       panel=id;
     },
     interact(){
-      if(focus)activate(focus);
-      else if(walker.b.z<wallZ-0.3&&Math.abs(walker.b.x)<1.66)activate({lift:true});
+      if(focus){activate(focus);return}
+      if(study){
+        if(orreryAim&&orreryAim!==study)beginStudy(orreryAim);
+        else if(!orreryAim)study=null;
+        return;
+      }
+      if(orreryAim){beginStudy(orreryAim);return}
+      if(walker.b.z<wallZ-0.3&&Math.abs(walker.b.x)<1.66)activate({lift:true});
     },
     tap(x,y){
       const hit=aim(x,y);
-      if(!hit)return false;
-      activate(hit);return true;
+      if(hit){activate(hit);return true}
+      raycaster.setFromCamera(pointer.set(x,y),camera);
+      const id=orrery?.pick(raycaster);
+      if(!id)return false;
+      beginStudy(id);
+      return true;
     }};
+  addEventListener('keydown',e=>{
+    if(!study)return;
+    if(e.code==='KeyQ'||e.code==='Escape'||e.code==='Backspace')study=null;
+  });
+  addEventListener('wheel',e=>{
+    if(!study)return;
+    const min=orrery.reach(study)*0.45,max=Math.max(1.6,orrery.reach(study)*8);
+    studyDist=clamp(studyDist*(e.deltaY>0?1.1:0.9),min,max);
+  },{passive:true});
 }
