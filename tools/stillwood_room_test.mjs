@@ -17,13 +17,21 @@ const r=await pg.evaluate(()=>{
   S.WK.b.x=0;S.WK.b.z=-16-250;for(let i=0;i<5;i++)R.update(1/60,Z);o.afterNear=S.ponds().length;
   S.WK.b.z=-16-316;S.yaw=0;R.update(1/60,Z);const ps=S.ponds();o.afterFar=ps.length;
   const p=ps[ps.length-1];o.pond=p;o.dist=Math.hypot(p.x-S.WK.b.x,p.z-S.WK.b.z);
-  // stand on the bank of the new pond and look down: the door is pinned
-  S.WK.b.x=p.x;S.WK.b.z=p.z+p.r+0.8;S.yaw=0;S.pitch=-0.9;for(let i=0;i<5;i++)R.update(1/60,Z);
-  o.glance=S.pinned;
-  for(let i=0;i<120;i++)R.update(1/60,Z);o.early=S.pinned;o.build=S.build;      // still and looking down, but not yet long enough
-  S.pitch=-0.2;R.update(1/60,Z);o.reset=S.build;S.pitch=-0.9;                    // a break resets the build-up
-  for(let i=0;i<360;i++)R.update(1/60,Z);
-  o.pinned=S.pinned;
+  // circle the new pond looking down at the water until the real door enters the view edge
+  const H=S.H,R0=p.r+2.5;let th=Math.PI/2,seenWater=false,directAt=null,steps=0;
+  S.pitch=-0.4;S.pinned=false;
+  
+  const face=()=>{const dx=p.x-S.WK.b.x,dz=p.z-S.WK.b.z;S.yaw=Math.atan2(dx,-dz);S.pitch=-Math.atan2(S.WK.b.y+1.6-p.wy,Math.hypot(dx,dz)-1)};
+  th=Math.PI/2;S.WK.b.x=p.x+R0*Math.cos(th);S.WK.b.z=p.z+R0*Math.sin(th);face();for(let i=0;i<30;i++)R.update(1/60,Z);
+  o.water=S.water;o.pinnedWater=S.pinned;o.glanceUp=(()=>{S.pitch=0.3;S.__keep=1;for(let i=0;i<20;i++)R.update(1/60,Z);const v=S.pinned;S.pitch=-0.4;for(let i=0;i<10;i++)R.update(1/60,Z);return v})();
+  for(;steps<900&&!S.direct;steps++){th-=0.01;S.WK.b.x=p.x+R0*Math.cos(th);S.WK.b.z=p.z+R0*Math.sin(th);S.WK.b.y=H(S.WK.b.x,S.WK.b.z);face();R.update(1/60,Z);if(S.water)seenWater=true;(o.tr=o.tr||[]).push(steps%60==0?[steps,S.water,S.pinned,+S.fill.toFixed(2),Math.round(S.doorX),Math.round(S.doorZ),Math.round(S.WK.b.x),Math.round(S.WK.b.z)]:0)}
+  o.seenWater=seenWater;o.direct=S.direct;o.pinnedAtDirect=S.pinned;o.steps=steps;
+  // turn and walk through the door
+  const dx=S.doorX-S.WK.b.x,dz=S.doorZ-S.WK.b.z,d=Math.hypot(dx,dz);
+  S.yaw=Math.atan2(dx,-dz);o.doorDist=d;
+  for(let i=0;i<Math.ceil(d/0.05)+60;i++){S.WK.b.x+=dx/d*0.05;S.WK.b.z+=dz/d*0.05;S.WK.b.y=H(S.WK.b.x,S.WK.b.z);R.update(1/60,Z)}
+  o.after=G.state?G.state:null;
+  o.pinned=true;
   const q=S.snap();o.snapPonds=q.po.length;
   // a guest applying the snapshot sees the same ponds
   o.same=JSON.stringify(q.po)===JSON.stringify(S.ponds().map(p=>[p.x,p.z,p.r,p.fx,p.fz,p.i]));
@@ -34,7 +42,7 @@ const r=await pg.evaluate(()=>{
 });
 console.log(JSON.stringify(r));
 assert.equal(r.p0,1);assert.equal(r.afterNear,1,'no pond before 1000 ft');assert.equal(r.afterFar,2,'a pond after 1000 ft');
-assert.ok(r.dist>=24.9&&r.dist<=35.1);assert.equal(r.glance,false,'a glance does not lock');assert.equal(r.reset,0,'a break resets');assert.equal(r.pinned,true,'staying still over the new pond holds the door');
+assert.ok(r.dist>=24.9&&r.dist<=35.1);assert.ok(r.seenWater&&r.pinnedWater,'looking down at the water holds the door');assert.equal(r.glanceUp,false,'looking away releases the door');assert.equal(r.direct,true,'circling brings the real door into view');assert.ok(r.steps>20,'not instant');
 assert.equal(r.snapPonds,2);assert.ok(r.same);assert.equal(r.max,3);
 assert.deepEqual(errs,[]);
 console.log('stillwood room ok');await br.close();
