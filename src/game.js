@@ -2271,6 +2271,7 @@ function roomClose(){
     const {stam,winded,spikeTraps}=previewStamina;
     Object.assign(P,{stam,winded,spikeTraps});previewStamina=null;
   }
+  roomPauseHide(false);
   P.away=false;state='play';document.body.classList.remove('inroom','moose-table','room-look-only','room-cinematic','room-no-use','room-choice',...Object.values(DOOR_KINDS).flatMap(door=>door.css?[door.css]:[]));mouseL=false;ROOMS.untap();
   $('tFlash').textContent='FLASH';
   $('fade').style.transition='opacity .4s';$('fade').style.opacity=0;
@@ -2422,13 +2423,18 @@ let doorMsgT=0, tipTimers=[];
 let mapBig=false, usingLock=false, pausedAt=0, flashT=0, sealMsgT=0, lowFuelSaid=false, pingT=0, beatT=0;
 let sens=store.get('sens',1);
 $('sens').value=sens;
-$('sens').addEventListener('input',e=>{sens=+e.target.value;store.set('sens',sens)});
+$('sens').addEventListener('input',e=>{sens=+e.target.value;store.set('sens',sens);document.querySelectorAll('.sensP').forEach(o=>o.value=sens)});
+document.querySelectorAll('.sensP').forEach(el=>{el.value=sens;el.addEventListener('input',()=>{sens=+el.value;store.set('sens',sens);$('sens').value=sens;document.querySelectorAll('.sensP').forEach(o=>o.value=sens)})});
 $('startSel').addEventListener('change',e=>store.set('startDepth',+e.target.value));
 let bright=clamp(+store.get('bright',1.3)||1.3,0.6,3);
 function setBright(v,quiet){bright=clamp(v,0.6,3);store.set('bright',bright);document.querySelectorAll('.brightS').forEach(el=>el.value=bright);if(!quiet)say('Brightness '+Math.round(bright/1.3*100)+'%',1)}
 document.querySelectorAll('.brightS').forEach(el=>{el.value=bright;el.addEventListener('input',e=>setBright(+e.target.value,true))});
 $('qSel').value=QSET;
 $('qSel').addEventListener('change',e=>{lsSet('quality',e.target.value);lsSet('safe',0);location.reload()});
+// the pause-panel copies save the same way but never reload: that would throw the run away
+const gfxNote=()=>document.querySelector('#pause .gfxNote').classList.remove('hidden');
+document.querySelectorAll('.qSelP').forEach(el=>{el.value=QSET;el.addEventListener('change',()=>{lsSet('quality',el.value);lsSet('safe',0);$('qSel').value=el.value;document.querySelectorAll('.qSelP').forEach(o=>o.value=el.value);gfxNote()})});
+document.querySelectorAll('.gtxP').forEach(el=>{el.checked=WANT_GTX;el.addEventListener('change',()=>{lsSet('gtx',el.checked);lsSet('safe',0);$('gtx').checked=el.checked;document.querySelectorAll('.gtxP').forEach(o=>o.checked=el.checked);gfxNote()})});
 $('gtx').checked=WANT_GTX;
 $('gtx').addEventListener('change',e=>{lsSet('gtx',e.target.checked);lsSet('safe',0);location.reload()});
 
@@ -2555,7 +2561,7 @@ function toTitle(){
   $('toast').style.opacity=0;
   showHub(true);
   showBest();
-  if(document.pointerLockElement)document.exitPointerLock();
+  if(document.pointerLockElement){usingLock=false;document.exitPointerLock()}
 }
 function showBest(){
   fillStartSel();
@@ -2568,9 +2574,37 @@ function pause(){
   $('pause').classList.remove('hidden');
 }
 function resume(withLock){
+  if(roomPaused){roomPauseHide(withLock);return}
   if(state!=='pause')return;
   state='play';$('pause').classList.add('hidden');
   if(withLock)lock();
+}
+/* ---------- Esc in the lobby / a door room: a small box, or the pause panel with settings. Only this player's input is held. ---------- */
+let lobbyPaused=false,roomPaused=false;
+function freeInput(){for(const k in keys)keys[k]=false;mouseL=false}
+function lobbyPauseShow(){
+  if(lobbyPaused||state!=='title'||activeStation||loading||touch.on||archiveRun)return;
+  lobbyPaused=true;pausedAt=performance.now();freeInput();
+  $('lobbyPause').classList.remove('hidden');
+  if(document.pointerLockElement){usingLock=false;document.exitPointerLock()}
+}
+function lobbyPauseHide(withLock){
+  if(!lobbyPaused)return;
+  lobbyPaused=false;$('lobbyPause').classList.add('hidden');
+  if(withLock&&!touch.on)lock();
+}
+function roomPauseShow(){
+  if(roomPaused||state!=='room'||archiveRun||touch.on||onMooseTable())return;
+  const mode=ROOMS.controlMode();
+  if(mode==='table'||mode==='read')return;
+  roomPaused=true;pausedAt=performance.now();freeInput();
+  mpPausePanel();document.querySelector('#pause .gfxNote').classList.add('hidden');
+  $('pause').classList.remove('hidden');
+}
+function roomPauseHide(withLock){
+  if(!roomPaused)return;
+  roomPaused=false;$('pause').classList.add('hidden');
+  if(withLock&&state==='room'&&!touch.on)lock();
 }
 function lock(){
   try{const p=canvas.requestPointerLock({unadjustedMovement:true});
@@ -2931,6 +2965,7 @@ function mpDown(){
 }
 function mpDescend(n,why){
   if(state==='pause')$('pause').classList.add('hidden');
+  roomPauseHide(false);
   if(state==='talk'){$('talk').classList.add('hidden');talk=null}
   descend(n,why);
 }
@@ -3578,6 +3613,7 @@ function mimicSay(key){
 function mimicEat(){
   if(P.down||P.grab||state==='title'||state==='dead')return;
   P.grab={t:0,x:MIM.rx>0?MIM.rx:P.x+Math.cos(P.yaw),z:MIM.rx>0?MIM.rz:P.z+Math.sin(P.yaw)};for(const k in keys)keys[k]=false;
+  roomPauseHide(false);
   if(state==='pause'){$('pause').classList.add('hidden');state='play'}
   if(state==='talk'){$('talk').classList.add('hidden');talk=null;state='play'}
   if(chatOpen)chatClose(false);
@@ -3654,6 +3690,14 @@ addEventListener('keydown',e=>{
   if(state==='title'&&(e.code==='Tab'||e.target?.closest?.('button')&&(e.code==='Enter'||e.code==='Space')))return;
   if(e.target===$('archiveBack')&&(e.code==='Enter'||e.code==='Space'))return;
   if(state==='room'&&(e.code==='Tab'||e.target?.closest?.('button')&&['Enter','NumpadEnter','Space'].includes(e.code)))return;
+  if(lobbyPaused||roomPaused){
+    const go=['Enter','NumpadEnter','KeyP'].includes(e.code)||(lobbyPaused&&e.code==='Space')||(e.code==='Escape'&&performance.now()-pausedAt>300);
+    if(go||e.code==='Tab'||e.code==='Space')e.preventDefault();
+    if(e.repeat)return;
+    if(go){if(lobbyPaused)lobbyPauseHide(true);else roomPauseHide(false)}
+    else if(roomPaused&&e.code==='KeyT')toTitle();
+    return;
+  }
   if(['Tab','Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
   if(roomMode==='table'&&['Backspace','Enter','NumpadEnter','Escape'].includes(e.code))e.preventDefault();
   if(e.repeat)return;
@@ -3693,11 +3737,12 @@ addEventListener('keydown',e=>{
   }
 });
 addEventListener('keyup',e=>{keys[e.code]=false});
-addEventListener('blur',()=>{for(const k in keys)keys[k]=false;mouseL=false;pause()});
-document.addEventListener('visibilitychange',()=>{if(document.hidden)pause()});
+const lobbyHadLock=()=>state==='title'&&(usingLock||!!document.pointerLockElement);
+addEventListener('blur',()=>{const lobby=lobbyHadLock();for(const k in keys)keys[k]=false;mouseL=false;pause();if(lobby)lobbyPauseShow()});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){const lobby=lobbyHadLock();pause();if(lobby)lobbyPauseShow()}});
 document.addEventListener('mousemove',e=>{
   const drag=(state==='title'||state==='room')&&(e.buttons&2);
-  if(loading||!['title','play','room'].includes(state)||(!drag&&document.pointerLockElement!==canvas))return;
+  if(loading||lobbyPaused||roomPaused||!['title','play','room'].includes(state)||(!drag&&document.pointerLockElement!==canvas))return;
   const mx=e.movementX,my=e.movementY;
   if(!isFinite(mx)||!isFinite(my)||Math.abs(mx)>600||Math.abs(my)>600)return;
   if(state==='title'){hub.look(mx*MOVE.mouse*sens,my*MOVE.mouse*sens);return}
@@ -3707,7 +3752,12 @@ document.addEventListener('mousemove',e=>{
 });
 document.addEventListener('pointerlockchange',()=>{
   if(document.pointerLockElement===canvas)usingLock=true;
-  else if(usingLock){usingLock=false;pause()}
+  else if(usingLock){
+    usingLock=false;
+    if(state==='title')lobbyPauseShow();
+    else if(state==='room')roomPauseShow();
+    else pause();
+  }
 });
 const onMooseTable=()=>state==='room'&&ROOMS.kind==='moose'&&ROOMS.state()?.table;
 document.addEventListener('pointerdown',e=>{
@@ -3719,6 +3769,7 @@ $('roomHud').addEventListener('click',e=>{
 });
 canvas.addEventListener('click',e=>{
   if(loading)return;
+  if(lobbyPaused){lobbyPauseHide(true);return}
   if(state==='title'){
     initAudio();
     if(document.pointerLockElement)hub.interact();
@@ -3734,6 +3785,7 @@ canvas.addEventListener('mousedown',e=>{if(loading)return;if(state==='room'&&!on
 addEventListener('mouseup',e=>{if(e.button===0)mouseL=false});
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 $('resumeBtn').addEventListener('click',()=>resume(true));
+$('lobbyPause').addEventListener('click',()=>{initAudio();lobbyPauseHide(true)});
 $('againBtn').addEventListener('click',()=>{startFromMenu();lock()});
 // touch controls
 const touch={on:false,mx:0,my:0,jump:false,stickId:null,lookId:null,tapId:null,sx:0,sy:0,lx:0,ly:0};
@@ -3845,6 +3897,12 @@ function pollPad(){
   const lx=curve(gp.axes[2]||0),ly=curve(gp.axes[3]||0);
   pad.lx=lx*(0.45+0.55*Math.abs(lx))*sens;pad.ly=ly*(0.45+0.55*Math.abs(ly))*sens;
   if(state==='room'&&(pad.roomButtons.some(Boolean)||pad.mx||pad.my||lx||ly))roomDevice='controller';
+  if(lobbyPaused||roomPaused){
+    if(hit(0)||hit(9)||(lobbyPaused&&hit(1)))lobbyPaused?lobbyPauseHide(false):roomPauseHide(false);
+    else if(roomPaused&&hit(8))toTitle();
+    for(let i=0;i<gp.buttons.length;i++)pad.prev[i]=B(i);
+    return;
+  }
   if(state==='play'){
     if(archiveRun&&hit(8)){finishArchive();pad.prev[8]=true;return}
     pad.jump=B(0)&&performance.now()>padHold;
@@ -5205,11 +5263,13 @@ function step(now){
   const raw=Math.max(0,(now-last)/1000);last=now;
   const dt=Math.min(raw,0.05);
   pollPad();
+  if(lobbyPaused&&(state!=='title'||activeStation||loading||touch.on))lobbyPauseHide(false);
+  if(roomPaused&&(state!=='room'||touch.on))roomPauseHide(false);
   if(loading){mpTick(raw);return raw}
   const moving=state==='play'||state==='room'||state==='title';
   if(moving!==wasPlaying){wasPlaying=moving;document.body.classList.toggle('playing',wasPlaying)}
   roomWatch();
-  if(state==='room'){ROOMS.update(dt,roomInput());if(state==='room'){$('fade').style.opacity=ROOMS.fade();$('roomCross').classList.toggle('on',ROOMS.aimed());mirrorBtns()}}
+  if(state==='room'){if(!roomPaused)ROOMS.update(dt,roomInput());else if(MP.on)ROOMS.update(dt,NOIN);if(state==='room'){$('fade').style.opacity=ROOMS.fade();$('roomCross').classList.toggle('on',ROOMS.aimed());mirrorBtns()}}
   else if(ROOMS.watching){ROOMS.update(dt,NOIN);$('fade').style.opacity=ROOMS.fade()}
   const live=()=>state==='play'||(MP.on&&(state==='pause'||state==='talk'||state==='room'));
   // a fake hang: nothing moves for you, though the room carries on
@@ -5220,7 +5280,7 @@ function step(now){
     else update(dt);
   }
   else if(state==='title'){
-    hub.update(dt,roomInput(),raw);
+    hub.update(dt,lobbyPaused?NOIN:roomInput(),raw);
     if(sharedLift.trip&&!hub.riding)hub.watchLift(sharedLift.trip.motion);
     else if(!hub.riding)hub.watchLift(null);
     if(shaftQueue.length&&raw<0.02&&!hub.riding)shaftQueue.shift()();
@@ -6032,6 +6092,6 @@ function gripProbe(ts,talking){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='
   for(const t of ts){buildNpc(n,t,P.x,0.7,P.z,0.016);res.push({t,...GRIP_DBG})}talk=save;return res}
 function benchNpc(iters){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='keeper');const e=[P.x,0.7,P.z];buildNpc(n,1,e[0],e[1],e[2],0.016);let t0=performance.now();
   for(let i=0;i<iters;i++){CH.n=0;buildNpc(n,1+i*0.016,e[0],e[1],e[2],0.016)}return (performance.now()-t0)/iters}
-window.__game={NEWS,openStation,get activeStation(){return activeStation},hub,music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={NEWS,openStation,get activeStation(){return activeStation},hub,get lobbyPaused(){return lobbyPaused},get roomPaused(){return roomPaused},simLockLost(){if(document.pointerLockElement){document.exitPointerLock();return}usingLock=true;document.dispatchEvent(new Event("pointerlockchange"))},music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 if(state==='title')startShaftWarm();
 requestAnimationFrame(frame);
