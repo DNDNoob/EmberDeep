@@ -51,25 +51,80 @@ export function nearestOf(ponds,x,z){
   let m=1e9,q=null;for(const p of ponds||[]){const d=Math.hypot(x-p.x,z-p.z)-p.r;if(d<m){m=d;q=p}}return q;
 }
 // ---- boulders you can climb: a stone whose top is within a jump becomes a dome you can land on and walk off ----
-// highest top (m above the ground at its foot) the walker's jump clears, less a margin; scales with the room walker like the jump does
-export const jumpTop=(eye=EYE)=>0.9*MOVE.jumpV*MOVE.jumpV/(2*MOVE.gravity)*scaleFor(eye);
+// how high one jump lifts the feet (m): scales with the room walker like the jump does. Landing needs a surface no higher than feet + this.
+export const jumpReach=(eye=EYE)=>MOVE.jumpV*MOVE.jumpV/(2*MOVE.gravity)*scaleFor(eye);
+// highest top (m above the ground at its foot) a standing jump clears, less a hair
+export const jumpTop=(eye=EYE)=>0.97*jumpReach(eye);
 const JUMP_TOP=jumpTop(EYE);
 export const STEP_MIN=0.35;     // lower than this and a stone is just stepped over
-// absolute height of a climbable stone's dome at (x,z), or -Infinity outside it. rock: {x,z,rg,y0,top}
-export function rockSurface(r,x,z){
-  const q=((x-r.x)**2+(z-r.z)**2)/(r.rg*r.rg);
-  return q>=1?-Infinity:r.y0+r.top*Math.sqrt(1-q);
+// ---- every stone is standable: its real top is sampled from the baked mesh into a small height grid (per variant) ----
+// pos: Float32Array of xyz triples (triangle list, or indexed when `index` is given). Returns {x0,z0,cw,cd,N,h,top,w,d}.
+export function heightGrid(pos,index,N=0){
+  let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9;
+  for(let i=0;i<pos.length;i+=3){x0=Math.min(x0,pos[i]);x1=Math.max(x1,pos[i]);z0=Math.min(z0,pos[i+2]);z1=Math.max(z1,pos[i+2])}
+  const w=x1-x0,d=z1-z0;if(!N)N=Math.max(12,Math.min(40,Math.ceil(Math.max(w,d)/0.12)));
+  const cw=w/N||1,cd=d/N||1,h=new Float32Array(N*N);let top=0;
+  const tri=(ax,ay,az,bx,by,bz,cx,cy,cz)=>{
+    const i0=Math.max(0,Math.floor((Math.min(ax,bx,cx)-x0)/cw)),i1=Math.min(N-1,Math.floor((Math.max(ax,bx,cx)-x0)/cw));
+    const j0=Math.max(0,Math.floor((Math.min(az,bz,cz)-z0)/cd)),j1=Math.min(N-1,Math.floor((Math.max(az,bz,cz)-z0)/cd));
+    const den=(bz-cz)*(ax-cx)+(cx-bx)*(az-cz);
+    for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++){
+      const px=x0+(i+0.5)*cw,pz=z0+(j+0.5)*cd;
+      let y=-1e9;
+      if(Math.abs(den)>1e-12){
+        const l1=((bz-cz)*(px-cx)+(cx-bx)*(pz-cz))/den,l2=((cz-az)*(px-cx)+(ax-cx)*(pz-cz))/den,l3=1-l1-l2;
+        if(l1>=-1e-6&&l2>=-1e-6&&l3>=-1e-6)y=l1*ay+l2*by+l3*cy;
+      }
+      if(y>h[j*N+i])h[j*N+i]=y;
+    }
+  };
+  const n=index?index.length:pos.length/3;
+  for(let t=0;t<n;t+=3){
+    const a=index?index[t]*3:t*3,b=index?index[t+1]*3:(t+1)*3,c=index?index[t+2]*3:(t+2)*3;
+    tri(pos[a],pos[a+1],pos[a+2],pos[b],pos[b+1],pos[b+2],pos[c],pos[c+1],pos[c+2]);
+  }
+  for(let i=0;i<pos.length;i+=3){   // slivers that miss every cell centre still count in the cell they sit in
+    const ci=Math.min(N-1,Math.max(0,Math.floor((pos[i]-x0)/cw))),cj=Math.min(N-1,Math.max(0,Math.floor((pos[i+2]-z0)/cd)));
+    if(pos[i+1]>h[cj*N+ci])h[cj*N+ci]=pos[i+1];
+  }
+  for(let i=0;i<h.length;i++)if(h[i]>top)top=h[i];
+  return {x0,z0,cw,cd,N,h,top,w,d};
 }
-// A body with feet at `y` cannot rise onto the dome by walking more than `tol`: push it back to the radius where the dome is that high.
+// an ellipsoid dome (half-width w/2, depth d/2, height hgt) as a grid: for tests
+export function domeGrid(w,d,hgt,N=24){
+  const h=new Float32Array(N*N);
+  for(let j=0;j<N;j++)for(let i=0;i<N;i++){const u=((i+0.5)/N-0.5)*2,v=((j+0.5)/N-0.5)*2,q=u*u+v*v;h[j*N+i]=q<1?hgt*Math.sqrt(1-q):0}
+  return {x0:-w/2,z0:-d/2,cw:w/N,cd:d/N,N,h,top:hgt,w,d};
+}
+// a placed stone: grid + pose. y0 = ground height at its foot, yo = vertical offset (negative when sunk), rot about Y, sxz/sy scale.
+export function makeRock(grid,{x,z,rot=0,sxz=1,sy=1,y0=0,yo=0}){
+  const c=Math.cos(rot),s=Math.sin(rot),lcx=grid.x0+grid.w/2,lcz=grid.z0+grid.d/2;
+  const cx=x+(lcx*c+lcz*s)*sxz,cz=z+(-lcx*s+lcz*c)*sxz;
+  return {x,z,rot,sxz,sy,y0,yo,grid,cx,cz,rb:0.5*Math.hypot(grid.w,grid.d)*sxz+0.3,top:yo+grid.top*sy,c,s};
+}
+// absolute height of the stone's top surface at (x,z), or -Infinity beyond its footprint (bilinear between grid cells)
+export function rockSurface(r,x,z){
+  const dx=x-r.x,dz=z-r.z,g=r.grid;
+  const lx=(dx*r.c-dz*r.s)/r.sxz,lz=(dx*r.s+dz*r.c)/r.sxz;
+  const u=(lx-g.x0)/g.cw-0.5,v=(lz-g.z0)/g.cd-0.5;
+  if(u<-1||v<-1||u>g.N||v>g.N)return -Infinity;
+  const i=Math.floor(u),j=Math.floor(v),fu=u-i,fv=v-j,N=g.N;
+  const at=(a,b)=>a<0||b<0||a>=N||b>=N?0:g.h[b*N+a];
+  const hl=(at(i,j)*(1-fu)+at(i+1,j)*fu)*(1-fv)+(at(i,j+1)*(1-fu)+at(i+1,j+1)*fu)*fv;
+  return r.y0+r.yo+hl*r.sy;
+}
+// A body with feet at `y` cannot walk up more than `tol` onto a stone: if the surface under it is higher, push it outward
+// (away from the stone's middle) to the nearest spot where it is not. Airborne bodies above the surface are not touched.
 export function rockPush(r,bx,bz,y,tol=0.12){
-  const dx=bx-r.x,dz=bz-r.z,d=Math.hypot(dx,dz);
-  if(d>=r.rg)return null;
-  const surf=rockSurface(r,bx,bz);
-  if(surf-y<=tol)return null;
-  const yn=y+tol-r.y0,ds=yn<=0?r.rg:r.rg*Math.sqrt(Math.max(0,1-(yn/r.top)**2));
-  if(d>=ds)return null;
-  if(d<1e-4)return [r.x+ds,bz];
-  return [r.x+dx/d*ds,r.z+dz/d*ds];
+  if((bx-r.cx)**2+(bz-r.cz)**2>r.rb*r.rb)return null;
+  if(rockSurface(r,bx,bz)-y<=tol)return null;
+  let dx=bx-r.cx,dz=bz-r.cz;const d0=Math.hypot(dx,dz);
+  if(d0<1e-4){dx=1;dz=0}else{dx/=d0;dz/=d0}
+  for(let t=d0;t<r.rb+0.6;t+=0.06){
+    const px=r.cx+dx*t,pz=r.cz+dz*t;
+    if(rockSurface(r,px,pz)-y<=tol)return [px,pz];
+  }
+  return [r.cx+dx*(r.rb+0.6),r.cz+dz*(r.rb+0.6)];
 }
 // ---- biomes: a smooth seeded field of ~90 m patches. m = meadow weight, d = deep-wood weight (both 0 in the mixed wood) ----
 export const BIOME={len:90,mLo:0.34,mHi:0.47,dLo:0.53,dHi:0.66};
@@ -577,11 +632,11 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     // big boulders and outcrops first, so everything else keeps clear of them; sparse, and never on the spawn, a pond or a path
     const bio=(x,z)=>{const b=biomeAt(x,z,seed),sp=sstep01((Math.hypot(x,z)-8)/16),pd=sstep01((pondDist(x,z)-2)/9),k=sp*pd;return [b.m*sp,b.d*k]};
     // a stone you can step over has no collider; a climbable one is a dome you can land on; the rest are solid
-    const addRock=(sl,x,z,sxz,sy,y)=>{
-      if(!sl||!sl.ready||!sl.hh)return;
-      const top=y+sl.hh*sy;if(top<STEP_MIN)return;
-      const rg=sl.fp*sxz*0.85;
-      rocks.push({x,z,rg,r:rg*0.96,y0:H(x,z),top,stand:top<=JUMP_TOP});
+    const addRock=(sl,x,z,sxz,sy,y,rot)=>{
+      if(!sl||!sl.ready||!sl.grid)return;
+      const r=makeRock(sl.grid,{x,z,rot,sxz,sy,y0:H(x,z),yo:y});
+      if(r.top<STEP_MIN)return;
+      r.stand=r.top<=JUMP_TOP;rocks.push(r);
     };
     const bigRocks=[];
     const rockBlock=(x,z,m)=>{for(const r of bigRocks)if(Math.hypot(x-r.x,z-r.z)<r.r+m)return true;return false};
@@ -608,7 +663,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     }
     for(const r of bigRocks){
       const sl=put(r.moss?'bigmoss':'bigrock',r.v,r.x,-r.sink*r.sc*1.4,r.z,r.sc,r.sc*(0.85+0.3*((r.v*7)%1)),r.rot);
-      addRock(sl,r.x,r.z,r.sc,r.sc*(0.85+0.3*((r.v*7)%1)),-r.sink*r.sc*1.4);
+      addRock(sl,r.x,r.z,r.sc,r.sc*(0.85+0.3*((r.v*7)%1)),-r.sink*r.sc*1.4,r.rot);
     }
     for(let iz=-reach;iz<=reach;iz++)for(let ix=-reach;ix<=reach;ix++){
       const ox=(cx+ix)*16-8,oz=(cz+iz)*16-8;
@@ -658,7 +713,8 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
         const [qm,qd]=bio(qx,qz);
         if(pondDist(qx,qz)>1.4&&pathDist(qx,qz)>1.1&&R(34)<0.075*(1+1.3*qd)*(1-0.45*qm)){
           const s=0.6+R(35)*0.9,mossy=R(36)<0.6+0.3*qd,sy=s*(0.8+R(38)*0.4);
-          addRock(put(mossy?'mossrock':'boulder',R(37),qx,-0.2*s,qz,s,sy,R(39)*6.283),qx,qz,s,sy,-0.2*s);
+          const rotQ=R(39)*6.283;
+          addRock(put(mossy?'mossrock':'boulder',R(37),qx,-0.2*s,qz,s,sy,rotQ),qx,qz,s,sy,-0.2*s,rotQ);
         }
       }
     }
@@ -693,7 +749,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   const applyProp=(sl,p)=>{
     sl.near.geometry=p.near;sl.farM.geometry=p.far;sl.ready=true;
     const r=trunkRadius(p.near);if(r>0&&TRUNK0[sl.kind])sl.r=r;
-    if(ROCKY.has(sl.kind)){if(!p.near.boundingBox)p.near.computeBoundingBox();const bb=p.near.boundingBox;sl.fp=(bb.max.x-bb.min.x+bb.max.z-bb.min.z)/4;sl.hh=bb.max.y;chunkX=1e9}
+    if(ROCKY.has(sl.kind)){if(!p.near.boundingBox)p.near.computeBoundingBox();const bb=p.near.boundingBox;sl.fp=(bb.max.x-bb.min.x+bb.max.z-bb.min.z)/4;sl.hh=bb.max.y;const gp=p.near.attributes.position;sl.grid=heightGrid(gp.array.length===gp.count*3?gp.array:Float32Array.from({length:gp.count*3},(_,i)=>gp.array[i]),p.near.index?p.near.index.array:null);chunkX=1e9}
     sl.tris=[p.near.attributes.position.count/3,p.far.attributes.position.count/3];
   };
   (async()=>{
@@ -719,21 +775,28 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   // ground for the walker: the hills plus the top of every climbable stone
   const G=(x,z)=>{
     let g=H(x,z);
-    for(const r of rocks){if(!r.stand)continue;const y=rockSurface(r,x,z);if(y>g)g=y}
+    for(const r of rocks){if((x-r.cx)**2+(z-r.cz)**2>r.rb*r.rb)continue;const y=rockSurface(r,x,z);if(y>g)g=y}
     return g;
   };
   S.G=G;
-  const blockedAt=(x,z)=>trunkAt(x,z)||rocks.some(r=>(r.x-x)**2+(r.z-z)**2<(r.rg+0.9)**2);
+  const blockedAt=(x,z)=>trunkAt(x,z)||rocks.some(r=>(r.cx-x)**2+(r.cz-z)**2<(r.rb+0.9)**2);
   const walker=createRoomWalker({o,eye:EYE,x:0,z:0,groundAt:G,snap:0.7,collide:b=>{
     for(const t of trees){
       const dx=b.x-t.x,dz=b.z-t.z,d=Math.hypot(dx,dz),m=0.32+treeR(t);
       if(d<m&&d>1e-4){b.x=t.x+dx/d*m;b.z=t.z+dz/d*m}
     }
-    for(const t of rocks){
-      if(t.stand){const q=rockPush(t,b.x,b.z,b.y);if(q){b.x=q[0];b.z=q[1]}continue}
-      const dx=b.x-t.x,dz=b.z-t.z,d=Math.hypot(dx,dz),m=0.32+t.r;
-      if(d<m&&d>1e-4){b.x=t.x+dx/d*m;b.z=t.z+dz/d*m}
+    // stones: a body only gets onto one it can reach (feet + a small step); two passes so a gap between stones cannot trap it
+    for(let pass=0;pass<3;pass++){
+      let moved=false;
+      for(const t of rocks){const q=rockPush(t,b.x,b.z,b.y);if(q){b.x=q[0];b.z=q[1];moved=true}}
+      if(!moved)break;
+      for(const t of trees){
+        const dx=b.x-t.x,dz=b.z-t.z,d=Math.hypot(dx,dz),m=0.32+treeR(t);
+        if(d<m&&d>1e-4){b.x=t.x+dx/d*m;b.z=t.z+dz/d*m}
+      }
     }
+    // last resort: still inside a stone after all that, so stand on it instead of being stuck
+    for(const t of rocks){const y=rockSurface(t,b.x,b.z);if(y-b.y>0.2){b.y=y;b.vy=0;S.pops=(S.pops||0)+1}}
   }});
   const b=walker.b;
   S.WK=walker;

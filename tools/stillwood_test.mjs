@@ -1,6 +1,6 @@
 // node tools/stillwood_test.mjs
 import assert from 'node:assert/strict';
-import {STILL,horizForward,lookDir,placeBehind,rayHitsPond,crossedDoor,stillStep,doorSeen,waterFill,viewFov,terrainH,terrainRaw,biomeAt,rockSurface,rockPush,jumpTop,STEP_MIN,placeLine,HILL,pondSpawnDue,pondSpawnAt,clearField,segDist} from '../src/stillwood.js';
+import {STILL,horizForward,lookDir,placeBehind,rayHitsPond,crossedDoor,stillStep,doorSeen,waterFill,viewFov,terrainH,terrainRaw,biomeAt,rockSurface,rockPush,jumpTop,jumpReach,heightGrid,domeGrid,makeRock,STEP_MIN,placeLine,HILL,pondSpawnDue,pondSpawnAt,clearField,segDist} from '../src/stillwood.js';
 
 const pond={x:0,z:-16,r:STILL.pondR};
 const fresh=()=>({
@@ -169,17 +169,36 @@ const spot=(x,z,yaw,pitch)=>{const s=fresh();s.x=x;s.z=z;s.yaw=yaw;s.pitch=pitch
   assert.notEqual(a,clearField(12.3,-4.5,8));
   assert.ok(Math.abs(segDist(0,5,0,0,10,0)-5)<1e-9&&Math.abs(segDist(-3,4,0,0,10,0)-5)<1e-9);}
 
-// Climbable stones: the jump clears a top up to jumpTop(); a dome is walked up only in small steps, so you must jump onto it.
-{const jt=jumpTop(1.6);assert.ok(jt>1.0&&jt<1.5,'jumpTop '+jt);assert.ok(STEP_MIN<0.5);
-  const r={x:0,z:0,rg:0.9,y0:0,top:1.0};
-  assert.ok(Math.abs(rockSurface(r,0,0)-1)<1e-12);assert.equal(rockSurface(r,2,0),-Infinity);
-  assert.ok(rockSurface(r,0.5,0)<rockSurface(r,0.2,0),'dome falls off');
-  assert.equal(rockPush(r,0,0,1.0),null,'standing on top');
-  const q=rockPush(r,0.5,0,0);assert.ok(q&&Math.hypot(q[0],q[1])>=0.5&&Math.hypot(q[0],q[1])<=0.9+1e-9,'ground-level walker is held at the foot');
-  assert.ok(rockSurface(r,q[0],q[1])<=0.12+1e-6,'pushed to where the dome is a step high');
-  assert.equal(rockPush(r,0.5,0,rockSurface(r,0.5,0)),null,'a body on the surface is not pushed');
-  assert.ok(rockPush(r,0,0,0)!==null,'inside at ground level gets out');
-  assert.equal(rockPush(r,1.5,0,0),null,'outside');
+// Stones: every one is standable from its real surface. You land if the surface is no higher than your feet plus one jump,
+// so low stones are reachable from the ground, tall ones only from a lower stone beside them.
+{const reach=jumpReach(1.6),jt=jumpTop(1.6);assert.ok(reach>1.3&&reach<1.6,'reach '+reach);assert.ok(jt<reach&&jt>1.2);assert.ok(STEP_MIN<0.5);
+  const low=makeRock(domeGrid(2,2,0.9),{x:0,z:0});
+  assert.ok(Math.abs(rockSurface(low,0,0)-0.9)<0.02,'top '+rockSurface(low,0,0));assert.equal(rockSurface(low,5,0),-Infinity);
+  assert.ok(rockSurface(low,0.8,0)<rockSurface(low,0.2,0),'dome falls off');
+  const q=rockPush(low,0.5,0,0);assert.ok(q&&Math.hypot(q[0],q[1])>0.5,'a walker on the ground is held at the foot');
+  assert.ok(rockSurface(low,q[0],q[1])<=0.12+1e-6,'held where the stone is a step high');
+  assert.equal(rockPush(low,0.2,0,reach),null,'a jump from the ground clears a 0.9 m stone');
+  assert.equal(rockPush(low,0.2,0,rockSurface(low,0.2,0)),null,'standing on it');
+  assert.ok(rockPush(low,0,0,0)!==null,'inside at ground level gets out');
+  // a 2.5 m stone beside a 1.2 m stone: not from the ground, yes from the lower stone
+  const mid=makeRock(domeGrid(3,3,1.2),{x:0,z:0}),tall=makeRock(domeGrid(4,4,2.5),{x:3.2,z:0});
+  const edge=[tall.cx-1.3,0];
+  assert.ok(rockSurface(tall,edge[0],0)>reach,'the tall stone is too high at its rim to jump onto from the ground? '+rockSurface(tall,edge[0],0));
+  assert.ok(rockPush(tall,tall.cx-0.4,0,reach)!==null,'cannot reach the tall one from the ground');
+  assert.equal(rockPush(tall,tall.cx-0.4,0,rockSurface(mid,0,0)+reach),null,'but can from the top of the lower one');
+  assert.equal(rockPush(mid,0.1,0,reach),null,'and the lower one from the ground');
+  // no trap in a narrow gap between two stones
+  const A=makeRock(domeGrid(3,3,2),{x:-1.6,z:0}),B=makeRock(domeGrid(3,3,2),{x:1.6,z:0});
+  for(const [px,pz] of [[0,0],[0.05,0.3],[-0.1,-0.4],[0,1]]){
+    let x=px,z=pz;
+    for(let i=0;i<3;i++)for(const r of [A,B]){const c=rockPush(r,x,z,0);if(c){x=c[0];z=c[1]}}
+    for(const r of [A,B])assert.ok(rockSurface(r,x,z)-0<=0.12+0.2,'ended outside both stones at '+px+','+pz);
+  }
+  // the baked mesh top is sampled: a box 2 x 1 x 1 reads as flat 1 m high
+  const box=new Float32Array([-1,0,-.5, 1,0,-.5, 1,1,-.5,  -1,0,-.5, 1,1,-.5, -1,1,-.5,  -1,1,-.5, 1,1,-.5, 1,1,.5,  -1,1,-.5, 1,1,.5, -1,1,.5]);
+  const bg=heightGrid(box,null);assert.ok(bg.top>0.99&&bg.top<1.01);
+  const br=makeRock(bg,{x:0,z:0});assert.ok(Math.abs(rockSurface(br,0,0)-1)<0.02);
+  const rot=makeRock(bg,{x:4,z:4,rot:Math.PI/2});assert.ok(Math.abs(rockSurface(rot,4,4.8)-1)<0.15,'rotated footprint follows');assert.ok(rockSurface(rot,4.9,4)<=0.2,'and is narrow the other way');
 }
 // Biomes: deterministic, smooth, all three kinds occur, and the mixed wood is a good share.
 {const a=biomeAt(120,-45,7),b=biomeAt(120,-45,7);assert.deepEqual(a,b);assert.notDeepEqual(biomeAt(120,-45,7),biomeAt(120,-45,9));
