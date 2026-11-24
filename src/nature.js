@@ -141,8 +141,8 @@ function oak(R, P, opts) {
   const blobsD = (x, y, z) => { let d = 1e9; for (let i = 0; i < blobs.length; i++) { const b = blobs[i]; const bd = Math.hypot(x - b[0], y - b[1], z - b[2]) - b[3]; d = d > 1e8 ? bd : smin(d, bd, 0.3); } return d; };
   const canopy = (x, y, z) => {
     const d0 = blobsD(x, y, z);
-    if (d0 > 0.8 || d0 < -0.8) return d0;
-    const wx = x + 0.3 * fbm(x * 0.9 + ph[0], y * 0.9, z * 0.9, 2), wy = y + 0.2 * fbm(x * 0.9, y * 0.9 + ph[1], z * 0.9, 2), wz = z + 0.3 * fbm(x * 0.9, y * 0.9, z * 0.9 + ph[2], 2);
+    if (d0 > 0.62 || d0 < -0.62) return d0;
+    const wx = x + 0.55 * (noise(x * 0.9 + ph[0], y * 0.9, z * 0.9) - 0.5), wy = y + 0.4 * (noise(x * 0.9, y * 0.9 + ph[1], z * 0.9) - 0.5), wz = z + 0.55 * (noise(x * 0.9, y * 0.9, z * 0.9 + ph[2]) - 0.5);
     let d = blobsD(wx, wy, wz);
     d -= 0.34 * fbm(x * 3.0 + ph[1], y * 3.0, z * 3.0, 2);
     d -= 0.1 * (1 - Math.abs(2 * noise(x * 5.5, y * 5.5 + ph[2], z * 5.5) - 1));
@@ -153,7 +153,7 @@ function oak(R, P, opts) {
     if (d < 0.15) d -= 0.045 * fbm(x * 7 + ph[0], y * 2.2, z * 7, 2);
     return d;
   };
-  const cell = 0.052, tb = segsBounds(segs, 0.15);
+  const cell = 0.06, tb = segsBounds(segs, 0.15);
   const cb = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
   for (const b of blobs) for (let i = 0; i < 3; i++) { cb[i] = Math.min(cb[i], b[i] - b[3] - 0.9); cb[i + 3] = Math.max(cb[i + 3], b[i] + b[3] + 0.9); }
   const gc = groundCull(cell);
@@ -169,7 +169,7 @@ function oak(R, P, opts) {
     },
   };
   const canopyPart = {
-    sdf: canopy, bounds: cb, cell: 0.115, w: 3.2,
+    sdf: canopy, bounds: cb, cell: 0.14, w: 3.2,
     shade(x, y, z, nx, ny, nz, ao, o) {
       const lump = 0.6 * noise(x * 4.3, y * 4.3 + ph[0], z * 4.3) + 0.4 * noise(x * 11, y * 11, z * 11 + ph[1]), big = fbm(x * 1.1, y * 1.1, z * 1.1 + ph[2], 2);
       const t = clamp(0.5 + 0.7 * ny + (lump - 0.5) * 0.9 + (y - th - 1) * 0.07, 0, 1);
@@ -200,15 +200,15 @@ function fir(R, P) {
     const tt = fract(T.lobes * a / TAU + T.ph), lobe = Math.pow(1 - Math.abs(2 * tt - 1), 1.6);
     const Rt = T.R * (0.72 + 0.28 * lobe + 0.22 * (noise(Math.cos(a) * 2.1 + T.sd, Math.sin(a) * 2.1, T.sd) - 0.5));
     const my = T.apex - 0.28 * T.drop, by = T.apex - T.drop * (0.8 + 0.4 * lobe);
-    let d = Math.min(seg2(r, y, 0, T.apex - 0.02, Rt * 0.5, my), seg2(r, y, Rt * 0.5, my, Rt, by)) - (0.11 + 0.04 * (1 - r / (Rt + 0.01)));
+    let d = Math.min(seg2(r, y, 0, T.apex - 0.02, Rt * 0.5, my), seg2(r, y, Rt * 0.5, my, Rt, by)) - (0.13 + 0.04 * (1 - r / (Rt + 0.01)));
     d += 0.05 * Math.cos(T.lobes * 2 * a + T.ph) * smoothstep(0.1, 0.5, r / Rt);
-    d -= 0.07 * fbm(x * 5 + T.sd, y * 5, z * 5, 2);
+    d -= 0.04 * fbm(x * 4 + T.sd, y * 4, z * 4, 2);
     return d;
   };
   const tiersSd = (x, y, z) => { let d = 1e9; for (const T of tiers) d = Math.min(d, tierD(T, x, y, z)); return d; };
   const trunkSeg = [mkSeg([0, -0.3, 0], [0, H, 0], 0.24, 0.025, 0.1)];
   const trunkD = segsSdf(trunkSeg);
-  const tcell = 0.07, ccell = 0.05, Rmax = R0 + 0.6, gc = groundCull(ccell);
+  const tcell = 0.085, ccell = 0.06, Rmax = R0 + 0.6, gc = groundCull(ccell);
   const trunkPart = {
     sdf: (x, y, z) => groundClip(trunkD(x, y, z) - 0.025 * fbm(x * 8 + ph, y * 2, z * 8, 2), y, ccell),
     bounds: [-0.5, -0.1, -0.5, 0.5, H + 0.2, 0.5], cell: ccell, w: 0.7,
@@ -242,15 +242,15 @@ function snag(R, P) {
   const segs = [];
   const nb = 5 + (R() * 3 | 0);
   for (let i = 0; i < nb; i++) {
-    const hy = H * (0.35 + 0.6 * (i + R() * 0.7) / nb), c = ctr(hy), a = R() * TAU;
-    let dir = normalize3([Math.cos(a), 0.35 + R() * 0.6, Math.sin(a)]), p = [c[0] + Math.cos(a) * rad(hy) * 0.6, hy, c[1] + Math.sin(a) * rad(hy) * 0.6];
-    let rr = Math.max(0.07, rad(hy) * 0.55), segn = 3 + (R() * 2 | 0);
-    const len = 0.5 + R() * 0.55;
+    const hy = H * (0.3 + 0.5 * (i + R() * 0.7) / nb), c = ctr(hy), a = R() * TAU;
+    let dir = normalize3([Math.cos(a), 0.2 + R() * 0.5, Math.sin(a)]), p = [c[0] + Math.cos(a) * rad(hy) * 0.6, hy, c[1] + Math.sin(a) * rad(hy) * 0.6];
+    let rr = Math.max(0.075, rad(hy) * 0.55), segn = 3 + (R() * 2 | 0);
+    const len = 0.45 + R() * 0.5;
     for (let s = 0; s < segn; s++) {
       dir = normalize3([dir[0] + (R() - 0.5) * 0.9, dir[1] + (R() - 0.45) * 0.6, dir[2] + (R() - 0.5) * 0.9]);
-      const q = [p[0] + dir[0] * len, p[1] + dir[1] * len, p[2] + dir[2] * len], r2 = Math.max(0.04, rr * 0.62);
+      const q = [p[0] + dir[0] * len, p[1] + dir[1] * len, p[2] + dir[2] * len], r2 = Math.max(0.05, rr * 0.62);
       segs.push(mkSeg(p, q, rr, r2, 0.06));
-      if (s === 1 && R() < 0.7) { const d2 = normalize3([-dir[2] + (R() - 0.5), dir[1] * 0.5 + 0.3, dir[0] + (R() - 0.5)]); segs.push(mkSeg(q, [q[0] + d2[0] * len * 0.8, q[1] + d2[1] * len * 0.8, q[2] + d2[2] * len * 0.8], Math.max(0.045, r2 * 0.8), 0.04, 0.05)); }
+      if (s === 1 && R() < 0.7) { const d2 = normalize3([-dir[2] + (R() - 0.5), dir[1] * 0.5 + 0.3, dir[0] + (R() - 0.5)]); segs.push(mkSeg(q, [q[0] + d2[0] * len * 0.8, q[1] + d2[1] * len * 0.8, q[2] + d2[2] * len * 0.8], Math.max(0.05, r2 * 0.8), 0.05, 0.05)); }
       p = q; rr = r2;
     }
   }
@@ -274,7 +274,7 @@ function snag(R, P) {
     if (d < 0.15) { const cs = Math.cos(tw * y), sn = Math.sin(tw * y); d += 0.032 * (1 - Math.abs(2 * noise((cs * x - sn * z) * 9, y * 1.2, (sn * x + cs * z) * 9 + nz) - 1)) - 0.016; }
     return d;
   };
-  const cell = 0.046, b = segsBounds(segs, 0.15); b[0] = Math.min(b[0], -0.7); b[2] = Math.min(b[2], -0.7); b[3] = Math.max(b[3], 0.7); b[5] = Math.max(b[5], 0.7); b[4] = Math.max(b[4], H + 0.5);
+  const cell = 0.055, b = segsBounds(segs, 0.15); b[0] = Math.min(b[0], -0.7); b[2] = Math.min(b[2], -0.7); b[3] = Math.max(b[3], 0.7); b[5] = Math.max(b[5], 0.7); b[4] = Math.max(b[4], H + 0.5);
   const gc = groundCull(cell);
   const part = {
     sdf: (x, y, z) => groundClip(sd(x, y, z), y, cell), bounds: growBounds(b, cell * 2), cell, w: 1, cull: (x, y, z) => gc(y),
@@ -309,7 +309,7 @@ function boulder(R, P, opts) {
     d += 0.05 * smoothstep(0.32, 0.0, w) - 0.015 * smoothstep(0.55, 0.3, w);
     return d * 0.85;
   };
-  const sdf = scaled(f, s), cell = Math.max(0.03, s * 0.046), ext = 1.5 * s, gc = groundCull(cell);
+  const sdf = scaled(f, s), cell = Math.max(0.035, s * 0.055), ext = 1.5 * s, gc = groundCull(cell);
   const part = {
     sdf: (x, y, z) => groundClip(sdf(x, y, z), y, cell), bounds: [-ext * 1.1, -cell * 3, -ext * 1.1, ext * 1.1, cy * s + ry * s * 1.5, ext * 1.1], cell, w: 1, cull: (x, y, z) => gc(y),
     shade(x, y, z, nx, ny, nz, ao, o) {
@@ -352,7 +352,7 @@ function slab(R, P, opts) {
     }
     return d;
   };
-  const sdf = scaled(f, s), cell = Math.max(0.03, s * 0.04), ext = 1.6 * s, gc = groundCull(cell);
+  const sdf = scaled(f, s), cell = Math.max(0.035, s * 0.05), ext = 1.6 * s, gc = groundCull(cell);
   const part = {
     sdf: (x, y, z) => groundClip(sdf(x, y, z), y, cell), bounds: [-ext * ax, -cell * 3, -ext * az, ext * ax, 1.8 * s, ext * az], cell, w: 1, cull: (x, y, z) => gc(y),
     shade(x, y, z, nx, ny, nz, ao, o) {
@@ -372,7 +372,7 @@ function slab(R, P, opts) {
 }
 
 /* ---------- 6. mossrock ---------- */
-const PAL_MOSSROCK = {stone: '#77746d', stone2: '#9c978c', dark: '#3f3d39', moss: '#44692b', moss2: '#6a8f36', mossD: '#294a1f'};
+const PAL_MOSSROCK = {stone: '#77746d', stone2: '#9c978c', dark: '#3f3d39', moss: '#3c5e27', moss2: '#5d8230', mossD: '#25421c'};
 function mossrock(R, P, opts) {
   const size = opts.size || (0.8 + 1.2 * Math.pow(R(), 1.2)), s = size / 2.4, ph = [R() * 50, R() * 50, R() * 50];
   const n = 2 + (R() * 3 | 0), st = [];
@@ -394,7 +394,7 @@ function mossrock(R, P, opts) {
     if (d < 0.18) { const m = moss(x, y, z); d -= m * (0.075 + 0.04 * noise(x * 11, y * 11, z * 11)); }
     return d * 0.88;
   };
-  const sdf = scaled(f, s), cell = Math.max(0.028, s * 0.045), ext = 2.0 * s, gc = groundCull(cell);
+  const sdf = scaled(f, s), cell = Math.max(0.035, s * 0.055), ext = 2.0 * s, gc = groundCull(cell);
   const part = {
     sdf: (x, y, z) => groundClip(sdf(x, y, z), y, cell), bounds: [-ext, -cell * 3, -ext, ext, 1.6 * s, ext], cell, w: 1, cull: (x, y, z) => gc(y),
     shade(x, y, z, nx, ny, nz, ao, o) {
@@ -427,7 +427,7 @@ function shrub(R, P, opts) {
     blobs.push({c, r, fr, tint: R(), s: [r * 1.1, r * 0.8, r * 1.0]});
   }
   const nt = 7 + (R() * 3 | 0);
-  for (let i = 0; i < nt; i++) { const b = blobs[(i * 4 + (R() * 3 | 0)) % blobs.length]; segs.push(mkSeg([(R() - 0.5) * 0.08, -0.05, (R() - 0.5) * 0.08], [b.c[0] * 0.8, b.c[1] * 0.85, b.c[2] * 0.8], 0.024 * sc, 0.016 * sc, 0.05)); }
+  for (let i = 0; i < nt; i++) { const b = blobs[(i * 4 + (R() * 3 | 0)) % blobs.length]; segs.push(mkSeg([(R() - 0.5) * 0.08, -0.05, (R() - 0.5) * 0.08], [b.c[0] * 0.8, b.c[1] * 0.85, b.c[2] * 0.8], 0.032 * sc, 0.024 * sc, 0.05)); }
   const twD = segsSdf(segs);
   const blobD = (b, x, y, z) => {
     const dx = x - b.c[0], dy = y - b.c[1], dz = z - b.c[2], f = b.fr;
@@ -443,7 +443,7 @@ function shrub(R, P, opts) {
     if (d < 0.05) d -= 0.012 * (1 - Math.abs(2 * noise(x * 20 + ph[0], y * 20, z * 20) - 1));
     return d;
   };
-  const cell = 0.022 * sc, ext = Rs + 0.3 * sc, gc = groundCull(cell);
+  const cell = 0.028 * sc, ext = Rs + 0.3 * sc, gc = groundCull(cell);
   const nearest = (x, y, z) => { let bi = 0, bd = 1e9; for (let i = 0; i < blobs.length; i++) { const b = blobs[i], d = Math.hypot(x - b.c[0], y - b.c[1], z - b.c[2]) / b.r; if (d < bd) { bd = d; bi = i; } } return [bi, bd]; };
   const part = {
     sdf: (x, y, z) => groundClip(sdf(x, y, z), y, cell), bounds: [-ext, -cell * 3, -ext, ext, Hs + 0.35 * sc, ext], cell, w: 1, cull: (x, y, z) => gc(y),
@@ -487,7 +487,7 @@ function succulent(R, P, opts) {
     for (let i = 0; i < n; i++) { const l = leaves[i], bd = Math.hypot(x - l.cx, y - l.cy, z - l.cz) - l.br; if (bd > d + 0.04) continue; d = smin(d, leafD(l, x, y, z), 0.03); }
     return d;
   };
-  const cell = 0.014 * sc, ext = Lmax * 1.15 + 0.05, gc = groundCull(cell);
+  const cell = 0.017 * sc, ext = Lmax * 1.15 + 0.05, gc = groundCull(cell);
   const part = {
     sdf: (x, y, z) => groundClip(sdf(x, y, z), y, cell), bounds: [-ext, -cell * 3, -ext, ext, Lmax * 1.1 + 0.1, ext], cell, w: 1, cull: (x, y, z) => gc(y),
     shade(x, y, z, nx, ny, nz, ao, o) {
@@ -538,7 +538,7 @@ function tulip(R, P, opts) {
     const a = R() * TAU, rr = Math.sqrt(R()) * rcl, base = [Math.cos(a) * rr, -0.01, Math.sin(a) * rr];
     const h = (0.28 + R() * 0.24) * sc, lean = 0.05 + R() * 0.07, la = a + (R() - 0.5) * 1.2;
     const hx = base[0] + Math.cos(la) * lean * sc, hz = base[2] + Math.sin(la) * lean * sc, hy = h;
-    const st = stemCurve(R, base, hx, hy, hz, 0.0085 * sc, 0.0075 * sc);
+    const st = stemCurve(R, base, hx, hy, hz, 0.0095 * sc, 0.0085 * sc);
     const tip = st.pts[3], tan = normalize3([tip[0] - st.pts[2][0], tip[1] - st.pts[2][1], tip[2] - st.pts[2][2]]);
     const blades = [];
     const nbld = 2, ba = R() * TAU;
@@ -548,7 +548,7 @@ function tulip(R, P, opts) {
     }
     const sdfB = bladesSdf(blades, 0.01), sdfS = segsSdf(st.segs);
     const ptsAll = [...st.pts, ...blades.flatMap(b => [b.p, [b.p[0] + b.fr.ez[0] * b.L, b.p[1] + b.fr.ez[1] * b.L - b.arch * b.L * b.L, b.p[2] + b.fr.ez[2] * b.L]])];
-    const cellS = 0.0056 * sc, gc = groundCull(cellS);
+    const cellS = 0.0065 * sc, gc = groundCull(cellS);
     const bs = boundsOfPts(ptsAll, 0.05 * sc); bs[1] = Math.min(bs[1], -cellS * 3);
     const stemPart = {
       sdf: (x, y, z) => groundClip(smin(sdfS(x, y, z), sdfB(x, y, z), 0.01), y, cellS), bounds: bs, cell: cellS, w: 1.0, cull: (x, y, z) => gc(y),
@@ -571,7 +571,7 @@ function tulip(R, P, opts) {
       let d = sdEllipsoid(lxs / lob, lys - 0.042, lzs / lob, 0.03, 0.05, 0.03);
       // pointed petal tips
       d = smin(d, sdEllipsoid(lxs / lob, lys - 0.088, lzs / lob, 0.022, 0.016, 0.022), 0.01);
-      const inner = sdEllipsoid(lxs, lys - 0.056, lzs, 0.0235, 0.056, 0.0235);
+      const inner = sdEllipsoid(lxs, lys - 0.056, lzs, 0.021, 0.056, 0.021);
       d = smax(d, -inner, 0.004);
       // seam notches between petals
       d += 0.003 * Math.max(0, Math.cos(3 * th + ph + Math.PI)) * smoothstep(0.03, 0.09, lys);
@@ -579,7 +579,7 @@ function tulip(R, P, opts) {
     };
     const hb = [tip[0] - 0.1 * hs, tip[1] - 0.04 * hs, tip[2] - 0.1 * hs, tip[0] + 0.1 * hs, tip[1] + 0.14 * hs, tip[2] + 0.1 * hs];
     parts.push({
-      sdf: hf, bounds: hb, cell: 0.0031 * hs, farCell: 0.0062 * hs, farInflate: 0.0025 * hs, w: 2.4,
+      sdf: hf, bounds: hb, cell: 0.0038 * hs, farCell: 0.0072 * hs, farInflate: 0.003 * hs, w: 2.4,
       shade(x, y, z, nx, ny, nz, ao, o) {
         const dx = x - tip[0], dy = y - tip[1], dz = z - tip[2], ly = (dx * fr.ex[1] * 0 + dx * fr.ey[0] + dy * fr.ey[1] + dz * fr.ey[2]) / hs;
         const th = Math.atan2(dx * fr.ez[0] + dy * fr.ez[1] + dz * fr.ez[2], dx * fr.ex[0] + dy * fr.ex[1] + dz * fr.ex[2]);
@@ -601,7 +601,7 @@ function daisy(R, P, opts) {
     const a = R() * TAU, rr = Math.sqrt(R()) * rcl, base = [Math.cos(a) * rr, -0.01, Math.sin(a) * rr];
     const h = (0.25 + R() * 0.3) * sc, lean = 0.07 + R() * 0.1, la = a + (R() - 0.5) * 1.0;
     const hx = base[0] + Math.cos(la) * lean * sc, hz = base[2] + Math.sin(la) * lean * sc;
-    const st = stemCurve(R, base, hx, h, hz, 0.0058 * sc, 0.005 * sc);
+    const st = stemCurve(R, base, hx, h, hz, 0.0068 * sc, 0.006 * sc);
     const tip = st.pts[3], tan = normalize3([tip[0] - st.pts[2][0] + (R() - 0.5) * 0.2, tip[1] - st.pts[2][1], tip[2] - st.pts[2][2] + (R() - 0.5) * 0.2]);
     const blades = [], nbl = 2 + (R() * 2 | 0), ba = R() * TAU;
     for (let k = 0; k < nbl; k++) {
@@ -609,7 +609,7 @@ function daisy(R, P, opts) {
       const f = (hh - 0) / h, sp = st.pts[1];
       blades.push(mkBlade([base[0] + (hx - base[0]) * f * 0.5, Math.max(0, hh), base[2] + (hz - base[2]) * f * 0.5], dir, (0.09 + R() * 0.07) * sc, 0.016 * sc, 0.0045 * sc, 2.5 + R() * 2));
     }
-    const sdfB = bladesSdf(blades, 0.006), sdfS = segsSdf(st.segs), cellS = 0.0042 * sc, gc = groundCull(cellS);
+    const sdfB = bladesSdf(blades, 0.006), sdfS = segsSdf(st.segs), cellS = 0.005 * sc, gc = groundCull(cellS);
     const ptsAll = [...st.pts, ...blades.flatMap(b => [b.p, [b.p[0] + b.fr.ez[0] * b.L, b.p[1] + b.fr.ez[1] * b.L - b.arch * b.L * b.L, b.p[2] + b.fr.ez[2] * b.L]])];
     const bs = boundsOfPts(ptsAll, 0.04 * sc); bs[1] = Math.min(bs[1], -cellS * 3);
     parts.push({
@@ -628,7 +628,7 @@ function daisy(R, P, opts) {
       let d = sdEllipsoid(lx, ly - 0.002, lz, 0.021, 0.0125, 0.021);
       if (r < 0.075) {
         const th = Math.atan2(lz, lx) + pj, am = ((th % sector) + sector) % sector - sector / 2, px = r * Math.cos(am), pz = r * Math.sin(am), yy = ly + 2.4 * r * r - 0.003;
-        const pd = sdEllipsoid(px - 0.036 - petalLen * 0.2, yy, pz, petalLen + 0.012, 0.0032, 0.0086) * 0.75;
+        const pd = sdEllipsoid(px - 0.036 - petalLen * 0.2, yy, pz, petalLen + 0.012, 0.0042, 0.0086) * 0.75;
         d = smin(d, pd, 0.004);
       }
       return d * hs;
@@ -636,7 +636,7 @@ function daisy(R, P, opts) {
     const hb = [tip[0] - 0.08 * sc, tip[1] - 0.06 * sc, tip[2] - 0.08 * sc, tip[0] + 0.08 * sc, tip[1] + 0.06 * sc, tip[2] + 0.08 * sc];
     const tint = tinted;
     parts.push({
-      sdf: hf, bounds: hb, cell: 0.0033 * sc, farCell: 0.0066 * sc, farInflate: 0.0035 * sc, w: 2.4,
+      sdf: hf, bounds: hb, cell: 0.004 * sc, farCell: 0.0075 * sc, farInflate: 0.004 * sc, w: 2.4,
       shade(x, y, z, nx, ny, nz, ao, o) {
         const dx = x - tip[0], dy = y - tip[1], dz = z - tip[2];
         const lx = (dx * fr.ex[0] + dy * fr.ex[1] + dz * fr.ex[2]) / hs, lz = (dx * fr.ez[0] + dy * fr.ez[1] + dz * fr.ez[2]) / hs, ly = (dx * fr.ey[0] + dy * fr.ey[1] + dz * fr.ey[2]) / hs, r = Math.hypot(lx, lz);
@@ -698,6 +698,13 @@ export function* bakePropGen(kind, seed = 1, opts = {}) {
       out[k] = rawN[k] <= t ? srcs[k] : yield* make(k, t);
       left -= out[k].T.length / 3; rest -= wt(k); yield;
     }
+    // parts that stalled above their share leave the total over budget: trim the rest (largest first) by the excess
+    let excess = out.reduce((a, m) => a + m.T.length / 3, 0) - total;
+    for (const k of [...order].sort((a, b) => out[b].T.length - out[a].T.length)) {
+      if (excess <= 0) break;
+      const cur = out[k].T.length / 3, t = Math.max(14, cur - excess);
+      if (t < cur) { out[k] = yield* run(simplifyGen(out[k], t)); excess -= cur - out[k].T.length / 3; }
+    }
     return out;
   };
   const nearM = yield* fit(meshes, budget.near, function* (k, t) { return yield* run(simplifyGen(meshes[k], t)); });
@@ -706,7 +713,7 @@ export function* bakePropGen(kind, seed = 1, opts = {}) {
   const coarse = function* (k, t) {   // re-sculpt coarser (inflated a little so thin parts survive), simplify; retry coarser while over budget
     const p = parts[k]; let cell = p.farCell || p.cell * 1.8, m, got = Infinity;
     const fs = (p.farInflate ?? p.cell * 0.3) ? (x, y, z) => p.sdf(x, y, z) - (p.farInflate ?? p.cell * 0.3) : p.sdf;
-    for (let tries = 0; tries < 4 && got > t * 1.1 + 6; tries++, cell *= 1.35) {
+    for (let tries = 0; tries < 4 && got > t * 1.01 + 2; tries++, cell *= 1.35) {
       m = dropSmall(yield* run(sculptGen(fs, p.bounds, cell, {cull: p.cull})), 20);
       if (m.T.length / 3 > t) m = yield* run(simplifyGen(m, t));
       got = m.T.length / 3;
@@ -717,7 +724,7 @@ export function* bakePropGen(kind, seed = 1, opts = {}) {
     // thin sheets (petals, skirts) cannot be collapsed far enough, so they go straight to a coarser sculpt; the rest simplify the near mesh and fall back to it when they stall
     if (parts[k].farCell) return yield* coarse(k, t);
     const m = yield* run(simplifyGen(nearM[k], t));
-    return m.T.length / 3 > t * 1.15 + 8 ? yield* coarse(k, t) : m;
+    return m.T.length / 3 > t * 1.01 + 2 ? yield* coarse(k, t) : m;
   });
   const finish = function* (ms, re) {
     const outs = [];

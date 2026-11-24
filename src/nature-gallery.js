@@ -53,12 +53,15 @@ const VIEWS = {
   rocks() { const a = row(['boulder', 'slab', 'mossrock'], 3, 0, 'near', 1.2), b = row(['boulder', 'slab', 'mossrock'], 21, 4.2, 'near', 1.2); place([...a, ...b]); cam([0, 3.2, 13], [0, 0.8, 2], 36); },
   plants() { const a = row(['shrub', 'succulent'], 3, 0, 'near', 0.6), b = row(['shrub', 'succulent'], 21, 2.5, 'near', 0.6); place([...a, ...b]); cam([0, 1.7, 6.2], [0, 0.35, 1.2], 34); },
   flowers() { const a = row(['tulip', 'daisy'], 3, 0, 'near', 0.5), b = row(['tulip', 'daisy'], 21, 1.7, 'near', 0.5); place([...a, ...b]); cam([0, 1.0, 3.6], [0, 0.22, 0.8], 32); },
-  seeds() {
-    const it = []; NATURE_KINDS.forEach((k, ki) => { for (let s = 0; s < 4; s++) it.push({kind: k, seed: 100 + s * 7 + ki, x: (s - 1.5) * (WID[k] + 0.4) * (ki < 3 ? 1 : 0.9), z: ki * 5.0 - 22, lod: 'near'}); });
-    // trees at the back, small things front: scale spacing per kind so the sheet is readable
-    place(it); cam([0, 16, 20], [0, 0.5, -9], 50);
-  },
+  // seed variation sheets: one row per kind, four seeds along x
+  seeds() { sheet(['oak', 'fir', 'snag'], 8.5, [0, 12, 26], [0, 1.6, 1], 40); },
+  seeds2() { sheet(['boulder', 'slab', 'mossrock'], 3.6, [0, 7.5, 12.5], [0, 0.5, 3.4], 38); },
+  seeds3() { sheet(['shrub', 'succulent', 'tulip', 'daisy'], 1.7, [0, 4.6, 6.4], [0, 0.1, -0.3], 40); },
 };
+function sheet(kinds, dz, cp, ct, fov) {
+  const it = []; kinds.forEach((k, ki) => { for (let sd = 0; sd < 4; sd++) it.push({kind: k, seed: 100 + sd * 7 + ki, x: (sd - 1.5) * (WID[k] + 0.6) * 1.1, z: ki * dz - dz * (kinds.length - 1) / 2, lod: 'near'}); });
+  place(it); cam(cp, [ct[0], ct[1], ct[2]], fov);
+}
 function cam(p, t, fov) { camera.position.set(...p); camera.lookAt(...t); camera.fov = fov; camera.updateProjectionMatrix(); }
 window.__gal = {
   baked, kinds: NATURE_KINDS, THREE,

@@ -7,7 +7,7 @@ import {mkdirSync, existsSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 const {chromium} = createRequire(import.meta.url)('playwright');
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const A = {scale: '1', out: resolve(root, 'shots/nature'), views: 'lineup,trees,rocks,plants,flowers,seeds,far', size: '1600x900'};
+const A = {scale: '1', out: resolve(root, 'shots/nature'), views: 'lineup,trees,rocks,plants,flowers,seeds,seeds2,seeds3,far', size: '1600x900'};
 for (let i = 2; i < process.argv.length; i += 2) A[process.argv[i].replace(/^--/, '')] = process.argv[i + 1];
 execFileSync('node', [resolve(root, 'tools/nature_gallery.mjs')], {stdio: 'inherit'});
 mkdirSync(A.out, {recursive: true});
