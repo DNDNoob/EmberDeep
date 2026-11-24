@@ -13,11 +13,15 @@
      2. F.kind      'cave' -> hollow, 'dark' -> blackhush, 'forest' -> forest ('back' = Humming Rooms: always silent)
      3. F.biome.name  the biome's own key (BIOME_KEY below) or the biome name itself, e.g. 'The Rustworks'
    The walkable lobby (game state 'title': menu room, archives, lift ride) plays 'lobby', and 'elevator' while riding the lift down (info.lift); a chase plays 'chase' if it has tracks, otherwise ducks the floor track by CHASE_DUCK_DB.
-   Silent: strange-door rooms, the Humming Rooms, dead. Paused: lowered. A voice-chat peer talking ducks by VOICE_DUCK_DB.
+   Silent: strange-door rooms (except those in ROOM_KEY, e.g. the still wood, which plays 'stillwood' via info.room), the Humming Rooms, dead. Paused: lowered. A voice-chat peer talking ducks by VOICE_DUCK_DB.
    Each list holds one or more URLs; one is picked at random when the track starts. Tracks loop. */
 export const MUSIC_TRACKS={lobby:['music/lobby-1.ogg','music/lobby-2.ogg'],elevator:['music/elevator-1.ogg','music/elevator-2.ogg'],stonework:['music/stonework-1.ogg','music/stonework-2.ogg'],moss:['music/moss-1.ogg','music/moss-2.ogg'],cinder:['music/cinder-1.ogg','music/cinder-2.ogg'],
   frost:['music/frost-1.ogg','music/frost-2.ogg'],hollow:['music/hollow-1.ogg','music/hollow-2.ogg'],blackhush:['music/blackhush-1.ogg','music/blackhush-2.ogg'],chase:['music/chase-1.ogg','music/chase-2.ogg'],
-  'The Bone Galleries':['music/bones-1.ogg','music/bones-2.ogg'],'The Rustworks':['music/rust-1.ogg','music/rust-2.ogg'],'The Glimmer Veins':['music/glimmer-1.ogg','music/glimmer-2.ogg'],forest:['music/forest-1.ogg','music/forest-2.ogg']};
+  'The Bone Galleries':['music/bones-1.ogg','music/bones-2.ogg'],'The Rustworks':['music/rust-1.ogg','music/rust-2.ogg'],'The Glimmer Veins':['music/glimmer-1.ogg','music/glimmer-2.ogg'],forest:['music/forest-1.ogg','music/forest-2.ogg'],
+  // the still wood: the sparsest, quietest of the existing loops (a few bright, slow notes), re-used rather than a new file
+  stillwood:['music/glimmer-1.ogg']};
+// strange-door rooms are silent unless listed here (room kind -> track key)
+const ROOM_KEY={stillwood:'stillwood'};
 const BIOME_KEY={'The Old Stonework':'stonework','Mossgrown Halls':'moss','Cinder Warrens':'cinder','The Frostvault':'frost','The Dark Forest':'forest'};
 const KIND_KEY={cave:'hollow',dark:'blackhush',forest:'forest'};
 export const DEFAULT_VOL={music:0.35,sfx:1,ambience:1,voices:1,mic:1};
@@ -95,7 +99,8 @@ export function updateMusic(dt,info){
     const s=info.state,F=info.F;
     let key=null,floorKey=null;
     if(s==='title')key=info.lift&&MUSIC_TRACKS.elevator.length?'elevator':MUSIC_TRACKS.lobby.length?'lobby':null;
-    else if(s==='dead'||info.inRoom||s==='room')key=null;
+    else if(s==='dead')key=null;
+    else if(info.inRoom||s==='room'){const k=ROOM_KEY[info.room];key=k&&MUSIC_TRACKS[k]&&MUSIC_TRACKS[k].length?k:null}
     else{
       floorKey=resolveMusicKey(F);key=floorKey;
       if(info.chasing>0&&s==='play')chaseT=CHASE_HOLD;else chaseT=Math.max(0,chaseT-dt);
