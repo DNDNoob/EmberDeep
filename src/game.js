@@ -2514,6 +2514,7 @@ function startFromMenu(seed,depth){
   if(!loading)startRun(seed,depth,false,true);
 }
 function enterRun(seed,sd,floor,landing,liftTrip){
+  if(seed===autoSeed&&!$('seedIn').value.trim()){autoSeed=randSeed();reWarm=true}
   if(loading?.kind==='shaft')closeLoading(); // an unfinished title warm-up must not hold the doors shut or rebuild the world later
   roomLeave();$('deadTitle').textContent='THE DARK TAKES YOU';
   showHub(false);
@@ -5427,7 +5428,7 @@ function tickSharedLift(){
     return;
   }
   const {depth,max}=sharedLift.selection;
-  const seed=($('seedIn').value.trim()||randSeed()).toUpperCase();
+  const seed=liftSeed();
   // The run must be hosted by someone on the platform. Keep the current
   // host whenever they are among the riders.
   const packet={id:newRoomCode(),depth,max,seed,pilot:members[0],members};
@@ -5510,6 +5511,7 @@ function showHub(on){
   if(!on)settingsScreen.screen.hidden=true;
   $('menuHub').hidden=!on;
   document.body.classList.toggle('hub-room',on);
+  if(on&&reWarm&&state==='title'&&!loading){reWarm=false;retargetShaft()}
   if(on){refreshHub();$('tFlash').textContent='USE'}
   else $('tFlash').textContent='FLASH';
 }
@@ -5694,7 +5696,7 @@ function prepareLanding(seed,depth){
   const task={floor:null,model:null,progress:0,ready:false,
     advance(){
       if(task.ready)return;
-      if(stage===0){task.floor=memoFloor(seed,depth);task.progress=0.2}
+      if(stage===0){task.floor=genFloor(seed,depth);task.progress=0.2}
       else if(stage===1){buildMesh(task.floor);task.progress=0.45}
       else if(stage===2){task.model=landingGeometry(task.floor);task.progress=0.6}
       else if(stage===3){buildStatic(task.floor);buildSdf(task.floor);task.progress=0.8}
@@ -5709,6 +5711,9 @@ function prepareLanding(seed,depth){
   return task;
 }
 let warmed=null,shaftQueue=[];
+// the seed a lift ride uses while the seed field is blank; a new one is rolled once a run starts from it, so each ride is a new maze
+let autoSeed=randSeed(),reWarm=false;
+const liftSeed=()=>($('seedIn').value.trim()||autoSeed).toUpperCase();
 function preparedLanding(seed,depth){
   if(warmed&&warmed.seed===seed&&warmed.depth===depth&&warmed.task){
     const task=warmed.task;warmed.left=0;warmed.task=null;return task;
@@ -5722,9 +5727,7 @@ function rememberShaft(seed,depth){
 }
 function startShaftWarm(){
   if(state!=='title')return;
-  const field=$('seedIn');
-  let seed=(field.value||'').trim().toUpperCase();
-  if(!seed){seed=randSeed();field.value=seed}
+  const seed=liftSeed();
   const depth=defaultLiftFloor();
   if(!$('liftDepth').value)$('liftDepth').value=depth;
   const stages=[],seen=new Set();
@@ -5751,10 +5754,10 @@ function startShaftWarm(){
 }
 function retargetShaft(){
   if(state!=='title'||hub.riding||loading)return;
-  const seed=($('seedIn').value||'').trim().toUpperCase();
+  const seed=liftSeed();
   const typed=+$('liftDepth').value;
   const depth=Number.isInteger(typed)&&typed>=1?typed:defaultLiftFloor();
-  if(!seed||(warmed&&warmed.seed===seed&&warmed.depth===depth))return;
+  if(warmed?.task&&warmed.seed===seed&&warmed.depth===depth)return;
   rememberShaft(seed,depth);
 }
 function departFromLift(shortcut=false){
@@ -5768,7 +5771,7 @@ function departFromLift(shortcut=false){
   const depth=shortcut?deepest:$('liftDepth').valueAsNumber;
   if(!Number.isInteger(depth)||depth<1||depth>+$('liftDepth').max)return;
   if(MP.on){sendLiftAction({k:'liftDepart'});return}
-  const seed=($('seedIn').value.trim()||randSeed()).toUpperCase();
+  const seed=liftSeed();
   if(hub.engageLift(depth,seed))closeStation();
 }
 $('liftDestination').addEventListener('submit',event=>{
