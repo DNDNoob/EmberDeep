@@ -9,8 +9,8 @@ const prefix=process.argv[2]||'after',seed=+(process.argv[3]||7);
 mkdirSync(root+'/shots/stillwood',{recursive:true});
 const VIEWS={
   a:{q:'high',x:0,z:-1.5,yaw:0.0,pitch:0.02},
-  b:{q:'high',x:0.8,z:-9.2,yaw:0.0,pitch:-0.06},
-  c:{q:'high',x:-6,z:-4,yaw:0.5,pitch:0.62},
+  b:{q:'high',x:0.2,z:-6.2,yaw:0.0,pitch:-0.1},
+  c:{q:'high',x:-3,z:-3,yaw:0.9,pitch:0.4},
   d:{q:'low',x:0,z:-1.5,yaw:0.0,pitch:0.02},
 };
 const want=prefix==='before'?['a','b']:Object.keys(VIEWS);
@@ -46,7 +46,7 @@ for(const k of want){
   },V);
   await pg.waitForTimeout(300);
   await pg.screenshot({path:`${root}/shots/stillwood/${prefix}-${k}.png`});
-  const info=await pg.evaluate(()=>{const i=window.__game.renderer.info;return {tris:i.render.triangles,calls:i.render.calls}});
+  const info=await pg.evaluate(()=>{const S=window.__game.ROOMS.state();return S.stats?S.stats():{}});delete info.bake;
   console.log(k,JSON.stringify(info));
   await ctx.close();
 }

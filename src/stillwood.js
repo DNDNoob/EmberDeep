@@ -117,10 +117,10 @@ const hr=(x,z,seed,k)=>hash2(Math.round(x*4)+k*7919,Math.round(z*4)-k*104729,see
 // ---- props: which baked kinds and how many seed variants, and how many instances each can hold ----
 // order = bake order: the things you see first come first
 const PROPS=[
-  {kind:'fir',n:3,cap:[110,260],far:66,w:1},
-  {kind:'shrub',n:2,cap:[120,130],far:34},
-  {kind:'mossrock',n:2,cap:[50,70],far:44},
-  {kind:'oak',n:2,cap:[60,150],far:66},
+  {kind:'fir',n:3,cap:[110,260],far:66,opts:{palette:{leaf:'#3f7058',leaf2:'#72a06f',leafD:'#274a3c'}}},
+  {kind:'shrub',n:2,cap:[120,130],far:34,opts:{palette:{leaf:'#4a7a42',leaf2:'#80a652',leafD:'#2d5330'}}},
+  {kind:'mossrock',n:2,cap:[50,70],far:44,opts:{palette:{moss:'#4f6e38',moss2:'#78914a',mossD:'#334d2a'}}},
+  {kind:'oak',n:2,cap:[60,150],far:66,opts:{palette:{leaf:'#5b8040',leaf2:'#93b055',leafD:'#3d5e30'}}},
   {kind:'tulip',n:1,cap:[110,60],far:26},
   {kind:'daisy',n:1,cap:[110,60],far:26},
   {kind:'slab',n:2,cap:[10,6],far:36,opts:{size:0.9}},
@@ -177,14 +177,14 @@ float clearF(vec2 p){vec2 q=p/14.;vec2 i=floor(q),f=q-i;f=f*f*(3.-2.*f);ivec2 c=
     .replace('#include <color_fragment>',`#include <color_fragment>
 {
   float cl=smoothstep(${CLEAR_AT-0.1},${CLEAR_AT+0.06},clearF(vW));
-  vec3 c=mix(vec3(.060,.125,.040),vec3(.150,.235,.060),cl);
+  vec3 c=mix(vec3(.075,.150,.055),vec3(.170,.255,.075),cl);
   float mo=vn(vW*.21+3.);c=mix(c,vec3(.035,.095,.045),smoothstep(.5,.78,mo)*.65*(1.-cl));
-  float lt=smoothstep(.56,.78,vn(vW*.46+9.));c=mix(c,vec3(.17,.10,.04),lt*.6*(1.-cl));
+  float lt=smoothstep(.56,.78,vn(vW*.46+9.));c=mix(c,vec3(.12,.12,.045),lt*.4*(1.-cl));
   float ds=smoothstep(.6,.85,vn(vW*.9+21.));c=mix(c,vec3(.10,.085,.05),ds*.35);
   float gr=.78+.4*vn(vW*3.7)*vn(vW*13.+5.)+.18*(vn(vW*1.3)-.5);c*=gr;
   vec2 ab=uSeg.zw-uSeg.xy;float t=clamp(dot(vW-uSeg.xy,ab)/dot(ab,ab),0.,1.);
   float dp=length(vW-uSeg.xy-ab*t)+ (vn(vW*2.)-.5)*.5;
-  c=mix(c,vec3(.115,.085,.05)*(.8+.4*vn(vW*8.)),(1.-smoothstep(.45,1.25,dp))*.8);
+  c=mix(c,vec3(.115,.085,.05)*(.8+.4*vn(vW*8.)),(1.-smoothstep(.3,.95,dp))*.55);
   float dq=length(vW-uPond.xy)-uPond.z;
   c=mix(c,vec3(.03,.05,.03),(1.-smoothstep(0.,2.6,dq))*.65);
   diffuseColor.rgb=c;
@@ -277,7 +277,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   const pathAt=(x,z)=>segDist(x,z,0,0,pond.x,pond.z);
   const clearOf=(x,z)=>((x-pond.x)**2+(z-pond.z)**2<(pond.r+2.4)**2)||(x*x+z*z<5*5);
   function trunkAt(x,z){return trees.some(t=>(t.x-x)**2+(t.z-z)**2<(treeR(t)+0.9)**2)}
-  const NEAR=o.low?12:18,reach=o.low?1:2;
+  const NEAR=o.low?10:18,reach=o.low?1:2;
   function rebuild(cx,cz){
     if(cx===chunkX&&cz===chunkZ)return;
     chunkX=cx;chunkZ=cz;trees=[];
@@ -304,7 +304,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
         const clearing=cf>CLEAR_AT,dd=Math.hypot(x-mx,z-mz);
         const thin=dd>NEAR+22?(dd>NEAR+40?0.3:0.55):1; // far trees thin out into the fog
         // trees: mostly fir, some oak, now and then a dead one
-        if(!clearing&&!clearOf(x,z)&&dPath>1.7&&R(3)<(low?0.4:0.5)&&R(10)<thin){
+        if(!clearing&&!clearOf(x,z)&&dPath>1.7&&R(3)<(low?0.34:0.5)&&R(10)<thin){
           const kv=R(4),kind=kv<0.6?'fir':kv<0.92?'oak':'snag',g=R(6),sc=(kind==='fir'?0.8:0.85)+g*g*0.65;
           const sl=put(kind,R(5),x,0,z,sc*(0.92+R(11)*0.16),sc,R(7)*6.283);
           if(sl)trees.push({x,z,s:sl,k:sc});
@@ -317,15 +317,15 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
         const fx=x0+(R(19)-0.5)*3,fz=z0+(R(20)-0.5)*3,dPf=Math.hypot(fx-pond.x,fz-pond.z)-pond.r,pf=pathAt(fx,fz);
         const wf=clearing?0.75:(dPf<6||pf<3.4)?0.45:0.04;
         if(dPf>1&&pf>0.8&&R(21)<wf*(low?0.7:1)){
-          const kind=R(22)<0.5?'tulip':'daisy',s=0.8+R(23)*0.6;
+          const kind=R(22)<0.5?'tulip':'daisy',s=1.1+R(23)*0.8;
           put(kind,R(24),fx,0,fz,s,s,R(25)*6.283);
-          if(clearing&&R(26)<0.5){const a=R(27)*6.283,s2=0.7+R(28)*0.5;put(R(29)<0.5?'tulip':'daisy',R(30),fx+Math.cos(a)*1.1,0,fz+Math.sin(a)*1.1,s2,s2,R(31)*6.283)}
+          if(clearing&&R(26)<0.5){const a=R(27)*6.283,s2=1+R(28)*0.7;put(R(29)<0.5?'tulip':'daisy',R(30),fx+Math.cos(a)*1.1,0,fz+Math.sin(a)*1.1,s2,s2,R(31)*6.283)}
         }
         // loose stones
         const qx=x0+(R(32)-0.5)*3,qz=z0+(R(33)-0.5)*3,dPq=Math.hypot(qx-pond.x,qz-pond.z)-pond.r;
         if(dPq>1.4&&pathAt(qx,qz)>1.1&&R(34)<0.075){
           const s=0.6+R(35)*0.9,mossy=R(36)<0.6;
-          put(mossy?'mossrock':'boulder',R(37),qx,-0.03,qz,s,s*(0.8+R(38)*0.4),R(39)*6.283);
+          put(mossy?'mossrock':'boulder',R(37),qx,-0.2*s,qz,s,s*(0.8+R(38)*0.4),R(39)*6.283);
         }
       }
     }
@@ -334,8 +334,8 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     for(let i=0;i<22;i++){
       const a=i/22*6.283+(hash2(i,3,seed)-0.5)*0.18;
       if(Math.abs(Math.atan2(Math.sin(a-toDoor),Math.cos(a-toDoor)))<0.3)continue;
-      const rad=pond.r+0.3+hash2(i,5,seed)*0.7,big=hash2(i,7,seed)<0.4,s=(big?0.8:0.55)+hash2(i,9,seed)*0.5;
-      put(hash2(i,11,seed)<0.65?'mossrock':'boulder',hash2(i,13,seed),pond.x+Math.cos(a)*rad,-0.04,pond.z+Math.sin(a)*rad,s,s*(0.7+hash2(i,15,seed)*0.3),hash2(i,17,seed)*6.283);
+      const rad=pond.r+0.3+hash2(i,5,seed)*0.7,big=hash2(i,7,seed)<0.3,s=(big?0.65:0.42)+hash2(i,9,seed)*0.4;
+      put(hash2(i,11,seed)<0.65?'mossrock':'boulder',hash2(i,13,seed),pond.x+Math.cos(a)*rad,-0.2*s,pond.z+Math.sin(a)*rad,s,s*(0.7+hash2(i,15,seed)*0.3),hash2(i,17,seed)*6.283);
     }
     // stepping stones along the path to the pond
     const L=Math.hypot(pond.x,pond.z),ux=pond.x/L,uz=pond.z/L;
