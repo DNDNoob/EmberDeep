@@ -30,6 +30,7 @@ import {initMusic,useStore,updateMusic,setVolumes,getVolumes,onVolumes,music} fr
 import {createMenuRoom,onLiftPlatform} from './menu-room.js';
 import {createSettingsScreen,createTerminalSession} from './shared-terminal.js';
 import {landingMazeZ} from './mine-shaft.js';
+import {NEWS} from './news.js';
 import {floorDiorama,lenticularDoor} from './archive-hall.js';
 
 const $ = id => document.getElementById(id);
@@ -2948,7 +2949,7 @@ function mpRecv(m,from){
       if(!Array.isArray(a)||a.length!==4||!a.every(Number.isFinite))return;
       const [x,y,z,yaw]=a;
       if(Math.abs(x)>21||y< -10000||y>3||z< -34||z>16||Math.abs(yaw)>1e4)return;
-      const station=['settings','guide','lift'].includes(m.station)?m.station:null;
+      const station=['settings','guide','news','lift'].includes(m.station)?m.station:null;
       let ride=null;
       if(m.ride&&sharedLift.trip&&m.ride===sharedLift.trip.id){
         ride=m.ride;
@@ -3631,6 +3632,8 @@ addEventListener('keydown',e=>{
   if(loading){if(e.code==='Tab'||e.code==='Enter'||e.code==='Space')e.preventDefault();return}
   if(state==='title'&&activeStation){
     if(e.code==='Escape'){e.preventDefault();closeStation();return}
+    const scroll={ArrowUp:-60,ArrowDown:60,PageUp:-300,PageDown:300}[e.code];
+    if(scroll&&scrollNews(scroll)){e.preventDefault();return}
     if(e.code==='Tab'){
       const controls=stationControls(),first=controls[0],last=controls.at(-1);
       if(e.shiftKey&&e.target===first){e.preventDefault();last.focus()}
@@ -3865,6 +3868,7 @@ function pollPad(){
         const controls=stationControls();
         (controls.includes(document.activeElement)?document.activeElement:controls[0])?.click();
       }
+      else if((hit(12)||hit(13))&&scrollNews(hit(12)?-90:90));
       else if(hit(12)||hit(13)){
         const controls=stationControls(),i=controls.indexOf(document.activeElement);
         controls[i<0?0:(i+(hit(12)?-1:1)+controls.length)%controls.length]?.focus();
@@ -5281,6 +5285,12 @@ const hub=createMenuRoom(renderer,{sfx,asset:exhibitAsset,activate:useMenuAsset,
   sampleFloor:memoFloor,prepareLanding:preparedLanding,landingGlimpse,passingLook,onLeavePanel:()=>closeStation(),createVisitor:buildHubVisitor});
 const board=$('title');
 const stationPanels=[...document.querySelectorAll('[data-station-panel]')];
+$('newsList').replaceChildren(...NEWS.map(post=>{
+  const item=document.createElement('article'),when=document.createElement('time'),head=document.createElement('h2'),text=document.createElement('p');
+  when.textContent=post.date;head.textContent=post.title;text.textContent=post.body;
+  item.append(when,head,text);return item;
+}));
+const scrollNews=dy=>{if(activeStation!=='news')return false;board.scrollBy({top:dy});return true};
 let activeStation=null;
 const sharedLift={selection:null,pending:0,trip:null,waiting:[]};
 const terminalPlayerName=id=>id===MP.id?myName():MP.peers.get(id)?.name||'Delver';
@@ -5522,7 +5532,8 @@ function openStation(id){
   hub.focusPanel(id);
   initAudio();
   if(document.pointerLockElement){usingLock=false;document.exitPointerLock()}
-  $('stationTitle').textContent=id==='settings'?'Settings':id==='lift'?'Descent Control':'Field Guide';
+  $('stationTitle').textContent=id==='settings'?'Settings':id==='lift'?'Descent Control':id==='news'?'Update Log':'Field Guide';
+  if(id==='news')hub.markNewsSeen();
   if(id==='lift'){
     $('liftDepth').value=sharedLift.selection?.depth||defaultLiftFloor();
     updateLiftScreen();
@@ -6021,6 +6032,6 @@ function gripProbe(ts,talking){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='
   for(const t of ts){buildNpc(n,t,P.x,0.7,P.z,0.016);res.push({t,...GRIP_DBG})}talk=save;return res}
 function benchNpc(iters){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='keeper');const e=[P.x,0.7,P.z];buildNpc(n,1,e[0],e[1],e[2],0.016);let t0=performance.now();
   for(let i=0;i<iters;i++){CH.n=0;buildNpc(n,1+i*0.016,e[0],e[1],e[2],0.016)}return (performance.now()-t0)/iters}
-window.__game={music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={NEWS,openStation,get activeStation(){return activeStation},hub,music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 if(state==='title')startShaftWarm();
 requestAnimationFrame(frame);

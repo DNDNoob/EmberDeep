@@ -3,6 +3,7 @@ import {bobY, createRoomWalker, lookBy, lookStep} from './movement.js';
 import {createArchiveHall, worldSign} from './archive-hall.js';
 import {buildAsteroidLobby,TELESCOPE_PANEL} from './asteroid-lobby.js';
 import {createKeplerOrrery} from './kepler-orrery.js';
+import {NEWS} from './news.js';
 import {createMineLanding,createMineRockGap,createShaftHead,landingMazeZ} from './mine-shaft.js';
 
 const portals=[
@@ -42,6 +43,10 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   let sharedTexture=null,defaultSettingsTexture=null;
   let sharedLift=null,liftAway=false;
   let orrery;
+  const newsKey='emberdeep.newsSeen',newsStamp=NEWS[0].date+' '+NEWS[0].title;
+  let newsSeen=false;
+  try{newsSeen=localStorage.getItem(newsKey)===newsStamp}catch{}
+  const newsIdle=()=>['Update Log',(newsSeen?'LATEST':'NEW')+'  /  '+NEWS[0].title];
   let active=true,study=null,studyYaw=0,studyPitch=0.28,studyDist=0.3,orreryAim=null;
   const orreryHint=document.createElement('div');
   orreryHint.style.cssText='position:fixed;left:0;right:0;bottom:22px;text-align:center;color:#ffe4bd;font:15px "Segoe UI",sans-serif;text-shadow:0 2px 6px #000;pointer-events:none;z-index:6';
@@ -153,10 +158,11 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   for(const x of [-3.08,3.08])for(const y of [3.68,4.34])box(lobby,gold,x,y,wallZ+0.28,0.047,0.047,0.04);
   mounted(lobby,'DESCENT LIFT',0,3.47,wallZ+0.28,2.26,0.32,{font:'bold 105px Georgia'});
 
-  // Both computers stand against the back wall (z 15) and face into the room (f=-1); the lift desk faces +z.
+  // The computers stand against the back wall (z 15) and face into the room (f=-1); the lift desk faces +z.
   for(const [id,x,z,name,sub] of [
     ['settings',-9.35,13.95,'Settings','Run setup · audio · graphics'],
-    ['guide',9.35,13.95,'Field Guide','Controls · records · achievements']
+    ['guide',9.35,13.95,'Field Guide','Controls · records · achievements'],
+    ['news',15.35,13.95,'Update Log','What\'s new in Door Simulator']
   ]){
     const settings=id==='settings',f=-1;
     const w=terminalWidth,h=terminalHeight,y=1.92;
@@ -168,11 +174,11 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     box(desk,iron,0,y,-0.46,w+0.55,h+0.39,0.84);
     box(desk,brass,0,y,-0.13,w+0.25,h+0.22,0.25);
     box(desk,black,0,y,-0.021,w+0.045,h+0.045,0.039);
-    const screen=worldSign(desk,[name,'READY  /  '+sub],0,y,0.012,w,h,{
-      color:id==='settings'?'#a9e5d7':'#f4d9ab',background:'#101b20',border:'#345453',
+    const screen=worldSign(desk,id==='news'?newsIdle():[name,'READY  /  '+sub],0,y,0.012,w,h,{
+      color:id==='settings'?'#a9e5d7':id==='news'?'#bcd9f4':'#f4d9ab',background:'#101b20',border:'#345453',
       font:'600 57px monospace',subFont:'500 20px monospace'
     });
-    stationLabels[id]={name,sub,screen,text:''};
+    stationLabels[id]={name,sub,screen,text:'',idle:id==='news'?newsIdle:null};
     const panelBase=box(desk,iron,0,0.49,0.27,w*.80,0.17,0.61);
     panelBase.rotation.x=0.06;
     const keys=new THREE.InstancedMesh(keyGeometry,keyMaterial,56);
@@ -552,7 +558,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       if(label.text===name)continue;
       label.text=name;
       if(name)label.screen.setLabel([label.name,name+' at terminal']);
-      else label.screen.setLabel([label.name,'READY  /  '+label.sub]);
+      else label.screen.setLabel(label.idle?label.idle():[label.name,'READY  /  '+label.sub]);
     }
   }
   function update(dt,input=zero,elapsed=dt){
@@ -601,7 +607,14 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     pose();
     renderer.toneMappingExposure=exposure;renderer.setRenderTarget(null);renderer.render(scene,camera);
   }
-  return {update,render,syncArchives,syncVisitors,watchLift,liftMode,setSharedLift,engageLift,reset,resetLift,setActive,
+  function markNewsSeen(){
+    if(newsSeen)return;
+    newsSeen=true;
+    try{localStorage.setItem(newsKey,newsStamp)}catch{}
+    const label=stationLabels.news;
+    if(!label.text)label.screen.setLabel(newsIdle());
+  }
+  return {update,render,markNewsSeen,get newsUnseen(){return !newsSeen},syncArchives,syncVisitors,watchLift,liftMode,setSharedLift,engageLift,reset,resetLift,setActive,
     sharedSettings(screen,display){
       sharedSettings=screen;
       sharedTexture=new THREE.CanvasTexture(display);
@@ -634,6 +647,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     get skyTime(){return skyMat&&skyMat.uniforms?skyMat.uniforms.uTime.value:0},
     get position(){return {x:walker.b.x,z:walker.b.z,y:cabin.position.y,depth:indication,docked:!!ride?.docked}},
     get presence(){return {x:walker.b.x,y:walker.b.y,z:walker.b.z,yaw:view.yaw,station:panel,ride:ride?.group?.id,ready:!!ride?.task.ready}},
+    place(x,z,yaw=0,pitch=0){Object.assign(walker.b,{x,z,vx:0,vz:0});view.yaw=yaw;view.pitch=pitch},
     look:(dx,dy)=>{
       if(study){
         studyYaw-=dx;
