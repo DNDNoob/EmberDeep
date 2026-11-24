@@ -34,6 +34,9 @@ const VIEWS={
   w:{q:'high',find:'line'},                        // the door in line: pond behind the camera, the door ahead, you in between
   v:{q:'low',...mead,yaw:0.6,pitch:0.02},         // the meadow on low quality
   x:{q:'low',...deep,yaw:0.6,pitch:0.02},         // the deep wood on low quality
+  j:{q:'high',x:0.2,z:-9.4,yaw:0,pitch:-0.32},   // the pond: player and door lined up in the water
+  y:{q:'high',find:'tall'},                        // standing on a tall boulder reached from a smaller one
+  z:{q:'high',find:'sprint'},                      // a frame mid-sprint
   // the held door seen in the water from four sides of the first pond (door stands 4.2 m behind the player)
   r:{q:'high',x:0,z:-9.6,yaw:0,pitch:-0.75,pin:true},
   s:{q:'high',x:0,z:-22.4,yaw:Math.PI,pitch:-0.75,pin:true},
@@ -82,6 +85,20 @@ for(const k of want){
       const rk=S.rockList().filter(r=>r.stand&&r.top>1.0&&r.rg<1.6&&Math.hypot(r.x,r.z)>8).sort((a,b)=>Math.hypot(a.x,a.z)-Math.hypot(b.x,b.z))[0];
       if(rk){x=rk.x;z=rk.z;yaw=Math.atan2(-rk.x,rk.z);pitch=-0.3;window.__stand=rk}
     }
+    if(V.find==='tall'){
+      let pick=null;
+      for(let gz=-160;gz<=160&&!pick;gz+=40)for(let gx=-160;gx<=160&&!pick;gx+=40){
+        S.WK.b.x=gx;S.WK.b.z=gz;for(let i=0;i<3;i++)R.update(1/60,Z);
+        const all=S.rockList(),trs=S.treeList();
+        for(const t of all){if(t.top<1.9||t.top>3.4||trs.some(q=>Math.hypot(q.x-t.cx,q.z-t.cz)<t.rb+4))continue;for(const l of all){if(l===t||l.top<0.7||l.top>1.5)continue;if(Math.hypot(l.cx-t.cx,l.cz-t.cz)<t.rb+l.rb&&!pick)pick={t,l}}}
+      }
+      if(pick){x=pick.t.cx;z=pick.t.cz;yaw=Math.atan2(pick.l.cx-pick.t.cx,-(pick.l.cz-pick.t.cz));pitch=-0.35;window.__stand={tall:pick.t.top,small:pick.l.top}}
+    }
+    if(V.find==='sprint'){
+      S.WK.b.x=-14;S.WK.b.z=10;S.yaw=Math.PI*0.8;S.pitch=0;
+      for(let i=0;i<100;i++){S.WK.b.stam=100;S.WK.b.winded=false;R.update(1/60,{mx:0,my:-1,lx:0,ly:0,sprint:true})}
+      x=S.WK.b.x;z=S.WK.b.z;yaw=S.yaw;pitch=0.02;window.__stand={sprintTo:[x,z]};
+    }
     if(V.find==='line'){
       const pd=S.ponds()[0];x=pd.x;z=pd.z+pd.r+3;yaw=Math.PI;pitch=0.0;
     }
@@ -103,7 +120,7 @@ for(const k of want){
       x=S.WK.b.x;z=S.WK.b.z;yaw=S.yaw;pitch=S.pitch;window.__circle={deg:(Math.PI/2-th)*180/Math.PI,direct:S.direct,pinned:S.pinned};
     }
     if(V.find==='line'){dxx=x;dzz=z+4.2;pin=1;V.face=0}
-    const ap=()=>{if(V.find!=='circle')S.apply({x,z,y:S.G(x,z),yaw,pitch,dx:dxx,dz:dzz,face:V.face??yaw,pin})};
+    const ap=()=>{if(V.find!=='circle'&&V.find!=='sprint')S.apply({x,z,y:S.G(x,z),yaw,pitch,dx:dxx,dz:dzz,face:V.face??yaw,pin})};
     ap();
     for(let i=0;i<30;i++)R.update(1/60,Z);
     ap();

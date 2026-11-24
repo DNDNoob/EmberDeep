@@ -288,19 +288,19 @@ const hr=(x,z,seed,k)=>hash2(Math.round(x*4)+k*7919,Math.round(z*4)-k*104729,see
 // ---- props: which baked kinds and how many seed variants, and how many instances each can hold ----
 // cap = [near, far]; far = farthest distance (m) an instance is drawn; near = distance (m) inside which the near LOD is used
 const PROPS=[
-  {kind:'fir',n:3,cap:[90,260],far:66,near:15,opts:{palette:{leaf:'#3f7058',leaf2:'#72a06f',leafD:'#274a3c'}}},
+  {kind:'fir',n:3,cap:[90,260],far:60,near:12.5,opts:{palette:{leaf:'#3f7058',leaf2:'#72a06f',leafD:'#274a3c'}}},
   {kind:'shrub',n:2,cap:[110,130],far:34,near:14,opts:{palette:{leaf:'#4a7a42',leaf2:'#80a652',leafD:'#2d5330'}}},
   {kind:'mossrock',n:2,cap:[60,70],far:44,near:15,opts:{palette:{moss:'#4f6e38',moss2:'#78914a',mossD:'#334d2a'}}},
-  {kind:'oak',n:2,cap:[50,150],far:66,near:15,opts:{palette:{leaf:'#5b8040',leaf2:'#93b055',leafD:'#3d5e30'}}},
-  {kind:'grass',n:3,cap:[110,200],far:26,near:9,opts:{palette:{base:'#3a5c2c',leaf:'#74a03c',tip:'#c6d062'}}},
-  {kind:'tulip',n:1,cap:[110,60],far:26,near:12},
-  {kind:'daisy',n:1,cap:[110,60],far:26,near:12},
+  {kind:'oak',n:2,cap:[50,150],far:60,near:13,opts:{palette:{leaf:'#5b8040',leaf2:'#93b055',leafD:'#3d5e30'}}},
+  {kind:'grass',n:3,cap:[110,200],far:24,near:9,opts:{palette:{base:'#3a5c2c',leaf:'#74a03c',tip:'#c6d062'}}},
+  {kind:'tulip',n:1,cap:[110,60],far:24,near:10},
+  {kind:'daisy',n:1,cap:[110,60],far:24,near:10},
   {kind:'reed',bake:'grass',n:2,cap:[40,40],far:44,near:14,opts:{tall:true}},
   {kind:'slab',n:2,cap:[24,12],far:36,near:18,opts:{size:0.9}},
   {kind:'boulder',n:1,cap:[40,60],far:44,near:15},
-  {kind:'bigrock',bake:'boulder',n:2,cap:[14,30],far:90,near:26,opts:{size:4.5,budget:{near:5000,far:900}}},
-  {kind:'bigmoss',bake:'mossrock',n:1,cap:[10,20],far:90,near:26,opts:{size:4.5,budget:{near:5000,far:900},palette:{moss:'#4f6e38',moss2:'#78914a',mossD:'#334d2a'}}},
-  {kind:'snag',n:1,cap:[40,80],far:66,near:15},
+  {kind:'bigrock',bake:'boulder',n:2,cap:[14,30],far:66,near:22,opts:{size:4.5,budget:{near:5000,far:900}}},
+  {kind:'bigmoss',bake:'mossrock',n:1,cap:[10,20],far:66,near:22,opts:{size:4.5,budget:{near:5000,far:900},palette:{moss:'#4f6e38',moss2:'#78914a',mossD:'#334d2a'}}},
+  {kind:'snag',n:1,cap:[40,80],far:60,near:14},
 ];
 const REFL_SKIP=new Set(['grass','tulip','daisy','slab','reed']);
 const ROCKY=new Set(['bigrock','bigmoss','boulder','mossrock']);
@@ -432,7 +432,7 @@ export function mirrorYaw(cx,cz,px,pz,yaw){
 }
 // a plain traveller (feet at y 0, eye at 1.6) that exists only in the reflection pass: legs swing from the hips with `walk`
 function makeBody(Q){
-  const mat=c=>Q===0?new THREE.MeshLambertMaterial({color:c}):new THREE.MeshStandardMaterial({color:c,roughness:0.9,metalness:0});
+  const mat=c=>Q===0?new THREE.MeshLambertMaterial({color:c,emissive:c,emissiveIntensity:0.25}):new THREE.MeshStandardMaterial({color:c,roughness:0.9,metalness:0,emissive:c,emissiveIntensity:0.25});
   const root=new THREE.Group(),cloak=mat(0x56765f),cloth=mat(0x7a6a46),skin=mat(0xd8b48c),boot=mat(0x2c2218),trim=mat(0xb8c8a0);
   const box=(w,h,d,x,y,z,m,par=root)=>{const o=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);o.position.set(x,y,z);par.add(o);return o};
   const legs=[-1,1].map(sd=>{const g=new THREE.Group();g.position.set(sd*0.1,0.88,0);root.add(g);box(0.15,0.62,0.17,0,-0.31,0,cloth,g);box(0.16,0.2,0.24,0,-0.76,-0.03,boot,g);return g});
@@ -824,9 +824,9 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     const mx=cx*16,mz=cz*16;
     const place=r=>{
       const sl=r.sl,d=Math.hypot(r.x-mx,r.z-mz);
-      if(d>sl.far*(low?0.75:1))return;
+      if(d>sl.far*(low?0.68:1))return;
       if(r.th>0){const bd=r.bd,thin=d>NEAR+13-9*bd?(d>NEAR+28-14*bd?0.28-0.12*bd:0.5-0.2*bd):1;if(r.th>=thin)return}
-      const far=d>sl.nearR*(low?0.7:1),im=far?sl.farM:sl.near;
+      const far=d>sl.nearR*(low?0.62:1),im=far?sl.farM:sl.near;
       if(im.count>=im.instanceMatrix.count)return;
       im.instanceMatrix.array.set(r.m,im.count*16);im.count++;
       const pr=(r.x-b.x)*dirX+(r.z-b.z)*dirZ;if(pr>aheadMax)aheadMax=pr;
