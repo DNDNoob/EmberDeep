@@ -198,9 +198,6 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     box(desk,settings?green:gold,w*.45,y-h/2-.13,0.012,0.071,0.041,0.024);
     target(desk,{station:id},0,y,0.025,w,h,0.04);
   }
-  mounted(lobby,['ENTRANCE HALL','WASD or left stick to walk · E, X or click to interact'],0,0.62,14.916,5,0.69,{
-    font:'600 74px Georgia',subFont:'500 35px "Segoe UI"',reverse:true
-  });
 
   const overhead=[];
   const cabin=new THREE.Group(),well=new THREE.Group();

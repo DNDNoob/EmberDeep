@@ -124,7 +124,7 @@ function doorTexture(ty=0.42){
     g.fillStyle='#d8aa2a';g.fillRect(0,0,w,56);g.fillRect(0,h-56,w,56);
     g.fillStyle='#1b1c20';for(let x=-60;x<w;x+=56){for(const y of [0,h-56]){g.beginPath();g.moveTo(x,y+56);g.lineTo(x+28,y+56);g.lineTo(x+84,y);g.lineTo(x+56,y);g.fill()}}
     g.fillStyle='rgba(230,232,236,.9)';g.font='bold 120px sans-serif';g.textAlign='center';g.fillText('HANGAR',w/2,h*ty);
-    g.font='bold 52px sans-serif';g.fillText('AUTHORISED ONLY',w/2,h*ty+70);
+    g.font='bold 52px sans-serif';g.fillText('AUTHORIZED ONLY',w/2,h*ty+70);
     g.fillStyle='#cc2d2d';g.fillRect(w*.3,h*(ty-0.15),w*.4,10);
     g.fillStyle='rgba(20,22,28,.7)';g.fillRect(w/2-3,60,6,h-120);
   },{aniso:8});
