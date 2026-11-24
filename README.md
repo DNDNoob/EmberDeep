@@ -5,6 +5,7 @@ A procedural maze explorer that runs in the browser. Play it at https://dndnoob.
 - `index.html` is the whole game in one file, rendered with Three.js (bundled inline, no network needed).
 - `classic.html` is the earlier hand-written WebGL2 renderer, kept as a fallback.
 - `src/game.js` is the source. `npm install` then `npm run build` rebuilds `index.html`.
+- Player-facing changes also get a post at the top of `src/news.js` (the lobby Update Log); see `AGENTS.md`.
 - The title lobby looks out through an observation window. The stars drift, and three worlds move on their own orbits, so the station feels as if it is really traveling.
 
 ## Playing with friends

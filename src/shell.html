@@ -229,6 +229,12 @@
   :is(#stationCard,[data-screen-id=stationCard]) input[type=range],:is(#stationCard,[data-screen-id=stationCard]) input[type=checkbox]{accent-color:#8bdbbb}
   :is(#stationCard,[data-screen-id=stationCard]) input[type=text],:is(#stationCard,[data-screen-id=stationCard]) select{box-sizing:border-box;background:#111f24;color:#dbf7e8;border:1px solid #517571;font:inherit}
   body.touch :is(#stationCard,[data-screen-id=stationCard]) label.gpu-option{display:none}
+  #newsList{outline:none}
+  #newsList article{margin:0 0 15px;padding:0 0 13px;border-bottom:1px solid #2b4a47}
+  #newsList article:last-child{border:0}
+  #newsList time{display:block;font-size:13px;color:#7fb4a6;letter-spacing:.06em}
+  #newsList h2{margin:2px 0 5px;font:600 20px Consolas,"Courier New",monospace;color:#e9e1b8}
+  #newsList p{margin:0;line-height:1.45;color:#c1ecd9}
   :is(#stationCard,[data-screen-id=stationCard]) .keys{margin:0 0 15px;font-size:15px}
   :is(#stationCard,[data-screen-id=stationCard]) .keys b{color:#9ee5c9}
   :is(#stationCard,[data-screen-id=stationCard]) .hint,:is(#stationCard,[data-screen-id=stationCard]) .sub{margin:8px 0;text-align:left;line-height:1.45;color:#b8d4cc}
@@ -322,6 +328,7 @@
       <button id="liftDeepest" type="button">Deepest reached</button>
     </form>
   </div>
+  <div data-station-panel="news" hidden><div id="newsList" tabindex="0" aria-label="Update log"></div></div>
   <div data-station-panel="guide" hidden>
   <div class="keys kb">
     <b>W A S D</b><span>Move</span>
