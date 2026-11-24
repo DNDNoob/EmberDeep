@@ -2309,6 +2309,12 @@ const wofForm=()=>FX.hedge>0?4:FX.plague>0?3:FX.pug>0&&FX.rat>0?(FX.last==='rat'
 const wofSpeed=()=>(FX.hedge>0&&FX.curl===2?3.2:1)*(FX.fat>0?0.1:1)*(FX.tickled>0?0.3:1)*(FX.stag>0?0.35:1);
 const wofEye=()=>wofForm()===4?(FX.curl?0.3:0.38):[1,0.42,0.55,0.55][wofForm()];
 const wofLive=()=>state!=='title'&&state!=='dead';
+// "The wheel waits outside the door": a player inside a door room is never touched by the wheel. Results that land meanwhile are queued
+// here and happen, in order, when they step back into the maze. World things (the Tickle Monster, a bomb) keep going but skip them.
+const wofAway=()=>P.away||state==='room';
+const WOQ=[];let WOQ_T=0,wofWasAway=false;
+const WOQ_MAX=3;
+function wofQueue(r){WOQ.push(r);if(WOQ.length>WOQ_MAX)WOQ.shift();WOQ_T=Math.max(WOQ_T,1.5)}
 
 function wofSpinStart(){
   if(!F||!F.safe||!F.safe.wheel||!WOF.done||wallet<10)return;
@@ -2337,9 +2343,9 @@ function wofTickSpin(dt){
     if(push>=0){WOF.flap=push*0.85;WOF.flapV=0}
     else{WOF.flapV+=(-140*WOF.flap-7*WOF.flapV)*dt;WOF.flap+=WOF.flapV*dt}
     const pg=Math.floor((a-0.11)/WOF_W);
-    if(pg!==WOF.peg){WOF.peg=pg;const w=F.safe.wheel,d=Math.hypot(w.x-P.x,w.z-P.z);if(d<12)tone(2100+Math.random()*200,0.025,'square',0.09*Math.max(0.15,1-d/12))}   // the flapper's clack
+    if(pg!==WOF.peg){WOF.peg=pg;const w=F.safe.wheel,d=Math.hypot(w.x-P.x,w.z-P.z);if(d<12&&!wofAway())tone(2100+Math.random()*200,0.025,'square',0.09*Math.max(0.15,1-d/12))}   // the flapper's clack
     const k=Math.floor(WOF.t/pl.dur*4);
-    if(k>WOF.chat&&k<=3){WOF.chat=k;if(Math.hypot(F.safe.wheel.x-P.x,F.safe.wheel.z-P.z)<8)say(PAT_CHAT[k-1],2.2)}
+    if(k>WOF.chat&&k<=3){WOF.chat=k;if(!wofAway()&&Math.hypot(F.safe.wheel.x-P.x,F.safe.wheel.z-P.z)<8)say(PAT_CHAT[k-1],2.2)}
   }
   if(WOF.t>=pl.dur+0.9){
     WOF.done=true;WOF.win=4;
@@ -2348,11 +2354,29 @@ function wofTickSpin(dt){
   }
 }
 function wofResolve(){
-  const i=sliceAt(WOF.plan.to),sl=WOF_SLICES[i],mine=WOF.mine,coin=WOF.coin;WOF.result=i;
+  const i=sliceAt(WOF.plan.to),sl=WOF_SLICES[i];WOF.result=i;
   mpSys(WOF.by+' landed on '+sl.name);
   if(!wofLive())return;
+  const r={i,coin:WOF.coin,mine:WOF.mine,by:WOF.by};
+  wofWorld(r);   // the floor itself carries on whatever you are doing
+  if(wofAway()){wofQueue(r);return}   // you are behind a door: this waits for you
+  wofPersonal(r);
+}
+// what the wheel does to the floor (host-run entities, the bomb); nothing here touches the local body
+function wofWorld(r){
+  switch(r.i){
+    case 10:if(!MP.guest)tkSpawn();break;
+    case 16:if(!MP.guest&&F)for(const s of F.shades)if(s.type===0&&s.x>0&&!s.dead){s.state=1;s.calm=0}break;   // the shades come looking
+    case 17:FX.pitch=0;FX.pitchDone=false;FX.pitchLine=-1;if(!MP.guest)tsSpawn();break;
+    case 20:if(!MP.guest)setTimeout(()=>{if(wofLive()&&!RR)rrStart()},1500);break;
+    case 21:bombDrop();break;
+  }
+}
+// what the wheel does to you
+function wofPersonal(r){
+  const i=r.i,sl=WOF_SLICES[i],mine=r.mine,coin=r.coin;
   const desc=i===7&&FX.loud>0?`Another pair on top of the last. Everything is now ${Math.pow(10,(FX.loudN||1)+1).toLocaleString()}x louder.`:WOF_DESC[i];
-  announce(sl.name.toUpperCase()+'!',(mine?'':WOF.by+' spun. ')+desc,sl.col);
+  announce(sl.name.toUpperCase()+'!',(mine?'':r.by+' spun. ')+desc,sl.col);
   if(ac){tone(392,0.32,'sawtooth',0.09,0.1,-12);tone(370,0.32,'sawtooth',0.09,0.45,-12);tone(349,0.32,'sawtooth',0.09,0.8,-12);tone(330,1.1,'sawtooth',0.09,1.15,-40)} // sad trombone
   switch(i){
     case 0:if(mine)wofScene('walmart');break;
@@ -2365,7 +2389,6 @@ function wofResolve(){
     case 7:FX.loudN=FX.loud>0?(FX.loudN||1)+1:1;FX.loud=FX_DUR.loud;break;   // they compound: each pair on top of the last is another 10x, and the clock starts over
     case 8:FX.tin=FX_DUR.tin;break;
     case 9:if(mine){FX.plague=FX_DUR.plague;FX.dying=false}break;
-    case 10:if(!MP.guest)tkSpawn();break;
     case 11:if(mine){FX.pox=FX_DUR.pox;FX.poxC=3}break;
     case 12:if(mine)wofScene('dmv');break;
     case 13:if(mine)wofScene('terms');break;
@@ -2374,10 +2397,23 @@ function wofResolve(){
     case 16:wofLightsOut();break;
     case 18:if(mine){FX.hedge=FX_DUR.hedge;setTimeout(()=>say(touch.on?'You are a hedgehog. CURL: nothing can hurt you. ROLL: super speed.':'You are a hedgehog. Hold Z to curl up (nothing can hurt you). Hold X to roll at super speed.',6),2500)}break;
     case 19:if(mine)wofScene('birth');break;
-    case 21:bombDrop();break;
-    case 20:if(!MP.guest)setTimeout(()=>{if(wofLive()&&!RR)rrStart()},1500);break;
-    case 17:FX.pitch=0;FX.pitchDone=false;FX.pitchLine=-1;if(!MP.guest)tsSpawn();break;
   }
+}
+// back in the maze: results that landed while you were behind a door happen now, one at a time, spaced out so breaks and banners do not overlap
+function wofReplayTick(dt){
+  if(!WOQ.length){WOQ_T=0;return}
+  if(FX.frozen||RR||termsEl||(BRK&&BRK.active)||(WOQ.busy&&performance.now()<WOQ.busy))return;
+  WOQ_T-=dt;if(WOQ_T>0)return;
+  const r=WOQ.shift();
+  if(r.msg){say(r.msg,4);WOQ_T=3;return}
+  say('While you were inside, '+(r.mine?'you':r.by)+' spun the wheel...',2.4);
+  WOQ.busy=performance.now()+2000;
+  setTimeout(()=>{
+    if(!wofLive())return;
+    if(wofAway()){WOQ.unshift(r);return}
+    wofPersonal(r);
+  },1800);
+  WOQ_T=7;   // room for the banner, and for whatever a break takes
 }
 // "Nothing": every gem found on this run is taken back out of the purse, and every supply bought or found for it is gone
 function wofLoseAll(){
@@ -2387,6 +2423,7 @@ function wofLoseAll(){
   setTimeout(()=>say(`You lose ${g} gem${g===1?'':'s'} and ${had?'all your supplies':'nothing else, you had nothing'}.`,4),1800);
 }
 function wofScene(kind){
+  if(wofAway())return;   // never a break behind a door
   if(state==='talk')closeTalk();
   FX.frozen=kind;P.vx=P.vz=0;
   const end=()=>{FX.frozen=null;if(wofLive()&&!touch.on&&!document.pointerLockElement)say('Click to return to the maze',4)};
@@ -2395,18 +2432,18 @@ function wofScene(kind){
   else brk().start(kind,end);
 }
 function wofClear(){
-  for(const k of FX_TIMERS)FX[k]=0;FX.flyT=0;BOMB=null;FX.dying=false;FX.poxNear=0;FX.frozen=null;TK=null;TS=null;RR=null;FX.pitchDone=false;FX.pitch=0;closeTerms();
+  for(const k of FX_TIMERS)FX[k]=0;FX.flyT=0;BOMB=null;FX.dying=false;FX.poxNear=0;FX.frozen=null;TK=null;TS=null;RR=null;FX.pitchDone=false;FX.pitch=0;WOQ.length=0;WOQ_T=0;WOQ.busy=0;rrMissed=false;closeTerms();
   if(BRK)BRK.stop(true);statusStrip([]);tints({});wofAudio();
 }
 /* sounds: the hearing aids sit after the master volume; the ringing goes through it */
 function wofAudio(){
   if(!ac||!wofOut)return;
   if(FX.loud<=0)FX.loudN=0;
-  const loud=FX.loud>0?Math.pow(10,Math.min(FX.loudN||1,6)):1;if(wofOut._v!==loud){wofOut._v=loud;wofOut.gain.setTargetAtTime(loud,ac.currentTime,0.12)}
-  if(FX.tin>0&&!tinNode){
+  const away=wofAway(),loud=FX.loud>0&&!away?Math.pow(10,Math.min(FX.loudN||1,6)):1;if(wofOut._v!==loud){wofOut._v=loud;wofOut.gain.setTargetAtTime(loud,ac.currentTime,0.12)}
+  if(FX.tin>0&&!away&&!tinNode){
     const o=ac.createOscillator(),o2=ac.createOscillator(),g=ac.createGain();o.frequency.value=7900;o2.frequency.value=7911;g.gain.value=0;
     o.connect(g);o2.connect(g);g.connect(master);o.start();o2.start();g.gain.setTargetAtTime(0.11,ac.currentTime,0.5);tinNode={o,o2,g};
-  }else if(FX.tin<=0&&tinNode){const q=tinNode;tinNode=null;q.g.gain.setTargetAtTime(0,ac.currentTime,0.4);setTimeout(()=>{try{q.o.stop();q.o2.stop()}catch(e){}},2500)}
+  }else if((FX.tin<=0||away)&&tinNode){const q=tinNode;tinNode=null;q.g.gain.setTargetAtTime(0,ac.currentTime,0.4);setTimeout(()=>{try{q.o.stop();q.o2.stop()}catch(e){}},2500)}
 }
 // a breathy old man's "hee-hee-hee", placed in stereo
 function giggle(x,z,vol,pitch){
@@ -2465,12 +2502,14 @@ function hedgeButtons(){
 // n players, n+1 empty chambers. Each player gets one turn: spin the cylinder (once, if they want), then pull the trigger.
 // Click, and it passes on; the round fires, and that player dies and the game ends. If it goes all the way round, everyone walks away.
 // The host (or a solo player) owns the table; the others send what they want to do and draw what the host says.
-let RR=null;
+let RR=null,rrMissed=false;
 const rrMe=()=>MP.on?MP.id:'me';
 const RR_TURN=25;   // seconds to decide before the table decides for you
 function rrStart(){
-  const seats=[{id:rrMe(),name:myName(),col:MP.on?MP_COLS[hashStr(MP.id||'')%MP_COLS.length]:[0.62,0.32,0.2]}];
-  if(MP.on)for(const p of MP.peers.values())if(p.run&&mpFresh(p))seats.push({id:p.id,name:p.name,col:p.col});
+  const seats=[];   // only players in the maze sit down; anyone behind a door misses it
+  if(!wofAway())seats.push({id:rrMe(),name:myName(),col:MP.on?MP_COLS[hashStr(MP.id||'')%MP_COLS.length]:[0.62,0.32,0.2]});
+  if(MP.on)for(const p of MP.peers.values())if(p.run&&mpFresh(p)&&!p.away)seats.push({id:p.id,name:p.name,col:p.col});
+  if(!seats.length){mpSys('Nobody was in the maze to sit at the roulette table. The chairs stay empty.');return}
   seats.sort((a,b)=>a.id<b.id?-1:1);
   const n=seats.length+2;
   rrSet({seats,n,live:(Math.random()*n)|0,pos:(Math.random()*n)|0,turn:0,spun:false,phase:'aim',phT:RR_TURN,ver:1,loser:-1,ev:'deal'});
@@ -2480,6 +2519,11 @@ function rrSet(s){
 }
 function rrShow(){   // join the table (or keep sitting at it) and react to what just happened
   if(!RR||!wofLive())return;
+  if(wofAway()||!RR.seats.some(q=>q.id===rrMe())){   // not at the table: nothing opens until it is over
+    if(wofAway())rrMissed=true;
+    if(RR.phase==='end')rrEnd();
+    return;
+  }
   if(state==='talk')closeTalk();
   if(FX.frozen!=='roulette'){FX.frozen='roulette';if(document.pointerLockElement){usingLock=false;document.exitPointerLock()}brk().start('roulette',()=>{},{rr:()=>RR,me:rrMe(),act:rrAct})}
   if(ac){if(RR.ev==='spin')for(let i=0;i<14;i++)tone(1400+Math.random()*300,0.02,'square',0.05,i*0.06);
@@ -2514,6 +2558,10 @@ function rrEnd(){
   if(BRK&&BRK.kind==='roulette')BRK.stop(true);
   if(FX.frozen==='roulette')FX.frozen=null;
   if(!r||!wofLive())return;
+  if(!r.seats.some(q=>q.id===rrMe())){   // you were not at the table
+    if(rrMissed){rrMissed=false;const m='You missed a round of Russian roulette at the table.';if(wofAway())wofQueue({msg:m});else say(m,4)}
+    return;
+  }
   const lost=r.loser>=0&&r.seats[r.loser]&&r.seats[r.loser].id===rrMe();
   if(lost){say('You lost at Russian roulette.',4);P.ward=0;P.hp=1;P.inv=0;R.wind=true;hurt(null)}   // no ward, no second wind
   else{say(r.loser>=0?r.seats[r.loser].name+' lost at Russian roulette.':'Everyone survived. This time.',4);if(!touch.on&&!document.pointerLockElement)setTimeout(()=>say('Click to return to the maze',4),4200)}
@@ -2529,7 +2577,7 @@ const rrValid=s=>s&&Array.isArray(s.seats)&&s.seats.length>0&&s.seats.length<=16
 let BOMB=null,scorch=null;
 function bombDrop(){
   const w=F&&F.safe&&F.safe.wheel;
-  if(!w||!WOF.here){setTimeout(()=>{if(wofLive()){say('Somewhere above you, something goes BOOM.',3);noise(1.2,0.25,90,0.6);pkShake=Math.max(pkShake,0.4)}},3500);return}
+  if(!w||!WOF.here){setTimeout(()=>{if(wofLive()&&!wofAway()){say('Somewhere above you, something goes BOOM.',3);noise(1.2,0.25,90,0.6);pkShake=Math.max(pkShake,0.4)}},3500);return}
   BOMB={x:w.x+w.nx*1.0,z:w.z+w.nz*1.0,t:0,beep:0,done:false};
 }
 function bombTick(dt){
@@ -2546,21 +2594,25 @@ function bombTick(dt){
   if(!B0)return;
   B0.t+=dt;
   const fuse=3,d=Math.hypot(B0.x-P.x,B0.z-P.z);
-  if(B0.t<fuse){B0.beep-=dt;if(B0.beep<=0){B0.beep=Math.max(0.12,0.55-B0.t*0.15);if(d<14)tone(1500,0.05,'square',0.07*Math.max(0.2,1-d/14))}
-    if(Math.random()<0.5&&d<14)noise(0.06,0.03*Math.max(0.2,1-d/14),5000,3);return}
+  if(B0.t<fuse){B0.beep-=dt;if(B0.beep<=0){B0.beep=Math.max(0.12,0.55-B0.t*0.15);if(d<14&&!wofAway())tone(1500,0.05,'square',0.07*Math.max(0.2,1-d/14))}
+    if(Math.random()<0.5&&d<14&&!wofAway())noise(0.06,0.03*Math.max(0.2,1-d/14),5000,3);return}
   if(!B0.done){B0.done=true;bombBoom(B0,d)}
   if(B0.t>fuse+3)BOMB=null;
 }
 function bombBoom(B0,d){
-  const k=Math.max(0,1-d/9);
-  noise(1.6,0.9*Math.max(0.25,k),110,0.5);noise(0.9,0.7*Math.max(0.2,k),700,0.6);tone(42,1.6,'sawtooth',0.45*Math.max(0.25,k),0,-22);
-  pkShake=Math.max(pkShake,0.5+k*1.5);rumble(400,1,1);
-  if(d<10)breakUI.flash(1);
+  const away=wofAway(),k=away?0:Math.max(0,1-d/9);
+  if(away&&wofLive())say('Somewhere beyond the door, something goes BOOM.',3);
+  if(away)noise(1.4,0.12,70,0.5);   // a muffled thud through the wall
+  else{
+    noise(1.6,0.9*Math.max(0.25,k),110,0.5);noise(0.9,0.7*Math.max(0.2,k),700,0.6);tone(42,1.6,'sawtooth',0.45*Math.max(0.25,k),0,-22);
+    pkShake=Math.max(pkShake,0.5+k*1.5);rumble(400,1,1);
+    if(d<10)breakUI.flash(1);
+  }
   // the scorch mark stays for the rest of the floor
   if(!scorch){scorch=new THREE.Mesh(new THREE.CircleGeometry(1,40),new THREE.MeshBasicMaterial({color:0x000000,transparent:true,opacity:0.55,depthWrite:false}));scorch.rotation.x=-Math.PI/2;scene.add(scorch)}
   scorch.position.set(B0.x,0.006,B0.z);scorch.scale.setScalar(1.3);scorch.visible=true;scorch.userData.depth=R.depth;
   // you: thrown away from the blast
-  if(!P.down&&wofLive()&&!FX.frozen&&d<9){
+  if(!P.down&&wofLive()&&!FX.frozen&&!away&&d<9){
     let ax=P.x-B0.x,az=P.z-B0.z,al=Math.hypot(ax,az);if(al<0.05){const a=Math.random()*Math.PI*2;ax=Math.cos(a);az=Math.sin(a);al=1}
     const v=3+9*k;P.vx=ax/al*v;P.vz=az/al*v;P.vy=2.6+2.2*k;P.y=0.0001;P.airSpeed=v;FX.flyT=2.5;FX.flyB=2;FX.spin=(Math.random()<0.5?-1:1)*(5+6*k);
     if(FX.curl!==1)say(k>0.5?'BOOM! You are airborne.':'The blast knocks you off your feet.',2.5);
@@ -2593,7 +2645,6 @@ function bombDraw(t){
 function wofLightsOut(){
   P.fuel=0;lowFuelSaid=true;sfx('powerdown');noise(0.5,0.25,900,1.5);
   setTimeout(()=>say('Every torch on the floor is out. Something heard the hiss.',4),1500);
-  if(!MP.guest&&F)for(const s of F.shades)if(s.type===0&&s.x>0&&!s.dead){s.state=1;s.calm=0}   // the shades come looking
 }
 
 /* ---------- the Timeshare Salesman ---------- */
@@ -2614,19 +2665,22 @@ function tsTick(dt){
   if(MP.guest){T0.age+=dt;if(T0.age>3){TS=null;return}followNet(T0,dt)}
   else{
     T0.t-=dt;
-    const L=tkTargets().filter(q=>!T0.heard[q.id]);
-    if(T0.t<=0||!L.length){TS=null;mpSend({k:'ts',d:R.depth,end:1});say('The salesman leaves his card on the floor and moves on.',3.5);return}
+    const L=tkTargets().filter(q=>!T0.heard[q.id]),waiting=tkTargets(true).some(q=>q.away&&!T0.heard[q.id]);
+    if(T0.t<=0||!L.length&&!waiting){TS=null;mpSend({k:'ts',d:R.depth,end:1});say('The salesman leaves his card on the floor and moves on.',3.5);return}
     let tg=L.find(q=>q.id===T0.tg);
-    if(!tg){L.sort((a,b)=>Math.hypot(a.x-T0.x,a.z-T0.z)-Math.hypot(b.x-T0.x,b.z-T0.z));tg=L[0];T0.tg=tg.id}
-    const d=Math.hypot(tg.x-T0.x,tg.z-T0.z);
-    T0.pitching=d<1.3;
-    if(d>0.75)mazeStep(T0,tg.x,tg.z,dt,2.0);else{T0.mv=Math.max(0,T0.mv-dt*4);T0.yaw=Math.atan2(tg.z-T0.z,tg.x-T0.x)}
-    if(T0.pitching){T0.prog[tg.id]=(T0.prog[tg.id]||0)+dt;if(T0.prog[tg.id]>=PITCH_LEN+0.5){T0.heard[tg.id]=true;T0.tg=null}}
+    if(!tg&&L.length){L.sort((a,b)=>Math.hypot(a.x-T0.x,a.z-T0.z)-Math.hypot(b.x-T0.x,b.z-T0.z));tg=L[0];T0.tg=tg.id}
+    if(!tg){T0.tg=null;T0.pitching=false;T0.mv=Math.max(0,T0.mv-dt*4)}   // the only one left is behind a door: he loiters
+    else{
+      const d=Math.hypot(tg.x-T0.x,tg.z-T0.z);
+      T0.pitching=d<1.3;
+      if(d>0.75)mazeStep(T0,tg.x,tg.z,dt,2.0);else{T0.mv=Math.max(0,T0.mv-dt*4);T0.yaw=Math.atan2(tg.z-T0.z,tg.x-T0.x)}
+      if(T0.pitching){T0.prog[tg.id]=(T0.prog[tg.id]||0)+dt;if(T0.prog[tg.id]>=PITCH_LEN+0.5){T0.heard[tg.id]=true;T0.tg=null}}
+    }
     T0.net-=dt;if(T0.net<=0&&MP.on){T0.net=0.1;mpSend({k:'ts',d:R.depth,x:r3(T0.x),z:r3(T0.z),y:r3(T0.yaw),m:r3(T0.mv),p:T0.pitching?1:0})}
   }
   T0.walk+=dt*T0.mv*8;
   // your side of it: the pitch plays while he is in your face
-  if(!FX.pitchDone&&wofLive()&&!P.down&&Math.hypot(T0.x-P.x,T0.z-P.z)<1.4){
+  if(!FX.pitchDone&&wofLive()&&!P.down&&!wofAway()&&Math.hypot(T0.x-P.x,T0.z-P.z)<1.4){
     FX.pitch+=dt;const k=Math.min(PITCH.length-1,Math.floor(FX.pitch/PITCH_LINE));
     if(k!==FX.pitchLine){FX.pitchLine=k;say('Salesman: '+PITCH[k],PITCH_LINE+0.3);talkBlip(T0.x,T0.z)}
     if(FX.pitch>=PITCH_LEN){FX.pitchDone=true;setTimeout(()=>say('You now own one fourteen-thousandth of a sanctuary. Probably.',3.5),PITCH_LINE*1000)}
@@ -2677,9 +2731,15 @@ function tkSpawn(){
   TK={x,z,yaw:0,t:150,tg:null,pause:1.6,walk:0,mv:0,gig:1,last:{},df:null,dfK:-1,dfT:0,net:0,gT:0,age:0,
     n:{type:'tickle',x,z,ph:1.7,used:true,lock:true,yaw:0,hy:0,hp:0}};
 }
-function tkTargets(){
-  const L=[];if(!P.down&&wofLive()&&!FX.frozen)L.push({id:'me',x:P.x,z:P.z});
-  if(MP.on)for(const p of MP.peers.values())if(p.d===R.depth&&mpDrawn(p)&&!p.frz)L.push({id:p.id,x:p.x,z:p.z});
+// who a floor-wide creature can go after: players standing in the maze. Anyone behind a door is out of reach (and, with away, listed apart).
+function tkTargets(away){
+  const L=[];
+  if(!P.down&&wofLive()&&!FX.frozen){if(!wofAway())L.push({id:'me',x:P.x,z:P.z});else if(away)L.push({id:'me',x:P.x,z:P.z,away:true})}
+  if(MP.on)for(const p of MP.peers.values()){
+    if(p.d!==R.depth||p.down||p.frz||!p.run||!mpFresh(p))continue;
+    if(p.away){if(away)L.push({id:p.id,x:p.x,z:p.z,away:true});continue}
+    if(mpDrawn(p))L.push({id:p.id,x:p.x,z:p.z});
+  }
   return L;
 }
 function tkTick(dt){
@@ -2708,7 +2768,7 @@ function tkTick(dt){
   T0.walk+=dt*T0.mv*9;
   T0.gT-=dt;if(T0.gT<=0){T0.gT=T0.pause>0?0.75:1.2+Math.random()*1.4;giggle(T0.x,T0.z,T0.pause>0?1.3:0.9)}
   // caught: you are tickled, which slows you right down
-  if(!P.down&&wofLive()&&!FX.frozen&&FX.curl!==1&&Math.hypot(T0.x-P.x,T0.z-P.z)<0.5){   // a curled hedgehog cannot be tickled
+  if(!P.down&&wofLive()&&!wofAway()&&!FX.frozen&&FX.curl!==1&&Math.hypot(T0.x-P.x,T0.z-P.z)<0.5){   // a curled hedgehog cannot be tickled
     if(FX.tickled<=0){say('Hee hee! He is tickling you! You can barely move.',2.5);giggle(P.x,P.z,1.1,1.5)}
     FX.tickled=FX_DUR.tickled;
   }
@@ -2717,12 +2777,15 @@ function tkTick(dt){
 /* ---------- every frame ---------- */
 function wofTick(dt){
   wofTickSpin(dt);
-  if(!wofLive()){if(FX.tin||FX.loud||TK||TS||FX.moon||FX.bob||FX.frozen||FX.pug||FX.rat||FX.plague||FX.fat||FX.pox||FX.dying)wofClear();return}
-  for(const k of FX_TIMERS)if(FX[k]>0)FX[k]=Math.max(0,FX[k]-dt);
+  if(!wofLive()){wofWasAway=false;if(FX.tin||FX.loud||TK||TS||FX.moon||FX.bob||FX.frozen||FX.pug||FX.rat||FX.plague||FX.fat||FX.pox||FX.dying)wofClear();return}
+  const away=wofAway();
+  if(away!==wofWasAway){wofWasAway=away;if(away){tints({});statusStrip([]);document.body.classList.remove('hedgehog');wofAudio()}else WOQ_T=Math.max(WOQ_T,1.5)}
+  if(!away)for(const k of FX_TIMERS)if(FX[k]>0)FX[k]=Math.max(0,FX[k]-dt);   // the clocks wait outside the door
   tkTick(dt);tsTick(dt);rrTick(dt);bombTick(dt);
+  if(!away)wofReplayTick(dt);
   // the hedgehog: hold Z (pad LB, touch CURL) to curl into a ball of spines, X (pad R3, touch ROLL) to roll
-  FX.curl=FX.hedge>0&&!P.down&&!FX.frozen?((keys.KeyZ||pad.curl||touch.curl)?1:(keys.KeyX||pad.roll||touch.roll)?2:0):0;
-  document.body.classList.toggle('hedgehog',FX.hedge>0);if(FX.hedge>0)hedgeButtons();
+  FX.curl=!away&&FX.hedge>0&&!P.down&&!FX.frozen?((keys.KeyZ||pad.curl||touch.curl)?1:(keys.KeyX||pad.roll||touch.roll)?2:0):0;
+  document.body.classList.toggle('hedgehog',FX.hedge>0&&!away);if(FX.hedge>0&&!away)hedgeButtons();
   if(FX.curl===1){P.inv=Math.max(P.inv,0.25);P.vx*=0.8;P.vz*=0.8}
   if(F&&!MP.guest){   // spines hurt: a shade that runs into a curled hedgehog recoils, stunned
     const balls=[];if(FX.curl===1)balls.push([P.x,P.z]);
@@ -2731,11 +2794,11 @@ function wofTick(dt){
   }
   // the plague rat: anyone or anything that comes near starts to die, slowly
   const carriers=[];
-  if(FX.plague>0&&!P.down)carriers.push([P.x,P.z]);
+  if(FX.plague>0&&!P.down&&!away)carriers.push([P.x,P.z]);
   if(MP.on)for(const p of MP.peers.values())if(p.form===3&&p.d===R.depth&&mpDrawn(p))carriers.push([p.x,p.z]);
   const near=(x,z,r)=>carriers.some(c=>(c[0]-x)**2+(c[1]-z)**2<r*r);
   if(F&&carriers.length){
-    if(!FX.dying&&FX.plague<=0&&!P.down&&near(P.x,P.z,1.4)){FX.dying=true;FX.dyT=6;say('You caught the Black Plague. You are dying, slowly.',4);cough()}
+    if(!FX.dying&&FX.plague<=0&&!P.down&&!away&&near(P.x,P.z,1.4)){FX.dying=true;FX.dyT=6;say('You caught the Black Plague. You are dying, slowly.',4);cough()}
     for(const n of F.npcs)if(!n.sick&&!n.fall&&near(n.x+(n.ox||0),n.z+(n.oz||0),1.4))n.sick=16;
     if(!MP.guest)for(const s of F.shades)if(!s.dead&&!s.sick&&s.x>0&&near(s.x,s.z,1.4))s.sick=10;
   }
@@ -2748,15 +2811,15 @@ function wofTick(dt){
   }
   if(FX.dying){
     if(P.down){FX.dying=false}
-    else if(FX.curl!==1){FX.dyT-=dt;if(FX.dyT<=0){FX.dyT=6;cough();P.ward=0;P.inv=0;hurt(null);if(state==='dead')return}}
+    else if(FX.curl!==1&&!away){FX.dyT-=dt;if(FX.dyT<=0){FX.dyT=6;cough();P.ward=0;P.inv=0;hurt(null);if(state==='dead')return}}
   }
   // smallpox: stand next to someone who has it for a second and you have it too
-  if(FX.pox<=0&&!P.down&&MP.on){
+  if(FX.pox<=0&&!P.down&&!away&&MP.on){
     let c=false;for(const p of MP.peers.values())if(p.pox&&p.d===R.depth&&mpDrawn(p)&&(p.x-P.x)**2+(p.z-P.z)**2<1.6*1.6){c=true;break}
     FX.poxNear=c?FX.poxNear+dt:Math.max(0,FX.poxNear-dt);
     if(FX.poxNear>1){FX.pox=FX_DUR.pox;FX.poxNear=0;FX.poxC=2;say('Smallpox. Someone breathed on you.',4)}
   }
-  if(FX.pox>0&&!P.down){FX.poxC-=dt;if(FX.poxC<=0){FX.poxC=5+Math.random()*5;cough();FX.stag=0.8}}
+  if(FX.pox>0&&!P.down&&!away){FX.poxC-=dt;if(FX.poxC<=0){FX.poxC=5+Math.random()*5;cough();FX.stag=0.8}}
   // what is on you right now
   const L=[],f=wofForm();
   if(f===4)L.push([FX.curl===1?'Hedgehog: curled up':FX.curl===2?'Hedgehog: rolling':(touch.on?'Hedgehog':'Hedgehog · Z curl · X roll'),FX.hedge]);
@@ -2771,8 +2834,9 @@ function wofTick(dt){
   if(FX.tickled>0)L.push(['Tickled',null]);
   if(TS)L.push(['Timeshare salesman about',null]);
   if(TK)L.push(['Tickle Monster loose',TK.t]);
+  if(away)L.length=0;
   statusStrip(L);
-  tints({plague:FX.dying?0.9:FX.plague>0?0.45:0,tickle:FX.tickled>0?0.8:0,pox:FX.pox>0?0.55:0,fat:FX.fat>0?0.6:0});
+  if(!away)tints({plague:FX.dying?0.9:FX.plague>0?0.45:0,tickle:FX.tickled>0?0.8:0,pox:FX.pox>0?0.55:0,fat:FX.fat>0?0.6:0});
   wofAudio();
 }
 function wofDraw(t,ex,ey,ez,dtR){
@@ -3939,6 +4003,9 @@ function mpSpectate(){
   if(Math.floor(P.x)!==P.tx||Math.floor(P.z)!==P.ty)onTileChange();
 }
 function mpCycle(){const L=mpAlive();if(L.length<2)return;const i=L.findIndex(p=>p.id===MP.follow);MP.follow=L[(i+1)%L.length].id}
+// flags packed into a[6] of the per-frame position message: 1 down, 2 safe, 4 run, 8 away, 16 mounted, 32 unseen,
+// 64+128 wheel form, 256 fat, 512 pox, 1024 frozen, 2048 bobblehead, 4096 hedgehog, 8192/16384 curl (1 / 2)
+const mpPosFlags=()=>(P.down?1:0)|(P.inSafe||P.away||FX.frozen?2:0)|4|(P.away?8:0)|(P.mounted?16:0)|(P.unseen?32:0)|((wofForm()<4?wofForm():0)<<6)|(FX.fat>0?256:0)|(FX.pox>0?512:0)|(FX.frozen?1024:0)|(FX.bob>0?2048:0)|(FX.hedge>0?4096:0)|(FX.curl===1?8192:FX.curl===2?16384:0);
 const mpFresh=p=>performance.now()-(p.seen||0)<15000;
 const mpShown=p=>MP.on&&p.run&&!p.away&&!p.unseen&&p.d===R.depth&&p.rx!==undefined&&state!=='title'&&mpFresh(p);
 function sendHubPresence(to){
@@ -3973,7 +4040,7 @@ function mpTick(raw){
   MP.pt-=raw;
   if(MP.pt<=0){
     MP.pt=1/15;
-    mpSend({k:'p',d:R.depth,a:[r3(P.x),r3(P.z),r3(P.y),r3(P.yaw),r3(P.pitch),Math.round(P.fuel),(P.down?1:0)|(P.inSafe||P.away||FX.frozen?2:0)|4|(P.away?8:0)|(P.mounted?16:0)|(P.unseen?32:0)|((wofForm()<4?wofForm():0)<<6)|(FX.fat>0?256:0)|(FX.pox>0?512:0)|(FX.frozen?1024:0)|(FX.bob>0?2048:0)|(FX.hedge>0?4096:0)|(FX.curl===1?8192:FX.curl===2?16384:0),P.hp]});
+    mpSend({k:'p',d:R.depth,a:[r3(P.x),r3(P.z),r3(P.y),r3(P.yaw),r3(P.pitch),Math.round(P.fuel),mpPosFlags(),P.hp]});
   }
   rvT-=raw;
   if(state==='room'&&rvT<=0&&MP.peers.size){rvT=0.1;const q=ROOMS.snap();if(q)mpSend({k:'rv',d:R.depth,w:ROOMS.kind,q})}
@@ -6061,6 +6128,7 @@ function step(now){
     updateSettingsScreen();
     $('hubCross').classList.toggle('ready',hub.aimed);
   }
+  else if(state==='room'&&!STUDIO)wofTick(dt);   // solo: update() sleeps behind a door, but the wheel and the floor's creatures do not
   mpTick(raw);
   return raw;
 }
@@ -6083,7 +6151,7 @@ function frameBody(now){
         if(++titleFrames===20)selfCheck();
       }
       else if((state==='room'||ROOMS.watching)&&ROOMS.active){resize();renderer.toneMappingExposure=1;ROOMS.render()}
-      else if(FX.frozen&&BRK&&BRK.active){resize();renderer.toneMappingExposure=1;BRK.render(raw)}
+      else if(FX.frozen&&BRK&&BRK.active&&state!=='room'){resize();renderer.toneMappingExposure=1;BRK.render(raw)}
       else render(now/1000);
     }
     if(state!=='title'){drawHUD();if(state!=='room'&&!ROOMS.watching)drawMap()}
@@ -6865,6 +6933,6 @@ function gripProbe(ts,talking){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='
   for(const t of ts){buildNpc(n,t,P.x,0.7,P.z,0.016);res.push({t,...GRIP_DBG})}talk=save;return res}
 function benchNpc(iters){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='keeper');const e=[P.x,0.7,P.z];buildNpc(n,1,e[0],e[1],e[2],0.016);let t0=performance.now();
   for(let i=0;i<iters;i++){CH.n=0;buildNpc(n,1+i*0.016,e[0],e[1],e[2],0.016)}return (performance.now()-t0)/iters}
-window.__game={wof:WOF,fx:FX,get tk(){return TK},get bomb(){return BOMB},get rr(){return RR},set rr(v){RR=v},rrAct,get ts(){return TS},get brk(){return BRK},set tk(v){TK=v},wofSpinStart,wofResolve,wofBegin,NEWS,openStation,get activeStation(){return activeStation},hub,get lobbyPaused(){return lobbyPaused},get roomPaused(){return roomPaused},simLockLost(){if(document.pointerLockElement){document.exitPointerLock();return}usingLock=true;document.dispatchEvent(new Event("pointerlockchange"))},music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={wofQ:WOQ,tkTargets,rrStart,wofClear,wofTick,mpPosFlags,wof:WOF,fx:FX,get tk(){return TK},get bomb(){return BOMB},get rr(){return RR},set rr(v){RR=v},rrAct,get ts(){return TS},get brk(){return BRK},set tk(v){TK=v},wofSpinStart,wofResolve,wofBegin,NEWS,openStation,get activeStation(){return activeStation},hub,get lobbyPaused(){return lobbyPaused},get roomPaused(){return roomPaused},simLockLost(){if(document.pointerLockElement){document.exitPointerLock();return}usingLock=true;document.dispatchEvent(new Event("pointerlockchange"))},music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 if(state==='title')startShaftWarm();
 requestAnimationFrame(frame);
