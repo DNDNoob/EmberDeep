@@ -2514,6 +2514,7 @@ function startFromMenu(seed,depth){
   if(!loading)startRun(seed,depth,false,true);
 }
 function enterRun(seed,sd,floor,landing,liftTrip){
+  if(loading?.kind==='shaft')closeLoading(); // an unfinished title warm-up must not hold the doors shut or rebuild the world later
   roomLeave();$('deadTitle').textContent='THE DARK TAKES YOU';
   showHub(false);
   if(!archiveRun)hub.reset();
@@ -5746,6 +5747,7 @@ function startShaftWarm(){
     shaftQueue.push(()=>buildGlimpseProto(floor,mouth));
   }
   showLoading('Opening the entrance hall',stages);
+  loading.kind='shaft';
 }
 function retargetShaft(){
   if(state!=='title'||hub.riding||loading)return;
