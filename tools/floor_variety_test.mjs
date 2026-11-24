@@ -20,10 +20,11 @@ const {pg,errs}=await open('low');
 const ev=(f,a)=>pg.evaluate(f,a);
 // ---- layouts unchanged
 const sums=await ev(()=>{const G=window.__game,out={};
-  const skip=new Set(['bi','biome','base','name','variant','litter','stone','wet','fogK','ambK','ambT','torchT','tex','seen','dist']);
+  // the Wheel of Misfortune and Pat Sajak are placed without drawing from the floor's rng; leaving them out shows nothing else moved
+  const skip=new Set(['bi','biome','base','name','variant','litter','stone','wet','fogK','ambK','ambT','torchT','tex','seen','dist','wheel']);
   const hs=s=>{let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return (h>>>0).toString(16)};
   for(const s of ['ALPHA','K7M2QX','EMBER9','ZZZZZZ','DOOR42'])for(let d=1;d<=12;d++){const F=G.genFloor(s,d);
-    for(const nt of [0,1])out[s+':'+d+(nt?':nt':'')]=hs(JSON.stringify(F,(k,v)=>skip.has(k)||(nt&&k==='discs')||(nt&&k==='t'&&typeof v==='string'&&/^(urn|shroom|ice|ember|barrel|bones|crate|sack|log|stump|fern)$/.test(v))?undefined:v instanceof Uint8Array||v instanceof Int16Array||v instanceof Int32Array?Array.from(v):v))}
+    for(const nt of [0,1])out[s+':'+d+(nt?':nt':'')]=hs(JSON.stringify(F,(k,v)=>k==='npcs'?v.filter(n=>n.type!=='pat'):skip.has(k)||(nt&&k==='discs')||(nt&&k==='t'&&typeof v==='string'&&/^(urn|shroom|ice|ember|barrel|bones|crate|sack|log|stump|fern)$/.test(v))?undefined:v instanceof Uint8Array||v instanceof Int16Array||v instanceof Int32Array?Array.from(v):v))}
   return out});
 let badL=[];for(const k in FULL)if(sums[k]!==FULL[k])badL.push(k);
 ok(badL.length===0,'grid, items, doors and props identical to main for 5 seeds x depths 1-5'+(badL.length?' ('+badL.join(',')+')':''));
