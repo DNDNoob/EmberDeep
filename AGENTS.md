@@ -4,7 +4,7 @@ Keep screens, consoles, and props usable from the player’s position in the sha
 
 For any wall art (murals, posters, paintings, signs with pictures), follow "Wall art, posters and murals" in `docs/procedural-art.md`: generate pixel art at load time; never ship bitmaps.
 
-Strange-door rooms follow `docs/strange-doors.md`. A creature that exists only in a door room is a Mob Archive exhibit in that same change: append it to `ROOM_MOBS`, call `o.mob` once when the player spots it on a live visit, and give it a glass-case model. `DOOR_KINDS` alone does not record it.
+Strange-door rooms follow `docs/strange-doors.md`. A creature that exists only in a door room is a Mob Archive exhibit in that same change: append it to `ROOM_MOBS`, call `o.mob` once when the player spots it on a live visit, and give it a glass-case model. `DOOR_KINDS` alone does not record it. Door rooms give no hints by default (see "No hints" in that doc).
 
 ## Update Log (player-facing changes)
 

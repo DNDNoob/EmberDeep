@@ -803,7 +803,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
       if(pondSpawnDue(b.x,b.z,last)){
         addPond(pondSpawnAt({seed,index:last.i+1,x:b.x,z:b.z,yaw:S.yaw,ponds}));
         S.mist=2.4;
-        o.say('Water again, ahead.',3.5);o.tone(392,0.6,'sine',0.03,0,-90);
+        o.tone(392,0.6,'sine',0.03,0,-90);
       }
       const sim={
         x:b.x,z:b.z,yaw:S.yaw,pitch:S.pitch,eye:EYE+b.y,aspect:cam.aspect||16/9,
@@ -817,12 +817,10 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
         finish({k:'leave',why:'stillwood'});return;
       }
       // a quiet cue when the door becomes watched or lets go
-      if(sim.locked){S.shim=1.2;o.tone(494,0.5,'sine',0.03,0,-160);o.tone(740,0.7,'sine',0.014,0.1);if(S.said<2){S.said=2;o.say('The water holds the door where it stands.',3.5)}}
-      else if(sim.released){o.tone(330,0.4,'sine',0.018,0,90);if(S.said===2){S.said=3;o.say('It is behind you again.',2.5)}}
-      else if(S.said===0&&S.t>0.8){S.said=1;o.say('The way back will not stay where you can look.',4.5)}
+      if(sim.locked){S.shim=1.2;o.tone(494,0.5,'sine',0.03,0,-160);o.tone(740,0.7,'sine',0.014,0.1);}
+      else if(sim.released){o.tone(330,0.4,'sine',0.018,0,90);}
       const near=pondDist(b.x,b.z)<14;
-      const hint=A.watching?A.label:S.pinned?(S.direct?'The door waits. Walk through it.':'The water remembers what is behind you.'):near?'Look into the water.':'The way back stays behind you.';
-      o.hud('<small>'+hint+'</small>');
+      o.hud(A.watching?'<small>'+(A.label||'')+'</small>':'');   // no instructions: the room is discovered, not explained
       if(near&&!A.watching&&Math.floor(S.t)%5===0&&S.t%5<dt)o.tone(880+Math.sin(S.t)*40,0.12,'sine',0.015);
     }else{
       o.hud('<small>'+(A.label||'')+'</small>');
