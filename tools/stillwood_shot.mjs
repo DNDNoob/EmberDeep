@@ -7,6 +7,14 @@ import {mkdirSync} from 'node:fs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const prefix=process.argv[2]||'after',seed=+(process.argv[3]||7);
 mkdirSync(root+'/shots/stillwood',{recursive:true});
+const {biomeAt,biomeN}=await import('../src/stillwood.js');
+// a spot of a biome: nearest to the spawn that is at least r0 away, with a view direction toward more of the same
+const spot=(f,r0=45)=>{let best=null;for(let r=r0;r<400&&!best;r+=6)for(let a=0;a<6.283;a+=0.05){const x=Math.cos(a)*r,z=Math.sin(a)*r;if(f(biomeAt(x,z,seed),x,z)){best={x:+x.toFixed(1),z:+z.toFixed(1)};break}}return best};
+const mead=spot(b=>b.m>0.99),deep=spot(b=>b.d>0.99);
+// a border: where the meadow gives way, looking from the meadow side toward the trees
+let bord=spot((b)=>b.m>0.5&&b.m<0.56&&b.d<0.01,30),bYaw=0;
+if(bord){let bx=0,bz=0,bn=biomeN(bord.x,bord.z,seed);for(let a=0;a<6.283;a+=0.1){const n=biomeN(bord.x+Math.cos(a)*6,bord.z+Math.sin(a)*6,seed);if(n>bn){bn=n;bx=Math.cos(a);bz=Math.sin(a)}}bYaw=Math.atan2(bx,-bz);bord={x:+(bord.x-bx*7).toFixed(1),z:+(bord.z-bz*7).toFixed(1)}}
+console.log('meadow',mead,'deep',deep,'border',bord);
 const VIEWS={
   a:{q:'high',x:0,z:-1.5,yaw:0.0,pitch:0.02},
   b:{q:'high',x:0.2,z:-6.2,yaw:0.0,pitch:-0.1},
@@ -19,6 +27,13 @@ const VIEWS={
   k:{q:'high',x:-23,z:-9,yaw:0,pitch:0.05},   // a big boulder outcrop
   l:{q:'high',find:'hill'},   // a view across the hills from a rise
   m:{q:'high',find:'circle'}, // circling the pond: the reflection, then the real door at the edge of the screen
+  n:{q:'high',...mead,yaw:0.6,pitch:0.02},        // a meadow
+  o:{q:'high',...deep,yaw:0.6,pitch:0.02},        // the deep wood
+  p:{q:'high',...bord,yaw:bYaw,pitch:0.02},       // a border: meadow into trees
+  q:{q:'high',find:'stand'},                       // standing on a boulder
+  w:{q:'high',find:'line'},                        // the door in line: pond behind the camera, the door ahead, you in between
+  v:{q:'low',...mead,yaw:0.6,pitch:0.02},         // the meadow on low quality
+  x:{q:'low',...deep,yaw:0.6,pitch:0.02},         // the deep wood on low quality
   // the held door seen in the water from four sides of the first pond (door stands 4.2 m behind the player)
   r:{q:'high',x:0,z:-9.6,yaw:0,pitch:-0.75,pin:true},
   s:{q:'high',x:0,z:-22.4,yaw:Math.PI,pitch:-0.75,pin:true},
@@ -57,10 +72,18 @@ for(const k of want){
       const dx=p.x-V.walk.x,dz=p.z-V.walk.z,L=Math.hypot(dx,dz);
       x=p.x-dx/L*(p.r+V.look.back);z=p.z-dz/L*(p.r+V.look.back);yaw=Math.atan2(dx,-dz);pitch=V.look.pitch;
     }
-    const dxx=x-Math.sin(yaw)*4.2,dzz=z+Math.cos(yaw)*4.2,pin=V.pin?1:0;
+    let dxx=x-Math.sin(yaw)*4.2,dzz=z+Math.cos(yaw)*4.2,pin=V.pin?1:0;
     if(V.find==='rock'){
       const rk=S.rockList().filter(r=>Math.hypot(r.x,r.z)>12).sort((a,b)=>b.r-a.r)[0];
       if(rk){const d=Math.hypot(rk.x,rk.z),ux=rk.x/d,uz=rk.z/d;x=rk.x-ux*(rk.r+8);z=rk.z-uz*(rk.r+8);yaw=Math.atan2(ux,-uz);pitch=0.0}
+    }
+    if(V.find==='stand'){
+      for(let i=0;i<3;i++)R.update(1/60,Z);
+      const rk=S.rockList().filter(r=>r.stand&&r.top>0.8&&Math.hypot(r.x,r.z)>8).sort((a,b)=>Math.hypot(a.x,a.z)-Math.hypot(b.x,b.z))[0];
+      if(rk){x=rk.x;z=rk.z;yaw=Math.atan2(-rk.x,rk.z);pitch=-0.3;window.__stand=rk}
+    }
+    if(V.find==='line'){
+      const pd=S.ponds()[0];x=pd.x;z=pd.z+pd.r+3;yaw=Math.PI;pitch=0.0;
     }
     if(V.find==='hill'){
       let best=null,low=null;
@@ -79,7 +102,8 @@ for(const k of want){
       }
       x=S.WK.b.x;z=S.WK.b.z;yaw=S.yaw;pitch=S.pitch;window.__circle={deg:(Math.PI/2-th)*180/Math.PI,direct:S.direct,pinned:S.pinned};
     }
-    const ap=()=>{if(V.find!=='circle')S.apply({x,z,y:S.H(x,z),yaw,pitch,dx:dxx,dz:dzz,face:yaw,pin})};
+    if(V.find==='line'){dxx=x;dzz=z+4.2;pin=1;V.face=0}
+    const ap=()=>{if(V.find!=='circle')S.apply({x,z,y:S.G(x,z),yaw,pitch,dx:dxx,dz:dzz,face:V.face??yaw,pin})};
     ap();
     for(let i=0;i<30;i++)R.update(1/60,Z);
     ap();
@@ -90,6 +114,7 @@ for(const k of want){
   await pg.waitForTimeout(300);
   await pg.screenshot({path:`${root}/shots/stillwood/${prefix}-${k}.png`});
   const info=await pg.evaluate(()=>{const S=window.__game.ROOMS.state();return S.stats?S.stats():{}});delete info.bake;
+  if(process.env.KINDS)console.log(JSON.stringify(await pg.evaluate(()=>window.__game.ROOMS.state().byKind())));
   console.log(k,JSON.stringify(info),JSON.stringify(await pg.evaluate(()=>window.__circle||null)),'rs',await pg.evaluate(()=>window.__game.rs));
   await ctx.close();
 }

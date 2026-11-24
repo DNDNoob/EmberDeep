@@ -1,6 +1,6 @@
 // node tools/stillwood_test.mjs
 import assert from 'node:assert/strict';
-import {STILL,horizForward,lookDir,placeBehind,rayHitsPond,crossedDoor,stillStep,doorSeen,waterFill,viewFov,terrainH,terrainRaw,HILL,pondSpawnDue,pondSpawnAt,clearField,segDist} from '../src/stillwood.js';
+import {STILL,horizForward,lookDir,placeBehind,rayHitsPond,crossedDoor,stillStep,doorSeen,waterFill,viewFov,terrainH,terrainRaw,biomeAt,rockSurface,rockPush,jumpTop,STEP_MIN,placeLine,HILL,pondSpawnDue,pondSpawnAt,clearField,segDist} from '../src/stillwood.js';
 
 const pond={x:0,z:-16,r:STILL.pondR};
 const fresh=()=>({
@@ -12,17 +12,31 @@ const fresh=()=>({
 {const f=horizForward(0);assert.ok(Math.abs(f[0])<1e-6&&f[1]<0);
   const d=lookDir(0,-0.8);assert.ok(d[1]<0,'negative pitch looks down')}
 
-// The door stays behind a running player and never enters the forward view.
+// The way back sits on the line pond - player - door, player in the middle, wherever the player stands or looks.
+{for(const [x,z,yaw] of [[0,-12,0],[12,-16,1.2],[-9,-5,2.5],[3,30,-0.7],[-40,-90,4]]){
+    const s=fresh();s.x=x;s.z=z;s.yaw=yaw;s.pitch=0;stillStep(s,0.1);
+    const ux=x-pond.x,uz=z-pond.z,L=Math.hypot(ux,uz),dx=s.door.x-x,dz=s.door.z-z,D=Math.hypot(dx,dz);
+    assert.ok(Math.abs(D-STILL.behind)<1e-9,'distance');
+    assert.ok((ux*dz-uz*dx)/(L*D)<1e-9&&(ux*dx+uz*dz)/(L*D)>1-1e-9,'collinear, player between pond and door');
+    // and it faces the player: its facing direction is from the door toward the player
+    assert.ok(Math.abs(Math.sin(s.door.face)+dx/D)<1e-9&&Math.abs(-Math.cos(s.door.face)+dz/D)<1e-9);
+  }}
+// Facing away from the pond puts that spot in front of you: the door is hidden, never seen, and never pins.
 {const s=fresh();s.z=12;s.yaw=Math.PI;   // running away from the pond
   for(let i=0;i<12;i++){
-    const f=horizForward(s.yaw);
-    s.x+=f[0]*1.2;s.z+=f[1]*1.2;
+    const f=horizForward(s.yaw);s.x+=f[0]*1.2;s.z+=f[1]*1.2;
     stillStep(s,0.2);
-    const dx=s.door.x-s.x,dz=s.door.z-s.z;
-    const dot=(f[0]*dx+f[1]*dz)/Math.hypot(dx,dz);
-    assert.ok(dot<-0.95,'door slipped into view while running, dot '+dot);
-    assert.equal(s.pinned,false);
+    assert.equal(s.hidden,true,'spot ahead is hidden');assert.equal(s.direct,false);assert.equal(s.pinned,false);
   }}
+// Facing the pond from afar the spot is behind you: the door is shown there, not seen.
+{const s=fresh();s.z=12;s.yaw=0;stillStep(s,0.2);assert.equal(s.hidden,false);assert.equal(s.pinned,false);assert.ok(s.door.z>s.z);}
+// It reappears only once its spot has left the view (with the hide margin), never at the screen edge.
+{const s=fresh();s.z=12;s.yaw=Math.PI;stillStep(s,0.1);assert.equal(s.hidden,true);
+  const fov=viewFov();let shown=-1;
+  for(let i=0;i<400&&shown<0;i++){s.yaw-=0.01;stillStep(s,0.05);if(!s.hidden)shown=i}
+  assert.ok(shown>0);
+  assert.equal(doorSeen([s.x,1.6,s.z],s.yaw,s.pitch,s.door,fov,STILL.seeMargin),false,'shown only out of view');
+  assert.equal(s.pinned,false);}
 
 const eyeOf=s=>[s.x,s.eye??1.6,s.z];
 const spot=(x,z,yaw,pitch)=>{const s=fresh();s.x=x;s.z=z;s.yaw=yaw;s.pitch=pitch;return s};
@@ -55,8 +69,8 @@ const spot=(x,z,yaw,pitch)=>{const s=fresh();s.x=x;s.z=z;s.yaw=yaw;s.pitch=pitch
 {const s=spot(0,-8,0,-0.5);stillStep(s,0.05);assert.ok(s.pinned);
   s.pitch=0;s.yaw=Math.PI/2;stillStep(s,STILL.grace*0.5);assert.equal(s.pinned,true,'tiny grace');
   stillStep(s,STILL.grace);assert.equal(s.pinned,false);assert.equal(s.released,true);
-  const f=horizForward(s.yaw),dx=s.door.x-s.x,dz=s.door.z-s.z;
-  assert.ok((f[0]*dx+f[1]*dz)/Math.hypot(dx,dz)<-0.95,'directly behind again');
+  const dx=s.door.x-s.x,dz=s.door.z-s.z,ux=s.x-pond.x,uz=s.z-pond.z;
+  assert.ok((ux*dx+uz*dz)/(Math.hypot(ux,uz)*Math.hypot(dx,dz))>1-1e-9,'back on the pond line');
   assert.ok(STILL.grace<=0.2);
 }
 // Far from any water, nothing is ever held and the door stays behind you through a run.
@@ -154,4 +168,25 @@ const spot=(x,z,yaw,pitch)=>{const s=fresh();s.x=x;s.z=z;s.yaw=yaw;s.pitch=pitch
 {const a=clearField(12.3,-4.5,7);assert.equal(a,clearField(12.3,-4.5,7));assert.ok(a>=0&&a<=1);
   assert.notEqual(a,clearField(12.3,-4.5,8));
   assert.ok(Math.abs(segDist(0,5,0,0,10,0)-5)<1e-9&&Math.abs(segDist(-3,4,0,0,10,0)-5)<1e-9);}
+
+// Climbable stones: the jump clears a top up to jumpTop(); a dome is walked up only in small steps, so you must jump onto it.
+{const jt=jumpTop(1.6);assert.ok(jt>1.0&&jt<1.5,'jumpTop '+jt);assert.ok(STEP_MIN<0.5);
+  const r={x:0,z:0,rg:0.9,y0:0,top:1.0};
+  assert.ok(Math.abs(rockSurface(r,0,0)-1)<1e-12);assert.equal(rockSurface(r,2,0),-Infinity);
+  assert.ok(rockSurface(r,0.5,0)<rockSurface(r,0.2,0),'dome falls off');
+  assert.equal(rockPush(r,0,0,1.0),null,'standing on top');
+  const q=rockPush(r,0.5,0,0);assert.ok(q&&Math.hypot(q[0],q[1])>=0.5&&Math.hypot(q[0],q[1])<=0.9+1e-9,'ground-level walker is held at the foot');
+  assert.ok(rockSurface(r,q[0],q[1])<=0.12+1e-6,'pushed to where the dome is a step high');
+  assert.equal(rockPush(r,0.5,0,rockSurface(r,0.5,0)),null,'a body on the surface is not pushed');
+  assert.ok(rockPush(r,0,0,0)!==null,'inside at ground level gets out');
+  assert.equal(rockPush(r,1.5,0,0),null,'outside');
+}
+// Biomes: deterministic, smooth, all three kinds occur, and the mixed wood is a good share.
+{const a=biomeAt(120,-45,7),b=biomeAt(120,-45,7);assert.deepEqual(a,b);assert.notDeepEqual(biomeAt(120,-45,7),biomeAt(120,-45,9));
+  let m=0,d=0,mix=0,N=0,jump=0;
+  for(let x=-900;x<900;x+=6)for(let z=-900;z<900;z+=6){const q=biomeAt(x,z,7);N++;if(q.m>0.5)m++;else if(q.d>0.5)d++;else mix++;
+    const q2=biomeAt(x+1,z,7);jump=Math.max(jump,Math.abs(q.m-q2.m),Math.abs(q.d-q2.d))}
+  const fm=m/N,fd=d/N,fx=mix/N;console.log('biome share meadow',fm.toFixed(2),'deep',fd.toFixed(2),'mixed',fx.toFixed(2),'max step per metre',jump.toFixed(3));
+  assert.ok(fm>0.15&&fd>0.15&&fx>0.25,'every biome is common enough');assert.ok(jump<0.2,'borders are smooth');
+}
 console.log('stillwood rules ok');

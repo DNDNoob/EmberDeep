@@ -4,7 +4,7 @@
 // that is standing behind you. Seeing that reflection, or seeing the door itself, holds the
 // door where it is. Look away from both and it slips behind you again.
 import * as THREE from 'three';
-import {MOVE,bobY,createRoomWalker,lookStep} from './movement.js';
+import {MOVE,bobY,createRoomWalker,lookStep,scaleFor} from './movement.js';
 import {getProp,natureMaterial} from './nature.js';
 
 const EYE=1.6;
@@ -12,7 +12,7 @@ const clamp=(v,a,b)=>v<a?a:v>b?b:v;
 
 export const STILL={
   behind:4.2, doorHalf:0.52, doorH:2.2, pondR:5.5, pondEvery:304.8, pondMax:3,
-  grace:0.15, seeMargin:0.03, waterY:0.045,
+  grace:0.15, seeMargin:0.03, hidePad:0.3, waterY:0.045,
   vfov:72*Math.PI/180, waterReach:25, waterFill:2/9,
 };
 
@@ -32,6 +32,53 @@ export function placeBehind(x,z,yaw,dist=STILL.behind,blocked){
     if(blocked(px,pz)){px+=-f[1]*1.5;pz+=f[0]*1.5}
   }
   return {x:px,z:pz,face:yaw};
+}
+// The way back sits on the line pond - you - door, with you in the middle: `dist` metres from you, directly away from the pond.
+// Standing on the pond centre (no line) it falls back to straight behind your head.
+export function placeLine(x,z,pond,yaw,dist=STILL.behind,blocked){
+  if(!pond)return placeBehind(x,z,yaw,dist,blocked);
+  let ux=x-pond.x,uz=z-pond.z;const L=Math.hypot(ux,uz);
+  if(L<0.3)return placeBehind(x,z,yaw,dist,blocked);
+  ux/=L;uz/=L;
+  let d=dist,px=x+ux*d,pz=z+uz*d;
+  if(blocked){
+    for(let i=0;i<8&&blocked(px,pz);i++){d+=0.65;px=x+ux*d;pz=z+uz*d}
+    if(blocked(px,pz)){d=dist;px=x+ux*d-uz*1.5;pz=z+uz*d+ux*1.5}
+  }
+  return {x:px,z:pz,face:Math.atan2(-ux,uz)};   // a door faces along its `face` yaw: toward you, so the opposite of the pond-to-door bearing
+}
+export function nearestOf(ponds,x,z){
+  let m=1e9,q=null;for(const p of ponds||[]){const d=Math.hypot(x-p.x,z-p.z)-p.r;if(d<m){m=d;q=p}}return q;
+}
+// ---- boulders you can climb: a stone whose top is within a jump becomes a dome you can land on and walk off ----
+// highest top (m above the ground at its foot) the walker's jump clears, less a margin; scales with the room walker like the jump does
+export const jumpTop=(eye=EYE)=>0.9*MOVE.jumpV*MOVE.jumpV/(2*MOVE.gravity)*scaleFor(eye);
+const JUMP_TOP=jumpTop(EYE);
+export const STEP_MIN=0.35;     // lower than this and a stone is just stepped over
+// absolute height of a climbable stone's dome at (x,z), or -Infinity outside it. rock: {x,z,rg,y0,top}
+export function rockSurface(r,x,z){
+  const q=((x-r.x)**2+(z-r.z)**2)/(r.rg*r.rg);
+  return q>=1?-Infinity:r.y0+r.top*Math.sqrt(1-q);
+}
+// A body with feet at `y` cannot rise onto the dome by walking more than `tol`: push it back to the radius where the dome is that high.
+export function rockPush(r,bx,bz,y,tol=0.12){
+  const dx=bx-r.x,dz=bz-r.z,d=Math.hypot(dx,dz);
+  if(d>=r.rg)return null;
+  const surf=rockSurface(r,bx,bz);
+  if(surf-y<=tol)return null;
+  const yn=y+tol-r.y0,ds=yn<=0?r.rg:r.rg*Math.sqrt(Math.max(0,1-(yn/r.top)**2));
+  if(d>=ds)return null;
+  if(d<1e-4)return [r.x+ds,bz];
+  return [r.x+dx/d*ds,r.z+dz/d*ds];
+}
+// ---- biomes: a smooth seeded field of ~90 m patches. m = meadow weight, d = deep-wood weight (both 0 in the mixed wood) ----
+export const BIOME={len:90,mLo:0.34,mHi:0.47,dLo:0.53,dHi:0.66};
+export function biomeN(x,z,seed){
+  return vnoise(x/BIOME.len,z/BIOME.len,seed^0xb10e)*0.86+vnoise(x/40+7.3,z/40-3.1,seed^0x2f1d)*0.14;
+}
+export function biomeAt(x,z,seed){
+  const n=biomeN(x,z,seed);
+  return {m:1-sstep01((n-BIOME.mLo)/(BIOME.mHi-BIOME.mLo)),d:sstep01((n-BIOME.dLo)/(BIOME.dHi-BIOME.dLo))};
 }
 export function rayHitsPond(eye,dir,pond,waterY=STILL.waterY,maxT=30){
   if(dir[1]>=-0.05)return null;
@@ -78,19 +125,26 @@ export function crossedDoor(x0,z0,x1,z1,door,half=STILL.doorHalf){
 // at least waterFill of the view rays strike a pond within waterReach) or the real door inside the camera frustum.
 // The instant neither holds (after a tiny grace against flicker) it slips back directly behind the player.
 export function stillStep(s,dt){
-  const ponds=s.ponds||[s.pond],eye=[s.x,s.eye??EYE,s.z],fov=s.fov||viewFov(STILL.vfov,s.aspect||16/9);
+  const ponds=s.ponds||[s.pond],eye=[s.x,s.eye??EYE,s.z],fov=s.fov||viewFov(STILL.vfov,s.aspect||16/9),margin=s.seeMargin??STILL.seeMargin;
   const fill=waterFill(eye,s.yaw,s.pitch,ponds,fov,s.waterReach??STILL.waterReach);
   const water=fill>=(s.waterFill??STILL.waterFill)-1e-9;
-  const direct=doorSeen(eye,s.yaw,s.pitch,s.door,fov,s.seeMargin??STILL.seeMargin);
-  const sees=water||direct;
-  s.locked=false;s.released=false;
-  if(sees){if(!s.pinned)s.locked=true;s.pinned=true;s.hold=s.grace??STILL.grace}
-  else if(s.pinned){s.hold-=dt;if(s.hold<=0){s.pinned=false;s.hold=0;s.released=true}}
-  if(!s.pinned){
-    const p=placeBehind(s.x,s.z,s.yaw,s.behind??STILL.behind,s.blocked);
-    s.door.x=p.x;s.door.z=p.z;s.door.face=p.face;
+  s.locked=false;s.released=false;s.direct=false;s.hidden=false;
+  if(s.pinned){
+    // frozen in place while you see its reflection or the door itself
+    s.direct=doorSeen(eye,s.yaw,s.pitch,s.door,fov,margin);
+    if(water||s.direct)s.hold=s.grace??STILL.grace;
+    else{s.hold-=dt;if(s.hold<=0){s.pinned=false;s.hold=0;s.released=true}}
   }
-  s.fill=fill;s.water=water;s.direct=direct;s.sees=sees;
+  if(!s.pinned){
+    // free: pond, you and the door in a straight line with you in the middle
+    const p=placeLine(s.x,s.z,nearestOf(ponds,s.x,s.z),s.yaw,s.behind??STILL.behind,s.blocked);
+    s.door.x=p.x;s.door.z=p.z;s.door.face=p.face;
+    if(s.groundAt)s.door.y=s.groundAt(p.x,p.z);
+    // a spot on screen hides the door (never counted as seen) until it leaves the view: it cannot pop in ahead of you
+    s.hidden=doorSeen(eye,s.yaw,s.pitch,s.door,fov,margin+(s.hidePad??STILL.hidePad));
+    if(water&&!s.hidden){s.pinned=true;s.locked=true;s.hold=s.grace??STILL.grace}
+  }
+  s.fill=fill;s.water=water;s.sees=water||s.direct;
   return s;
 }
 
@@ -193,6 +247,7 @@ const PROPS=[
   {kind:'bigmoss',bake:'mossrock',n:1,cap:[10,20],far:90,near:26,opts:{size:4.5,budget:{near:5000,far:900},palette:{moss:'#4f6e38',moss2:'#78914a',mossD:'#334d2a'}}},
   {kind:'snag',n:1,cap:[40,80],far:66,near:15},
 ];
+const ROCKY=new Set(['bigrock','bigmoss','boulder','mossrock']);
 const BAKE_ORDER=['fir0','shrub0','mossrock0','oak0','grass0','tulip0','daisy0','reed0','slab0','bigrock0','boulder0','fir1','grass1','oak1','shrub1','bigmoss0','snag0','fir2','mossrock1','reed1','bigrock1','grass2','slab1'];
 // until a prop's bake lands (or is read from the cache) its slot shows one of these cheap stand-ins
 function placeholder(kind){
@@ -246,7 +301,7 @@ function groundGeometry(){
 // ground: moss, meadow, leaf litter, dirt paths and sandy muddy banks, all from world position so it can follow the player; up to 3 ponds
 function groundMaterial(Q,seed,U3){
   const m=Q===0?new THREE.MeshLambertMaterial({color:0xffffff}):new THREE.MeshStandardMaterial({color:0xffffff,roughness:1,metalness:0});
-  const U=Object.assign({uSeed:{value:(seed^0x51ed)|0},uSeedA:{value:(seed^0x7a11)|0},uSeedB:{value:(seed^0x3c9d)|0}},U3);
+  const U=Object.assign({uSeed:{value:(seed^0x51ed)|0},uSeedA:{value:(seed^0x7a11)|0},uSeedB:{value:(seed^0x3c9d)|0},uSeedC:{value:(seed^0xb10e)|0},uSeedD:{value:(seed^0x2f1d)|0}},U3);
   m.onBeforeCompile=sh=>{
     Object.assign(sh.uniforms,U);
     const TERR=`uniform int uSeedA;uniform int uSeedB;uniform vec4 uPondsT[3];
@@ -264,18 +319,24 @@ float terrH(vec2 p){
   objectNormal=normalize(vec3(terrH(w0-vec2(e,0.))-terrH(w0+vec2(e,0.)),2.*e,terrH(w0-vec2(0.,e))-terrH(w0+vec2(0.,e))));}`)
       .replace('#include <begin_vertex>','#include <begin_vertex>\nvW=(modelMatrix*vec4(position,1.0)).xz;transformed.y+=terrH(vW);');
     sh.fragmentShader=sh.fragmentShader.replace('#include <common>',`#include <common>
-varying vec2 vW;uniform int uSeed;uniform vec3 uPonds[3];uniform vec4 uSegs[3];
+varying vec2 vW;uniform int uSeed;uniform int uSeedC;uniform int uSeedD;uniform vec3 uPonds[3];uniform vec4 uSegs[3];
 float h21(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
 float vn(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(h21(i),h21(i+vec2(1,0)),f.x),mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x),f.y);}
 float hs(ivec2 c){uint h=(uint(c.x)*374761393u)^(uint(c.y)*668265263u)^uint(uSeed);h=(h^(h>>13))*1274126177u;return float(h^(h>>16))/4294967296.0;}
+float hsB(ivec2 c,int sd){uint h=(uint(c.x)*374761393u)^(uint(c.y)*668265263u)^uint(sd);h=(h^(h>>13))*1274126177u;return float(h^(h>>16))/4294967296.0;}
+float vnB(vec2 q,int sd){vec2 i=floor(q),f=q-i;f=f*f*(3.-2.*f);ivec2 c=ivec2(i);return mix(mix(hsB(c,sd),hsB(c+ivec2(1,0),sd),f.x),mix(hsB(c+ivec2(0,1),sd),hsB(c+ivec2(1,1),sd),f.x),f.y);}
 float clearF(vec2 p){vec2 q=p/14.;vec2 i=floor(q),f=q-i;f=f*f*(3.-2.*f);ivec2 c=ivec2(i);
   return mix(mix(hs(c),hs(c+ivec2(1,0)),f.x),mix(hs(c+ivec2(0,1)),hs(c+ivec2(1,1)),f.x),f.y);}`)
     .replace('#include <color_fragment>',`#include <color_fragment>
 {
-  float cl=smoothstep(${CLEAR_AT-0.1},${CLEAR_AT+0.06},clearF(vW));
+  float bn=vnB(vW/${BIOME.len.toFixed(1)},uSeedC)*.86+vnB(vW/40.+vec2(7.3,-3.1),uSeedD)*.14;
+  float sp=smoothstep(8.,24.,length(vW));
+  float bm=(1.-smoothstep(${BIOME.mLo},${BIOME.mHi},bn))*sp,bd=smoothstep(${BIOME.dLo},${BIOME.dHi},bn)*sp;
+  float cl=smoothstep(${CLEAR_AT-0.1}+.2*bd,${CLEAR_AT+0.06}+.2*bd,clearF(vW));cl=max(cl*(1.-.7*bd),bm);
   vec3 c=mix(vec3(.075,.150,.055),vec3(.170,.255,.075),cl);
+  c=mix(c,vec3(.255,.305,.085),bm*.55);c=mix(c,vec3(.050,.085,.036),bd*.7);
   float mo=vn(vW*.21+3.);c=mix(c,vec3(.035,.095,.045),smoothstep(.5,.78,mo)*.65*(1.-cl));
-  float lt=smoothstep(.56,.78,vn(vW*.46+9.));c=mix(c,vec3(.12,.12,.045),lt*.4*(1.-cl));
+  float lt=smoothstep(.56,.78,vn(vW*.46+9.));lt=max(lt,bd*smoothstep(.3,.65,vn(vW*.55+4.)));c=mix(c,vec3(.12,.10,.045),lt*(.4+.35*bd)*(1.-cl));
   float ds=smoothstep(.6,.85,vn(vW*.9+21.));c=mix(c,vec3(.10,.085,.05),ds*.35);
   float gr=.78+.4*vn(vW*3.7)*vn(vW*13.+5.)+.18*(vn(vW*1.3)-.5);c*=gr;
   float dq=1e9,dp=1e9;
@@ -514,6 +575,14 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
       return sl;
     };
     // big boulders and outcrops first, so everything else keeps clear of them; sparse, and never on the spawn, a pond or a path
+    const bio=(x,z)=>{const b=biomeAt(x,z,seed),sp=sstep01((Math.hypot(x,z)-8)/16),pd=sstep01((pondDist(x,z)-2)/9),k=sp*pd;return [b.m*sp,b.d*k]};
+    // a stone you can step over has no collider; a climbable one is a dome you can land on; the rest are solid
+    const addRock=(sl,x,z,sxz,sy,y)=>{
+      if(!sl||!sl.ready||!sl.hh)return;
+      const top=y+sl.hh*sy;if(top<STEP_MIN)return;
+      const rg=sl.fp*sxz*0.85;
+      rocks.push({x,z,rg,r:rg*0.96,y0:H(x,z),top,stand:top<=JUMP_TOP});
+    };
     const bigRocks=[];
     const rockBlock=(x,z,m)=>{for(const r of bigRocks)if(Math.hypot(x-r.x,z-r.z)<r.r+m)return true;return false};
     for(let iz=-reach;iz<=reach;iz++)for(let ix=-reach;ix<=reach;ix++){
@@ -539,7 +608,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     }
     for(const r of bigRocks){
       const sl=put(r.moss?'bigmoss':'bigrock',r.v,r.x,-r.sink*r.sc*1.4,r.z,r.sc,r.sc*(0.85+0.3*((r.v*7)%1)),r.rot);
-      if(sl)rocks.push({x:r.x,z:r.z,r:sl.fp*r.sc*0.82});
+      addRock(sl,r.x,r.z,r.sc,r.sc*(0.85+0.3*((r.v*7)%1)),-r.sink*r.sc*1.4);
     }
     for(let iz=-reach;iz<=reach;iz++)for(let ix=-reach;ix<=reach;ix++){
       const ox=(cx+ix)*16-8,oz=(cz+iz)*16-8;
@@ -548,31 +617,37 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
         const R=k=>hr(x0,z0,seed,k);
         const x=x0+(R(1)-0.5)*2.4,z=z0+(R(2)-0.5)*2.4;
         const dPath=pathDist(x,z),cf=clearField(x,z,seed);
-        const clearing=cf>CLEAR_AT,dd=Math.hypot(x-mx,z-mz);
-        const thin=dd>NEAR+13?(dd>NEAR+28?0.28:0.5):1; // far trees thin out into the fog
+        const [bm,bd]=bio(x,z);
+        const clearing=(cf>CLEAR_AT+0.2*bd&&bd<0.6)||bm>0.5,dd=Math.hypot(x-mx,z-mz);
+        // far trees thin out into the fog, sooner in the dense wood so it does not cost more than the rest
+        const thin=dd>NEAR+13-9*bd?(dd>NEAR+28-14*bd?0.28-0.12*bd:0.5-0.2*bd):1;
         // trees: mostly fir, some oak, now and then a dead one
-        if(!clearing&&!clearOf(x,z)&&dPath>1.7&&R(3)<(low?0.32:0.44)&&R(10)<thin&&!rockBlock(x,z,0.9)){
-          const kv=R(4),kind=kv<0.6?'fir':kv<0.92?'oak':'snag',g=R(6),sc=(kind==='fir'?0.8:0.85)+g*g*0.65;
+        const pt=(low?0.32:0.44)*(1+0.5*bd)*(low?1-0.45*bd:1)*(1-bm);
+        const lone=bm>0.55&&R(3)>0.988&&dd<NEAR+20;       // a rare lone oak standing in the open
+        if(!clearOf(x,z)&&dPath>1.7&&((!clearing&&R(3)<pt)||lone)&&R(10)<thin&&!rockBlock(x,z,0.9)){
+          const kv=lone?0.7:bd>0.3?R(4)*0.85:R(4),kind=kv<0.6?'fir':kv<0.92?'oak':'snag',g=R(6),sc=(kind==='fir'?0.8:0.85)+g*g*0.65;
           const sl=put(kind,R(5),x,0,z,sc*(0.92+R(11)*0.16),sc,R(7)*6.283);
           if(sl)trees.push({x,z,s:sl,k:sc});
         }
         // shrubs: under the trees, thinner in the sun
         const sx=x0+(R(12)-0.5)*3,sz=z0+(R(13)-0.5)*3;
-        if(pondDist(sx,sz)>0.9&&pathDist(sx,sz)>1&&R(14)<(clearing?0.1:0.26)&&R(10)<thin&&!rockBlock(sx,sz,0.4))
+        if(pondDist(sx,sz)>0.9&&pathDist(sx,sz)>1&&R(14)<(clearing?0.1:0.26)*(1+0.5*bd)*(low?1-0.4*bd:1)*(1-0.85*bm)&&R(10)<thin&&!rockBlock(sx,sz,0.4))
           put('shrub',R(15),sx,0,sz,0.75+R(16)*0.8,0.75+R(17)*0.7,R(18)*6.283);
         // flower clumps: meadow clearings, round the ponds and beside the paths
         const fx=x0+(R(19)-0.5)*3,fz=z0+(R(20)-0.5)*3,dPf=pondDist(fx,fz),pf=pathDist(fx,fz);
-        const wf=clearing?0.7:(dPf<6||pf<3.4)?0.45:0.04;
+        const [fm,fd]=bio(fx,fz),wf=Math.max(clearing?0.7:(dPf<6||pf<3.4)?0.45:0.04,fm*0.8)*(1-0.9*fd);
         if(dPf>1&&pf>0.8&&R(21)<wf*(low?0.7:1)){
           const kind=R(22)<0.5?'tulip':'daisy',s=1.1+R(23)*0.8;
           put(kind,R(24),fx,0,fz,s,s,R(25)*6.283);
-          if(clearing&&R(26)<0.5){const a=R(27)*6.283,s2=1+R(28)*0.7;put(R(29)<0.5?'tulip':'daisy',R(30),fx+Math.cos(a)*1.1,0,fz+Math.sin(a)*1.1,s2,s2,R(31)*6.283)}
+          if((clearing||fm>0.5)&&R(26)<0.5+0.15*fm){const a=R(27)*6.283,s2=1+R(28)*0.7;put(R(29)<0.5?'tulip':'daisy',R(30),fx+Math.cos(a)*1.1,0,fz+Math.sin(a)*1.1,s2,s2,R(31)*6.283);
+            if(fm>0.5&&R(120)<0.35){const a2=a+2.1+R(121),s3=0.9+R(122)*0.7;put(R(123)<0.5?'tulip':'daisy',R(124),fx+Math.cos(a2)*1.5,0,fz+Math.sin(a2)*1.5,s3,s3,R(125)*6.283)}}
         }
         // grass clumps: thick in meadows and on pond banks, sparse under the trees
-        for(let g=0;g<4;g++){
-          const kk=80+g*6,gx=x0+(hr(x0,z0,seed,kk)-0.5)*3.2,gz=z0+(hr(x0,z0,seed,kk+1)-0.5)*3.2,dpg=pondDist(gx,gz);
+        const [gm,gd]=bio(x0,z0);
+        for(let g=0;g<(gm>0.5?5:4);g++){
+          const kk=g<4?80+g*6:140+g*6,gx=x0+(hr(x0,z0,seed,kk)-0.5)*3.2,gz=z0+(hr(x0,z0,seed,kk+1)-0.5)*3.2,dpg=pondDist(gx,gz);
           const inMeadow=clearField(gx,gz,seed)>CLEAR_AT-0.05;
-          const wg=inMeadow?0.95:dpg<4.5?0.85:0.3;
+          const wg=Math.max(inMeadow?0.95:dpg<4.5?0.85:0.3,gm*0.86)*(1-0.85*gd*(dpg<4.5?0.5:1));
           if(dpg>0.5&&pathDist(gx,gz)>0.6&&hr(x0,z0,seed,kk+2)<wg*(low?0.55:1)){
             const s=2.4+hr(x0,z0,seed,kk+3)*1.6;
             put('grass',hr(x0,z0,seed,kk+4),gx,0,gz,s,s*(0.8+hr(x0,z0,seed,kk+5)*0.6),hr(x0,z0,seed,kk+6)*6.283);
@@ -580,9 +655,10 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
         }
         // loose stones
         const qx=x0+(R(32)-0.5)*3,qz=z0+(R(33)-0.5)*3;
-        if(pondDist(qx,qz)>1.4&&pathDist(qx,qz)>1.1&&R(34)<0.075){
-          const s=0.6+R(35)*0.9,mossy=R(36)<0.6;
-          put(mossy?'mossrock':'boulder',R(37),qx,-0.2*s,qz,s,s*(0.8+R(38)*0.4),R(39)*6.283);
+        const [qm,qd]=bio(qx,qz);
+        if(pondDist(qx,qz)>1.4&&pathDist(qx,qz)>1.1&&R(34)<0.075*(1+1.3*qd)*(1-0.45*qm)){
+          const s=0.6+R(35)*0.9,mossy=R(36)<0.6+0.3*qd,sy=s*(0.8+R(38)*0.4);
+          addRock(put(mossy?'mossrock':'boulder',R(37),qx,-0.2*s,qz,s,sy,R(39)*6.283),qx,qz,s,sy,-0.2*s);
         }
       }
     }
@@ -617,7 +693,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   const applyProp=(sl,p)=>{
     sl.near.geometry=p.near;sl.farM.geometry=p.far;sl.ready=true;
     const r=trunkRadius(p.near);if(r>0&&TRUNK0[sl.kind])sl.r=r;
-    if(sl.kind==='bigrock'||sl.kind==='bigmoss'){const bb=p.near.boundingBox;sl.fp=(bb.max.x-bb.min.x+bb.max.z-bb.min.z)/4}
+    if(ROCKY.has(sl.kind)){if(!p.near.boundingBox)p.near.computeBoundingBox();const bb=p.near.boundingBox;sl.fp=(bb.max.x-bb.min.x+bb.max.z-bb.min.z)/4;sl.hh=bb.max.y;chunkX=1e9}
     sl.tris=[p.near.attributes.position.count/3,p.far.attributes.position.count/3];
   };
   (async()=>{
@@ -636,14 +712,25 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   const door=makeDoor();group.add(door);
   S={t:0,yaw:0,pitch:0,bloom:0.18,seed,pinned:false,hold:0,said:0,doorX:0,doorZ:4.2,doorFace:0,ready:false,bake,mist:0,shim:0,water:false,direct:false,fill:0};
   S.ponds=()=>ponds.map(p=>({...p}));
+  S.dims=()=>slots.filter(s=>s.ready).map(s=>{const g=s.near.geometry;if(!g.boundingBox)g.computeBoundingBox();const b=g.boundingBox;return {id:s.id,w:+(b.max.x-b.min.x).toFixed(2),h:+(b.max.y-b.min.y).toFixed(2),y0:+b.min.y.toFixed(2),d:+(b.max.z-b.min.z).toFixed(2)}});
+  S.byKind=()=>{const o={};for(const s of slots){const nt=s.near.geometry.attributes.position.count/3,ft=s.farM.geometry.attributes.position.count/3;const a=o[s.kind]||(o[s.kind]={near:0,far:0,ni:0,fi:0});a.near+=Math.round(s.near.count*nt);a.far+=Math.round(s.farM.count*ft);a.ni+=s.near.count;a.fi+=s.farM.count}return o};
   S.H=H;S.rockList=()=>rocks.map(r=>({...r}));
   S.treeList=()=>trees.map(t=>({x:t.x,z:t.z,kind:t.s.kind,k:t.k}));
-  const walker=createRoomWalker({o,eye:EYE,x:0,z:0,groundAt:H,snap:0.7,collide:b=>{
+  // ground for the walker: the hills plus the top of every climbable stone
+  const G=(x,z)=>{
+    let g=H(x,z);
+    for(const r of rocks){if(!r.stand)continue;const y=rockSurface(r,x,z);if(y>g)g=y}
+    return g;
+  };
+  S.G=G;
+  const blockedAt=(x,z)=>trunkAt(x,z)||rocks.some(r=>(r.x-x)**2+(r.z-z)**2<(r.rg+0.9)**2);
+  const walker=createRoomWalker({o,eye:EYE,x:0,z:0,groundAt:G,snap:0.7,collide:b=>{
     for(const t of trees){
       const dx=b.x-t.x,dz=b.z-t.z,d=Math.hypot(dx,dz),m=0.32+treeR(t);
       if(d<m&&d>1e-4){b.x=t.x+dx/d*m;b.z=t.z+dz/d*m}
     }
     for(const t of rocks){
+      if(t.stand){const q=rockPush(t,b.x,b.z,b.y);if(q){b.x=q[0];b.z=q[1]}continue}
       const dx=b.x-t.x,dz=b.z-t.z,d=Math.hypot(dx,dz),m=0.32+t.r;
       if(d<m&&d>1e-4){b.x=t.x+dx/d*m;b.z=t.z+dz/d*m}
     }
@@ -677,7 +764,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   S.apply=q=>{
     if(![q.x,q.z,q.y,q.yaw,q.pitch,q.dx,q.dz,q.face].every(Number.isFinite))return;
     S.yaw=q.yaw;S.pitch=clamp(q.pitch,-MOVE.roomPitch,MOVE.roomPitch);
-    S.doorX=q.dx;S.doorZ=q.dz;S.doorFace=q.face;S.pinned=!!q.pin;
+    camY=null;S.doorX=q.dx;S.doorZ=q.dz;S.doorFace=q.face;S.pinned=!!q.pin;
     if(Array.isArray(q.po)&&q.po.length>=1&&q.po.length<=STILL.pondMax){
       const list=q.po.filter(a=>Array.isArray(a)&&a.length>=6&&a.slice(0,6).every(Number.isFinite)).map(a=>({x:a[0],z:a[1],r:clamp(a[2],3,8),fx:a[3],fz:a[4],i:Math.max(0,a[5]|0)}));
       const same=list.length===ponds.length&&list.every((p,k)=>p.i===ponds[k].i&&p.x===ponds[k].x&&p.z===ponds[k].z);
@@ -685,13 +772,13 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     }
     walker.watch(0.1,q.x,q.z,clamp(q.y,-12,14));
   };
-  let scryFlip=0;
+  let scryFlip=0,camY=null;
   S.frame=()=>{
     // the scrying image only matters when water is in view and you look toward it: skip it otherwise
     const near=nearestPond(b.x,b.z),nd=Math.hypot(b.x-near.x,b.z-near.z)-near.r;
     if(S.pitch>0.05&&nd>6||nd>40)return;
     if((scryFlip^=1)&&S.pitch>-0.5&&nd>3)return;
-    const eyeY=EYE+b.y+bobY(b,walker.scale);
+    const eyeY=EYE+camY+bobY(b,walker.scale);
     scryCam.position.set(b.x,eyeY,b.z);
     scryCam.lookAt(S.doorX,H(S.doorX,S.doorZ)+1.15,S.doorZ);
     scryCam.updateMatrixWorld();
@@ -721,12 +808,12 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
       const sim={
         x:b.x,z:b.z,yaw:S.yaw,pitch:S.pitch,eye:EYE+b.y,aspect:cam.aspect||16/9,
         door:{x:S.doorX,z:S.doorZ,y:H(S.doorX,S.doorZ),face:S.doorFace},
-        ponds,pinned:S.pinned,hold:S.hold,blocked:trunkAt,
+        ponds,pinned:S.pinned,hold:S.hold,blocked:blockedAt,groundAt:H,
       };
       stillStep(sim,dt);
       S.pinned=sim.pinned;S.hold=sim.hold;S.doorX=sim.door.x;S.doorZ=sim.door.z;S.doorFace=sim.door.face;
-      S.water=sim.water;S.direct=sim.direct;S.fill=sim.fill;
-      if(S.pinned&&b.y-H(b.x,b.z)<1.4&&crossedDoor(ox,oz,b.x,b.z,sim.door)){
+      S.water=sim.water;S.direct=sim.direct;S.fill=sim.fill;S.hidden=sim.hidden;
+      if(S.pinned&&b.y-G(b.x,b.z)<1.4&&crossedDoor(ox,oz,b.x,b.z,sim.door)){
         finish({k:'leave',why:'stillwood'});return;
       }
       // a quiet cue when the door becomes watched or lets go
@@ -743,11 +830,13 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     }
     S.shim=Math.max(0,(S.shim||0)-dt);
     if(S.mist>0){S.mist=Math.max(0,S.mist-dt);scene.fog.density=fogD*(1+1.1*Math.sin(Math.PI*S.mist/2.4))}
-    poseDoor();
+    poseDoor();door.visible=!S.hidden;
     ground.position.x=b.x;ground.position.z=b.z;
     UT.value=S.t;
     updatePonds(dt,b,moving);
-    cam.position.set(b.x,EYE+b.y+bobY(b,walker.scale),b.z);
+    // the eye follows the feet smoothly on the ground (stepping onto or off a stone does not pop) and exactly in the air
+    if(camY===null||b.y>G(b.x,b.z)+0.05||Math.abs(b.y-camY)>3)camY=b.y;else camY+=(b.y-camY)*Math.min(1,dt*16);
+    cam.position.set(b.x,EYE+camY+bobY(b,walker.scale),b.z);
     cam.rotation.set(S.pitch,-S.yaw,0,'YXZ');
   };
   onClear(()=>{
