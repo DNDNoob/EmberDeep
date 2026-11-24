@@ -13,7 +13,7 @@ assert.equal(spotted(eye,forward,[0,1.6,-13]),false);
 assert.equal(spotted(eye,forward,[0,1.6,-4],3),false);
 assert.equal(spotted(eye,[0,0,-2],[0,1.6,-2]),true);
 
-assert.deepEqual(Object.keys(ROOM_MOBS),['guest','teens','moose','goose','mother']);
+assert.deepEqual(Object.keys(ROOM_MOBS),['guest','teens','moose','goose','mother','nightthing']);
 for(const [id,mob] of Object.entries(ROOM_MOBS)){
   assert.equal(typeof mob.name,'string');
   assert.ok(mob.name.length>1,id);
