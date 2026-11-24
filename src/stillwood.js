@@ -545,7 +545,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     for(const sl of pslots){sl.pond=null;sl.g.visible=false}
     GU.uPondsT.value.forEach(v=>v.set(1e5,1e5,1,0));GU.uPonds.value.forEach(v=>v.set(1e5,1e5,1));GU.uSegs.value.forEach(v=>v.set(1e5,1e5,1e5+1,1e5));
     ponds.forEach((p,k)=>{assignPond(p);GU.uPondsT.value[k].set(p.x,p.z,p.r,p.y);GU.uPonds.value[k].set(p.x,p.z,p.r);GU.uSegs.value[k].set(p.fx,p.fz,p.x,p.z)});
-    chunkX=1e9;
+    invalidate(true);
   }
   function pushRip(sl,x,z,amp){const R=sl.mat.uniforms.uRip.value;R[sl.rip++%4].set(x,z,TW.value,amp)}
   function updatePonds(dt,b,moving){
@@ -606,96 +606,99 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     }
   }
   const slotById=Object.fromEntries(slots.map(s=>[s.id,s]));
-  let trees=[],rocks=[],chunkX=1e9,chunkZ=1e9,deadClear=false,S=null;
+  let trees=[],rocks=[],deadClear=false,S=null;
   const treeR=t=>t.s.r*t.k+t.s.pad*Math.min(1.2,t.k);
   const clearOf=(x,z)=>x*x+z*z<25||pondDist(x,z)<2.4;
   function trunkAt(x,z){return trees.some(t=>(t.x-x)**2+(t.z-z)**2<(treeR(t)+0.9)**2)}
-  const NEAR=low?10:15,reach=low?1:2;
-  function rebuild(cx,cz){
-    if(cx===chunkX&&cz===chunkZ)return;
-    chunkX=cx;chunkZ=cz;trees=[];rocks=[];
-    for(const s of slots){s.near.count=0;s.farM.count=0}
-    const mx=cx*16,mz=cz*16;
-    // put one instance in a slot's near or far mesh by its distance from the chunk centre
-    const put=(kind,v,x,y,z,sxz,sy,rot)=>{
-      const arr=by[kind],sl=arr[Math.min(arr.length-1,Math.floor(v*arr.length))];
-      const d=Math.hypot(x-mx,z-mz);
-      if(d>sl.far*(low?0.75:1))return null;
-      const far=d>sl.nearR*(low?0.7:1),im=far?sl.farM:sl.near;
-      if(im.count>=im.instanceMatrix.count)return null;
-      let gy=H(x,z);
-      if(sl.pad>0||TRUNK0[kind]){const e=0.6,gr=Math.max(Math.abs(H(x+e,z)-H(x-e,z)),Math.abs(H(x,z+e)-H(x,z-e)))/(2*e);gy-=0.06+0.45*gr}
-      dummy.position.set(x,y+gy,z);dummy.rotation.set(0,rot,0);dummy.scale.set(sxz,sy,sxz);dummy.updateMatrix();
-      im.setMatrixAt(im.count++,dummy.matrix);
-      return sl;
-    };
-    // big boulders and outcrops first, so everything else keeps clear of them; sparse, and never on the spawn, a pond or a path
-    const bio=(x,z)=>{const b=biomeAt(x,z,seed),sp=sstep01((Math.hypot(x,z)-8)/16),pd=sstep01((pondDist(x,z)-2)/9),k=sp*pd;return [b.m*sp,b.d*k]};
-    // a stone you can step over has no collider; a climbable one is a dome you can land on; the rest are solid
-    const addRock=(sl,x,z,sxz,sy,y,rot)=>{
-      if(!sl||!sl.ready||!sl.grid)return;
-      const r=makeRock(sl.grid,{x,z,rot,sxz,sy,y0:H(x,z),yo:y});
-      if(r.top<STEP_MIN)return;
-      r.stand=r.top<=JUMP_TOP;rocks.push(r);
-    };
-    const bigRocks=[];
-    const rockBlock=(x,z,m)=>{for(const r of bigRocks)if(Math.hypot(x-r.x,z-r.z)<r.r+m)return true;return false};
-    for(let iz=-reach;iz<=reach;iz++)for(let ix=-reach;ix<=reach;ix++){
-      const ox=(cx+ix)*16-8,oz=(cz+iz)*16-8;
-      for(let j=0;j<5;j++)for(let i=0;i<5;i++){
-        const x0=ox+1.6+i*3.2,z0=oz+1.6+j*3.2,R=k=>hr(x0,z0,seed,k);
-        const x=x0+(R(101)-0.5)*3,z=z0+(R(102)-0.5)*3,dp=pondDist(x,z);
-        if(R(103)>=(dp<16?0.03:0.011)*(low?0.7:1))continue;
-        const sc=0.65+R(104)*0.8,fp=1.9*sc;
-        if(dp<fp+2.5||pathDist(x,z)<fp+1.2||Math.hypot(x,z)<9+fp)continue;
-        const big={x,z,r:fp,sc,rot:R(105)*6.283,sink:0.3+0.5*R(106),v:R(107),moss:R(108)<0.4};
-        if(rockBlock(x,z,fp*0.6))continue;
-        bigRocks.push(big);
-        if(R(109)<0.5){      // an outcrop: a few smaller ones leaning on it
-          const n=2+(R(110)*2|0);
-          for(let k=0;k<n;k++){
-            const a=R(111+k*3)*6.283,sc2=sc*(0.35+R(112+k*3)*0.35),fp2=1.9*sc2,d=fp*0.8+fp2*0.7,sx=x+Math.cos(a)*d,sz=z+Math.sin(a)*d;
-            if(pondDist(sx,sz)<fp2+2||pathDist(sx,sz)<fp2+1)continue;
-            bigRocks.push({x:sx,z:sz,r:fp2,sc:sc2,rot:R(113+k*3)*6.283,sink:0.2+0.4*R(114+k*3),v:R(115+k*3),moss:R(116+k*3)<0.4});
-          }
+  const NEAR=low?10:15,AR=low?5:6;    // AR: chunks (16 m) generated round the player, so every prop's far distance is covered before it can be seen
+  const bio=(x,z)=>{const b=biomeAt(x,z,seed),sp=sstep01((Math.hypot(x,z)-8)/16),pd=sstep01((pondDist(x,z)-2)/9),k=sp*pd;return [b.m*sp,b.d*k]};
+  // ---- streaming: each 16 m chunk is generated once into a list of placed instances, cached, and assembled into the instanced meshes ----
+  const cache=new Map(),candCache=new Map(),bigCache=new Map();
+  let pondRecs=[];
+  const mkRec=(kind,v,x,y,z,sxz,sy,rot,extra)=>{
+    const arr=by[kind],sl=arr[Math.min(arr.length-1,Math.floor(v*arr.length))];
+    let gy=H(x,z);
+    if(sl.pad>0||TRUNK0[kind]){const e=0.6,gr=Math.max(Math.abs(H(x+e,z)-H(x-e,z)),Math.abs(H(x,z+e)-H(x,z-e)))/(2*e);gy-=0.06+0.45*gr}
+    dummy.position.set(x,y+gy,z);dummy.rotation.set(0,rot,0);dummy.scale.set(sxz,sy,sxz);dummy.updateMatrix();
+    const r={sl,x,z,m:Float32Array.from(dummy.matrix.elements),th:0,bd:0,tk:0,rk:null};
+    if(extra)Object.assign(r,extra);
+    if(r.rk===1)r.rk={x,z,sxz,sy,y,rot};
+    return r;
+  };
+  // big boulder candidates of one chunk (cached): never on the spawn, a pond or a path; a candidate gives way to a nearby higher-priority one
+  function candsOf(kx,kz){
+    const key=kx+','+kz;let c=candCache.get(key);if(c)return c;
+    c=[];const ox=kx*16-8,oz=kz*16-8;
+    for(let j=0;j<5;j++)for(let i=0;i<5;i++){
+      const x0=ox+1.6+i*3.2,z0=oz+1.6+j*3.2,R=k=>hr(x0,z0,seed,k);
+      const x=x0+(R(101)-0.5)*3,z=z0+(R(102)-0.5)*3,dp=pondDist(x,z);
+      if(R(103)>=(dp<16?0.03:0.011)*(low?0.7:1))continue;
+      const sc=0.65+R(104)*0.8,fp=1.9*sc;
+      if(dp<fp+2.5||pathDist(x,z)<fp+1.2||Math.hypot(x,z)<9+fp)continue;
+      const big={x,z,r:fp,sc,rot:R(105)*6.283,sink:0.3+0.5*R(106),v:R(107),moss:R(108)<0.4,sat:[]};
+      if(R(109)<0.5){      // an outcrop: a few smaller ones leaning on it
+        const n=2+(R(110)*2|0);
+        for(let k=0;k<n;k++){
+          const a=R(111+k*3)*6.283,sc2=sc*(0.35+R(112+k*3)*0.35),fp2=1.9*sc2,d=fp*0.8+fp2*0.7,sx=x+Math.cos(a)*d,sz=z+Math.sin(a)*d;
+          if(pondDist(sx,sz)<fp2+2||pathDist(sx,sz)<fp2+1)continue;
+          big.sat.push({x:sx,z:sz,r:fp2,sc:sc2,rot:R(113+k*3)*6.283,sink:0.2+0.4*R(114+k*3),v:R(115+k*3),moss:R(116+k*3)<0.4});
         }
       }
+      c.push(big);
     }
-    for(const r of bigRocks){
-      const sl=put(r.moss?'bigmoss':'bigrock',r.v,r.x,-r.sink*r.sc*1.4,r.z,r.sc,r.sc*(0.85+0.3*((r.v*7)%1)),r.rot);
-      addRock(sl,r.x,r.z,r.sc,r.sc*(0.85+0.3*((r.v*7)%1)),-r.sink*r.sc*1.4,r.rot);
+    candCache.set(key,c);return c;
+  }
+  function bigsOf(kx,kz){
+    const key=kx+','+kz;let c=bigCache.get(key);if(c)return c;
+    const mine=candsOf(kx,kz),others=[];
+    for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++)for(const o of candsOf(kx+dx,kz+dz))others.push(o);
+    c=[];
+    for(const a of mine){
+      let ok=true;
+      for(const o of others)if(o!==a&&o.v>a.v&&Math.hypot(a.x-o.x,a.z-o.z)<(a.r+o.r)*0.8){ok=false;break}
+      if(!ok)continue;
+      c.push(a,...a.sat);
     }
-    for(let iz=-reach;iz<=reach;iz++)for(let ix=-reach;ix<=reach;ix++){
-      const ox=(cx+ix)*16-8,oz=(cz+iz)*16-8;
+    bigCache.set(key,c);return c;
+  }
+  function genChunk(kx,kz){
+    const recs=[],emit=(kind,v,x,y,z,sxz,sy,rot,extra)=>{const r=mkRec(kind,v,x,y,z,sxz,sy,rot,extra);recs.push(r);return r};
+    const bigRocks=[];
+    for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++)for(const o of bigsOf(kx+dx,kz+dz))bigRocks.push(o);
+    const rockBlock=(x,z,m)=>{for(const r of bigRocks)if(Math.hypot(x-r.x,z-r.z)<r.r+m)return true;return false};
+    for(const r of bigsOf(kx,kz)){
+      const sy=r.sc*(0.85+0.3*((r.v*7)%1));
+      emit(r.moss?'bigmoss':'bigrock',r.v,r.x,-r.sink*r.sc*1.4,r.z,r.sc,sy,r.rot,{rk:1});
+    }
+    {
+      const ox=kx*16-8,oz=kz*16-8;
       for(let j=0;j<5;j++)for(let i=0;i<5;i++){
         const x0=ox+1.6+i*3.2,z0=oz+1.6+j*3.2;
         const R=k=>hr(x0,z0,seed,k);
         const x=x0+(R(1)-0.5)*2.4,z=z0+(R(2)-0.5)*2.4;
         const dPath=pathDist(x,z),cf=clearField(x,z,seed);
         const [bm,bd]=bio(x,z);
-        const clearing=(cf>CLEAR_AT+0.2*bd&&bd<0.6)||bm>0.5,dd=Math.hypot(x-mx,z-mz);
-        // far trees thin out into the fog, sooner in the dense wood so it does not cost more than the rest
-        const thin=dd>NEAR+13-9*bd?(dd>NEAR+28-14*bd?0.28-0.12*bd:0.5-0.2*bd):1;
+        const clearing=(cf>CLEAR_AT+0.2*bd&&bd<0.6)||bm>0.5,dd=0;
+        // far trees thin out into the fog (decided when the chunk is assembled, by distance): th is this instance's lot
         // trees: mostly fir, some oak, now and then a dead one
         const pt=(low?0.32:0.44)*(1+0.5*bd)*(low?1-0.45*bd:1)*(1-bm);
-        const lone=bm>0.55&&R(3)>0.988&&dd<NEAR+20;       // a rare lone oak standing in the open
-        if(!clearOf(x,z)&&dPath>1.7&&((!clearing&&R(3)<pt)||lone)&&R(10)<thin&&!rockBlock(x,z,0.9)){
+        const lone=bm>0.55&&R(3)>0.988; // a rare lone oak standing in the open
+        if(!clearOf(x,z)&&dPath>1.7&&((!clearing&&R(3)<pt)||lone)&&!rockBlock(x,z,0.9)){
           const kv=lone?0.7:bd>0.3?R(4)*0.85:R(4),kind=kv<0.6?'fir':kv<0.92?'oak':'snag',g=R(6),sc=(kind==='fir'?0.8:0.85)+g*g*0.65;
-          const sl=put(kind,R(5),x,0,z,sc*(0.92+R(11)*0.16),sc,R(7)*6.283);
-          if(sl)trees.push({x,z,s:sl,k:sc});
+          emit(kind,R(5),x,0,z,sc*(0.92+R(11)*0.16),sc,R(7)*6.283,{th:R(10),bd,tk:sc});
         }
         // shrubs: under the trees, thinner in the sun
         const sx=x0+(R(12)-0.5)*3,sz=z0+(R(13)-0.5)*3;
-        if(pondDist(sx,sz)>0.9&&pathDist(sx,sz)>1&&R(14)<(clearing?0.1:0.26)*(1+0.5*bd)*(low?1-0.4*bd:1)*(1-0.85*bm)&&R(10)<thin&&!rockBlock(sx,sz,0.4))
-          put('shrub',R(15),sx,0,sz,0.75+R(16)*0.8,0.75+R(17)*0.7,R(18)*6.283);
+        if(pondDist(sx,sz)>0.9&&pathDist(sx,sz)>1&&R(14)<(clearing?0.1:0.26)*(1+0.5*bd)*(low?1-0.4*bd:1)*(1-0.85*bm)&&!rockBlock(sx,sz,0.4))
+          emit('shrub',R(15),sx,0,sz,0.75+R(16)*0.8,0.75+R(17)*0.7,R(18)*6.283,{th:R(10),bd});
         // flower clumps: meadow clearings, round the ponds and beside the paths
         const fx=x0+(R(19)-0.5)*3,fz=z0+(R(20)-0.5)*3,dPf=pondDist(fx,fz),pf=pathDist(fx,fz);
         const [fm,fd]=bio(fx,fz),wf=Math.max(clearing?0.7:(dPf<6||pf<3.4)?0.45:0.04,fm*0.8)*(1-0.9*fd);
         if(dPf>1&&pf>0.8&&R(21)<wf*(low?0.7:1)){
           const kind=R(22)<0.5?'tulip':'daisy',s=1.1+R(23)*0.8;
-          put(kind,R(24),fx,0,fz,s,s,R(25)*6.283);
-          if((clearing||fm>0.5)&&R(26)<0.5+0.15*fm){const a=R(27)*6.283,s2=1+R(28)*0.7;put(R(29)<0.5?'tulip':'daisy',R(30),fx+Math.cos(a)*1.1,0,fz+Math.sin(a)*1.1,s2,s2,R(31)*6.283);
-            if(fm>0.5&&R(120)<0.35){const a2=a+2.1+R(121),s3=0.9+R(122)*0.7;put(R(123)<0.5?'tulip':'daisy',R(124),fx+Math.cos(a2)*1.5,0,fz+Math.sin(a2)*1.5,s3,s3,R(125)*6.283)}}
+          emit(kind,R(24),fx,0,fz,s,s,R(25)*6.283);
+          if((clearing||fm>0.5)&&R(26)<0.5+0.15*fm){const a=R(27)*6.283,s2=1+R(28)*0.7;emit(R(29)<0.5?'tulip':'daisy',R(30),fx+Math.cos(a)*1.1,0,fz+Math.sin(a)*1.1,s2,s2,R(31)*6.283);
+            if(fm>0.5&&R(120)<0.35){const a2=a+2.1+R(121),s3=0.9+R(122)*0.7;emit(R(123)<0.5?'tulip':'daisy',R(124),fx+Math.cos(a2)*1.5,0,fz+Math.sin(a2)*1.5,s3,s3,R(125)*6.283)}}
         }
         // grass clumps: thick in meadows and on pond banks, sparse under the trees
         const [gm,gd]=bio(x0,z0);
@@ -705,7 +708,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
           const wg=Math.max(inMeadow?0.95:dpg<4.5?0.85:0.3,gm*0.86)*(1-0.85*gd*(dpg<4.5?0.5:1));
           if(dpg>0.5&&pathDist(gx,gz)>0.6&&hr(x0,z0,seed,kk+2)<wg*(low?0.55:1)){
             const s=2.4+hr(x0,z0,seed,kk+3)*1.6;
-            put('grass',hr(x0,z0,seed,kk+4),gx,0,gz,s,s*(0.8+hr(x0,z0,seed,kk+5)*0.6),hr(x0,z0,seed,kk+6)*6.283);
+            emit('grass',hr(x0,z0,seed,kk+4),gx,0,gz,s,s*(0.8+hr(x0,z0,seed,kk+5)*0.6),hr(x0,z0,seed,kk+6)*6.283);
           }
         }
         // loose stones
@@ -714,10 +717,15 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
         if(pondDist(qx,qz)>1.4&&pathDist(qx,qz)>1.1&&R(34)<0.075*(1+1.3*qd)*(1-0.45*qm)){
           const s=0.6+R(35)*0.9,mossy=R(36)<0.6+0.3*qd,sy=s*(0.8+R(38)*0.4);
           const rotQ=R(39)*6.283;
-          addRock(put(mossy?'mossrock':'boulder',R(37),qx,-0.2*s,qz,s,sy,rotQ),qx,qz,s,sy,-0.2*s,rotQ);
+          emit(mossy?'mossrock':'boulder',R(37),qx,-0.2*s,qz,s,sy,rotQ,{rk:1});
         }
       }
     }
+    return recs;
+  }
+  // everything round a pond that is not chunk-bound: the ring of stones, reeds, stepping stones
+  function genPondRecs(){
+    const recs=[],emitP=(kind,v,x,y,z,sxz,sy,rot,extra)=>{recs.push(mkRec(kind,v,x,y,z,sxz,sy,rot,extra))};
     for(const pd of ponds){
       const pi=pd.i*53;
       // a ring of stones round the water, open where the path arrives
@@ -726,30 +734,90 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
         const a=i/22*6.283+(hash2(i+pi,3,seed)-0.5)*0.18;
         if(Math.abs(Math.atan2(Math.sin(a-toFrom),Math.cos(a-toFrom)))<0.3)continue;
         const rad=pd.r+0.3+hash2(i+pi,5,seed)*0.7,big=hash2(i+pi,7,seed)<0.3,s=(big?0.65:0.42)+hash2(i+pi,9,seed)*0.4;
-        put(hash2(i+pi,11,seed)<0.65?'mossrock':'boulder',hash2(i+pi,13,seed),pd.x+Math.cos(a)*rad,-0.2*s,pd.z+Math.sin(a)*rad,s,s*(0.7+hash2(i+pi,15,seed)*0.3),hash2(i+pi,17,seed)*6.283);
+        emitP(hash2(i+pi,11,seed)<0.65?'mossrock':'boulder',hash2(i+pi,13,seed),pd.x+Math.cos(a)*rad,-0.2*s,pd.z+Math.sin(a)*rad,s,s*(0.7+hash2(i+pi,15,seed)*0.3),hash2(i+pi,17,seed)*6.283);
       }
       // reeds and cattails along the margin
       for(let i=0;i<(low?9:16);i++){
         const a=hash2(i+pi,21,seed)*6.283;
         if(Math.abs(Math.atan2(Math.sin(a-toFrom),Math.cos(a-toFrom)))<0.35)continue;
         const rad=pd.r-0.25+hash2(i+pi,23,seed)*1.3,s=0.85+hash2(i+pi,25,seed)*0.7;
-        put('reed',hash2(i+pi,27,seed),pd.x+Math.cos(a)*rad,0,pd.z+Math.sin(a)*rad,s,s*(0.9+hash2(i+pi,29,seed)*0.3),hash2(i+pi,31,seed)*6.283);
+        emitP('reed',hash2(i+pi,27,seed),pd.x+Math.cos(a)*rad,0,pd.z+Math.sin(a)*rad,s,s*(0.9+hash2(i+pi,29,seed)*0.3),hash2(i+pi,31,seed)*6.283);
       }
       // stepping stones along the path from where the way began
       const dx=pd.x-pd.fx,dz=pd.z-pd.fz,L=Math.hypot(dx,dz)||1,ux=dx/L,uz=dz/L;
       for(let k=0,d=2.3;d<L-pd.r-0.6;k++,d+=1.7+hash2(k+pi,2,seed)*0.5){
         const lat=(hash2(k+pi,4,seed)-0.5)*0.5;
-        put('slab',hash2(k+pi,6,seed),pd.fx+ux*d-uz*lat,-0.07,pd.fz+uz*d+ux*lat,0.85+hash2(k+pi,8,seed)*0.3,0.45,hash2(k+pi,10,seed)*6.283);
+        emitP('slab',hash2(k+pi,6,seed),pd.fx+ux*d-uz*lat,-0.07,pd.fz+uz*d+ux*lat,0.85+hash2(k+pi,8,seed)*0.3,0.45,hash2(k+pi,10,seed)*6.283);
       }
     }
+    return recs;
+  }
+  const offs=[];for(let dz=-AR-1;dz<=AR+1;dz++)for(let dx=-AR-1;dx<=AR+1;dx++){const d=Math.hypot(dx,dz);if(d<=AR+0.6)offs.push([dx,dz,d])}
+  offs.sort((a,b)=>a[2]-b[2]);
+  let curCX=1e9,curCZ=1e9,queue=[],dirty=true,lastAsm=0,dirX=0,dirZ=0;
+  const gen=(kx,kz)=>{const key=kx+','+kz;if(!cache.has(key))cache.set(key,genChunk(kx,kz))};
+  // which chunks are still missing round (cx,cz), the ones ahead of the walker first
+  function plan(cx,cz){
+    queue=[];
+    for(const [dx,dz,d] of offs)if(!cache.has((cx+dx)+','+(cz+dz)))queue.push([cx+dx,cz+dz,d-0.7*(dx*dirX+dz*dirZ)]);
+    queue.sort((a,b)=>a[2]-b[2]);
+    if(cache.size>AR*AR*16){for(const k of cache.keys()){const [x,z]=k.split(',').map(Number);if(Math.hypot(x-cx,z-cz)>AR+3)cache.delete(k)}}
+  }
+  // generate chunks for up to `ms` milliseconds (always at least one if any is missing)
+  function pump(ms){
+    const t0=performance.now();let n=0;
+    while(queue.length&&(n===0||performance.now()-t0<ms)){const q=queue.shift();gen(q[0],q[1]);n++}
+    if(n)dirty=true;return n;
+  }
+  function assemble(cx,cz){
+    chunkAsm.n++;aheadMax=0;
+    trees=[];rocks=[];
+    for(const s of slots){s.near.count=0;s.farM.count=0}
+    const mx=cx*16,mz=cz*16;
+    const place=r=>{
+      const sl=r.sl,d=Math.hypot(r.x-mx,r.z-mz);
+      if(d>sl.far*(low?0.75:1))return;
+      if(r.th>0){const bd=r.bd,thin=d>NEAR+13-9*bd?(d>NEAR+28-14*bd?0.28-0.12*bd:0.5-0.2*bd):1;if(r.th>=thin)return}
+      const far=d>sl.nearR*(low?0.7:1),im=far?sl.farM:sl.near;
+      if(im.count>=im.instanceMatrix.count)return;
+      im.instanceMatrix.array.set(r.m,im.count*16);im.count++;
+      const pr=(r.x-b.x)*dirX+(r.z-b.z)*dirZ;if(pr>aheadMax)aheadMax=pr;
+      if(r.tk&&d<48)trees.push({x:r.x,z:r.z,s:sl,k:r.tk});
+      if(r.rk&&d<40&&sl.ready&&sl.grid){
+        const k=r.rk,rr=makeRock(sl.grid,{x:k.x,z:k.z,rot:k.rot,sxz:k.sxz,sy:k.sy,y0:H(k.x,k.z),yo:k.y});
+        if(rr.top>=STEP_MIN){rr.stand=rr.top<=JUMP_TOP;rocks.push(rr)}
+      }
+    };
+    asmKeys=new Set();
+    for(const [dx,dz] of offs){const k=(cx+dx)+','+(cz+dz),rec=cache.get(k);if(rec){asmKeys.add(k);for(const r of rec)place(r)}}
+    for(const r of pondRecs)place(r);
     for(const s of slots){s.near.instanceMatrix.needsUpdate=true;s.farM.instanceMatrix.needsUpdate=true}
+    dirty=false;lastAsm=performance.now();chunkAsm.ahead=aheadMax;
+  }
+  const chunkAsm={n:0,ahead:0};let aheadMax=0,asmKeys=new Set();
+  // called every frame with where the walker is: new chunk -> replan and recentre; spare milliseconds -> generate ahead
+  function rebuild(cx,cz,vx=0,vz=0,ms=3,sync=false){
+    const L=Math.hypot(vx,vz);if(L>0.5){dirX=vx/L;dirZ=vz/L}
+    const moved=cx!==curCX||cz!==curCZ;
+    if(moved){curCX=cx;curCZ=cz;plan(cx,cz);
+      // the ring you can see right now is made before the frame ends; the rest is spread over the next frames
+      for(const [dx,dz,d] of offs){if(d>2.2)break;gen(cx+dx,cz+dz)}
+      plan(cx,cz);dirty=true}
+    if(sync){while(queue.length)gen(...queue.shift())}else pump(ms);
+    if(moved||(dirty&&performance.now()-lastAsm>150))assemble(cx,cz);
+  }
+  // after a change to the ponds or to a baked prop: regenerate (ponds) or reassemble (bakes)
+  function invalidate(all){
+    if(all){cache.clear();candCache.clear();bigCache.clear();pondRecs=genPondRecs();curCX=1e9}
+    dirty=true;lastAsm=0;
   }
   // bake in idle slices, one prop at a time; each lands in its InstancedMesh pair as soon as it is ready
   const bake={t0:performance.now(),ms:0,done:0,total:BAKE_ORDER.length,cached:0,log:[]};
   const applyProp=(sl,p)=>{
     sl.near.geometry=p.near;sl.farM.geometry=p.far;sl.ready=true;
     const r=trunkRadius(p.near);if(r>0&&TRUNK0[sl.kind])sl.r=r;
-    if(ROCKY.has(sl.kind)){if(!p.near.boundingBox)p.near.computeBoundingBox();const bb=p.near.boundingBox;sl.fp=(bb.max.x-bb.min.x+bb.max.z-bb.min.z)/4;sl.hh=bb.max.y;const gp=p.near.attributes.position;sl.grid=heightGrid(gp.array.length===gp.count*3?gp.array:Float32Array.from({length:gp.count*3},(_,i)=>gp.array[i]),p.near.index?p.near.index.array:null);chunkX=1e9}
+    if(ROCKY.has(sl.kind)){if(!p.near.boundingBox)p.near.computeBoundingBox();const bb=p.near.boundingBox;sl.fp=(bb.max.x-bb.min.x+bb.max.z-bb.min.z)/4;sl.hh=bb.max.y;const gp=p.near.attributes.position;sl.grid=heightGrid(gp.array.length===gp.count*3?gp.array:Float32Array.from({length:gp.count*3},(_,i)=>gp.array[i]),p.near.index?p.near.index.array:null)}
+    invalidate(false)
     sl.tris=[p.near.attributes.position.count/3,p.far.attributes.position.count/3];
   };
   (async()=>{
@@ -770,6 +838,10 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   S.ponds=()=>ponds.map(p=>({...p}));
   S.dims=()=>slots.filter(s=>s.ready).map(s=>{const g=s.near.geometry;if(!g.boundingBox)g.computeBoundingBox();const b=g.boundingBox;return {id:s.id,w:+(b.max.x-b.min.x).toFixed(2),h:+(b.max.y-b.min.y).toFixed(2),y0:+b.min.y.toFixed(2),d:+(b.max.z-b.min.z).toFixed(2)}});
   S.byKind=()=>{const o={};for(const s of slots){const nt=s.near.geometry.attributes.position.count/3,ft=s.farM.geometry.attributes.position.count/3;const a=o[s.kind]||(o[s.kind]={near:0,far:0,ni:0,fi:0});a.near+=Math.round(s.near.count*nt);a.far+=Math.round(s.farM.count*ft);a.ni+=s.near.count;a.fi+=s.farM.count}return o};
+  S.stream=()=>({asm:chunkAsm.n,queue:queue.length,cache:cache.size,ahead:chunkAsm.ahead,
+    // metres ahead (along dx,dz) before the first chunk that has not been generated
+    asmd:(dx,dz)=>{const L=Math.hypot(dx,dz)||1;for(let t=0;t<300;t+=6){const kx=Math.round((b.x+dx/L*t)/16),kz=Math.round((b.z+dz/L*t)/16);if(!asmKeys.has(kx+','+kz))return t}return 300},
+    gen:(dx,dz)=>{const L=Math.hypot(dx,dz)||1;for(let t=0;t<300;t+=6){const kx=Math.round((b.x+dx/L*t)/16),kz=Math.round((b.z+dz/L*t)/16);if(!cache.has(kx+','+kz))return t}return 300}});
   S.H=H;S.rockList=()=>rocks.map(r=>({...r}));
   S.treeList=()=>trees.map(t=>({x:t.x,z:t.z,kind:t.s.kind,k:t.k}));
   // ground for the walker: the hills plus the top of every climbable stone
@@ -814,13 +886,13 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     door.rotation.y=Math.PI-S.doorFace;
   };
   setPonds(ponds);
-  rebuild(0,0);
+  rebuild(0,0,0,0,0,false);
   Object.assign(S,placeBehind(0,0,0,STILL.behind,trunkAt));
   S.doorX=S.x;S.doorZ=S.z;S.doorFace=S.face;poseDoor();
 
   const addPond=np=>{
     const list=[...ponds,np];while(list.length>STILL.pondMax)list.shift();
-    setPonds(list);rebuild(Math.round(b.x/16),Math.round(b.z/16));
+    setPonds(list);rebuild(Math.round(b.x/16),Math.round(b.z/16),b.vx,b.vz);
   };
   S.snap=()=>({sd:seed,x:+b.x.toFixed(2),z:+b.z.toFixed(2),y:+b.y.toFixed(2),yaw:+S.yaw.toFixed(3),pitch:+S.pitch.toFixed(3),dx:+S.doorX.toFixed(2),dz:+S.doorZ.toFixed(2),face:+S.doorFace.toFixed(3),pin:S.pinned?1:0,
     po:ponds.map(p=>[p.x,p.z,p.r,p.fx,p.fz,p.i])});
@@ -860,7 +932,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
       const ox=b.x,oz=b.z;
       walker.step(dt,input,S.yaw);
       moving=Math.hypot(b.x-ox,b.z-oz)>dt*0.4;
-      rebuild(Math.round(b.x/16),Math.round(b.z/16));
+      rebuild(Math.round(b.x/16),Math.round(b.z/16),b.vx,b.vz);
       // another pond, a long walk on
       const last=ponds[ponds.length-1];
       if(pondSpawnDue(b.x,b.z,last)){
