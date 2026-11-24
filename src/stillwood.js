@@ -189,9 +189,11 @@ const PROPS=[
   {kind:'reed',bake:'grass',n:2,cap:[40,40],far:44,near:14,opts:{tall:true}},
   {kind:'slab',n:2,cap:[24,12],far:36,near:18,opts:{size:0.9}},
   {kind:'boulder',n:1,cap:[40,60],far:44,near:15},
+  {kind:'bigrock',bake:'boulder',n:2,cap:[14,30],far:90,near:26,opts:{size:4.5,budget:{near:5000,far:900}}},
+  {kind:'bigmoss',bake:'mossrock',n:1,cap:[10,20],far:90,near:26,opts:{size:4.5,budget:{near:5000,far:900},palette:{moss:'#4f6e38',moss2:'#78914a',mossD:'#334d2a'}}},
   {kind:'snag',n:1,cap:[40,80],far:66,near:15},
 ];
-const BAKE_ORDER=['fir0','shrub0','mossrock0','oak0','grass0','tulip0','daisy0','reed0','slab0','boulder0','fir1','grass1','oak1','shrub1','snag0','fir2','mossrock1','reed1','grass2','slab1'];
+const BAKE_ORDER=['fir0','shrub0','mossrock0','oak0','grass0','tulip0','daisy0','reed0','slab0','bigrock0','boulder0','fir1','grass1','oak1','shrub1','bigmoss0','snag0','fir2','mossrock1','reed1','bigrock1','grass2','slab1'];
 // until a prop's bake lands (or is read from the cache) its slot shows one of these cheap stand-ins
 function placeholder(kind){
   const T=THREE,m=(g,x,y,z,c,sx=1,sy=1,sz=1)=>{g.scale(sx,sy,sz);g.translate(x,y,z);return [g,...c]};
@@ -203,6 +205,8 @@ function placeholder(kind){
     tulip:[m(new T.ConeGeometry(0.22,0.5,5),0,0.25,0,[0.2,0.06,0.05])],
     daisy:[m(new T.ConeGeometry(0.22,0.45,5),0,0.22,0,[0.25,0.24,0.16])],
     mossrock:[m(new T.DodecahedronGeometry(0.5,0),0,0.2,0,[0.07,0.1,0.06],1.2,0.7,1)],
+    bigrock:[m(new T.DodecahedronGeometry(1.8,0),0,1.1,0,[0.1,0.1,0.09],1.1,0.7,1)],
+    bigmoss:[m(new T.DodecahedronGeometry(1.8,0),0,1.0,0,[0.07,0.1,0.06],1.2,0.65,1)],
     boulder:[m(new T.DodecahedronGeometry(0.4,0),0,0.14,0,[0.1,0.1,0.09],1.2,0.6,1)],
     grass:[m(new T.ConeGeometry(0.14,0.32,5),0,0.16,0,[0.05,0.12,0.03])],
     reed:[m(new T.ConeGeometry(0.12,1.2,5),0,0.6,0,[0.06,0.12,0.04])],
@@ -469,7 +473,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     flower:natureMaterial({Q,UT,sway:0.06,bend:0.03}),
     rock:natureMaterial({Q,UT,sway:0}),
   };
-  const matOf={fir:M.fir,oak:M.oak,snag:M.snag,shrub:M.shrub,grass:M.grass,reed:M.reed,tulip:M.flower,daisy:M.flower,mossrock:M.rock,boulder:M.rock,slab:M.rock};
+  const matOf={bigrock:M.rock,bigmoss:M.rock,fir:M.fir,oak:M.oak,snag:M.snag,shrub:M.shrub,grass:M.grass,reed:M.reed,tulip:M.flower,daisy:M.flower,mossrock:M.rock,boulder:M.rock,slab:M.rock};
   const fam=(seed%3)*10;
   const holders={};for(const p of PROPS)holders[p.kind]=placeholder(p.kind);
   const slots=[],by={};
@@ -481,19 +485,19 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
         im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);im.frustumCulled=false;im.count=0;group.add(im);return im;
       };
       const sl={kind:p.kind,bake:p.bake||p.kind,i,id:p.kind+i,pseed:fam+i+1,opts:p.opts,far:p.far,nearR:p.near,near:mk(p.cap[0]),farM:mk(p.cap[1]),
-        r:TRUNK0[p.kind]||0,pad:TRUNK_PAD[p.kind]||0,ready:false};
+        r:TRUNK0[p.kind]||0,pad:TRUNK_PAD[p.kind]||0,fp:1.8,ready:false};
       slots.push(sl);by[p.kind].push(sl);
     }
   }
   const slotById=Object.fromEntries(slots.map(s=>[s.id,s]));
-  let trees=[],chunkX=1e9,chunkZ=1e9,deadClear=false,S=null;
+  let trees=[],rocks=[],chunkX=1e9,chunkZ=1e9,deadClear=false,S=null;
   const treeR=t=>t.s.r*t.k+t.s.pad*Math.min(1.2,t.k);
   const clearOf=(x,z)=>x*x+z*z<25||pondDist(x,z)<2.4;
   function trunkAt(x,z){return trees.some(t=>(t.x-x)**2+(t.z-z)**2<(treeR(t)+0.9)**2)}
   const NEAR=low?10:15,reach=low?1:2;
   function rebuild(cx,cz){
     if(cx===chunkX&&cz===chunkZ)return;
-    chunkX=cx;chunkZ=cz;trees=[];
+    chunkX=cx;chunkZ=cz;trees=[];rocks=[];
     for(const s of slots){s.near.count=0;s.farM.count=0}
     const mx=cx*16,mz=cz*16;
     // put one instance in a slot's near or far mesh by its distance from the chunk centre
@@ -509,6 +513,34 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
       im.setMatrixAt(im.count++,dummy.matrix);
       return sl;
     };
+    // big boulders and outcrops first, so everything else keeps clear of them; sparse, and never on the spawn, a pond or a path
+    const bigRocks=[];
+    const rockBlock=(x,z,m)=>{for(const r of bigRocks)if(Math.hypot(x-r.x,z-r.z)<r.r+m)return true;return false};
+    for(let iz=-reach;iz<=reach;iz++)for(let ix=-reach;ix<=reach;ix++){
+      const ox=(cx+ix)*16-8,oz=(cz+iz)*16-8;
+      for(let j=0;j<5;j++)for(let i=0;i<5;i++){
+        const x0=ox+1.6+i*3.2,z0=oz+1.6+j*3.2,R=k=>hr(x0,z0,seed,k);
+        const x=x0+(R(101)-0.5)*3,z=z0+(R(102)-0.5)*3,dp=pondDist(x,z);
+        if(R(103)>=(dp<16?0.03:0.011)*(low?0.7:1))continue;
+        const sc=0.65+R(104)*0.8,fp=1.9*sc;
+        if(dp<fp+2.5||pathDist(x,z)<fp+1.2||Math.hypot(x,z)<9+fp)continue;
+        const big={x,z,r:fp,sc,rot:R(105)*6.283,sink:0.3+0.5*R(106),v:R(107),moss:R(108)<0.4};
+        if(rockBlock(x,z,fp*0.6))continue;
+        bigRocks.push(big);
+        if(R(109)<0.5){      // an outcrop: a few smaller ones leaning on it
+          const n=2+(R(110)*2|0);
+          for(let k=0;k<n;k++){
+            const a=R(111+k*3)*6.283,sc2=sc*(0.35+R(112+k*3)*0.35),fp2=1.9*sc2,d=fp*0.8+fp2*0.7,sx=x+Math.cos(a)*d,sz=z+Math.sin(a)*d;
+            if(pondDist(sx,sz)<fp2+2||pathDist(sx,sz)<fp2+1)continue;
+            bigRocks.push({x:sx,z:sz,r:fp2,sc:sc2,rot:R(113+k*3)*6.283,sink:0.2+0.4*R(114+k*3),v:R(115+k*3),moss:R(116+k*3)<0.4});
+          }
+        }
+      }
+    }
+    for(const r of bigRocks){
+      const sl=put(r.moss?'bigmoss':'bigrock',r.v,r.x,-r.sink*r.sc*1.4,r.z,r.sc,r.sc*(0.85+0.3*((r.v*7)%1)),r.rot);
+      if(sl)rocks.push({x:r.x,z:r.z,r:sl.fp*r.sc*0.82});
+    }
     for(let iz=-reach;iz<=reach;iz++)for(let ix=-reach;ix<=reach;ix++){
       const ox=(cx+ix)*16-8,oz=(cz+iz)*16-8;
       for(let j=0;j<5;j++)for(let i=0;i<5;i++){
@@ -519,14 +551,14 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
         const clearing=cf>CLEAR_AT,dd=Math.hypot(x-mx,z-mz);
         const thin=dd>NEAR+13?(dd>NEAR+28?0.28:0.5):1; // far trees thin out into the fog
         // trees: mostly fir, some oak, now and then a dead one
-        if(!clearing&&!clearOf(x,z)&&dPath>1.7&&R(3)<(low?0.32:0.44)&&R(10)<thin){
+        if(!clearing&&!clearOf(x,z)&&dPath>1.7&&R(3)<(low?0.32:0.44)&&R(10)<thin&&!rockBlock(x,z,0.9)){
           const kv=R(4),kind=kv<0.6?'fir':kv<0.92?'oak':'snag',g=R(6),sc=(kind==='fir'?0.8:0.85)+g*g*0.65;
           const sl=put(kind,R(5),x,0,z,sc*(0.92+R(11)*0.16),sc,R(7)*6.283);
           if(sl)trees.push({x,z,s:sl,k:sc});
         }
         // shrubs: under the trees, thinner in the sun
         const sx=x0+(R(12)-0.5)*3,sz=z0+(R(13)-0.5)*3;
-        if(pondDist(sx,sz)>0.9&&pathDist(sx,sz)>1&&R(14)<(clearing?0.1:0.26)&&R(10)<thin)
+        if(pondDist(sx,sz)>0.9&&pathDist(sx,sz)>1&&R(14)<(clearing?0.1:0.26)&&R(10)<thin&&!rockBlock(sx,sz,0.4))
           put('shrub',R(15),sx,0,sz,0.75+R(16)*0.8,0.75+R(17)*0.7,R(18)*6.283);
         // flower clumps: meadow clearings, round the ponds and beside the paths
         const fx=x0+(R(19)-0.5)*3,fz=z0+(R(20)-0.5)*3,dPf=pondDist(fx,fz),pf=pathDist(fx,fz);
@@ -585,6 +617,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   const applyProp=(sl,p)=>{
     sl.near.geometry=p.near;sl.farM.geometry=p.far;sl.ready=true;
     const r=trunkRadius(p.near);if(r>0&&TRUNK0[sl.kind])sl.r=r;
+    if(sl.kind==='bigrock'||sl.kind==='bigmoss'){const bb=p.near.boundingBox;sl.fp=(bb.max.x-bb.min.x+bb.max.z-bb.min.z)/4}
     sl.tris=[p.near.attributes.position.count/3,p.far.attributes.position.count/3];
   };
   (async()=>{
@@ -603,11 +636,15 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   const door=makeDoor();group.add(door);
   S={t:0,yaw:0,pitch:0,bloom:0.18,seed,pinned:false,hold:0,said:0,doorX:0,doorZ:4.2,doorFace:0,ready:false,bake,mist:0,shim:0,water:false,direct:false,fill:0};
   S.ponds=()=>ponds.map(p=>({...p}));
-  S.H=H;
+  S.H=H;S.rockList=()=>rocks.map(r=>({...r}));
   S.treeList=()=>trees.map(t=>({x:t.x,z:t.z,kind:t.s.kind,k:t.k}));
   const walker=createRoomWalker({o,eye:EYE,x:0,z:0,groundAt:H,snap:0.7,collide:b=>{
     for(const t of trees){
       const dx=b.x-t.x,dz=b.z-t.z,d=Math.hypot(dx,dz),m=0.32+treeR(t);
+      if(d<m&&d>1e-4){b.x=t.x+dx/d*m;b.z=t.z+dz/d*m}
+    }
+    for(const t of rocks){
+      const dx=b.x-t.x,dz=b.z-t.z,d=Math.hypot(dx,dz),m=0.32+t.r;
       if(d<m&&d>1e-4){b.x=t.x+dx/d*m;b.z=t.z+dz/d*m}
     }
   }});
@@ -620,7 +657,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
       const nt=s.near.geometry.attributes.position.count/3,ft=s.farM.geometry.attributes.position.count/3;
       near+=s.near.count*nt;far+=s.farM.count*ft;n+=s.near.count;f+=s.farM.count;
     }
-    return {tris:Math.round(near+far),nearTris:Math.round(near),farTris:Math.round(far),nearInst:n,farInst:f,trees:trees.length,ponds:ponds.length,ready:S.ready,bake};
+    return {tris:Math.round(near+far),nearTris:Math.round(near),farTris:Math.round(far),nearInst:n,farInst:f,trees:trees.length,rocks:rocks.length,ponds:ponds.length,ready:S.ready,bake};
   };
   const poseDoor=()=>{
     door.position.set(S.doorX,H(S.doorX,S.doorZ),S.doorZ);
