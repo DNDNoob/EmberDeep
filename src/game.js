@@ -3541,9 +3541,9 @@ function mimicPick(id){
   let r=Math.random()*tot;for(let i=0;i<P2.length;i++){r-=w[i];if(r<=0)return P2[i]}
   return P2[P2.length-1];
 }
-const MIM={x:-99,z:-99,rx:-99,rz:-99,face:0,rface:0,st:0,as:'',vic:'',t:0,hid:40,sayT:5,gx:0,gy:0,px:-1,py:-1,walk:0,spd:0,lastKey:'',vd:null,vdKey:'',voice:null,depth:0};
+const MIM={x:-99,z:-99,rx:-99,rz:-99,face:0,rface:0,st:0,as:'',vic:'',t:0,hid:53,sayT:5,gx:0,gy:0,px:-1,py:-1,walk:0,spd:0,lastKey:'',vd:null,vdKey:'',voice:null,depth:0};
 // st: 0 hidden, 1 stalking, 2 revealing (eating), 3 recoiling from a flash
-function mimicReset(){Object.assign(MIM,{x:-99,z:-99,rx:-99,rz:-99,st:0,hid:30+Math.random()*25,t:0,vd:null,vdKey:'',as:'',vic:'',mooseLure:null})}
+function mimicReset(){Object.assign(MIM,{x:-99,z:-99,rx:-99,rz:-99,st:0,hid:40+Math.random()*33,t:0,vd:null,vdKey:'',as:'',vic:'',mooseLure:null})}
 const tid=t=>t.loc?MP.id:t.p.id;
 function mimicHost(dt,TG){
   const M=MIM;
@@ -3564,7 +3564,7 @@ function mimicHost(dt,TG){
     return;
   }
   M.t+=dt;
-  if(M.st===3){if(M.t>0.7){M.st=0;M.x=M.z=-99;M.hid=18+Math.random()*12}return}
+  if(M.st===3){if(M.t>0.7){M.st=0;M.x=M.z=-99;M.hid=24+Math.random()*16}return}
   const V=TG.find(t=>tid(t)===M.vic);
   if(M.st===2){if(M.t>1.6){mimicReset()}return}
   if(followMoose(M,dt,2.65))return;
@@ -3606,7 +3606,9 @@ function mimicFlash(x,z){
 }
 // play one of the disguise's clips from where the mimic stands
 function mimicSay(key){
-  for(const L of CLIPS.values()){const c=L.find(q=>q.key===key);if(c){
+  for(const [id,L] of CLIPS){const c=L.find(q=>q.key===key);if(c){
+    // never replay a player's own recorded voice back to them (MIM.voice stays untouched)
+    if(id===MP.id||key.startsWith(MP.id+':'))return;
     VOX.playClip(key,c.buf,mpEar(MIM.rx,MIM.rz,R.depth,true)).then(h=>{MIM.voice=h});return}}
 }
 // you are the one it reached
