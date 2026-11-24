@@ -9,6 +9,8 @@
 export const NEWS=[
   {date:'2026-11-24',title:'A lusher, breezier wood',
     body:'The wood behind a certain door has grown thicker and greener, with grass underfoot, wildflowers in the clearings and a breeze that moves through everything. Take a slow walk.'},
+  {date:'2026-11-24',title:'Quieter in the dark',
+    body:'Something that lurks in the maze now keeps to itself a little more often. And you\'ll no longer hear your own voice coming back at you from where it shouldn\'t.'},
   {date:'2026-11-24',title:'Update log online',
     body:'This terminal now keeps a running log of what\'s new in Door Simulator. Check back after each update. Nothing here will spoil what\'s waiting behind the doors.'},
   {date:'2026-11-24',title:'Repairs in the deep',
