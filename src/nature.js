@@ -909,27 +909,32 @@ export function getProp(kind, seed = 1, opts = {}) {
 /* ============================================================================================================================
    Material: vertex colours + sway (same aSw/uTime scheme as forest.js); Q>0 adds a fresnel rim and fake subsurface on leaf/petal verts.
    ============================================================================================================================ */
-export function natureMaterial({Q = 1, UT, sway = 0.03, bend = 0, flutter = 0, wind = [0.8, 0.6]} = {}) {
+export function natureMaterial({Q = 1, UT, sway = 0.03, bend = 0, clump = 0, dip = 0, wind = [0.8, 0.6]} = {}) {
   // wind: a gust wave travels along `wind` (phase from the instance's world position). Per vertex:
-  //  aSw * sway        : fine sway of tips (grass, flowers, shrubs)
-  //  mask * y^2 * bend : whole-plant lean from the base, growing with height (trunks stay planted, crowns move most)
-  //  aLf * flutter     : quick leaf/bough flutter (Q>0 only). Rocks have aSw = 0 and never move.
+  //  aSw * sway          : fine sway of tips (grass, flowers, shrubs: thin things that really do bend)
+  //  mask * y^2 * bend   : whole-plant lean from the base, growing with height. Same shift for every vertex at one height, so
+  //                        a trunk or crown moves as a body and its volume is never squashed (trees)
+  //  aLf * clump         : leaf clumps drift a few cm as units: a smooth field (~1.5 m features) so neighbouring vertices move together
+  //  aLf * aSw * dip     : bough tips nod slightly (fir)
+  // Rocks have aSw = 0 and never move. Q0 keeps only sway, bend and dip.
   const uT = UT || {value: 0}, wl = Math.hypot(wind[0], wind[1]) || 1, wd = [wind[0] / wl, wind[1] / wl];
   const patch = sh => {
-    sh.uniforms.uTime = uT; sh.uniforms.uSway = {value: sway}; sh.uniforms.uBend = {value: bend}; sh.uniforms.uFlutter = {value: flutter}; sh.uniforms.uWind = {value: new THREE.Vector2(wd[0], wd[1])};
-    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float aSw;attribute float aLf;uniform float uTime;uniform float uSway;uniform float uBend;uniform float uFlutter;uniform vec2 uWind;' + (Q > 0 ? 'varying float vLf;' : ''))
+    sh.uniforms.uTime = uT; sh.uniforms.uSway = {value: sway}; sh.uniforms.uBend = {value: bend}; sh.uniforms.uClump = {value: clump}; sh.uniforms.uDip = {value: dip}; sh.uniforms.uWind = {value: new THREE.Vector2(wd[0], wd[1])};
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float aSw;attribute float aLf;uniform float uTime;uniform float uSway;uniform float uBend;uniform float uClump;uniform float uDip;uniform vec2 uWind;' + (Q > 0 ? 'varying float vLf;' : ''))
       .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + (Q > 0 ? 'vLf=aLf;\n' : '') +
         '{\n#ifdef USE_INSTANCING\nvec2 wp=instanceMatrix[3].xz;\n#else\nvec2 wp=modelMatrix[3].xz;\n#endif\n' +
         'float ph=wp.x*1.7+wp.y*2.3;float wph=dot(wp,uWind);\n' +
         'float gust=sin(uTime*0.75-wph*0.085)*.5+.5;gust=gust*gust*(1.-.4*(sin(uTime*0.31-wph*0.03)*.5+.5));\n' +
         'float gs=.3+.7*gust;\n' +
-        'float s1=sin(uTime*1.3+ph+position.y*.8)*.7+sin(uTime*3.1+ph*1.7+position.x*3.)*.3;\n' +
+        'float s1=sin(uTime*1.3+ph+position.y*.8)*.7+sin(uTime*2.3+ph*1.7+position.x*.9)*.3;\n' +
         'float k=aSw*s1*uSway*(.45+.9*gust);\n' +
         'transformed.xz+=vec2(k)*vec2(uWind.x+.35*uWind.y,uWind.y-.35*uWind.x);\n' +
         'float m=min(aSw*6.,1.);float hy=max(position.y,0.);\n' +
-        'float bd=m*hy*hy*uBend*(gs+.12*sin(uTime*0.9+ph));\n' +
-        'transformed.xz+=uWind*bd;transformed.xz+=vec2(-uWind.y,uWind.x)*bd*.25*sin(uTime*0.6+ph*.7);\n' +
-        (Q > 0 ? 'float fl=aLf*m*uFlutter*(.4+gust);\ntransformed+=vec3(sin(uTime*5.3+position.x*6.+ph),sin(uTime*4.1+position.z*5.+ph*1.3)*.5,sin(uTime*4.7+position.y*6.+ph*.7))*fl;\n' : '') +
+        'float bd=m*hy*hy*uBend*(gs+.12*sin(uTime*0.7+ph));\n' +
+        'transformed.xz+=uWind*bd;transformed.xz+=vec2(-uWind.y,uWind.x)*bd*.2*sin(uTime*0.45+ph*.7);\n' +
+        'transformed.y-=bd*hy*0.012;\n' +
+        'float dp=aLf*aSw*uDip*(.3+.7*gust)*(.6+.4*sin(uTime*1.1+ph));transformed.y-=dp;\n' +
+        (Q > 0 ? 'vec3 q=position*.55+vec3(ph*.2,0.,ph*.3);\nvec3 cd=vec3(sin(uTime*.8+q.x+q.y*.7),sin(uTime*.65+q.z*1.2+1.3)*.5,sin(uTime*.9+q.y*.8+q.z+2.1));\ntransformed+=cd*aLf*m*uClump*(.35+.9*gust);\n' : '') +
         '}');
     if (Q > 0) sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vLf;')
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n' +

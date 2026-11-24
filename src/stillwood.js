@@ -379,16 +379,18 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
 
   // ---- the wood: one InstancedMesh pair (near and far LOD) per baked kind and seed variant ----
   const UT={value:0};
-  // wind: trees lean from the trunk (crowns move most) and flutter; shrubs and grass sway outright; rocks never move
+  // wind: trees lean from the trunk as bodies (crowns move most) with a few cm of coherent clump drift; shrubs and grass sway outright; rocks never move
   const M={
-    tree:natureMaterial({Q,UT,sway:0.02,bend:0.0075,flutter:0.03}),
-    shrub:natureMaterial({Q,UT,sway:0.07,bend:0.02,flutter:0.02}),
+    fir:natureMaterial({Q,UT,sway:0,bend:0.0055,clump:0.016,dip:0.04}),
+    oak:natureMaterial({Q,UT,sway:0,bend:0.0045,clump:0.007}),
+    snag:natureMaterial({Q,UT,sway:0,bend:0.004}),
+    shrub:natureMaterial({Q,UT,sway:0.07,bend:0.02}),
     grass:natureMaterial({Q,UT,sway:0.06,bend:0.03}),
     reed:natureMaterial({Q,UT,sway:0.05,bend:0.09}),
     flower:natureMaterial({Q,UT,sway:0.06,bend:0.03}),
     rock:natureMaterial({Q,UT,sway:0}),
   };
-  const matOf={fir:M.tree,oak:M.tree,snag:M.tree,shrub:M.shrub,grass:M.grass,reed:M.reed,tulip:M.flower,daisy:M.flower,mossrock:M.rock,boulder:M.rock,slab:M.rock};
+  const matOf={fir:M.fir,oak:M.oak,snag:M.snag,shrub:M.shrub,grass:M.grass,reed:M.reed,tulip:M.flower,daisy:M.flower,mossrock:M.rock,boulder:M.rock,slab:M.rock};
   const fam=(seed%3)*10;
   const holders={};for(const p of PROPS)holders[p.kind]=placeholder(p.kind);
   const slots=[],by={};
