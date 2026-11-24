@@ -42,7 +42,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   let sharedTexture=null,defaultSettingsTexture=null;
   let sharedLift=null,liftAway=false;
   let orrery;
-  let study=null,studyYaw=0,studyPitch=0.28,studyDist=0.3,orreryAim=null;
+  let active=true,study=null,studyYaw=0,studyPitch=0.28,studyDist=0.3,orreryAim=null;
   const orreryHint=document.createElement('div');
   orreryHint.style.cssText='position:fixed;left:0;right:0;bottom:22px;text-align:center;color:#ffe4bd;font:15px "Segoe UI",sans-serif;text-shadow:0 2px 6px #000;pointer-events:none;z-index:6';
   document.body.appendChild(orreryHint);
@@ -414,7 +414,10 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     channel=null;
     Object.assign(walker.b,{x:0,z:13.1,y:0,vx:0,vz:0,vy:0,jumpQ:0,bob:0});
     view.yaw=view.pitch=0;
+    study=null;orreryHint.textContent='';
   }
+  // the lobby is only the active view on the title screen; elsewhere it shows no hint and ignores the orrery keys
+  function setActive(on){active=!!on;if(!active){study=null;orreryHint.textContent=''}}
   function syncArchives(groups){
     for(const portal of portals){
       const entries=groups[portal.id],known=entries.filter(e=>e.data).length;
@@ -569,7 +572,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     focus=aim();
     raycaster.setFromCamera(pointer.set(0,0),camera);
     orreryAim=orrery?.pick(raycaster)||null;
-    orreryHint.textContent=study
+    orreryHint.textContent=!active?'':study
       ? `Close view of ${orrery.name(study)}. Click another body to go there. Scroll to move closer. Q walks again.`
       : orreryAim ? `E: look closer at ${orrery.name(orreryAim)}` : '';
   }
@@ -598,7 +601,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     pose();
     renderer.toneMappingExposure=exposure;renderer.setRenderTarget(null);renderer.render(scene,camera);
   }
-  return {update,render,syncArchives,syncVisitors,watchLift,liftMode,setSharedLift,engageLift,reset,resetLift,
+  return {update,render,syncArchives,syncVisitors,watchLift,liftMode,setSharedLift,engageLift,reset,resetLift,setActive,
     sharedSettings(screen,display){
       sharedSettings=screen;
       sharedTexture=new THREE.CanvasTexture(display);
@@ -663,11 +666,11 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       return true;
     }};
   addEventListener('keydown',e=>{
-    if(!study)return;
+    if(!active||!study)return;
     if(e.code==='KeyQ'||e.code==='Escape'||e.code==='Backspace')study=null;
   });
   addEventListener('wheel',e=>{
-    if(!study)return;
+    if(!active||!study)return;
     const min=orrery.reach(study)*0.45,max=Math.max(1.6,orrery.reach(study)*8);
     studyDist=clamp(studyDist*(e.deltaY>0?1.1:0.9),min,max);
   },{passive:true});

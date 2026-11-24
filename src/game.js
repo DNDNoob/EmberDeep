@@ -5509,6 +5509,7 @@ function showHub(on){
   closeStation();
   if(!on)settingsScreen.screen.hidden=true;
   $('menuHub').hidden=!on;
+  hub.setActive(on);
   document.body.classList.toggle('hub-room',on);
   if(on&&reWarm&&state==='title'&&!loading){reWarm=false;retargetShaft()}
   if(on){refreshHub();$('tFlash').textContent='USE'}
