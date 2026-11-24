@@ -11,8 +11,9 @@ const EYE=1.6;
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
 
 export const STILL={
-  behind:4.2, doorHalf:0.52, doorH:2.2, pondR:5.5, pondEvery:152.4, pondMax:3,
-  grace:2.15, seeDot:0.6, lookDown:-0.28, waterY:0.045,
+  behind:4.2, doorHalf:0.52, doorH:2.2, pondR:5.5, pondEvery:304.8, pondMax:3,
+  grace:2.0, seeDot:0.6, lookDown:-0.28, waterY:0.045,
+  lockPitch:-0.5, lockNear:2.0, lockSpeed:0.6, buildTime:2.5,
 };
 
 export function horizForward(yaw){
@@ -57,23 +58,35 @@ export function crossedDoor(x0,z0,x1,z1,door,half=STILL.doorHalf){
   const side=(x-door.x)*(-nz)+(z-door.z)*nx;
   return Math.abs(side)<=half;
 }
-// One simulation step. s = {x,z,yaw,pitch,door:{x,z,face},pond:{x,z,r},pinned,hold}
+// One simulation step. s = {x,z,yaw,pitch,speed,door:{x,z,face},pond:{x,z,r},pinned,hold,build}
+// Holding the door takes intent: stand within lockNear of the water, look steeply down into it (pitch below lockPitch) and keep
+// still (speed under lockSpeed) for buildTime. Any break (moving, looking up or away, stepping back) resets the build-up.
+// Once held it lasts only while you keep looking at the door or into the water; look away for `grace` and it slips behind you.
 export function stillStep(s,dt){
   const eye=[s.x,s.eye??EYE,s.z];
   const dir=lookDir(s.yaw,s.pitch);
-  const down=s.pitch<(s.lookDown??STILL.lookDown)&&!!rayHitsPond(eye,dir,s.pond,s.waterY??STILL.waterY);
+  const hit=rayHitsPond(eye,dir,s.pond,s.waterY??STILL.waterY);
+  const down=s.pitch<(s.lookDown??STILL.lookDown)&&!!hit;
   const direct=doorSeen(eye,dir,s.door,s.seeDot??STILL.seeDot);
   const sees=down||direct;
-  if(sees){s.hold=s.grace??STILL.grace;s.pinned=true}
-  else if(s.pinned){s.hold-=dt;if(s.hold<=0){s.pinned=false;s.hold=0}}
+  const edge=Math.hypot(s.x-s.pond.x,s.z-s.pond.z)-s.pond.r;
+  const intent=!s.pinned&&!!hit&&s.pitch<(s.lockPitch??STILL.lockPitch)&&edge<=(s.lockNear??STILL.lockNear)&&(s.speed??0)<=(s.lockSpeed??STILL.lockSpeed);
+  s.locked=false;
+  if(s.pinned){
+    s.build=0;
+    if(sees)s.hold=s.grace??STILL.grace;
+    else{s.hold-=dt;if(s.hold<=0){s.pinned=false;s.hold=0}}
+  }else{
+    s.build=intent?(s.build||0)+dt:0;
+    if(s.build>=(s.buildTime??STILL.buildTime)){s.pinned=true;s.hold=s.grace??STILL.grace;s.build=0;s.locked=true}
+  }
   if(!s.pinned){
     const p=placeBehind(s.x,s.z,s.yaw,s.behind??STILL.behind,s.blocked);
     s.door.x=p.x;s.door.z=p.z;s.door.face=p.face;
   }
-  s.down=down;s.direct=direct;s.sees=sees;
+  s.down=down;s.direct=direct;s.sees=sees;s.intent=intent;
   return s;
 }
-
 // A new pond is due once the player is a long walk (500 ft) from the newest one.
 export function pondSpawnDue(px,pz,last,every=STILL.pondEvery){
   return Math.hypot(px-last.x,pz-last.z)>=every;
@@ -274,7 +287,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     gr.addColorStop(0,'rgba(255,255,235,1)');gr.addColorStop(0.35,'rgba(230,255,200,0.5)');gr.addColorStop(1,'rgba(230,255,200,0)');g.fillStyle=gr;g.fillRect(0,0,32,32);
     const t=new THREE.CanvasTexture(c);return t})();
   const waterVS=`varying vec2 vUv;varying vec3 vW;void main(){vUv=uv;vec4 w=modelMatrix*vec4(position,1.0);vW=w.xyz;gl_Position=projectionMatrix*viewMatrix*w;}`;
-  const waterFS=`uniform sampler2D uScry;uniform float uTime;uniform vec2 uCenter;uniform float uR;uniform vec4 uRip[4];uniform vec3 uFog;uniform float uFogD;uniform float uQ;
+  const waterFS=`uniform sampler2D uScry;uniform float uTime;uniform vec2 uCenter;uniform float uR;uniform vec4 uRip[4];uniform vec3 uFog;uniform float uFogD;uniform float uQ;uniform vec2 uYaw;uniform float uClear;uniform float uShim;
     varying vec2 vUv;varying vec3 vW;
     float h21(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
     float vn(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(h21(i),h21(i+vec2(1,0)),f.x),mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x),f.y);}
@@ -285,9 +298,15 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
       for(int i=0;i<4;i++){vec4 r=uRip[i];float age=uTime-r.z;
         if(age>0.&&age<4.5){vec2 q=vW.xz-r.xy;float dq=length(q);float rad=age*0.85;float e=(dq-rad)*5.;
           float w=exp(-e*e)*r.w*(1.-age/4.5)*sin((dq-rad)*20.);rp+=w;rd+=q/(dq+1e-3)*w;}}
-      vec2 wv=vec2(sin(vW.x*3.1+uTime*.9)+sin(vW.z*2.3-uTime*.7),sin(vW.z*3.7+uTime*.8)+sin(vW.x*2.9-uTime*1.1))*.004;
-      vec2 uv=vUv+rd*.03+wv;
-      vec3 scry=texture2D(uScry,uv).rgb*vec3(.8,.97,.9);
+      // wave normal: two drifting sine fields; its xz slope refracts the image
+      vec2 wv=vec2(sin(vW.x*3.1+uTime*.9)+sin(vW.z*2.3-uTime*.7)+.5*sin(vW.x*7.3+vW.z*5.1+uTime*1.7),sin(vW.z*3.7+uTime*.8)+sin(vW.x*2.9-uTime*1.1)+.5*sin(vW.z*6.7-vW.x*4.3+uTime*1.5));
+      float calm=1.-.85*uClear;
+      // the door image is laid out for the viewer: far side of the pond is up, and your right stays on the right, whatever side you stand
+      vec2 fw=uYaw,rt=vec2(-fw.y,fw.x);
+      vec2 suv=vec2(1.-(dot(rel,rt)/(2.*uR)+.5),dot(rel,fw)/(2.*uR)+.5);
+      suv=(suv-.5)*(1.+.25*(1.-uClear))+.5+(wv*.011+rd*.05)*calm;
+      vec3 scry=texture2D(uScry,suv).rgb*vec3(.8,.97,.9);
+      scry=mix(scry,scry*(.65+.5*vn(vW.xz*5.+uTime*.4)),(1.-uClear)*.5);
       float steep=smoothstep(.1,.55,V.y),fr=pow(1.-clamp(V.y,0.,1.),4.);
       float shallow=smoothstep(.55,1.,d);
       vec3 col=mix(vec3(.018,.06,.055),vec3(.15,.19,.095),shallow);
@@ -297,10 +316,11 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
       }
       vec3 treeC=mix(vec3(.045,.1,.07),uFog,.5);
       vec3 skyc=mix(treeC,uFog*1.02,smoothstep(.0,.22,V.y+(vn(vW.xz*.7)-.5)*.06));
-      float sw=mix(.3,.97,steep)*(1.-smoothstep(.82,1.,d)*.55);
+      float sw=(mix(.12,.36,steep)*(1.-uClear)+uClear*mix(.6,.98,steep))*(1.-smoothstep(.82,1.,d)*.55);
       col=mix(col,scry,sw);
       col=mix(col,skyc,clamp(fr*(1.-steep)*.95,0.,.9));
       col+=vec3(.24,.3,.27)*rp*.45;
+      col+=vec3(.35,.5,.38)*uShim*exp(-pow((d-(1.-uShim)*1.15)*6.,2.))*.7+vec3(.1,.16,.12)*uShim*.35;
       col=mix(col,vec3(.3,.38,.26),smoothstep(.97,1.,d)*.3);
       float fogf=1.-exp(-uFogD*uFogD*dist*dist);col=mix(col,uFog,fogf);
       gl_FragColor=vec4(col,1.);
@@ -314,7 +334,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   const pslots=[0,1,2].map(k=>{
     const g=new THREE.Group();g.visible=false;group.add(g);
     const mat=new THREE.ShaderMaterial({transparent:false,fog:false,toneMapped:true,
-      uniforms:{uScry:{value:rt.texture},uTime:TW,uCenter:{value:new THREE.Vector2()},uR:{value:5},uRip:{value:[0,1,2,3].map(()=>new THREE.Vector4(0,0,-99,0))},uFog:{value:new THREE.Vector3(FOGC.r,FOGC.g,FOGC.b)},uFogD:{value:fogD},uQ:{value:Q}},
+      uniforms:{uScry:{value:rt.texture},uTime:TW,uCenter:{value:new THREE.Vector2()},uR:{value:5},uRip:{value:[0,1,2,3].map(()=>new THREE.Vector4(0,0,-99,0))},uFog:{value:new THREE.Vector3(FOGC.r,FOGC.g,FOGC.b)},uFogD:{value:fogD},uQ:{value:Q},uYaw:{value:new THREE.Vector2(0,-1)},uClear:{value:0},uShim:{value:0}},
       vertexShader:waterVS,fragmentShader:waterFS});
     const water=new THREE.Mesh(waterGeo,mat);water.rotation.x=-Math.PI/2;water.position.y=STILL.waterY;g.add(water);
     const beam=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.55,9,8,1,true),
@@ -353,6 +373,8 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   function pushRip(sl,x,z,amp){const R=sl.mat.uniforms.uRip.value;R[sl.rip++%4].set(x,z,TW.value,amp)}
   function updatePonds(dt,b,moving){
     TW.value=S.t;
+    const fy=horizForward(S.yaw),clr=S.pinned?1:clamp((S.build||0)/STILL.buildTime,0,1),shim=Math.max(0,S.shim||0);
+    for(const sl of pslots){const u=sl.mat.uniforms;u.uYaw.value.set(fy[0],fy[1]);u.uClear.value=clr;u.uShim.value=shim}
     for(const sl of pslots){
       const p=sl.pond;if(!p)continue;
       if(S.t>sl.nextDrip){const h=hash2(Math.floor(S.t*7),p.i,seed),h2=hash2(Math.floor(S.t*5),p.i+9,seed),a=h*6.283,rr=Math.sqrt(h2)*p.r*0.75;
@@ -520,7 +542,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   })();
 
   const door=makeDoor();group.add(door);
-  S={t:0,yaw:0,pitch:0,bloom:0.18,seed,pinned:false,hold:0,said:0,doorX:0,doorZ:4.2,doorFace:0,ready:false,bake,mist:0};
+  S={t:0,yaw:0,pitch:0,bloom:0.18,seed,pinned:false,hold:0,said:0,doorX:0,doorZ:4.2,doorFace:0,ready:false,bake,mist:0,build:0,spd:0,shim:0,bt:0};
   S.ponds=()=>ponds.map(p=>({...p}));
   const walker=createRoomWalker({o,eye:EYE,x:0,z:0,collide:b=>{
     for(const t of trees){
@@ -600,27 +622,31 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
       }
       const eye=[b.x,EYE+b.y,b.z],dir=lookDir(S.yaw,S.pitch);
       const pd=ponds.find(p=>rayHitsPond(eye,dir,p))||nearestPond(b.x,b.z);
+      S.spd+=(Math.hypot(b.x-ox,b.z-oz)/Math.max(dt,1e-3)-S.spd)*Math.min(1,dt*8);
       const sim={
-        x:b.x,z:b.z,yaw:S.yaw,pitch:S.pitch,eye:EYE+b.y,
+        x:b.x,z:b.z,yaw:S.yaw,pitch:S.pitch,eye:EYE+b.y,speed:S.spd,build:S.build,
         door:{x:S.doorX,z:S.doorZ,face:S.doorFace},
         pond:pd,pinned:S.pinned,hold:S.hold,blocked:trunkAt,
       };
       stillStep(sim,dt);
-      S.pinned=sim.pinned;S.hold=sim.hold;S.doorX=sim.door.x;S.doorZ=sim.door.z;S.doorFace=sim.door.face;
+      S.pinned=sim.pinned;S.hold=sim.hold;S.build=sim.build;S.doorX=sim.door.x;S.doorZ=sim.door.z;S.doorFace=sim.door.face;
       if(S.pinned&&b.y<1.4&&crossedDoor(ox,oz,b.x,b.z,sim.door)){
         finish({k:'leave',why:'stillwood'});return;
       }
-      if(sim.down&&S.said<2){S.said=2;o.say('The water holds the door where it stands.',3.5);o.tone(494,0.45,'sine',0.04,0,-180)}
+      if(sim.locked){S.said=2;S.shim=1.2;o.say('The water holds the door where it stands.',3.5);o.tone(494,0.6,'sine',0.045,0,-180);o.tone(740,0.8,'sine',0.02,0.12)}
       else if(!S.pinned&&S.said===2){S.said=3;o.say('It is behind you again.',2.5)}
       else if(S.said===0&&S.t>0.8){S.said=1;o.say('The way back will not stay where you can look.',4.5)}
+      // the build-up is quiet: a soft tone that climbs while you stay still over the water
+      if(S.build>0){S.bt-=dt;if(S.bt<=0){S.bt=0.45;o.tone(300+S.build/STILL.buildTime*260,0.5,'sine',0.012)}}else S.bt=0;
       const near=pondDist(b.x,b.z)<3;
-      const hint=A.watching?A.label:S.pinned?'The door is held. Turn and walk through it.':near?'Look down into the water.':'The way back stays behind you.';
+      const hint=A.watching?A.label:S.pinned?'The door is held. Turn and walk through it.':S.build>0?'Stay still.':near?'Be still and look into the water.':'The way back stays behind you.';
       o.hud('<small>'+hint+'</small>');
       if(near&&!A.watching&&Math.floor(S.t)%5===0&&S.t%5<dt)o.tone(880+Math.sin(S.t)*40,0.12,'sine',0.015);
     }else{
       o.hud('<small>'+(A.label||'')+'</small>');
       moving=true;
     }
+    S.shim=Math.max(0,(S.shim||0)-dt);
     if(S.mist>0){S.mist=Math.max(0,S.mist-dt);scene.fog.density=fogD*(1+1.1*Math.sin(Math.PI*S.mist/2.4))}
     poseDoor();
     ground.position.x=b.x;ground.position.z=b.z;

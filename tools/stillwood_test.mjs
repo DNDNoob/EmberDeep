@@ -24,32 +24,55 @@ const fresh=()=>({
     assert.equal(s.pinned,false);
   }}
 
-// Looking down into the pond pins the door, and turning does not drag it.
-{const s=fresh();s.x=0;s.z=-12;s.pitch=-0.9;stillStep(s,0.05);
-  assert.equal(s.down,true);assert.equal(s.pinned,true);
+// Run the rules for `secs` of stillness at the current pose.
+const hold=(s,secs,dt=0.05)=>{for(let t=0;t<secs-1e-9;t+=dt)stillStep(s,dt);return s};
+
+// A glance down into the water no longer holds the door.
+{const s=fresh();s.z=-12;s.pitch=-0.9;stillStep(s,0.05);
+  assert.equal(s.down,true);assert.equal(s.pinned,false,'one glance must not lock');
+  hold(s,STILL.buildTime-0.3);assert.equal(s.pinned,false);assert.ok(s.build>2&&s.build<STILL.buildTime);
+}
+// Being still and looking steeply down from the bank for buildTime does; turning then does not drag the door.
+{const s=fresh();s.z=-12;s.pitch=-0.9;hold(s,STILL.buildTime+0.2);
+  assert.equal(s.pinned,true);
   const held={x:s.door.x,z:s.door.z,face:s.door.face};
   s.pitch=0;
   for(let i=0;i<8;i++){s.yaw+=0.2;stillStep(s,0.1)}
   assert.equal(s.pinned,true);
   assert.ok(Math.hypot(s.door.x-held.x,s.door.z-held.z)<1e-6,'pinned door moved');
 }
+// Anything that breaks the intent resets the build-up: moving, a shallow look, looking away, stepping back.
+{const mk=()=>{const s=fresh();s.z=-12;s.pitch=-0.9;hold(s,1.5);assert.ok(s.build>1.4);return s};
+  let s=mk();s.speed=STILL.lockSpeed+0.5;stillStep(s,0.05);assert.equal(s.build,0,'moving resets');
+  s=mk();s.pitch=-0.35;stillStep(s,0.05);assert.equal(s.build,0,'a shallow look resets');
+  s=mk();s.pitch=0;stillStep(s,0.05);assert.equal(s.build,0,'looking up resets');
+  s=mk();s.z=-16+STILL.pondR+STILL.lockNear+1.5;stillStep(s,0.05);assert.equal(s.build,0,'stepping back from the edge resets');
+  {const e=fresh();e.z=-9.5;e.pitch=-0.9;hold(e,1.5);assert.ok(e.build>1.4);e.yaw=Math.PI;stillStep(e,0.05);assert.equal(e.build,0,'looking away from the water resets')}
+  s=mk();s.speed=STILL.lockSpeed+0.5;hold(s,1.5);hold(s,STILL.buildTime-0.5);assert.equal(s.pinned,false,'must start over after a break');
+}
+// Far from the water, even a still steep look does nothing.
+{const s=fresh();s.z=-3;s.pitch=-1.2;hold(s,5);assert.equal(s.pinned,false);assert.equal(s.build,0);}
 
-// A full turn toward the frozen door, slower than the grace, keeps it and counts as seeing it.
-{const s=fresh();s.z=-12;s.pitch=-0.9;stillStep(s,0.05);assert.ok(s.pinned);
+// A full turn toward the held door, slower than the grace, keeps it and counts as seeing it.
+{const s=fresh();s.z=-12;s.pitch=-0.9;hold(s,STILL.buildTime+0.2);assert.ok(s.pinned);
   s.pitch=0;const steps=14;
   for(let i=0;i<steps;i++){s.yaw+=Math.PI/steps;stillStep(s,1.1/steps)}
   assert.equal(s.pinned,true);
   assert.equal(s.direct,true);
 }
 
-// Looking away from both the pond and the door lets it slip behind you again.
-{const s=fresh();s.z=-12;s.pitch=-0.9;stillStep(s,0.05);
+// Looking away from both the pond and the door lets it slip behind you again after the grace.
+{const s=fresh();s.z=-12;s.pitch=-0.9;hold(s,STILL.buildTime+0.2);assert.ok(s.pinned);
   s.pitch=0;s.yaw=0.4;
-  stillStep(s,STILL.grace+0.05);
+  stillStep(s,STILL.grace-0.2);assert.equal(s.pinned,true);
+  stillStep(s,0.3);
   assert.equal(s.pinned,false);
   const f=horizForward(s.yaw),dx=s.door.x-s.x,dz=s.door.z-s.z;
   assert.ok((f[0]*dx+f[1]*dz)/Math.hypot(dx,dz)<-0.95);
+  assert.ok(STILL.grace<=2.15&&STILL.buildTime>=2.4);
 }
+// Looking into the water keeps a held door held.
+{const s=fresh();s.z=-12;s.pitch=-0.9;hold(s,STILL.buildTime+0.2);hold(s,8);assert.equal(s.pinned,true);}
 
 // The pond ray misses if you are looking level, and hits when you look down from the bank.
 {const eye=[0,1.6,-12];
@@ -70,12 +93,12 @@ const fresh=()=>({
   assert.ok(p.z>=6);assert.ok(Math.abs(p.x)<2);
 }
 
-// A new pond is due after about 500 ft (152.4 m) from the newest one, not before.
+// A new pond is due after about 1000 ft (304.8 m) from the newest one, not before.
 {const last={x:3,z:-16,r:5.5};
-  assert.ok(Math.abs(STILL.pondEvery-152.4)<1e-9);
-  assert.equal(pondSpawnDue(3,-16-150,last),false);
-  assert.equal(pondSpawnDue(3,-16-153,last),true);
-  assert.equal(pondSpawnDue(3+120,-16+100,last),true);
+  assert.ok(Math.abs(STILL.pondEvery-304.8)<1e-9);
+  assert.equal(pondSpawnDue(3,-16-300,last),false);
+  assert.equal(pondSpawnDue(3,-16-306,last),true);
+  assert.equal(pondSpawnDue(3+250,-16+200,last),true);
   assert.equal(pondSpawnDue(3,-16,last),false);
 }
 // The next pond is 25-35 m ahead within ~15 degrees of facing, deterministic from seed+index+position+yaw, clear of existing ponds.
