@@ -4279,7 +4279,7 @@ function lurkTick(dt){
     if(n.aggro&&!n.said){n.said=1;sfx('growl');say('It noticed you looking.',2.4)}
     if(r.looking)rememberMob('lurk',n);
     if(n.face!=null)n.yaw=n.face;
-    if(r.hurt&&!MP.guest&&state==='play'&&!P.down)hurt(null);
+    if(r.hurt&&state==='play'&&!P.down&&P.inv<=0&&!P.away)hurt(null);
   }
 }
 
