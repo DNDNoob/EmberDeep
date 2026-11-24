@@ -5,6 +5,7 @@
 // door where it is. Look away from both and it slips behind you again.
 import * as THREE from 'three';
 import {MOVE,bobY,createRoomWalker,lookStep} from './movement.js';
+import {getProp,natureMaterial} from './nature.js';
 
 const EYE=1.6;
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
@@ -78,18 +79,6 @@ function hash2(x,z,seed){
   h=Math.imul(h^(h>>>13),1274126177);
   return ((h^(h>>>16))>>>0)/4294967296;
 }
-function pineGeometry(){
-  const g=new THREE.CylinderGeometry(0.11,0.16,1.15,5);
-  g.translate(0,0.58,0);
-  const a=new THREE.ConeGeometry(1.15,2.4,6),b=new THREE.ConeGeometry(0.82,1.8,6);
-  a.translate(0,2.15,0);b.translate(0,3.15,0);
-  return mergeParts([[g,0.36,0.24,0.12],[a,0.16,0.38,0.18],[b,0.22,0.48,0.24]]);
-}
-function fernGeometry(){
-  const g=new THREE.ConeGeometry(0.55,0.7,5);
-  g.translate(0,0.28,0);
-  return mergeParts([[g,0.28,0.46,0.2]]);
-}
 function mergeParts(parts){
   let n=0;
   for(const [g] of parts)n+=g.attributes.position.count;
@@ -109,6 +98,102 @@ function mergeParts(parts){
   out.computeVertexNormals();
   return out;
 }
+// ---- terrain and placement helpers (pure, seeded: every player gets the same wood) ----
+const lerp=(a,b,t)=>a+(b-a)*t;
+const sstep=t=>t*t*(3-2*t);
+// 0..1 value noise on a 14 m lattice; high values are sunny clearings (the ground shader reads the same field)
+export function clearField(x,z,seed){
+  const u=x/14,v=z/14,iu=Math.floor(u),iv=Math.floor(v),fu=sstep(u-iu),fv=sstep(v-iv),s=seed^0x51ed;
+  return lerp(lerp(hash2(iu,iv,s),hash2(iu+1,iv,s),fu),lerp(hash2(iu,iv+1,s),hash2(iu+1,iv+1,s),fu),fv);
+}
+const CLEAR_AT=0.66;
+export function segDist(px,pz,ax,az,bx,bz){
+  const dx=bx-ax,dz=bz-az,t=clamp(((px-ax)*dx+(pz-az)*dz)/(dx*dx+dz*dz||1),0,1);
+  return Math.hypot(px-ax-dx*t,pz-az-dz*t);
+}
+// extra independent random numbers for a cell
+const hr=(x,z,seed,k)=>hash2(Math.round(x*4)+k*7919,Math.round(z*4)-k*104729,seed+k*15485863);
+
+// ---- props: which baked kinds and how many seed variants, and how many instances each can hold ----
+// order = bake order: the things you see first come first
+const PROPS=[
+  {kind:'fir',n:3,cap:[110,260],far:66,w:1},
+  {kind:'shrub',n:2,cap:[120,130],far:34},
+  {kind:'mossrock',n:2,cap:[50,70],far:44},
+  {kind:'oak',n:2,cap:[60,150],far:66},
+  {kind:'tulip',n:1,cap:[110,60],far:26},
+  {kind:'daisy',n:1,cap:[110,60],far:26},
+  {kind:'slab',n:2,cap:[10,6],far:36,opts:{size:0.9}},
+  {kind:'boulder',n:1,cap:[40,60],far:44},
+  {kind:'snag',n:1,cap:[40,80],far:66},
+];
+const BAKE_ORDER=['fir0','shrub0','mossrock0','oak0','tulip0','daisy0','slab0','boulder0','fir1','oak1','shrub1','snag0','fir2','mossrock1','slab1'];
+// until a prop's bake lands (or is read from the cache) its slot shows one of these cheap stand-ins
+function placeholder(kind){
+  const T=THREE,m=(g,x,y,z,c,sx=1,sy=1,sz=1)=>{g.scale(sx,sy,sz);g.translate(x,y,z);return [g,...c]};
+  const parts={
+    fir:[m(new T.CylinderGeometry(0.1,0.2,1.2,5),0,0.6,0,[0.05,0.03,0.015]),m(new T.ConeGeometry(1.5,3.2,7),0,2.4,0,[0.012,0.05,0.025]),m(new T.ConeGeometry(0.9,2.4,7),0,4.2,0,[0.016,0.07,0.03])],
+    oak:[m(new T.CylinderGeometry(0.2,0.34,3,6),0,1.5,0,[0.06,0.04,0.02]),m(new T.IcosahedronGeometry(2,0),0,4.4,0,[0.03,0.09,0.03],1.2,0.9,1.2)],
+    snag:[m(new T.CylinderGeometry(0.1,0.35,4.6,5),0,2.3,0,[0.1,0.085,0.07])],
+    shrub:[m(new T.IcosahedronGeometry(0.5,0),0,0.28,0,[0.03,0.09,0.03],1,0.6,1)],
+    tulip:[m(new T.ConeGeometry(0.22,0.5,5),0,0.25,0,[0.2,0.06,0.05])],
+    daisy:[m(new T.ConeGeometry(0.22,0.45,5),0,0.22,0,[0.25,0.24,0.16])],
+    mossrock:[m(new T.DodecahedronGeometry(0.5,0),0,0.2,0,[0.07,0.1,0.06],1.2,0.7,1)],
+    boulder:[m(new T.DodecahedronGeometry(0.4,0),0,0.14,0,[0.1,0.1,0.09],1.2,0.6,1)],
+    slab:[m(new T.CylinderGeometry(0.45,0.5,0.4,6),0,0.2,0,[0.12,0.12,0.1])],
+  }[kind];
+  const g=mergeParts(parts);
+  const n=g.attributes.position.count;
+  g.setAttribute('aSw',new THREE.BufferAttribute(new Float32Array(n),1));
+  g.setAttribute('aLf',new THREE.BufferAttribute(new Float32Array(n),1));
+  return g;
+}
+// a trunk radius read from the baked mesh: the lower vertices just above the roots
+function trunkRadius(g){
+  const p=g.attributes.position.array,d=[];
+  for(let i=0;i<p.length;i+=3)if(p[i+1]>0.1&&p[i+1]<0.4)d.push(Math.hypot(p[i],p[i+2]));
+  if(d.length<6)return 0;
+  d.sort((a,b)=>a-b);return d[d.length/10|0];
+}
+const TRUNK0={fir:0.21,oak:0.35,snag:0.44}; // before the bake: what the baked seeds measure
+const TRUNK_PAD={fir:0.55,oak:0.1,snag:0.1};  // a fir's skirt of boughs starts at knee height
+const TREE_KINDS=['fir','oak','snag'];
+
+// ground: moss, meadow, leaf litter, a dirt path and a dark wet bank, all from world position so it can follow the player
+function groundMaterial(Q,seed,pond){
+  const m=Q===0?new THREE.MeshLambertMaterial({color:0xffffff}):new THREE.MeshStandardMaterial({color:0xffffff,roughness:1,metalness:0});
+  const U={uSeed:{value:seed^0x51ed},uPond:{value:new THREE.Vector3(pond.x,pond.z,pond.r)},uSeg:{value:new THREE.Vector4(0,0,pond.x,pond.z)}};
+  m.onBeforeCompile=sh=>{
+    Object.assign(sh.uniforms,U);
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nvarying vec2 vW;')
+      .replace('#include <begin_vertex>','#include <begin_vertex>\nvW=(modelMatrix*vec4(position,1.0)).xz;');
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>',`#include <common>
+varying vec2 vW;uniform float uSeed;uniform vec3 uPond;uniform vec4 uSeg;
+float h21(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+float vn(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(h21(i),h21(i+vec2(1,0)),f.x),mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x),f.y);}
+float hs(ivec2 c){uint h=(uint(c.x)*374761393u)^(uint(c.y)*668265263u)^uint(int(uSeed));h=(h^(h>>13))*1274126177u;return float(h^(h>>16))/4294967296.0;}
+float clearF(vec2 p){vec2 q=p/14.;vec2 i=floor(q),f=q-i;f=f*f*(3.-2.*f);ivec2 c=ivec2(i);
+  return mix(mix(hs(c),hs(c+ivec2(1,0)),f.x),mix(hs(c+ivec2(0,1)),hs(c+ivec2(1,1)),f.x),f.y);}`)
+    .replace('#include <color_fragment>',`#include <color_fragment>
+{
+  float cl=smoothstep(${CLEAR_AT-0.1},${CLEAR_AT+0.06},clearF(vW));
+  vec3 c=mix(vec3(.060,.125,.040),vec3(.150,.235,.060),cl);
+  float mo=vn(vW*.21+3.);c=mix(c,vec3(.035,.095,.045),smoothstep(.5,.78,mo)*.65*(1.-cl));
+  float lt=smoothstep(.56,.78,vn(vW*.46+9.));c=mix(c,vec3(.17,.10,.04),lt*.6*(1.-cl));
+  float ds=smoothstep(.6,.85,vn(vW*.9+21.));c=mix(c,vec3(.10,.085,.05),ds*.35);
+  float gr=.78+.4*vn(vW*3.7)*vn(vW*13.+5.)+.18*(vn(vW*1.3)-.5);c*=gr;
+  vec2 ab=uSeg.zw-uSeg.xy;float t=clamp(dot(vW-uSeg.xy,ab)/dot(ab,ab),0.,1.);
+  float dp=length(vW-uSeg.xy-ab*t)+ (vn(vW*2.)-.5)*.5;
+  c=mix(c,vec3(.115,.085,.05)*(.8+.4*vn(vW*8.)),(1.-smoothstep(.45,1.25,dp))*.8);
+  float dq=length(vW-uPond.xy)-uPond.z;
+  c=mix(c,vec3(.03,.05,.03),(1.-smoothstep(0.,2.6,dq))*.65);
+  diffuseColor.rgb=c;
+}`);
+  };
+  m.customProgramCacheKey=()=>'stillground'+Q;
+  return m;
+}
+
 function makeDoor(){
   const root=new THREE.Group();
   const wood=new THREE.MeshStandardMaterial({color:0x6a4a2c,roughness:0.86});
@@ -132,27 +217,17 @@ function makeDoor(){
 
 export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=7}){
   const pond={x:((seed%5)-2)*2.2,z:-16,r:STILL.pondR};
+  const Q=o.low?0:1;
   cam.fov=72;cam.near=0.08;cam.far=160;
   const prevBg=scene.background;
   scene.background=new THREE.Color(0xc5ddd0);
   scene.fog=new THREE.FogExp2(0xc5ddd0,o.low?0.034:0.026);
-  group.add(new THREE.HemisphereLight(0xd5eee4,0x3d4e2c,0.85));
+  group.add(new THREE.HemisphereLight(0xd5eee4,0x4d6038,0.9));
   const sun=new THREE.DirectionalLight(0xfff0d0,1.55);
   sun.position.set(40,55,18);group.add(sun);
 
-  const ground=new THREE.Mesh(new THREE.CircleGeometry(96,28),new THREE.MeshStandardMaterial({color:0x3e5a34,roughness:1}));
+  const ground=new THREE.Mesh(new THREE.CircleGeometry(96,28),groundMaterial(Q,seed,pond));
   ground.rotation.x=-Math.PI/2;ground.position.y=0;group.add(ground);
-  const pathMat=new THREE.MeshStandardMaterial({color:0x6d7a52,roughness:1});
-  for(let i=1;i<=5;i++){
-    const stone=new THREE.Mesh(new THREE.CylinderGeometry(0.28,0.34,0.08,6),pathMat);
-    stone.position.set(pond.x*i/6,0.04,pond.z*i/6);group.add(stone);
-  }
-  const rockMat=new THREE.MeshStandardMaterial({color:0x8a9084,roughness:0.95});
-  for(let i=0;i<16;i++){
-    const a=i/16*Math.PI*2,rock=new THREE.Mesh(new THREE.DodecahedronGeometry(0.28+((i*5)%3)*0.06,0),rockMat);
-    rock.position.set(pond.x+Math.cos(a)*(pond.r+0.45),0.12,pond.z+Math.sin(a)*(pond.r+0.45));
-    rock.scale.y=0.6;group.add(rock);
-  }
   const beam=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.55,9,8,1,true),
     new THREE.MeshBasicMaterial({color:0xe7fff4,transparent:true,opacity:0.1,side:THREE.DoubleSide,depthWrite:false}));
   beam.position.set(pond.x,4.5,pond.z);group.add(beam);
@@ -177,62 +252,138 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   }));
   water.rotation.x=-Math.PI/2;water.position.set(pond.x,STILL.waterY,pond.z);group.add(water);
 
-  const pines=new THREE.InstancedMesh(pineGeometry(),new THREE.MeshStandardMaterial({vertexColors:true,roughness:0.9}),o.low?180:360);
-  const ferns=new THREE.InstancedMesh(fernGeometry(),new THREE.MeshStandardMaterial({vertexColors:true,roughness:1}),o.low?220:480);
-  pines.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  ferns.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  group.add(pines,ferns);
+  // ---- the wood: one InstancedMesh pair (near and far LOD) per baked kind and seed variant ----
+  const UT={value:0};
+  const mat=natureMaterial({Q,UT,sway:0.035});
+  const fam=(seed%3)*10;
+  const holders={};for(const p of PROPS)holders[p.kind]=placeholder(p.kind);
+  const slots=[],by={};
+  for(const p of PROPS){
+    by[p.kind]=[];
+    for(let i=0;i<p.n;i++){
+      const mk=cap=>{
+        const im=new THREE.InstancedMesh(holders[p.kind],mat,Math.ceil(cap*(o.low?0.6:1)));
+        im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);im.frustumCulled=false;im.count=0;group.add(im);return im;
+      };
+      const sl={kind:p.kind,i,id:p.kind+i,pseed:fam+i+1,opts:p.opts,far:p.far,near:mk(p.cap[0]),farM:mk(p.cap[1]),
+        r:TRUNK0[p.kind]||0,pad:TRUNK_PAD[p.kind]||0,ready:false};
+      slots.push(sl);by[p.kind].push(sl);
+    }
+  }
+  const slotById=Object.fromEntries(slots.map(s=>[s.id,s]));
   const dummy=new THREE.Object3D();
-  let trees=[],chunkX=1e9,chunkZ=1e9;
+  let trees=[],chunkX=1e9,chunkZ=1e9,deadClear=false;
+  const treeR=t=>t.s.r*t.k+t.s.pad*Math.min(1.2,t.k);
+  const pathAt=(x,z)=>segDist(x,z,0,0,pond.x,pond.z);
   const clearOf=(x,z)=>((x-pond.x)**2+(z-pond.z)**2<(pond.r+2.4)**2)||(x*x+z*z<5*5);
-  function trunkAt(x,z){return trees.some(t=>(t.x-x)**2+(t.z-z)**2<(t.r+0.9)**2)}
+  function trunkAt(x,z){return trees.some(t=>(t.x-x)**2+(t.z-z)**2<(treeR(t)+0.9)**2)}
+  const NEAR=o.low?12:18,reach=o.low?1:2;
   function rebuild(cx,cz){
     if(cx===chunkX&&cz===chunkZ)return;
     chunkX=cx;chunkZ=cz;trees=[];
-    let np=0,nf=0;
-    const reach=o.low?1:2;
+    for(const s of slots){s.near.count=0;s.farM.count=0}
+    const mx=cx*16,mz=cz*16,low=!!o.low;
+    // put one instance in a slot's near or far mesh by its distance from the chunk centre
+    const put=(kind,v,x,y,z,sxz,sy,rot)=>{
+      const arr=by[kind],sl=arr[Math.min(arr.length-1,Math.floor(v*arr.length))];
+      const d=Math.hypot(x-mx,z-mz);
+      if(d>sl.far*(low?0.8:1))return null;
+      const far=d>NEAR,im=far?sl.farM:sl.near;
+      if(im.count>=im.instanceMatrix.count)return null;
+      dummy.position.set(x,y,z);dummy.rotation.set(0,rot,0);dummy.scale.set(sxz,sy,sxz);dummy.updateMatrix();
+      im.setMatrixAt(im.count++,dummy.matrix);
+      return sl;
+    };
     for(let iz=-reach;iz<=reach;iz++)for(let ix=-reach;ix<=reach;ix++){
-      const ox=(cx+ix)*16,oz=(cz+iz)*16;
+      const ox=(cx+ix)*16-8,oz=(cz+iz)*16-8;
       for(let j=0;j<5;j++)for(let i=0;i<5;i++){
-        const x=ox+1.6+i*3.2,z=oz+1.6+j*3.2;
-        const h=hash2(Math.round(x*4),Math.round(z*4),seed);
-        if(clearOf(x,z)){
-          if(h>0.72&&nf<ferns.count){
-            dummy.position.set(x,0,z);dummy.scale.setScalar(0.7+h);dummy.rotation.y=h*6;
-            dummy.updateMatrix();ferns.setMatrixAt(nf++,dummy.matrix);
-          }
-          continue;
+        const x0=ox+1.6+i*3.2,z0=oz+1.6+j*3.2;
+        const R=k=>hr(x0,z0,seed,k);
+        const x=x0+(R(1)-0.5)*2.4,z=z0+(R(2)-0.5)*2.4;
+        const dPond=Math.hypot(x-pond.x,z-pond.z)-pond.r,dPath=pathAt(x,z),cf=clearField(x,z,seed);
+        const clearing=cf>CLEAR_AT,dd=Math.hypot(x-mx,z-mz);
+        const thin=dd>NEAR+22?(dd>NEAR+40?0.3:0.55):1; // far trees thin out into the fog
+        // trees: mostly fir, some oak, now and then a dead one
+        if(!clearing&&!clearOf(x,z)&&dPath>1.7&&R(3)<(low?0.4:0.5)&&R(10)<thin){
+          const kv=R(4),kind=kv<0.6?'fir':kv<0.92?'oak':'snag',g=R(6),sc=(kind==='fir'?0.8:0.85)+g*g*0.65;
+          const sl=put(kind,R(5),x,0,z,sc*(0.92+R(11)*0.16),sc,R(7)*6.283);
+          if(sl)trees.push({x,z,s:sl,k:sc});
         }
-        if(h<0.38)continue;
-        const sc=0.75+h*0.7;
-        if(np<pines.count){
-          dummy.position.set(x,0,z);dummy.rotation.y=h*12;dummy.scale.set(sc,0.85+h*0.5,sc);
-          dummy.updateMatrix();pines.setMatrixAt(np++,dummy.matrix);
-          trees.push({x,z,r:0.42*sc});
+        // shrubs: under the trees, thinner in the sun
+        const sx=x0+(R(12)-0.5)*3,sz=z0+(R(13)-0.5)*3,dPs=Math.hypot(sx-pond.x,sz-pond.z)-pond.r;
+        if(dPs>0.9&&pathAt(sx,sz)>1&&R(14)<(clearing?0.1:0.3)&&R(10)<thin)
+          put('shrub',R(15),sx,0,sz,0.75+R(16)*0.8,0.75+R(17)*0.7,R(18)*6.283);
+        // flower clumps: meadow clearings, round the pond and beside the path
+        const fx=x0+(R(19)-0.5)*3,fz=z0+(R(20)-0.5)*3,dPf=Math.hypot(fx-pond.x,fz-pond.z)-pond.r,pf=pathAt(fx,fz);
+        const wf=clearing?0.75:(dPf<6||pf<3.4)?0.45:0.04;
+        if(dPf>1&&pf>0.8&&R(21)<wf*(low?0.7:1)){
+          const kind=R(22)<0.5?'tulip':'daisy',s=0.8+R(23)*0.6;
+          put(kind,R(24),fx,0,fz,s,s,R(25)*6.283);
+          if(clearing&&R(26)<0.5){const a=R(27)*6.283,s2=0.7+R(28)*0.5;put(R(29)<0.5?'tulip':'daisy',R(30),fx+Math.cos(a)*1.1,0,fz+Math.sin(a)*1.1,s2,s2,R(31)*6.283)}
         }
-        if(h>0.55&&nf<ferns.count){
-          dummy.position.set(x+1.1*(h-0.5),0,z-0.8);dummy.scale.setScalar(0.55+h*0.4);dummy.rotation.y=h*4;
-          dummy.updateMatrix();ferns.setMatrixAt(nf++,dummy.matrix);
+        // loose stones
+        const qx=x0+(R(32)-0.5)*3,qz=z0+(R(33)-0.5)*3,dPq=Math.hypot(qx-pond.x,qz-pond.z)-pond.r;
+        if(dPq>1.4&&pathAt(qx,qz)>1.1&&R(34)<0.075){
+          const s=0.6+R(35)*0.9,mossy=R(36)<0.6;
+          put(mossy?'mossrock':'boulder',R(37),qx,-0.03,qz,s,s*(0.8+R(38)*0.4),R(39)*6.283);
         }
       }
     }
-    dummy.scale.set(0,0,0);dummy.updateMatrix();
-    for(;np<pines.count;np++)pines.setMatrixAt(np,dummy.matrix);
-    for(;nf<ferns.count;nf++)ferns.setMatrixAt(nf,dummy.matrix);
-    pines.instanceMatrix.needsUpdate=true;ferns.instanceMatrix.needsUpdate=true;
-    pines.computeBoundingSphere();ferns.computeBoundingSphere();
+    // a ring of stones round the water, open where the path arrives
+    const toDoor=Math.atan2(-pond.z,-pond.x);
+    for(let i=0;i<22;i++){
+      const a=i/22*6.283+(hash2(i,3,seed)-0.5)*0.18;
+      if(Math.abs(Math.atan2(Math.sin(a-toDoor),Math.cos(a-toDoor)))<0.3)continue;
+      const rad=pond.r+0.3+hash2(i,5,seed)*0.7,big=hash2(i,7,seed)<0.4,s=(big?0.8:0.55)+hash2(i,9,seed)*0.5;
+      put(hash2(i,11,seed)<0.65?'mossrock':'boulder',hash2(i,13,seed),pond.x+Math.cos(a)*rad,-0.04,pond.z+Math.sin(a)*rad,s,s*(0.7+hash2(i,15,seed)*0.3),hash2(i,17,seed)*6.283);
+    }
+    // stepping stones along the path to the pond
+    const L=Math.hypot(pond.x,pond.z),ux=pond.x/L,uz=pond.z/L;
+    for(let k=0,d=2.3;d<L-pond.r-0.6;k++,d+=1.7+hash2(k,2,seed)*0.5){
+      const lat=(hash2(k,4,seed)-0.5)*0.5;
+      put('slab',hash2(k,6,seed),ux*d-uz*lat,-0.07,uz*d+ux*lat,0.85+hash2(k,8,seed)*0.3,0.45,hash2(k,10,seed)*6.283);
+    }
+    for(const s of slots){s.near.instanceMatrix.needsUpdate=true;s.farM.instanceMatrix.needsUpdate=true}
   }
+  // bake in idle slices, one prop at a time; each lands in its InstancedMesh pair as soon as it is ready
+  const bake={t0:performance.now(),ms:0,done:0,total:BAKE_ORDER.length,cached:0,log:[]};
+  const applyProp=(sl,p)=>{
+    sl.near.geometry=p.near;sl.farM.geometry=p.far;sl.ready=true;
+    const r=trunkRadius(p.near);if(r>0&&TRUNK0[sl.kind])sl.r=r;
+    sl.tris=[p.near.attributes.position.count/3,p.far.attributes.position.count/3];
+  };
+  (async()=>{
+    for(const id of BAKE_ORDER){
+      if(deadClear)return;
+      const sl=slotById[id];
+      try{
+        const t=performance.now(),p=await getProp(sl.kind,sl.pseed,Object.assign({sliceMs:5},sl.opts));
+        if(deadClear)return;
+        applyProp(sl,p);bake.done++;if(p.stats&&p.stats.cached)bake.cached++;bake.log.push([id,Math.round(performance.now()-t)]);
+      }catch(e){console.warn('still wood bake',id,e);bake.done++}
+    }
+    bake.ms=performance.now()-bake.t0;S.ready=true;
+  })();
 
   const door=makeDoor();group.add(door);
-  const S={t:0,yaw:0,pitch:0,bloom:0.18,seed,pinned:false,hold:0,said:0,doorX:0,doorZ:4.2,doorFace:0};
+  const S={t:0,yaw:0,pitch:0,bloom:0.18,seed,pinned:false,hold:0,said:0,doorX:0,doorZ:4.2,doorFace:0,ready:false,bake};
   const walker=createRoomWalker({o,eye:EYE,x:0,z:0,collide:b=>{
     for(const t of trees){
-      const dx=b.x-t.x,dz=b.z-t.z,d=Math.hypot(dx,dz),m=0.32+t.r;
+      const dx=b.x-t.x,dz=b.z-t.z,d=Math.hypot(dx,dz),m=0.32+treeR(t);
       if(d<m&&d>1e-4){b.x=t.x+dx/d*m;b.z=t.z+dz/d*m}
     }
   }});
   const b=walker.b;
-  let prevX=b.x,prevZ=b.z;
+  S.WK=walker;
+  // what is on screen: instances x triangles of the LOD each one uses
+  S.stats=()=>{
+    let near=0,far=0,n=0,f=0;
+    for(const s of slots){
+      const nt=s.near.geometry.attributes.position.count/3,ft=s.farM.geometry.attributes.position.count/3;
+      near+=s.near.count*nt;far+=s.farM.count*ft;n+=s.near.count;f+=s.farM.count;
+    }
+    return {tris:Math.round(near+far),nearTris:Math.round(near),farTris:Math.round(far),nearInst:n,farInst:f,trees:trees.length,ready:S.ready,bake};
+  };
   const poseDoor=()=>{
     door.position.set(S.doorX,0,S.doorZ);
     door.rotation.y=Math.PI-S.doorFace;
@@ -288,11 +439,18 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     }else o.hud('<small>'+(A.label||'')+'</small>');
     poseDoor();
     ground.position.x=b.x;ground.position.z=b.z;
-    water.material.uniforms.uTime.value=S.t;
+    water.material.uniforms.uTime.value=S.t;UT.value=S.t;
     cam.position.set(b.x,EYE+b.y+bobY(b,walker.scale),b.z);
     cam.rotation.set(S.pitch,-S.yaw,0,'YXZ');
     prevX=b.x;prevZ=b.z;
   };
-  onClear(()=>{scene.background=prevBg;rt.dispose()});
+  onClear(()=>{
+    deadClear=true;scene.background=prevBg;rt.dispose();
+    const gs=new Set([ground.geometry,...Object.values(holders)]);
+    for(const s of slots){gs.add(s.near.geometry);gs.add(s.farM.geometry);s.near.dispose();s.farM.dispose()}
+    for(const g of gs)g.dispose();
+    mat.dispose();ground.material.dispose();water.geometry.dispose();water.material.dispose();
+    beam.geometry.dispose();beam.material.dispose();
+  });
   return S;
 }
