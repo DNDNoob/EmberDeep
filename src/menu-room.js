@@ -1,9 +1,11 @@
 import * as THREE from 'three';
 import {bobY, createRoomWalker, lookBy, lookStep} from './movement.js';
 import {createArchiveHall, worldSign} from './archive-hall.js';
-import {buildAsteroidLobby} from './asteroid-lobby.js';
+import {buildAsteroidLobby,TELESCOPE_PANEL} from './asteroid-lobby.js';
 import {createKeplerOrrery} from './kepler-orrery.js';
-import {advanceLiftMotion,createMineLanding,createMineRockGap,createShaftHead,landingMazeZ} from './mine-shaft.js';
+import {NEWS} from './news.js';
+import {DOOR,WALL_Z,buildHangar,buildHangarFront,wallRects} from './hangar.js';
+import {createMineLanding,createMineRockGap,createShaftHead,landingMazeZ} from './mine-shaft.js';
 
 const portals=[
   {id:'doors',x:-15.35,name:'Door Archive',color:0xb9c4ff},
@@ -11,14 +13,14 @@ const portals=[
   {id:'mobs',x:6.55,name:'Mob Archive',color:0xf3b29b},
   {id:'glitches',x:15.35,name:'Glitch Archive',color:0xd9b3f9}
 ];
-const wallZ=-7,eye=1.62,interval=8.2;
+const wallZ=-7,eye=1.62,floorMin=8.2,floorMax=17;
 const liftGateZ=-10.75,landingEntranceZ=landingMazeZ-0.8,liftExitHalfWidth=0.47;
 const terminalWidth=4.5,terminalHeight=2.98;
 const screenWidth=900,screenHeight=596;
 const clamp=THREE.MathUtils.clamp;
 export const onLiftPlatform=({x,z})=>Math.abs(x)<1.66&&z<wallZ-0.3&&z>liftGateZ;
 
-export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleFloor,prepareLanding,onLeavePanel,createVisitor}){
+export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleFloor,prepareLanding,landingGlimpse,passingLook,onLeavePanel,createVisitor}){
   const scene=new THREE.Scene();
   scene.background=new THREE.Color(0x14121d);
   scene.fog=new THREE.Fog(0x17151f,24,64);
@@ -42,6 +44,14 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   let sharedTexture=null,defaultSettingsTexture=null;
   let sharedLift=null,liftAway=false;
   let orrery;
+  const newsKey='emberdeep.newsSeen',newsStamp=NEWS[0].date+' '+NEWS[0].title;
+  let newsSeen=false;
+  try{newsSeen=localStorage.getItem(newsKey)===newsStamp}catch{}
+  const newsIdle=()=>['Update Log',(newsSeen?'LATEST':'NEW')+'  /  '+NEWS[0].title];
+  let active=true,study=null,studyYaw=0,studyPitch=0.28,studyDist=0.3,orreryAim=null;
+  const orreryHint=document.createElement('div');
+  orreryHint.style.cssText='position:fixed;left:0;right:0;bottom:22px;text-align:center;color:#ffe4bd;font:15px "Segoe UI",sans-serif;text-shadow:0 2px 6px #000;pointer-events:none;z-index:6';
+  document.body.appendChild(orreryHint);
 
   function box(parent,mat,x,y,z,w,h,d){
     const mesh=new THREE.Mesh(cube,mat);
@@ -88,9 +98,12 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       }else b.z=wallZ;
     }
     for(const desk of Object.values(terminals)){
-      if(Math.abs(b.x-desk.x)<2.48&&b.z>desk.z-0.45&&b.z<desk.z+0.57)b.z=desk.z+0.57;
+      const f=desk.f||1,d=f*(b.z-desk.z);
+      if(Math.abs(b.x-desk.x)<2.48&&d>-0.45&&d<0.57)b.z=desk.z+f*0.57;
     }
     orrery?.block(b);
+    const panel=TELESCOPE_PANEL;
+    if(Math.abs(b.z-panel.z)<panel.w*0.5+0.15&&b.x>panel.x-0.42)b.x=panel.x-0.42;
   }});
 
   scene.add(new THREE.HemisphereLight(0xddd5f9,0x877075,1.22));
@@ -99,8 +112,10 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   light(lobby,0x83b7ef,111,18.3,3.8,4,18);
   light(lobby,0xc3b4f4,163,0,7.9,4,30);
   box(lobby,dark,0,-0.19,3.97,41.1,0.35,21.94);
-  box(lobby,stone,0,2.29,15.03,41.4,4.62,0.18);
-  buildAsteroidLobby(lobby);
+  for(const [x0,x1,y0,y1] of wallRects(-0.02,4.6,20.7))box(lobby,stone,(x0+x1)/2,(y0+y1)/2,WALL_Z,x1-x0,y1-y0,0.18);
+  const hangar=buildHangar(lobby),hangarFront=buildHangarFront(lobby);
+  target(lobby,{locked:'hangar'},DOOR.x,DOOR.h/2,WALL_Z-0.12,DOOR.w,DOOR.h,0.1);
+  const skyMat=buildAsteroidLobby(lobby);
   orrery=createKeplerOrrery();
   lobby.add(orrery.group);
 
@@ -146,42 +161,43 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   for(const x of [-3.08,3.08])for(const y of [3.68,4.34])box(lobby,gold,x,y,wallZ+0.28,0.047,0.047,0.04);
   mounted(lobby,'DESCENT LIFT',0,3.47,wallZ+0.28,2.26,0.32,{font:'bold 105px Georgia'});
 
+  // The computers stand against the back wall (z 15) and face into the room (f=-1); the lift desk faces +z.
   for(const [id,x,z,name,sub] of [
-    ['settings',-9.35,-3.5,'Settings','Run setup · audio · graphics'],
-    ['guide',9.35,-3.5,'Field Guide','Controls · records · achievements']
+    ['settings',-9.35,13.95,'Settings','Run setup · audio · graphics'],
+    ['guide',9.35,13.95,'Field Guide','Controls · records · achievements'],
+    ['news',15.35,13.95,'Update Log','What\'s new in Door Simulator']
   ]){
-    const settings=id==='settings';
-    const w=settings?2.45:terminalWidth,h=settings?1.52:terminalHeight,y=settings?1.66:1.92;
-    terminals[id]={x,y,z,w,h};
-    box(lobby,iron,x,0.51,z-0.33,w*.70,1.03,0.58);
-    box(lobby,brass,x,0.075,z-0.15,w*.82,0.15,0.86);
-    box(lobby,iron,x,y,z-0.46,w+0.55,h+0.39,0.84);
-    box(lobby,brass,x,y,z-0.13,w+0.25,h+0.22,0.25);
-    box(lobby,black,x,y,z-0.021,w+0.045,h+0.045,0.039);
-    const screen=worldSign(lobby,[name,'READY  /  '+sub],x,y,z+0.012,w,h,{
-      color:id==='settings'?'#a9e5d7':'#f4d9ab',background:'#101b20',border:'#345453',
+    const settings=id==='settings',f=-1;
+    const w=terminalWidth,h=terminalHeight,y=1.92;
+    terminals[id]={x,y,z,w,h,f};
+    const desk=new THREE.Group();
+    desk.position.set(x,0,z);desk.rotation.y=Math.PI;lobby.add(desk);
+    box(desk,iron,0,0.51,-0.33,w*.70,1.03,0.58);
+    box(desk,brass,0,0.075,-0.15,w*.82,0.15,0.86);
+    box(desk,iron,0,y,-0.46,w+0.55,h+0.39,0.84);
+    box(desk,brass,0,y,-0.13,w+0.25,h+0.22,0.25);
+    box(desk,black,0,y,-0.021,w+0.045,h+0.045,0.039);
+    const screen=worldSign(desk,id==='news'?newsIdle():[name,'READY  /  '+sub],0,y,0.012,w,h,{
+      color:id==='settings'?'#a9e5d7':id==='news'?'#bcd9f4':'#f4d9ab',background:'#101b20',border:'#345453',
       font:'600 57px monospace',subFont:'500 20px monospace'
     });
-    stationLabels[id]={name,sub,screen,text:''};
-    const panelBase=box(lobby,iron,x,0.49,z+0.27,w*.80,0.17,0.61);
+    stationLabels[id]={name,sub,screen,text:'',idle:id==='news'?newsIdle:null};
+    const panelBase=box(desk,iron,0,0.49,0.27,w*.80,0.17,0.61);
     panelBase.rotation.x=0.06;
     const keys=new THREE.InstancedMesh(keyGeometry,keyMaterial,56);
     for(let i=0;i<56;i++){
       const row=Math.floor(i/14);
-      const key=new THREE.Matrix4().makeScale(w/terminalWidth,1,1);
-      key.setPosition(x+(i%14-6.5)*0.214*w/terminalWidth,0.596-row*0.008,z+0.08+row*0.126);
+      const key=new THREE.Matrix4();
+      key.setPosition((i%14-6.5)*0.214,0.596-row*0.008,0.08+row*0.126);
       keys.setMatrixAt(i,key);
     }
-    lobby.add(keys);
+    desk.add(keys);
     for(const side of [-1,1])for(let i=0;i<10;i++){
-      box(lobby,black,x+side*(w/2+.22),y-.45+i*0.095,z-0.025,0.12,0.039,0.036);
+      box(desk,black,side*(w/2+.22),y-.45+i*0.095,-0.025,0.12,0.039,0.036);
     }
-    box(lobby,settings?green:gold,x+w*.45,y-h/2-.13,z+0.012,0.071,0.041,0.024);
-    target(lobby,{station:id},x,y,z+0.025,w,h,0.04);
+    box(desk,settings?green:gold,w*.45,y-h/2-.13,0.012,0.071,0.041,0.024);
+    target(desk,{station:id},0,y,0.025,w,h,0.04);
   }
-  mounted(lobby,['ENTRANCE HALL','WASD or left stick to walk · E, X or click to interact'],0,1.65,14.916,5,0.69,{
-    font:'600 74px Georgia',subFont:'500 35px "Segoe UI"',reverse:true
-  });
 
   const overhead=[];
   const cabin=new THREE.Group(),well=new THREE.Group();
@@ -237,12 +253,18 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   target(cabin,{lift:true},liftDesk.x,liftDesk.y,liftDesk.z+0.025,liftDesk.w,liftDesk.h,0.07);
   const shaftSections=[];
   for(let i=0;i<5;i++){
-    const section=createMineLanding({height:interval,sampleFloor,numberSign:(parent,z)=>
+    const section=createMineLanding({height:floorMin,sampleFloor,numberSign:(parent,z)=>
       mounted(parent,'',0,3.33,z,1.72,0.39,{font:'bold 96px monospace',subFont:'500 43px monospace'})});
+    section.group.traverse(child=>child.layers.set(i+1));
+    camera.layers.enable(i+1);
     well.add(section.group);shaftSections.push(section);
   }
-  const rockGap=createMineRockGap();
-  well.add(rockGap.group);
+  const sleeves=[];
+  for(let i=0;i<shaftSections.length;i++){
+    const sleeve=createMineRockGap();
+    sleeve.group.traverse(child=>child.layers.set(i+1));
+    well.add(sleeve.group);sleeves.push(sleeve);
+  }
   well.visible=false;
   let indication=null;
   function indicators(depth){
@@ -272,11 +294,26 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   }
   function engageLift(depth,seed,group=null){
     if(ride||liftAway||!onLiftPlatform(walker.b))return false;
-    ride={depth,travel:0,extra:0,speed:0,seed,group,task:prepareLanding(seed,depth),docked:false,gate:0,onLanding:false};
-    cage.visible=true;well.visible=true;
-    liftLabel.setLabel(['FLOOR '+depth,'PREPARING MAZE'],true,0);
-    indicators(1);sfx('door');
+    const solo=!group?.follow;
+    ride={depth,travel:0,extra:0,speed:0,seed,group,task:prepareLanding(seed,depth),docked:false,gate:0,onLanding:false,
+      count:solo?3:0,countAt:0,warm:1,calm:solo?0.45:0,shown:!solo,stretch:new Float64Array(depth+1),settle:new Uint8Array(depth+1)};
+    cage.visible=true;
+    if(!solo)well.visible=true;
+    liftLabel.setLabel(ride.count?['3','FLOOR '+depth]:['FLOOR '+depth,'PREPARING MAZE'],true,0);
+    indicators(1);sfx(ride.count?'ding':'door');
     return true;
+  }
+  function floorDist(n){
+    let d=0;
+    for(let i=1;i<=n;i++)d+=floorMin+ride.stretch[i];
+    return d;
+  }
+  function tickCountdown(dt){
+    if(ride.count<=0)return;
+    ride.countAt+=dt;
+    if(ride.countAt<1)return;
+    ride.countAt-=1;ride.count--;
+    if(ride.count>0){sfx('ding');liftLabel.setLabel([String(ride.count),'FLOOR '+ride.depth],true,(3-ride.count)/3)}
   }
   function tickLift(dt,previousZ){
     if(!ride)return;
@@ -289,43 +326,86 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       }
       return;
     }
-    ride.task.advance();
-    const destination=ride.depth*interval;
+    const following=!!ride.group?.follow;
+    // The count is only the numbers and the ding. Loading starts after the car is released.
+    if(!following&&ride.count>0){
+      tickCountdown(dt);
+      if(!ride.shown){ride.shown=true;well.visible=true}
+      placeShaft(true);
+      return;
+    }
+    if(ride.settle)for(let i=1;i<ride.settle.length;i++)if(ride.settle[i]===2)ride.settle[i]=1;
+    if(!following&&ride.task&&!ride.task.ready)ride.task.advance();
+    else if(ride.warm<=ride.depth)landingGlimpse(ride.seed,ride.warm++,true);
     let arriving;
-    if(ride.group?.follow){
+    if(following){
       const motion=ride.group.follow();
       if(!motion)return;
-      // Match the pilot's car. Local generation can continue during transit.
+      if(motion.gaps&&ride.stretch)for(let i=0;i<ride.stretch.length&&i<motion.gaps.length;i++)ride.stretch[i]=motion.gaps[i];
       const k=1-Math.exp(-Math.min(dt,0.055)*8);
+      const destination=floorDist(ride.depth);
       ride.travel+=(motion.travel-ride.travel)*k;
-      ride.extra+=(motion.extra-ride.extra)*k;
-      arriving=motion.docked&&ride.task.ready&&destination-ride.travel<0.015&&motion.extra-ride.extra<0.015;
-      if(arriving){ride.travel=destination;ride.extra=motion.extra}
+      arriving=motion.docked&&ride.task.ready&&destination-ride.travel<0.04;
+      if(arriving)ride.travel=destination;
     }else{
-      const ready=ride.task.ready&&(!ride.group||ride.group.ready());
-      arriving=advanceLiftMotion(ride,dt,destination,ready);
+      const step=Math.min(dt,0.055);
+      const destination=floorDist(ride.depth);
+      const cruise=THREE.MathUtils.clamp(Math.max(destination,floorMin)/18,2.4,5);
+      let next=1,acc=0;
+      while(next<=ride.depth&&acc+floorMin+ride.stretch[next]<=ride.travel+0.04){acc+=floorMin+ride.stretch[next];next++}
+      next=Math.min(next,ride.depth);
+      if(next<ride.depth&&ride.settle[next]===0&&landingGlimpse(ride.seed,next,false))ride.settle[next]=1;
+      const loaded=next<ride.depth?ride.settle[next]===1:!!(ride.task&&ride.task.ready&&(!ride.group||ride.group.ready()));
+      const open=Math.max(0,floorMax-floorMin-ride.stretch[next]);
+      const closing=loaded||open<=0;
+      const desired=closing?Math.min(cruise,Math.sqrt(2*1.6*Math.max(0,destination-ride.travel))):cruise;
+      const prev=ride.speed;
+      ride.speed=prev+THREE.MathUtils.clamp(desired-prev,-2.1*step,2.1*step);
+      const movement=Math.max(0,(prev+ride.speed)*0.5*step);
+      if(!loaded&&open>0){
+        const copy=Math.min(open,Math.max(movement,step*3.2));
+        ride.stretch[next]+=copy;ride.travel+=copy;
+      }else ride.travel=Math.min(floorDist(ride.depth),ride.travel+movement);
+      const destNow=floorDist(ride.depth);
+      arriving=loaded&&next===ride.depth&&destNow-ride.travel<=0.03;
+      if(arriving)ride.travel=destNow;
     }
-    const current=Math.max(1,Math.ceil(ride.travel/interval));
-    indicators(current);
-    cabin.position.y=-ride.travel-ride.extra;
+    let passed=0,cursor=0;
+    while(passed<ride.depth&&cursor+floorMin+ride.stretch[passed+1]<=ride.travel+0.2){cursor+=floorMin+ride.stretch[passed+1];passed++}
+    indicators(Math.max(1,Math.min(ride.depth,passed+1)));
+    cabin.position.y=-ride.travel;
     lobby.visible=cabin.position.y>-4.5;
-    rockGap.resize(-destination+interval,ride.extra);
-    const progress=Math.round(Math.min(0.99,(ride.travel/destination)*0.68+ride.task.progress*0.32)*100);
+    const destination=floorDist(ride.depth);
+    const progress=Math.round(Math.min(0.99,(ride.travel/Math.max(destination,1))*0.68+(ride.task?ride.task.progress:1)*0.32)*100);
     if(progress!==ride.progress){
       ride.progress=progress;
       liftLabel.setLabel(['FLOOR '+ride.depth,'DESCENDING  '+progress+'%'],true,progress/100);
     }
-    const base=Math.max(0,Math.floor(ride.travel/interval)-1);
-    for(let number=base;number<base+shaftSections.length;number++){
-      const section=shaftSections[number%shaftSections.length];
-      section.group.position.y=-number*interval-(number>=ride.depth?ride.extra:0);
-      section.update(ride.seed,number,number===ride.depth?ride.task.floor:undefined);
-      section.setMaze(number===ride.depth?ride.task.model:null);
-    }
+    placeShaft(true);
     if(arriving){
       ride.docked=true;
       liftLabel.setLabel(['FLOOR '+ride.depth,'WALK INTO MAZE'],true,1);
       sfx('descend');
+    }
+    function placeShaft(dress){
+      let budget=dress?1:0,acc=0,base=0;
+      while(base<ride.depth&&acc+floorMin+ride.stretch[base+1]<=ride.travel){acc+=floorMin+ride.stretch[base+1];base++}
+      base=Math.max(0,base-1);
+      for(let number=base;number<base+shaftSections.length;number++){
+        const section=shaftSections[number%shaftSections.length];
+        const y=number===0?0:-floorDist(Math.min(number,ride.depth));
+        section.group.position.y=number>ride.depth?y-(number-ride.depth)*floorMin:y;
+        section.group.visible=number<=ride.depth;
+        const destined=number===ride.depth&&ride.task.model;
+        const showMouth=number>0&&number<=ride.depth&&!destined;
+        const glimpse=showMouth?landingGlimpse(ride.seed,number,false):null;
+        const look=number===ride.depth&&ride.task.floor?ride.task.floor:(showMouth?passingLook(number):null);
+        if(budget>0&&section.update(ride.seed,number,look))budget--;
+        section.setMaze(destined?ride.task.model:glimpse);
+        const sleeve=sleeves[number%shaftSections.length];
+        if(number>=1&&number<=ride.depth)sleeve.resize(-floorDist(number-1),ride.stretch[number]);
+        else sleeve.resize(0,0);
+      }
     }
   }
   function resetLift(){
@@ -340,7 +420,10 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     channel=null;
     Object.assign(walker.b,{x:0,z:13.1,y:0,vx:0,vz:0,vy:0,jumpQ:0,bob:0});
     view.yaw=view.pitch=0;
+    study=null;orreryHint.textContent='';
   }
+  // the lobby is only the active view on the title screen; elsewhere it shows no hint and ignores the orrery keys
+  function setActive(on){active=!!on;if(!active){study=null;orreryHint.textContent=''}}
   function syncArchives(groups){
     for(const portal of portals){
       const entries=groups[portal.id],known=entries.filter(e=>e.data).length;
@@ -362,7 +445,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     for(const hit of raycaster.intersectObjects(targets,false)){
       const entry=hit.object.userData.entry;
       if(entry.lift&&(ride||walker.b.z>wallZ-0.3||hit.distance>4.3))continue;
-      if(entry.station&&walker.b.z<=terminals[entry.station].z+0.06)continue;
+      if(entry.station&&(terminals[entry.station].f||1)*(walker.b.z-terminals[entry.station].z)<=0.06)continue;
       if(ride&&!entry.lift)continue;
       if(entry.kind){
         const portal=portals.find(p=>p.id===entry.kind);
@@ -378,7 +461,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     const desk=terminals[id];
     const w=desk.w||terminalWidth,h=desk.h||terminalHeight;
     const projected=panelCorners.map(([x,y])=>{
-      worldPoint.set(desk.x+x*w/terminalWidth,desk.y+y*h/terminalHeight,desk.z+0.015);
+      worldPoint.set(desk.x+(desk.f||1)*x*w/terminalWidth,desk.y+y*h/terminalHeight,desk.z+(desk.f||1)*0.015);
       worldPoint.applyMatrix4(camera.matrixWorldInverse);
       if(worldPoint.z>=-camera.near)return null;
       worldPoint.applyMatrix4(camera.projectionMatrix);
@@ -402,17 +485,52 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     form.style.visibility='visible';
     return true;
   }
+  function beginStudy(id){
+    const anchor=orrery.focus(id);
+    if(!study)studyYaw=Math.atan2(anchor.x-camera.position.x,anchor.z-camera.position.z);
+    studyPitch=study?studyPitch:0.28;
+    studyDist=orrery.reach(id);
+    study=id;
+  }
   function pose(){
+    if(study){
+      const anchor=orrery.focus(study);
+      const cp=Math.cos(studyPitch),sp=Math.sin(studyPitch);
+      camera.position.set(anchor.x+Math.sin(studyYaw)*cp*studyDist,anchor.y+sp*studyDist,anchor.z+Math.cos(studyYaw)*cp*studyDist);
+      camera.lookAt(anchor);
+      if(camera.near!==0.008){camera.near=0.008;camera.updateProjectionMatrix()}
+      camera.updateMatrixWorld();
+      return;
+    }
+    if(camera.near!==0.06){camera.near=0.06;camera.updateProjectionMatrix()}
     const {x,y,z}=walker.b;
-    camera.position.set(x,eye+y+bobY(walker.b,walker.scale)+cabin.position.y,z);
+    camera.position.set(x,eye+y+bobY(walker.b,walker.scale)+(ride?cabin.position.y:0),z);
     camera.rotation.set(view.pitch,-view.yaw,0,'YXZ');camera.updateMatrixWorld();
+  }
+  function watchLift(motion){
+    if(ride)return;
+    if(!motion){
+      if(cabin.position.y!==0||well.visible){
+        cabin.position.y=0;well.visible=cage.visible=awayGate.visible=false;lobby.visible=true;
+        cabin.visible=!liftAway;
+      }
+      return;
+    }
+    const y=-(motion.travel||0)-(motion.extra||0);
+    const gone=y<-3.2;
+    cabin.visible=true;well.visible=true;cage.visible=y<-0.15;awayGate.visible=gone;
+    cabin.position.y=y;
+    // The hall stays put for whoever did not board. Only the car and its riders drop.
+    if(gone&&channel==='lift'){channel=null;walker.b.z=Math.max(walker.b.z,wallZ+0.05)}
   }
   function syncVisitors(peers,dt,time){
     const seen=new Set(),users={};
     for(const peer of peers){
       const p=peer.hub;
-      if(ride?p.ride!==ride.group?.id:!!p.ride)continue;
-      const parent=ride?cabin:lobby;
+      // In the car, only the people who boarded are in here. From the hall, riders
+      // stay visible inside the cabin so a departure doesn't blink them out.
+      if(ride&&p.ride!==ride.group?.id)continue;
+      const parent=(ride||p.ride)?cabin:lobby;
       seen.add(peer.id);
       let visitor=visitors.get(peer.id);
       if(!visitor){
@@ -440,23 +558,32 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       if(label.text===name)continue;
       label.text=name;
       if(name)label.screen.setLabel([label.name,name+' at terminal']);
-      else label.screen.setLabel([label.name,'READY  /  '+label.sub]);
+      else label.screen.setLabel(label.idle?label.idle():[label.name,'READY  /  '+label.sub]);
     }
   }
   function update(dt,input=zero,elapsed=dt){
-    lookStep(view,dt,input.lx,input.ly);
+    if(study){
+      studyYaw-=input.lx*dt*2.2;
+      studyPitch=clamp(studyPitch-input.ly*dt*2.2,-1.05,1.15);
+    }else lookStep(view,dt,input.lx,input.ly);
     const previousZ=walker.b.z;
-    walker.step(dt,input,view.yaw);
+    if(!study)walker.step(dt,input,view.yaw);
     tickLift(Math.min(elapsed,0.25),previousZ);
     pose();if(ride)cabin.updateMatrixWorld(true);
     if(panel){
       const desk=terminals[panel];
-      if(panel==='lift'&&!onLiftPlatform(walker.b)||walker.b.z<=desk.z+0.08||
+      if(panel==='lift'&&!onLiftPlatform(walker.b)||(desk.f||1)*(walker.b.z-desk.z)<=0.08||
         Math.hypot(walker.b.x-desk.x,walker.b.z-desk.z)>(panel==='lift'?4:6.5))onLeavePanel();
     }
     focus=aim();
+    raycaster.setFromCamera(pointer.set(0,0),camera);
+    orreryAim=orrery?.pick(raycaster)||null;
+    orreryHint.textContent=!active?'':study
+      ? `Close view of ${orrery.name(study)}. Click another body to go there. Scroll to move closer. Q walks again.`
+      : orreryAim ? `E: look closer at ${orrery.name(orreryAim)}` : '';
   }
   function render(exposure,time){
+    if(skyMat&&skyMat.uniforms)skyMat.uniforms.uTime.value=time||0;
     const width=innerWidth,height=innerHeight;
     const aspect=width/height;
     const baseFov=Math.min(105,Math.max(61,THREE.MathUtils.radToDeg(2*Math.atan(0.78/aspect))));
@@ -470,15 +597,25 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     pose();
     const sharedVisible=sharedSettings&&!sharedSettings.hidden;
     if(sharedVisible){
-      if(ride||walker.b.z<=terminals.settings.z+0.08)sharedSettings.style.visibility='hidden';
+      if(ride||terminals.settings.f*(walker.b.z-terminals.settings.z)<=0.08)sharedSettings.style.visibility='hidden';
       else if(!projectPanel(width,height,'settings',sharedSettings)&&panel==='settings')onLeavePanel();
     }
-    if(panel&&!(sharedVisible&&panel==='settings')&&!projectPanel(width,height,panel,stationForm))onLeavePanel();
+    if(panel&&!(sharedVisible&&panel==='settings')&&!projectPanel(width,height,panel,stationForm))stationForm.style.visibility='hidden';
     if(!ride)for(const hall of galleries.values())hall.animate(time,camera.position);
     orrery.animate(time);
+    hangar.update(time||0);hangarFront.update(time||0);
+    if(skyMat&&skyMat.uniforms&&skyMat.uniforms.uBody)orrery.fillWindow(skyMat.uniforms,time||0);
+    pose();
     renderer.toneMappingExposure=exposure;renderer.setRenderTarget(null);renderer.render(scene,camera);
   }
-  return {update,render,syncArchives,syncVisitors,liftMode,setSharedLift,engageLift,reset,resetLift,
+  function markNewsSeen(){
+    if(newsSeen)return;
+    newsSeen=true;
+    try{localStorage.setItem(newsKey,newsStamp)}catch{}
+    const label=stationLabels.news;
+    if(!label.text)label.screen.setLabel(newsIdle());
+  }
+  return {update,render,markNewsSeen,get newsUnseen(){return !newsSeen},syncArchives,syncVisitors,watchLift,liftMode,setSharedLift,engageLift,reset,resetLift,setActive,
     sharedSettings(screen,display){
       sharedSettings=screen;
       sharedTexture=new THREE.CanvasTexture(display);
@@ -492,27 +629,65 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     },
     settingsInReach(position){
       const desk=terminals.settings;
-      const dz=position.z-desk.z,dx=Math.max(0,Math.abs(position.x-desk.x)-desk.w/2);
+      const dz=desk.f*(position.z-desk.z),dx=Math.max(0,Math.abs(position.x-desk.x)-desk.w/2);
       return dz>0&&Math.abs(position.y)<1.5&&Math.hypot(dx,dz)<=1.524;
     },
     get boarded(){return !liftAway&&onLiftPlatform(walker.b)},
     get riding(){return !!ride},
-    get liftMotion(){return ride&&{travel:ride.travel,extra:ride.extra,docked:ride.docked}},
+    primeShaft(){
+      if(ride)return;
+      const hidden=!well.visible;
+      well.visible=true;
+      camera.updateMatrixWorld();
+      try{renderer.compile(scene,camera)}catch(e){}
+      if(hidden)well.visible=false;
+    },
+    get liftMotion(){return ride&&{travel:ride.travel,extra:0,docked:ride.docked,gaps:Array.from(ride.stretch)}},
+    get hangarStats(){return hangar.stats()},
     get aimed(){return !!focus},
+    setSkyTime(t){if(skyMat&&skyMat.uniforms)skyMat.uniforms.uTime.value=t},
+    get skyTime(){return skyMat&&skyMat.uniforms?skyMat.uniforms.uTime.value:0},
     get position(){return {x:walker.b.x,z:walker.b.z,y:cabin.position.y,depth:indication,docked:!!ride?.docked}},
     get presence(){return {x:walker.b.x,y:walker.b.y,z:walker.b.z,yaw:view.yaw,station:panel,ride:ride?.group?.id,ready:!!ride?.task.ready}},
-    look:(dx,dy)=>lookBy(view,dx,dy),focusPanel:id=>{
+    place(x,z,yaw=0,pitch=0){Object.assign(walker.b,{x,z,vx:0,vz:0});view.yaw=yaw;view.pitch=pitch},
+    look:(dx,dy)=>{
+      if(study){
+        studyYaw-=dx;
+        studyPitch=clamp(studyPitch-dy,-1.05,1.15);
+        return;
+      }
+      lookBy(view,dx,dy);
+    },focusPanel:id=>{
       if(!id){panel=null;return}
       stationForm.style.visibility='hidden';
       panel=id;
     },
     interact(){
-      if(focus)activate(focus);
-      else if(walker.b.z<wallZ-0.3&&Math.abs(walker.b.x)<1.66)activate({lift:true});
+      if(focus){activate(focus);return}
+      if(study){
+        if(orreryAim&&orreryAim!==study)beginStudy(orreryAim);
+        else if(!orreryAim)study=null;
+        return;
+      }
+      if(orreryAim){beginStudy(orreryAim);return}
+      if(walker.b.z<wallZ-0.3&&Math.abs(walker.b.x)<1.66)activate({lift:true});
     },
     tap(x,y){
       const hit=aim(x,y);
-      if(!hit)return false;
-      activate(hit);return true;
+      if(hit){activate(hit);return true}
+      raycaster.setFromCamera(pointer.set(x,y),camera);
+      const id=orrery?.pick(raycaster);
+      if(!id)return false;
+      beginStudy(id);
+      return true;
     }};
+  addEventListener('keydown',e=>{
+    if(!active||!study)return;
+    if(e.code==='KeyQ'||e.code==='Escape'||e.code==='Backspace')study=null;
+  });
+  addEventListener('wheel',e=>{
+    if(!active||!study)return;
+    const min=orrery.reach(study)*0.45,max=Math.max(1.6,orrery.reach(study)*8);
+    studyDist=clamp(studyDist*(e.deltaY>0?1.1:0.9),min,max);
+  },{passive:true});
 }

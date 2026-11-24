@@ -16,7 +16,9 @@ import {createTheater} from './theater.js';
 import {monolithRoom} from './monoliths.js';
 import {mooseDefenseRoom} from './moose-defense.js';
 import {stillwoodRoom} from './stillwood.js';
+import {hamletRoom} from './hamlet.js';
 import {MOVE,lookStep,lookBy,bobAdvance,bobY,createRoomWalker} from './movement.js';
+import {spotted} from './room-mobs.js';
 
 // Order is part of seeded door rotation. Add new IDs at the end.
 export const DOOR_KINDS={
@@ -28,6 +30,7 @@ export const DOOR_KINDS={
   monoliths:{name:'the whispering monoliths',look:'monoliths',touchUse:false},
   moose:{name:'Mosquito Outpost',look:'moose',css:'mooseroom'}, // walkable arcade with a tabletop camera
   stillwood:{name:'a door into the still wood',look:'stillwood',touchUse:false},
+  hamlet:{name:'a door into a little village',look:'hamlet'},
 };
 const modeOf=k=>DOOR_KINDS[k]?.mode||'walk';
 
@@ -246,7 +249,8 @@ class RoomGTAOPass extends GTAOPass {
 export function createRooms(renderer,o0){
   // a watcher is not the one in the room: no speech or shaking for them, and a fast-forward makes no sound
   const o=Object.assign({},o0,{say:(...a)=>{if(!A.watching)o0.say(...a)},rumble:(...a)=>{if(!A.watching)o0.rumble(...a)},
-    tone:(...a)=>{if(!A.mute)o0.tone(...a)},noise:(...a)=>{if(!A.mute)o0.noise(...a)},hint:k=>A.watching?A.label:o0.hint(k),gems:n=>{if(!A.watching&&o0.gems)o0.gems(n)},sfx:n=>{if(!A.mute&&!A.watching&&o0.sfx)o0.sfx(n)}});
+    tone:(...a)=>{if(!A.mute)o0.tone(...a)},noise:(...a)=>{if(!A.mute)o0.noise(...a)},hint:k=>A.watching?A.label:o0.hint(k),gems:n=>{if(!A.watching&&o0.gems)o0.gems(n)},sfx:n=>{if(!A.mute&&!A.watching&&o0.sfx)o0.sfx(n)},
+    mob:(id,seed)=>{if(!A.watching&&o0.mob)o0.mob(id,seed)}});
   const nf=v=>typeof v==='number'&&isFinite(v),Z={mx:0,my:0,press:0,lx:0,ly:0};
   const scene=new THREE.Scene(),cam=new THREE.PerspectiveCamera(72,1,0.05,2000);
   scene.background=new THREE.Color(0x000000);
@@ -1264,6 +1268,9 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       const mp=S.pose(t),cp=Math.cos(S.pitch),fx=Math.sin(S.yaw)*cp,fy=Math.sin(S.pitch),fz=-Math.cos(S.yaw)*cp;
       let dx=mp.x-S.px,dy=2.2-S.eyeY,dz=mp.z-S.pz;const dl=Math.hypot(dx,dy,dz)||1;
       const seen=(dx*fx+dy*fy+dz*fz)/dl>MIR.LOOK&&t>=MIR.WALK;S.lk=lerp(S.lk,seen?1:0,Math.min(1,dt*8));
+      if(!W&&!S.noted&&t>=MIR.ENTER+0.35&&mp.x<40&&spotted([S.px,S.eyeY,S.pz],[fx,fy,fz],[mp.x,2.2,mp.z])){
+        S.noted=true;o.mob?.('guest',S.seed);
+      }
       if(mp.wa>0&&S.ch!==2){const a=Math.floor(mp.w/Math.PI);if(S.fs!==undefined&&a!==S.fs){o.tone(50,0.14,'sine',0.25);o.noise(0.14,0.25,110,0.8)}S.fs=a}else S.fs=undefined;
       // is the can under the crosshair? a generous ray test, and the only thing that ever says so
       {const ey=S.eyeY;let tg='';const c=S.canC,rx=c[0]-S.px,ry=c[1]-ey,rz=c[2]-S.pz,al=rx*fx+ry*fy+rz*fz;
@@ -1500,7 +1507,8 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
   const monoliths=(seed=7)=>monolithRoom({group,cam,o,A,finish,rand:rng32(seed),seed});
   const moose=()=>mooseDefenseRoom({group,scene,cam,o,A,finish,onClear:fn=>clearHooks.push(fn)});
   const stillwood=(seed=7)=>stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear:fn=>clearHooks.push(fn),seed});
-  const KINDS={galaxy,fall,kiln,mirror,theater,monoliths,moose,stillwood};
+  const hamlet=(seed=7)=>hamletRoom({group,scene,cam,o,A,finish,onClear:fn=>clearHooks.push(fn),seed});
+  const KINDS={galaxy,fall,kiln,mirror,theater,monoliths,moose,stillwood,hamlet};
   for(const kind of Object.keys(DOOR_KINDS))if(!Object.hasOwn(KINDS,kind))throw new Error('Missing room factory for '+kind);
   A.mode=modeOf;
   A.controlMode=()=>cur?.controlMode?.()||modeOf(A.kind);

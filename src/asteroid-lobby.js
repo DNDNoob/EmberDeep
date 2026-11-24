@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {TELESCOPE_MAG} from './kepler-orrery.js';
 
 const halfWidth=20.65, front=-7.14, rear=15.12, spring=5.5, rise=5.65;
 const rockMaterial=new THREE.MeshStandardMaterial({vertexColors:true,roughness:0.94,side:THREE.DoubleSide});
@@ -118,8 +119,21 @@ function rockFace(parent,side,z0,z1,bottom,top,seed){
 }
 
 function observationWindow(parent){
+  const body=()=>new THREE.Vector4();
+  const tint=()=>new THREE.Vector3(1,1,1);
   const shader=new THREE.ShaderMaterial({
     side:THREE.DoubleSide,
+    uniforms:{
+      uTime:{value:0},
+      uMag:{value:1},
+      uRoll:{value:0},
+      uStation:{value:new THREE.Vector3()},
+      uForward:{value:new THREE.Vector3(1,0,0)},
+      uRight:{value:new THREE.Vector3(0,0,1)},
+      uUp:{value:new THREE.Vector3(0,1,0)},
+      uBody:{value:[body(),body(),body(),body(),body(),body(),body(),body()]},
+      uTint:{value:[tint(),tint(),tint(),tint(),tint(),tint(),tint(),tint()]}
+    },
     vertexShader:`
       varying vec3 world;
       varying vec2 pane;
@@ -131,6 +145,15 @@ function observationWindow(parent){
     fragmentShader:`
       varying vec3 world;
       varying vec2 pane;
+      uniform float uTime;
+      uniform float uMag;
+      uniform float uRoll;
+      uniform vec3 uStation;
+      uniform vec3 uForward;
+      uniform vec3 uRight;
+      uniform vec3 uUp;
+      uniform vec4 uBody[8];
+      uniform vec3 uTint[8];
       float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
       vec3 stars(vec2 p,float scale,float chance,float seed){
         vec2 cell=floor(p*scale),uv=fract(p*scale);
@@ -141,38 +164,63 @@ function observationWindow(parent){
         float bright=(1.0-smoothstep(0.035,width*1.07+0.066,d))*step(chance,luck);
         return bright*mix(vec3(0.29,0.54,0.99),vec3(1.0,0.78,0.54),hash(cell+19.5))*(0.29+0.63*luck);
       }
-      vec3 planet(vec3 sky,vec2 coords,vec2 center,float r,vec3 base,vec3 pale,float bands){
-        vec2 p=(coords-center)/r;
-        float d=dot(p,p),edge=max(fwidth(d),0.013);
-        vec3 n=vec3(p,sqrt(max(0.0,1.0-d)));
-        float sunlight=smoothstep(-0.17,0.49,dot(n,normalize(vec3(-0.61,0.64,0.52))));
-        float stripe=sin(p.y*22.0+p.x*2.0+sin(p.x*5.0+p.y*7.0)*1.15);
-        float clouds=smoothstep(0.24,0.81,stripe*0.5+0.5);
-        float rim=pow(max(0.0,1.0-n.z),2.8);
-        vec3 surface=mix(base,pale,0.22+clouds*bands)*(0.09+0.92*sunlight)+pale*rim*sunlight*0.26;
-        sky+=pale*exp(-max(0.0,sqrt(d)-1.0)*24.0)*step(1.0,d)*0.105;
-        return mix(sky,surface,1.0-smoothstep(1.0-edge,1.0+edge,d));
+      vec3 disc(vec3 sky,vec2 coords,vec2 center,float r,vec3 base,vec3 pale,float bands,float rocky){
+        vec2 p=(coords-center)/max(r,1e-4);
+        float d2=dot(p,p),edge=max(fwidth(d2),0.01);
+        float cs=cos(uRoll),sn=sin(uRoll);
+        vec2 pr=mat2(cs,sn,-sn,cs)*p;
+        vec3 n=vec3(p,sqrt(max(0.0,1.0-d2)));
+        float sunlight=smoothstep(-0.22,0.58,dot(n,normalize(vec3(-0.48,0.66,0.42))));
+        float stripe=sin(pr.y*(rocky>0.5?8.0:16.0)+pr.x*(rocky>0.5?2.4:1.3)+sin(pr.x*4.2+pr.y*6.0));
+        float grain=hash(floor(pr*vec2(rocky>0.5?22.0:7.0,rocky>0.5?16.0:5.0)+9.0));
+        float mark=mix(smoothstep(0.18,0.82,stripe*0.5+0.5),grain,rocky);
+        float rim=pow(max(0.0,1.0-n.z),2.7);
+        vec3 surface=mix(base,pale,0.2+mark*bands)*(0.07+0.93*sunlight)+pale*rim*sunlight*0.3;
+        sky+=pale*exp(-max(0.0,sqrt(d2)-1.0)*16.0)*step(1.0,d2)*0.18;
+        return mix(sky,surface,1.0-smoothstep(1.0-edge,1.0+edge,d2));
+      }
+      vec3 sun(vec3 sky,vec2 coords,vec2 center,float r,vec3 tint){
+        float d=length((coords-center)/max(r,1e-4));
+        float core=smoothstep(1.2,0.15,d);
+        float glow=exp(-max(0.0,d-0.45)*1.25);
+        return sky+tint*(core*1.25+glow*0.85);
       }
       float rings(vec2 p){
         p=mat2(0.94,0.34,-0.34,0.94)*p;
         float d=length(p/vec2(1.0,0.31));
-        return smoothstep(1.29,1.40,d)*(1.0-smoothstep(1.91,2.04,d))*(0.61+0.39*sin(d*38.0));
+        return smoothstep(1.55,1.72,d)*(1.0-smoothstep(4.9,5.35,d))*(0.58+0.42*sin(d*28.0));
       }
       void main(){
         vec3 ray=normalize(world-cameraPosition);
-        vec2 p=ray.zy/max(ray.x,0.05);
-        float dust=exp(-pow((p.y+0.11*p.x-0.028)*6.5,2.0))*exp(-dot(p,p)*0.43);
-        dust*=0.56+0.21*sin(13.0*p.x+18.0*p.y)+0.11*sin(32.0*p.x-21.0*p.y);
-        vec3 color=vec3(0.003,0.005,0.014)+dust*vec3(0.020,0.017,0.048);
-        color+=stars(p,115.0,0.953,4.8)*0.52+stars(p,59.0,0.983,8.7)*0.91;
-        vec2 gold=vec2(-0.069,0.094);
-        vec2 ring=(p-gold)/0.023;
-        float r=rings(ring);
-        color=mix(color,vec3(0.45,0.30,0.18),r*0.64);
-        color=planet(color,p,gold,0.023,vec3(0.42,0.24,0.12),vec3(0.95,0.68,0.38),0.55);
-        color=mix(color,vec3(0.61,0.41,0.25),r*smoothstep(0.0,0.14,ring.y)*0.52);
-        color=planet(color,p,vec2(0.18,0.048),0.034,vec3(0.079,0.28,0.46),vec3(0.48,0.78,0.97),0.63);
-        color=planet(color,p,vec2(0.315,0.143),0.014,vec3(0.36,0.115,0.085),vec3(0.87,0.45,0.29),0.43);
+        vec2 paneAng=ray.zy/max(ray.x,0.05);
+        float mag=max(uMag,0.001);
+        float cs=cos(uRoll),sn=sin(uRoll);
+        vec2 inertial=mat2(cs,sn,-sn,cs)*(paneAng/mag);
+        vec3 dir=normalize(uForward+uRight*(paneAng.x/mag)+uUp*(paneAng.y/mag));
+        float dust=0.0;
+        if(abs(dir.y)>0.003){
+          float lam=-uStation.y/dir.y;
+          if(lam>0.05){
+            vec2 hit=uStation.xz+dir.xz*lam;
+            dust=exp(-pow((length(hit)-1.19)*5.5,2.0))*exp(-lam*0.22);
+          }
+        }
+        vec3 color=vec3(0.003,0.005,0.014);
+        color+=vec3(0.45,0.52,0.58)*dust*0.22;
+        color+=stars(inertial,14.0,0.962,4.8)*(0.7+0.16*sin(uTime*1.3+inertial.x))+stars(inertial,34.0,0.986,8.7)*0.62;
+        float lane=exp(-pow(inertial.y*7.0,2.0))*0.045;
+        color+=vec3(0.16,0.18,0.26)*lane;
+        for(int i=0;i<8;i++){
+          vec4 b=uBody[i];
+          if(b.z>0.0001){
+            vec3 tint=uTint[i];
+            vec2 local=mat2(cs,sn,-sn,cs)*((paneAng-b.xy)/max(b.z,1e-4));
+            if(b.w>1.5 && b.w<2.5) color=mix(color,tint,rings(local)*0.62);
+            if(b.w>0.5 && b.w<1.5) color=sun(color,paneAng,b.xy,b.z,tint);
+            else color=disc(color,paneAng,b.xy,b.z,tint*0.42,tint,b.w>3.5?0.72:0.48,b.w>2.5 && b.w<3.5?1.0:0.0);
+            if(b.w>1.5 && b.w<2.5) color=mix(color,tint,rings(local)*smoothstep(-0.05,0.2,local.y)*0.5);
+          }
+        }
         float glassEdge=pow(1.0-max(0.0,ray.x),3.0);
         float glare=exp(-pow((pane.y-0.87+0.27*pane.x)*44.0,2.0));
         float lower=exp(-pow((pane.y-0.11+0.09*pane.x)*84.0,2.0));
@@ -194,15 +242,52 @@ function observationWindow(parent){
     block(parent,blueLight,20.3,0.59,z,0.045,0.04,0.29);
     block(parent,blueLight,20.3,5.0,z,0.045,0.04,0.29);
   }
+  return shader;
+}
+
+// Stands on the room side of the glass, right of the aim, so Obera stays clear.
+export const TELESCOPE_PANEL={x:19.48,y:1.46,z:7.15,w:2.4,h:1.5};
+
+function telescopePanel(parent){
+  const {x,y,z,w,h}=TELESCOPE_PANEL;
+  block(parent,ribMaterial,x+0.12,0.46,z,0.36,0.92,0.62);
+  block(parent,trimMaterial,x+0.1,0.94,z,0.5,0.06,0.78);
+  block(parent,ribMaterial,x,y,z,0.1,h+0.14,w+0.14);
+  const canvas=document.createElement('canvas');
+  canvas.width=1024;canvas.height=640;
+  const ctx=canvas.getContext('2d');
+  ctx.fillStyle='#14110e';ctx.fillRect(0,0,1024,640);
+  ctx.strokeStyle='#c6a15a';ctx.lineWidth=12;ctx.strokeRect(16,16,992,608);
+  ctx.strokeStyle='#6d522c';ctx.lineWidth=3;ctx.strokeRect(34,34,956,572);
+  ctx.textAlign='center';
+  ctx.fillStyle='#e7d3a8';ctx.font='600 52px Georgia, serif';
+  ctx.fillText('KEPLER-47 TELESCOPE',512,108);
+  ctx.fillStyle='#b89a6c';ctx.font='500 34px Georgia, serif';
+  ctx.fillText('MAGNIFICATION',512,186);
+  ctx.fillStyle='#fff1d2';ctx.font='600 124px Georgia, serif';
+  ctx.fillText(TELESCOPE_MAG.toFixed(2)+'\u00d7',512,330);
+  ctx.fillStyle='#f0d7a4';ctx.font='500 42px Georgia, serif';
+  ctx.fillText('POSITION LOCKED',512,430);
+  ctx.fillText('MAGNIFICATION LOCKED',512,490);
+  ctx.fillStyle='#d7b98a';ctx.font='500 32px Georgia, serif';
+  ctx.fillText('CONSULT TECHNICIAN MANUAL TO RESTART',512,568);
+  const map=new THREE.CanvasTexture(canvas);
+  map.colorSpace=THREE.SRGBColorSpace;
+  const face=new THREE.Mesh(new THREE.PlaneGeometry(w,h),new THREE.MeshBasicMaterial({map}));
+  face.position.set(x-0.07,y,z);
+  face.rotation.y=Math.PI/2;
+  parent.add(face);
 }
 
 export function buildAsteroidLobby(parent){
   vault(parent);
   const floor=()=>-0.1,roof=()=>spring+0.08;
   rockFace(parent,-1,front,rear,floor,roof,3);
-  observationWindow(parent);
+  const sky=observationWindow(parent);
+  telescopePanel(parent);
   rockFace(parent,1,front,-5.65,floor,roof,5);
   rockFace(parent,1,13.65,rear,floor,roof,9);
   rockFace(parent,1,-5.95,13.95,floor,z=>0.61+0.20*Math.sin(z*0.86)+0.14*Math.sin(z*2.14),7);
   rockFace(parent,1,-5.95,13.95,z=>5.03-0.20*Math.sin(z*0.96)-0.13*Math.sin(z*2.51),roof,11);
+  return sky;
 }

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import {outpostArcade,outpostCamera,walkOutpost,TABLE_HEIGHT,TABLE_SCALE} from './moose-arcade.js';
+import {outpostArcade,outpostCamera,walkOutpost,TABLE_HEIGHT,TABLE_SCALE,EYE} from './moose-arcade.js';
+import {spotted} from './room-mobs.js';
 
 export const MOOSE_TOWER_PRICE=3;
 export const MOOSE_SPIKE_PRICE=5;
@@ -210,7 +211,7 @@ export function animalHitEffects(group,scale=1){
   return {burst,update,clear(){for(const pool of pools)for(const p of pool)p.mesh.visible=false}};
 }
 
-function gooseModel(){
+export function gooseModel(){
   const root=new THREE.Group(),ball=new THREE.IcosahedronGeometry(1,1);
   const neck=new THREE.Group();neck.position.set(0,.36,.13);root.add(neck);
   const mat=color=>new THREE.MeshStandardMaterial({color,roughness:.9,flatShading:true});
@@ -588,7 +589,7 @@ export function mooseDefenseRoom({group:room,scene,cam,o,A,onClear,finish}){
     const row=clamp(Math.floor(selection/COLS)+dz,0,ROWS-1);
     selection=row*COLS+col;prompt='';
   }
-  const ray=new THREE.Raycaster(),pointer=new THREE.Vector2(),hit=new THREE.Vector3();
+  const ray=new THREE.Raycaster(),pointer=new THREE.Vector2(),hit=new THREE.Vector3(),spotV=new THREE.Vector3();
   const board=new THREE.Plane(new THREE.Vector3(0,1,0),-(TABLE_HEIGHT+.034*TABLE_SCALE));
   S.tap=(x,y)=>{
     if(!live||!S.table||!['build','run','break'].includes(S.phase))return false;
@@ -695,6 +696,17 @@ export function mooseDefenseRoom({group:room,scene,cam,o,A,onClear,finish}){
       model.position.set(p.x,.40+Math.sin(time*9+i)*.075,p.z);model.rotation.y=p.yaw;
       model.userData.pose(time+i,goose.slow>0,true);
     });
+    if(live&&phase==='run'){
+      const b=arcade.walker.b,cp=Math.cos(S.pitch);
+      const eye=[b.x,EYE+b.y,b.z],dir=[Math.sin(S.yaw)*cp,Math.sin(S.pitch),-Math.cos(S.yaw)*cp];
+      const notice=(id,model,lift)=>{
+        if(!model.visible)return;
+        model.getWorldPosition(spotV);spotV.y+=lift*TABLE_SCALE;
+        if(spotted(eye,dir,[spotV.x,spotV.y,spotV.z],9))o.mob?.(id);
+      };
+      notice(boss?'mother':'moose',boss?mother:moose,boss?1.7:1.15);
+      for(const model of geese)if(model.visible){notice('goose',model,0.7);break}
+    }
     range.visible=S.canBuild(selection);
     const {x,z}=TILES[selection];
     range.position.set(x,.05,z);cursor.position.set(x,.04,z);cursorCenter.position.set(x,.05,z);

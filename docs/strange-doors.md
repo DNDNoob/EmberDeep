@@ -33,6 +33,39 @@ Decide whether each ending affects the visitor or the whole party.
   walking through the space. Keep the play station physically reachable
   and preserve the player's position when switching back to walking.
 
+## Record a room-only creature in the Mob Archive
+
+A creature that exists only behind a strange door is a Mob Archive
+exhibit by default. Add it in the same change as the room. This is not
+optional for a new hostile, and it is not implied by `DOOR_KINDS`.
+
+Leave out scenery and hazards that are not an encounter: monolith heads,
+kiln stones, the star room, the fall, the still wood, the person
+sometimes seen in the mirror, and the zombie-moose mount. Maze creatures
+(Shade, Stalker, Wisp, Watcher, Mimic, Wrong Shadow) are recorded in
+`src/game.js` and stay ahead of room creatures. Do not add them here.
+
+1. Append a stable id to `ROOM_MOBS` in `src/room-mobs.js`. Keep existing
+   ids and their order. New exhibits are added at the end of the hall.
+   Each entry is `{name, room}`, and `room` is that creature's
+   `DOOR_KINDS` id. Listing it is what adds the case, the save, and
+   Encounter replay. Encounter reopens that room with the recorded seed.
+2. The first time the player looks at the creature during a live visit,
+   call `o.mob?.(id, seed)`. Use `spotted()` from `src/room-mobs.js`:
+   in front of the look direction and within range. The maze cone is
+   `minDot` 0.52. Call it once. Do not call it while `A.watching` or
+   during an archive replay. `createRooms` already drops spectator
+   calls. Pass the room seed when the visit depends on it. If you omit
+   the seed, the archive uses the seed already stored for that door, so
+   the door has to have been opened on a real descent.
+3. Add a glass-case model for that id in `roomMobExhibit` in
+   `src/room-mob-exhibits.js`. Feet near y=0, height under 1.42, width
+   under 1.42, and a `userData.pose(time)`. An id with no model is an
+   empty case.
+4. Append the same id, in the same order, to the expected key list in
+   `tools/room_mob_test.mjs` and run it. The size checks already cover
+   every `ROOM_MOBS` id.
+
 ## Light and detail the room
 
 Rooms registered with the shared manager get FXAA edge smoothing on Medium
@@ -128,6 +161,10 @@ temporary `table`, `choice`, or `read` focus.
   The star room is look-only, and the falling room is cinematic.
 - The still wood is ordinary walking. Look down into the pond to pin the
   door that hides behind you, then walk back through it.
+- The little village is ordinary walking. Villagers run the paths until the
+  sun sets and a thing comes out. A chest in the square holds an obsidian-glass
+  sword. Each hit takes one limb. Kill it, then walk back through the door
+  behind where you arrived. Leaving before it dies is a retreat.
 
 ## Preview and check
 
@@ -150,5 +187,6 @@ Before shipping, verify that the main interaction works on keyboard,
 controller, and touch, and that the room leaves no lingering HUD, audio,
 or controls after exit. Run `tools/movement_test.mjs` and
 `tools/door_rotation_test.mjs` against a fresh build. Run
-`tools/room_controls_test.mjs` when changing bindings or focus and
-`tools/room_fxaa_test.mjs` when changing room rendering.
+`tools/room_controls_test.mjs` when changing bindings or focus,
+`tools/room_fxaa_test.mjs` when changing room rendering, and
+`tools/room_mob_test.mjs` when adding or changing a room-only creature.

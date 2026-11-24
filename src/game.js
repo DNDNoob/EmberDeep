@@ -13,6 +13,8 @@ import {createVoice} from './voice.js';
 import {guidePath,guideBeacon,GUIDE_RANGE} from './guide.js';
 import {createRooms,kilnGame,KILN,DOOR_KINDS} from './rooms.js';
 import {animalHitEffects,mooseModel,scoutGooseModel,MOOSE_ACH,MOOSE_SPIKE_PRICE} from './moose-defense.js';
+import {ROOM_MOBS} from './room-mobs.js';
+import {roomMobExhibit} from './room-mob-exhibits.js';
 import {roomActions,roomControlLabel} from './room-controls.js';
 import {bakeRecipe,bakeRecipeIdle,bakeIsDone,bakeStarted,bakeExport,bakePrime,KIT_HASH} from './npc_kit.js';
 import {loadBake,saveBake,cacheStats} from './npc_cache.js';
@@ -21,12 +23,14 @@ import {KEEPER} from './npc_recipes.js';
 import {createBabyFace,createFallVoid} from './babyface.js';
 import {pickVariant,VARIANTS} from './variants.js';
 import {createForest,coreFaces,INSET,CORE_H} from './forest.js';
-import {MOVE,stepMove,lookStep,lookBy,bobY} from './movement.js';
+import {MOVE,stepMove,lookStep,lookBy,bobY,noclipDest} from './movement.js';
+import {lurkStep} from './lurk.js';
 import {initAmbience,updateAmbience,amb} from './ambience.js';
 import {initMusic,useStore,updateMusic,setVolumes,getVolumes,onVolumes,music} from './music.js';
 import {createMenuRoom,onLiftPlatform} from './menu-room.js';
 import {createSettingsScreen,createTerminalSession} from './shared-terminal.js';
 import {landingMazeZ} from './mine-shaft.js';
+import {NEWS} from './news.js';
 import {floorDiorama,lenticularDoor} from './archive-hall.js';
 import {wheelModel,planSpin,spinAngle,pegPush,sliceAt,WOF_SLICES,WOF_N,WOF_W} from './wheel.js';
 import {announce,statusStrip,tints,coinFlip,breakUI} from './wheel-screens.js';
@@ -442,6 +446,11 @@ function genFloor(seedStr,depth,look){
     // every door wears a look. A disguise kind (the trap) picks one with the door rng AFTER placement so positions and kinds never move.
     const own=doorDisguises();
     for(const D of sdoors){const k=DOOR_KINDS[D.kind]||{};D.look=k.disguise?(own[(dr()*own.length)|0]||'wood'):(k.look||'wood')}}
+  // someone who looks like a neighbor, and is not one. Drawn last, from its own dice and a spare cell, so the rest of the floor stays the same as it always was for a seed.
+  if(depth>=2){const lr=mulberry32(hashStr(seedStr+'#lurk'+depth)),ok=pool.filter(c=>!traps.some(q=>q.tx===c[0]&&q.ty===c[1])&&!sdoors.some(q=>q.tx===c[0]&&q.ty===c[1]));
+    if(lr()<0.7&&ok.length){const c=ok[(lr()*ok.length)|0],guise=lr()<0.4?'delver':'map';
+      npcs.push({type:'lurk',guise,x:c[0]+0.5,z:c[1]+0.5,ph:lr()*6.28,gift:0,tip:0,
+        gx:c[0],gy:c[1],px:-1,py:-1,stare:0,aggro:false,face:lr()*6.28,hitT:0,used:true})}}
   // face down an open corridor at the start
   let yaw=0;
   for(const d of DIRS){if(g[idx(stx+d[0],sty+d[1])]===0){yaw=Math.atan2(d[1],d[0]);break}}
@@ -488,12 +497,12 @@ if(Q>=1&&!SAFE){
   scene.environmentIntensity=0.05;pm.dispose();
 }
 const torchLight=new THREE.PointLight(0xffffff,0,8,1.0);
-if(SHADOWS){torchLight.castShadow=true;torchLight.shadow.mapSize.set(Q>=2?1024:512,Q>=2?1024:512);torchLight.shadow.camera.near=0.04;torchLight.shadow.camera.far=9;torchLight.shadow.bias=-0.003;torchLight.shadow.normalBias=0.025}
+if(SHADOWS){torchLight.castShadow=true;torchLight.shadow.mapSize.set(Q>=2?1024:512,Q>=2?1024:512);torchLight.shadow.camera.near=0.04;torchLight.shadow.camera.far=9;torchLight.shadow.bias=-0.003;torchLight.shadow.normalBias=0.025;torchLight.shadow.camera.layers.enable(1)}
 scene.add(torchLight);
 const flashLight=new THREE.PointLight(0xd9edff,0,9,1);scene.add(flashLight);
 const poolLights=[],shadLights=[];
 for(let i=0;i<NPOOL;i++){const l=new THREE.PointLight(0xffffff,0,4,1.25);scene.add(l);poolLights.push(l)}
-for(let i=0;i<NSHAD;i++){const l=new THREE.PointLight(0xffffff,0,4,1.25);l.castShadow=true;l.shadow.mapSize.set(512,512);l.shadow.camera.near=0.05;l.shadow.camera.far=8;l.shadow.bias=-0.004;l.shadow.normalBias=0.03;l.shadow.autoUpdate=false;l.userData.key='';scene.add(l);shadLights.push(l)}
+for(let i=0;i<NSHAD;i++){const l=new THREE.PointLight(0xffffff,0,4,1.25);l.castShadow=true;l.shadow.mapSize.set(512,512);l.shadow.camera.near=0.05;l.shadow.camera.far=8;l.shadow.bias=-0.004;l.shadow.normalBias=0.03;l.shadow.autoUpdate=false;l.shadow.camera.layers.enable(1);l.userData.key='';scene.add(l);shadLights.push(l)}
 // flames are not points: cap how hot a surface right next to one can get, and let light fade out more gently toward its reach
 THREE.ShaderChunk.lights_pars_begin=THREE.ShaderChunk.lights_pars_begin
   .replace('max( pow( lightDistance, decayExponent ), 0.01 )','max( pow( lightDistance, decayExponent ), 0.6 )')
@@ -846,7 +855,7 @@ const SURFS=makeSurfaces(renderer,Q>=2?1024:Q>=1?512:256,NORMALMAP), spriteTex=m
 /* ---------- world mesh ---------- */
 let worldMesh=null,forestGrp=null;
 const FOREST=createForest({UT,Q,shadows:SHADOWS>0});
-function buildMesh(F){
+function buildMesh(F,preview=false){
   const v=[],{W,H,g}=F,Y=WALL_H;
   const quad=(p,n,uv,layer)=>{for(const i of[0,1,2,0,2,3])v.push(p[i][0],p[i][1],p[i][2],n[0],n[1],n[2],uv[i][0],uv[i][1],layer)};
   const wall=(x,y)=>x<0||y<0||x>=W||y>=H||g[y*W+x]===1;
@@ -921,11 +930,14 @@ function buildMesh(F){
   if(curK>=0)geo.addGroup(gStart,o-gStart,mats.length-1);
   geo.setAttribute('position',new THREE.BufferAttribute(pos,3));geo.setAttribute('normal',new THREE.BufferAttribute(nor,3));geo.setAttribute('uv',new THREE.BufferAttribute(uv,2));
   geo.computeBoundingSphere();
+  const mesh=new THREE.Mesh(geo,mats);mesh.castShadow=true;mesh.receiveShadow=true;mesh.frustumCulled=false;
+  // A passing landing only needs this mesh. Do not touch the playable world.
+  if(preview)return mesh;
+  mesh.matrixAutoUpdate=false;
   if(worldMesh){scene.remove(worldMesh);worldMesh.geometry.dispose()}
-  worldMesh=new THREE.Mesh(geo,mats);worldMesh.castShadow=true;worldMesh.receiveShadow=true;worldMesh.frustumCulled=false;worldMesh.matrixAutoUpdate=false;
-  scene.add(worldMesh);
+  worldMesh=mesh;scene.add(worldMesh);
   if(forestGrp){FOREST.dispose(forestGrp);forestGrp=null}
-  if(fr){forestGrp=FOREST.build(F);scene.add(forestGrp);F.fo.stats=forestGrp.userData.stats}
+  if(fr&&!preview){forestGrp=FOREST.build(F);scene.add(forestGrp);F.fo.stats=forestGrp.userData.stats}
   for(const l of shadLights)l.userData.key='';
 }
 function buildSdf(){}
@@ -1220,20 +1232,23 @@ function buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,lod){
 }
 function buildNpc(n,t,ex,ey,ez,dtR){
   const dxp=ex-n.x,dzp=ez-n.z,dist=Math.hypot(dxp,dzp),toP=Math.atan2(dzp,dxp);
-  const seated=n.type==='delver';
+  const kind=n.type==='lurk'?(n.guise==='delver'?'delver':'map'):n.type;
+  const seated=kind==='delver';
   if(n.yaw===undefined){
     n.hy=0;n.hp=0;
     if(seated){ // sit with the back to a wall when there is one
       n.yaw=n.wy!==undefined?n.wy:toP;
-    }else n.yaw=n.type==='keeper'&&F.safe?Math.atan2(F.safe.z-n.z,F.safe.x-n.x):toP;
+    }else n.yaw=kind==='keeper'&&F.safe?Math.atan2(F.safe.z-n.z,F.safe.x-n.x):toP;
   }
+  if(!Number.isFinite(n.hy))n.hy=0;
+  if(!Number.isFinite(n.hp))n.hp=0;
   const wrap=a=>{while(a>Math.PI)a-=Math.PI*2;while(a<-Math.PI)a+=Math.PI*2;return a};
-  if(n.type==='keeper'&&dist<30)keeperWarm();
+  if(kind==='keeper'&&dist<30)keeperWarm();
   const talking=talk&&talk.npc===n;
   let diff=wrap(toP-n.yaw);
   if(!seated&&!n.lock&&dist<5&&(Math.abs(diff)>0.45||talking)){const st=Math.sign(diff)*Math.min(Math.abs(diff),2.6*dtR);n.yaw+=st;diff-=st}
   const lim=seated?1.25:1.0,wantY=n.lockHead?0:dist<6?clamp(diff,-lim,lim):Math.sin(t*0.4+n.ph)*0.35;
-  const headY0=seated?0.62:n.type==='keeper'?0.968*(KEEPER.proportions.height||1):0.84,wantP=dist<6?clamp(Math.atan2(ey-headY0,Math.max(dist,0.3)),-0.45,0.4):0;
+  const headY0=seated?0.62:kind==='keeper'?0.968*(KEEPER.proportions.height||1):0.84,wantP=dist<6?clamp(Math.atan2(ey-headY0,Math.max(dist,0.3)),-0.45,0.4):0;
   const k=Math.min(1,dtR*6);n.hy+=(wantY-n.hy)*k;n.hp+=(wantP-n.hp)*k;
   if(n.pose){n.hy=n.pose[0];n.hp=n.pose[1]}
   const ph=n.ph,br=Math.sin(t*1.7+ph),breath=br*0.004;
@@ -1241,8 +1256,8 @@ function buildNpc(n,t,ex,ey,ez,dtR){
   const nod=talking?Math.sin(t*5.5)*0.05:0,jaw=talking?Math.max(0,Math.sin(t*9))*0.006:0;
   const B={p:[n.x+(n.ox||0),(n.fall||0)*0.07+(n.oy||0),n.z+(n.oz||0)],R:n.fall?m3(rYaw(n.yaw),rZ(n.fall*1.48)):rYaw(n.yaw)};   // fall: a plague victim, lying on its back
   const out={top:1,lantern:null};
-  if(n.type==='keeper'&&!NPC_CLASSIC&&dist<14&&keeperReady())buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,STUDIO&&STUDIO.lod!=null?STUDIO.lod:Q>=1?(dist<6?0:dist<9.5?1:2):(dist<8?1:2)); // near / mid / far; low quality never uses the near LOD
-  else if(n.type==='keeper'){
+  if(kind==='keeper'&&!NPC_CLASSIC&&dist<14&&keeperReady())buildKeeperSculpt(n,B,t,ph,breath,br,blink,jaw,nod,out,STUDIO&&STUDIO.lod!=null?STUDIO.lod:Q>=1?(dist<6?0:dist<9.5?1:2):(dist<8?1:2)); // near / mid / far; low quality never uses the near LOD
+  else if(kind==='keeper'){
     const robe=[0.36,0.1,0.07,2],robeD=[0.24,0.07,0.06,2],gold=[0.8,0.58,0.18,2],skin=[0.8,0.6,0.47,1],white=[0.9,0.9,0.86,5],wood=[0.3,0.2,0.12,6];
     seg(B,[0,0,0],[0,0.05,0],0.178,0.172,gold);
     seg(B,[0,0.05,0],[0,0.5,0],0.172,0.092,robe);
@@ -1275,7 +1290,7 @@ function buildNpc(n,t,ex,ey,ez,dtR){
     ball(H,[0.045,0.0,0],[0.045,0.045,0.062],white);
     seg(H,[0.05,-0.01-jaw,0],[0.085,-0.21-jaw,0],0.048,0.01,white);
     out.top=1.0;
-  }else if(n.type==='map'){
+  }else if(kind==='map'){
     const S=0.94,v=(x,y,z)=>[x*S,y*S,z*S];
     const teal=[0.08,0.4,0.42,2],tealD=[0.05,0.27,0.3,2],cream=[0.86,0.8,0.66,2],leg=[0.2,0.14,0.11,2],boot=[0.36,0.21,0.1,3],belt=[0.3,0.17,0.08,3],
           hair=[0.55,0.2,0.07,5],skin=[0.92,0.71,0.57,1],must=[0.9,0.62,0.14,2];
@@ -1818,6 +1833,17 @@ const DOOR_LOOKS={
     },
     glow(D,t){return[0.45,0.9,0.62,0.38+0.16*Math.sin(t*1.7+D.ph)]}
   },
+  hamlet:{
+    leaf(f,D){
+      slab(f,[0.02,0.52,0],[0.04,1.04,0.52],[0.72,0.28,0.22,6]);
+      slab(f,[0.045,0.55,0],[0.02,0.78,0.36],[0.95,0.86,0.62,6]);
+      slab(f,[0.06,0.95,0],[0.012,0.22,0.22],[0.35,0.7,0.95,11]);
+      slab(f,[0.06,0.62,-0.16],[0.012,0.18,0.16],[0.98,0.78,0.3,11]);
+      slab(f,[0.06,0.62,0.16],[0.012,0.18,0.16],[0.45,0.78,0.42,11]);
+      doorKnob(f,[0.95,0.78,0.28,4]);
+    },
+    glow(D,t){return[1,0.72,0.35,0.42+0.12*Math.sin(t*2+D.ph)]}
+  },
 };
 const DOOR_EXPLORE_PER_MIN=150;
 const doorOrder=()=>Object.keys(DOOR_KINDS);
@@ -2283,6 +2309,12 @@ const wofForm=()=>FX.hedge>0?4:FX.plague>0?3:FX.pug>0&&FX.rat>0?(FX.last==='rat'
 const wofSpeed=()=>(FX.hedge>0&&FX.curl===2?3.2:1)*(FX.fat>0?0.1:1)*(FX.tickled>0?0.3:1)*(FX.stag>0?0.35:1);
 const wofEye=()=>wofForm()===4?(FX.curl?0.3:0.38):[1,0.42,0.55,0.55][wofForm()];
 const wofLive=()=>state!=='title'&&state!=='dead';
+// "The wheel waits outside the door": a player inside a door room is never touched by the wheel. Results that land meanwhile are queued
+// here and happen, in order, when they step back into the maze. World things (the Tickle Monster, a bomb) keep going but skip them.
+const wofAway=()=>P.away||state==='room';
+const WOQ=[];let WOQ_T=0,wofWasAway=false;
+const WOQ_MAX=3;
+function wofQueue(r){WOQ.push(r);if(WOQ.length>WOQ_MAX)WOQ.shift();WOQ_T=Math.max(WOQ_T,1.5)}
 
 function wofSpinStart(){
   if(!F||!F.safe||!F.safe.wheel||!WOF.done||wallet<10)return;
@@ -2311,9 +2343,9 @@ function wofTickSpin(dt){
     if(push>=0){WOF.flap=push*0.85;WOF.flapV=0}
     else{WOF.flapV+=(-140*WOF.flap-7*WOF.flapV)*dt;WOF.flap+=WOF.flapV*dt}
     const pg=Math.floor((a-0.11)/WOF_W);
-    if(pg!==WOF.peg){WOF.peg=pg;const w=F.safe.wheel,d=Math.hypot(w.x-P.x,w.z-P.z);if(d<12)tone(2100+Math.random()*200,0.025,'square',0.09*Math.max(0.15,1-d/12))}   // the flapper's clack
+    if(pg!==WOF.peg){WOF.peg=pg;const w=F.safe.wheel,d=Math.hypot(w.x-P.x,w.z-P.z);if(d<12&&!wofAway())tone(2100+Math.random()*200,0.025,'square',0.09*Math.max(0.15,1-d/12))}   // the flapper's clack
     const k=Math.floor(WOF.t/pl.dur*4);
-    if(k>WOF.chat&&k<=3){WOF.chat=k;if(Math.hypot(F.safe.wheel.x-P.x,F.safe.wheel.z-P.z)<8)say(PAT_CHAT[k-1],2.2)}
+    if(k>WOF.chat&&k<=3){WOF.chat=k;if(!wofAway()&&Math.hypot(F.safe.wheel.x-P.x,F.safe.wheel.z-P.z)<8)say(PAT_CHAT[k-1],2.2)}
   }
   if(WOF.t>=pl.dur+0.9){
     WOF.done=true;WOF.win=4;
@@ -2322,11 +2354,29 @@ function wofTickSpin(dt){
   }
 }
 function wofResolve(){
-  const i=sliceAt(WOF.plan.to),sl=WOF_SLICES[i],mine=WOF.mine,coin=WOF.coin;WOF.result=i;
+  const i=sliceAt(WOF.plan.to),sl=WOF_SLICES[i];WOF.result=i;
   mpSys(WOF.by+' landed on '+sl.name);
   if(!wofLive())return;
+  const r={i,coin:WOF.coin,mine:WOF.mine,by:WOF.by};
+  wofWorld(r);   // the floor itself carries on whatever you are doing
+  if(wofAway()){wofQueue(r);return}   // you are behind a door: this waits for you
+  wofPersonal(r);
+}
+// what the wheel does to the floor (host-run entities, the bomb); nothing here touches the local body
+function wofWorld(r){
+  switch(r.i){
+    case 10:if(!MP.guest)tkSpawn();break;
+    case 16:if(!MP.guest&&F)for(const s of F.shades)if(s.type===0&&s.x>0&&!s.dead){s.state=1;s.calm=0}break;   // the shades come looking
+    case 17:FX.pitch=0;FX.pitchDone=false;FX.pitchLine=-1;if(!MP.guest)tsSpawn();break;
+    case 20:if(!MP.guest)setTimeout(()=>{if(wofLive()&&!RR)rrStart()},1500);break;
+    case 21:bombDrop();break;
+  }
+}
+// what the wheel does to you
+function wofPersonal(r){
+  const i=r.i,sl=WOF_SLICES[i],mine=r.mine,coin=r.coin;
   const desc=i===7&&FX.loud>0?`Another pair on top of the last. Everything is now ${Math.pow(10,(FX.loudN||1)+1).toLocaleString()}x louder.`:WOF_DESC[i];
-  announce(sl.name.toUpperCase()+'!',(mine?'':WOF.by+' spun. ')+desc,sl.col);
+  announce(sl.name.toUpperCase()+'!',(mine?'':r.by+' spun. ')+desc,sl.col);
   if(ac){tone(392,0.32,'sawtooth',0.09,0.1,-12);tone(370,0.32,'sawtooth',0.09,0.45,-12);tone(349,0.32,'sawtooth',0.09,0.8,-12);tone(330,1.1,'sawtooth',0.09,1.15,-40)} // sad trombone
   switch(i){
     case 0:if(mine)wofScene('walmart');break;
@@ -2339,7 +2389,6 @@ function wofResolve(){
     case 7:FX.loudN=FX.loud>0?(FX.loudN||1)+1:1;FX.loud=FX_DUR.loud;break;   // they compound: each pair on top of the last is another 10x, and the clock starts over
     case 8:FX.tin=FX_DUR.tin;break;
     case 9:if(mine){FX.plague=FX_DUR.plague;FX.dying=false}break;
-    case 10:if(!MP.guest)tkSpawn();break;
     case 11:if(mine){FX.pox=FX_DUR.pox;FX.poxC=3}break;
     case 12:if(mine)wofScene('dmv');break;
     case 13:if(mine)wofScene('terms');break;
@@ -2348,10 +2397,23 @@ function wofResolve(){
     case 16:wofLightsOut();break;
     case 18:if(mine){FX.hedge=FX_DUR.hedge;setTimeout(()=>say(touch.on?'You are a hedgehog. CURL: nothing can hurt you. ROLL: super speed.':'You are a hedgehog. Hold Z to curl up (nothing can hurt you). Hold X to roll at super speed.',6),2500)}break;
     case 19:if(mine)wofScene('birth');break;
-    case 21:bombDrop();break;
-    case 20:if(!MP.guest)setTimeout(()=>{if(wofLive()&&!RR)rrStart()},1500);break;
-    case 17:FX.pitch=0;FX.pitchDone=false;FX.pitchLine=-1;if(!MP.guest)tsSpawn();break;
   }
+}
+// back in the maze: results that landed while you were behind a door happen now, one at a time, spaced out so breaks and banners do not overlap
+function wofReplayTick(dt){
+  if(!WOQ.length){WOQ_T=0;return}
+  if(FX.frozen||RR||termsEl||(BRK&&BRK.active)||(WOQ.busy&&performance.now()<WOQ.busy))return;
+  WOQ_T-=dt;if(WOQ_T>0)return;
+  const r=WOQ.shift();
+  if(r.msg){say(r.msg,4);WOQ_T=3;return}
+  say('While you were inside, '+(r.mine?'you':r.by)+' spun the wheel...',2.4);
+  WOQ.busy=performance.now()+2000;
+  setTimeout(()=>{
+    if(!wofLive())return;
+    if(wofAway()){WOQ.unshift(r);return}
+    wofPersonal(r);
+  },1800);
+  WOQ_T=7;   // room for the banner, and for whatever a break takes
 }
 // "Nothing": every gem found on this run is taken back out of the purse, and every supply bought or found for it is gone
 function wofLoseAll(){
@@ -2361,6 +2423,7 @@ function wofLoseAll(){
   setTimeout(()=>say(`You lose ${g} gem${g===1?'':'s'} and ${had?'all your supplies':'nothing else, you had nothing'}.`,4),1800);
 }
 function wofScene(kind){
+  if(wofAway())return;   // never a break behind a door
   if(state==='talk')closeTalk();
   FX.frozen=kind;P.vx=P.vz=0;
   const end=()=>{FX.frozen=null;if(wofLive()&&!touch.on&&!document.pointerLockElement)say('Click to return to the maze',4)};
@@ -2369,18 +2432,18 @@ function wofScene(kind){
   else brk().start(kind,end);
 }
 function wofClear(){
-  for(const k of FX_TIMERS)FX[k]=0;FX.flyT=0;BOMB=null;FX.dying=false;FX.poxNear=0;FX.frozen=null;TK=null;TS=null;RR=null;FX.pitchDone=false;FX.pitch=0;closeTerms();
+  for(const k of FX_TIMERS)FX[k]=0;FX.flyT=0;BOMB=null;FX.dying=false;FX.poxNear=0;FX.frozen=null;TK=null;TS=null;RR=null;FX.pitchDone=false;FX.pitch=0;WOQ.length=0;WOQ_T=0;WOQ.busy=0;rrMissed=false;closeTerms();
   if(BRK)BRK.stop(true);statusStrip([]);tints({});wofAudio();
 }
 /* sounds: the hearing aids sit after the master volume; the ringing goes through it */
 function wofAudio(){
   if(!ac||!wofOut)return;
   if(FX.loud<=0)FX.loudN=0;
-  const loud=FX.loud>0?Math.pow(10,Math.min(FX.loudN||1,6)):1;if(wofOut._v!==loud){wofOut._v=loud;wofOut.gain.setTargetAtTime(loud,ac.currentTime,0.12)}
-  if(FX.tin>0&&!tinNode){
+  const away=wofAway(),loud=FX.loud>0&&!away?Math.pow(10,Math.min(FX.loudN||1,6)):1;if(wofOut._v!==loud){wofOut._v=loud;wofOut.gain.setTargetAtTime(loud,ac.currentTime,0.12)}
+  if(FX.tin>0&&!away&&!tinNode){
     const o=ac.createOscillator(),o2=ac.createOscillator(),g=ac.createGain();o.frequency.value=7900;o2.frequency.value=7911;g.gain.value=0;
     o.connect(g);o2.connect(g);g.connect(master);o.start();o2.start();g.gain.setTargetAtTime(0.11,ac.currentTime,0.5);tinNode={o,o2,g};
-  }else if(FX.tin<=0&&tinNode){const q=tinNode;tinNode=null;q.g.gain.setTargetAtTime(0,ac.currentTime,0.4);setTimeout(()=>{try{q.o.stop();q.o2.stop()}catch(e){}},2500)}
+  }else if((FX.tin<=0||away)&&tinNode){const q=tinNode;tinNode=null;q.g.gain.setTargetAtTime(0,ac.currentTime,0.4);setTimeout(()=>{try{q.o.stop();q.o2.stop()}catch(e){}},2500)}
 }
 // a breathy old man's "hee-hee-hee", placed in stereo
 function giggle(x,z,vol,pitch){
@@ -2439,12 +2502,14 @@ function hedgeButtons(){
 // n players, n+1 empty chambers. Each player gets one turn: spin the cylinder (once, if they want), then pull the trigger.
 // Click, and it passes on; the round fires, and that player dies and the game ends. If it goes all the way round, everyone walks away.
 // The host (or a solo player) owns the table; the others send what they want to do and draw what the host says.
-let RR=null;
+let RR=null,rrMissed=false;
 const rrMe=()=>MP.on?MP.id:'me';
 const RR_TURN=25;   // seconds to decide before the table decides for you
 function rrStart(){
-  const seats=[{id:rrMe(),name:myName(),col:MP.on?MP_COLS[hashStr(MP.id||'')%MP_COLS.length]:[0.62,0.32,0.2]}];
-  if(MP.on)for(const p of MP.peers.values())if(p.run&&mpFresh(p))seats.push({id:p.id,name:p.name,col:p.col});
+  const seats=[];   // only players in the maze sit down; anyone behind a door misses it
+  if(!wofAway())seats.push({id:rrMe(),name:myName(),col:MP.on?MP_COLS[hashStr(MP.id||'')%MP_COLS.length]:[0.62,0.32,0.2]});
+  if(MP.on)for(const p of MP.peers.values())if(p.run&&mpFresh(p)&&!p.away)seats.push({id:p.id,name:p.name,col:p.col});
+  if(!seats.length){mpSys('Nobody was in the maze to sit at the roulette table. The chairs stay empty.');return}
   seats.sort((a,b)=>a.id<b.id?-1:1);
   const n=seats.length+2;
   rrSet({seats,n,live:(Math.random()*n)|0,pos:(Math.random()*n)|0,turn:0,spun:false,phase:'aim',phT:RR_TURN,ver:1,loser:-1,ev:'deal'});
@@ -2454,6 +2519,11 @@ function rrSet(s){
 }
 function rrShow(){   // join the table (or keep sitting at it) and react to what just happened
   if(!RR||!wofLive())return;
+  if(wofAway()||!RR.seats.some(q=>q.id===rrMe())){   // not at the table: nothing opens until it is over
+    if(wofAway())rrMissed=true;
+    if(RR.phase==='end')rrEnd();
+    return;
+  }
   if(state==='talk')closeTalk();
   if(FX.frozen!=='roulette'){FX.frozen='roulette';if(document.pointerLockElement){usingLock=false;document.exitPointerLock()}brk().start('roulette',()=>{},{rr:()=>RR,me:rrMe(),act:rrAct})}
   if(ac){if(RR.ev==='spin')for(let i=0;i<14;i++)tone(1400+Math.random()*300,0.02,'square',0.05,i*0.06);
@@ -2488,6 +2558,10 @@ function rrEnd(){
   if(BRK&&BRK.kind==='roulette')BRK.stop(true);
   if(FX.frozen==='roulette')FX.frozen=null;
   if(!r||!wofLive())return;
+  if(!r.seats.some(q=>q.id===rrMe())){   // you were not at the table
+    if(rrMissed){rrMissed=false;const m='You missed a round of Russian roulette at the table.';if(wofAway())wofQueue({msg:m});else say(m,4)}
+    return;
+  }
   const lost=r.loser>=0&&r.seats[r.loser]&&r.seats[r.loser].id===rrMe();
   if(lost){say('You lost at Russian roulette.',4);P.ward=0;P.hp=1;P.inv=0;R.wind=true;hurt(null)}   // no ward, no second wind
   else{say(r.loser>=0?r.seats[r.loser].name+' lost at Russian roulette.':'Everyone survived. This time.',4);if(!touch.on&&!document.pointerLockElement)setTimeout(()=>say('Click to return to the maze',4),4200)}
@@ -2503,7 +2577,7 @@ const rrValid=s=>s&&Array.isArray(s.seats)&&s.seats.length>0&&s.seats.length<=16
 let BOMB=null,scorch=null;
 function bombDrop(){
   const w=F&&F.safe&&F.safe.wheel;
-  if(!w||!WOF.here){setTimeout(()=>{if(wofLive()){say('Somewhere above you, something goes BOOM.',3);noise(1.2,0.25,90,0.6);pkShake=Math.max(pkShake,0.4)}},3500);return}
+  if(!w||!WOF.here){setTimeout(()=>{if(wofLive()&&!wofAway()){say('Somewhere above you, something goes BOOM.',3);noise(1.2,0.25,90,0.6);pkShake=Math.max(pkShake,0.4)}},3500);return}
   BOMB={x:w.x+w.nx*1.0,z:w.z+w.nz*1.0,t:0,beep:0,done:false};
 }
 function bombTick(dt){
@@ -2520,21 +2594,25 @@ function bombTick(dt){
   if(!B0)return;
   B0.t+=dt;
   const fuse=3,d=Math.hypot(B0.x-P.x,B0.z-P.z);
-  if(B0.t<fuse){B0.beep-=dt;if(B0.beep<=0){B0.beep=Math.max(0.12,0.55-B0.t*0.15);if(d<14)tone(1500,0.05,'square',0.07*Math.max(0.2,1-d/14))}
-    if(Math.random()<0.5&&d<14)noise(0.06,0.03*Math.max(0.2,1-d/14),5000,3);return}
+  if(B0.t<fuse){B0.beep-=dt;if(B0.beep<=0){B0.beep=Math.max(0.12,0.55-B0.t*0.15);if(d<14&&!wofAway())tone(1500,0.05,'square',0.07*Math.max(0.2,1-d/14))}
+    if(Math.random()<0.5&&d<14&&!wofAway())noise(0.06,0.03*Math.max(0.2,1-d/14),5000,3);return}
   if(!B0.done){B0.done=true;bombBoom(B0,d)}
   if(B0.t>fuse+3)BOMB=null;
 }
 function bombBoom(B0,d){
-  const k=Math.max(0,1-d/9);
-  noise(1.6,0.9*Math.max(0.25,k),110,0.5);noise(0.9,0.7*Math.max(0.2,k),700,0.6);tone(42,1.6,'sawtooth',0.45*Math.max(0.25,k),0,-22);
-  pkShake=Math.max(pkShake,0.5+k*1.5);rumble(400,1,1);
-  if(d<10)breakUI.flash(1);
+  const away=wofAway(),k=away?0:Math.max(0,1-d/9);
+  if(away&&wofLive())say('Somewhere beyond the door, something goes BOOM.',3);
+  if(away)noise(1.4,0.12,70,0.5);   // a muffled thud through the wall
+  else{
+    noise(1.6,0.9*Math.max(0.25,k),110,0.5);noise(0.9,0.7*Math.max(0.2,k),700,0.6);tone(42,1.6,'sawtooth',0.45*Math.max(0.25,k),0,-22);
+    pkShake=Math.max(pkShake,0.5+k*1.5);rumble(400,1,1);
+    if(d<10)breakUI.flash(1);
+  }
   // the scorch mark stays for the rest of the floor
   if(!scorch){scorch=new THREE.Mesh(new THREE.CircleGeometry(1,40),new THREE.MeshBasicMaterial({color:0x000000,transparent:true,opacity:0.55,depthWrite:false}));scorch.rotation.x=-Math.PI/2;scene.add(scorch)}
   scorch.position.set(B0.x,0.006,B0.z);scorch.scale.setScalar(1.3);scorch.visible=true;scorch.userData.depth=R.depth;
   // you: thrown away from the blast
-  if(!P.down&&wofLive()&&!FX.frozen&&d<9){
+  if(!P.down&&wofLive()&&!FX.frozen&&!away&&d<9){
     let ax=P.x-B0.x,az=P.z-B0.z,al=Math.hypot(ax,az);if(al<0.05){const a=Math.random()*Math.PI*2;ax=Math.cos(a);az=Math.sin(a);al=1}
     const v=3+9*k;P.vx=ax/al*v;P.vz=az/al*v;P.vy=2.6+2.2*k;P.y=0.0001;P.airSpeed=v;FX.flyT=2.5;FX.flyB=2;FX.spin=(Math.random()<0.5?-1:1)*(5+6*k);
     if(FX.curl!==1)say(k>0.5?'BOOM! You are airborne.':'The blast knocks you off your feet.',2.5);
@@ -2567,7 +2645,6 @@ function bombDraw(t){
 function wofLightsOut(){
   P.fuel=0;lowFuelSaid=true;sfx('powerdown');noise(0.5,0.25,900,1.5);
   setTimeout(()=>say('Every torch on the floor is out. Something heard the hiss.',4),1500);
-  if(!MP.guest&&F)for(const s of F.shades)if(s.type===0&&s.x>0&&!s.dead){s.state=1;s.calm=0}   // the shades come looking
 }
 
 /* ---------- the Timeshare Salesman ---------- */
@@ -2588,19 +2665,22 @@ function tsTick(dt){
   if(MP.guest){T0.age+=dt;if(T0.age>3){TS=null;return}followNet(T0,dt)}
   else{
     T0.t-=dt;
-    const L=tkTargets().filter(q=>!T0.heard[q.id]);
-    if(T0.t<=0||!L.length){TS=null;mpSend({k:'ts',d:R.depth,end:1});say('The salesman leaves his card on the floor and moves on.',3.5);return}
+    const L=tkTargets().filter(q=>!T0.heard[q.id]),waiting=tkTargets(true).some(q=>q.away&&!T0.heard[q.id]);
+    if(T0.t<=0||!L.length&&!waiting){TS=null;mpSend({k:'ts',d:R.depth,end:1});say('The salesman leaves his card on the floor and moves on.',3.5);return}
     let tg=L.find(q=>q.id===T0.tg);
-    if(!tg){L.sort((a,b)=>Math.hypot(a.x-T0.x,a.z-T0.z)-Math.hypot(b.x-T0.x,b.z-T0.z));tg=L[0];T0.tg=tg.id}
-    const d=Math.hypot(tg.x-T0.x,tg.z-T0.z);
-    T0.pitching=d<1.3;
-    if(d>0.75)mazeStep(T0,tg.x,tg.z,dt,2.0);else{T0.mv=Math.max(0,T0.mv-dt*4);T0.yaw=Math.atan2(tg.z-T0.z,tg.x-T0.x)}
-    if(T0.pitching){T0.prog[tg.id]=(T0.prog[tg.id]||0)+dt;if(T0.prog[tg.id]>=PITCH_LEN+0.5){T0.heard[tg.id]=true;T0.tg=null}}
+    if(!tg&&L.length){L.sort((a,b)=>Math.hypot(a.x-T0.x,a.z-T0.z)-Math.hypot(b.x-T0.x,b.z-T0.z));tg=L[0];T0.tg=tg.id}
+    if(!tg){T0.tg=null;T0.pitching=false;T0.mv=Math.max(0,T0.mv-dt*4)}   // the only one left is behind a door: he loiters
+    else{
+      const d=Math.hypot(tg.x-T0.x,tg.z-T0.z);
+      T0.pitching=d<1.3;
+      if(d>0.75)mazeStep(T0,tg.x,tg.z,dt,2.0);else{T0.mv=Math.max(0,T0.mv-dt*4);T0.yaw=Math.atan2(tg.z-T0.z,tg.x-T0.x)}
+      if(T0.pitching){T0.prog[tg.id]=(T0.prog[tg.id]||0)+dt;if(T0.prog[tg.id]>=PITCH_LEN+0.5){T0.heard[tg.id]=true;T0.tg=null}}
+    }
     T0.net-=dt;if(T0.net<=0&&MP.on){T0.net=0.1;mpSend({k:'ts',d:R.depth,x:r3(T0.x),z:r3(T0.z),y:r3(T0.yaw),m:r3(T0.mv),p:T0.pitching?1:0})}
   }
   T0.walk+=dt*T0.mv*8;
   // your side of it: the pitch plays while he is in your face
-  if(!FX.pitchDone&&wofLive()&&!P.down&&Math.hypot(T0.x-P.x,T0.z-P.z)<1.4){
+  if(!FX.pitchDone&&wofLive()&&!P.down&&!wofAway()&&Math.hypot(T0.x-P.x,T0.z-P.z)<1.4){
     FX.pitch+=dt;const k=Math.min(PITCH.length-1,Math.floor(FX.pitch/PITCH_LINE));
     if(k!==FX.pitchLine){FX.pitchLine=k;say('Salesman: '+PITCH[k],PITCH_LINE+0.3);talkBlip(T0.x,T0.z)}
     if(FX.pitch>=PITCH_LEN){FX.pitchDone=true;setTimeout(()=>say('You now own one fourteen-thousandth of a sanctuary. Probably.',3.5),PITCH_LINE*1000)}
@@ -2651,9 +2731,15 @@ function tkSpawn(){
   TK={x,z,yaw:0,t:150,tg:null,pause:1.6,walk:0,mv:0,gig:1,last:{},df:null,dfK:-1,dfT:0,net:0,gT:0,age:0,
     n:{type:'tickle',x,z,ph:1.7,used:true,lock:true,yaw:0,hy:0,hp:0}};
 }
-function tkTargets(){
-  const L=[];if(!P.down&&wofLive()&&!FX.frozen)L.push({id:'me',x:P.x,z:P.z});
-  if(MP.on)for(const p of MP.peers.values())if(p.d===R.depth&&mpDrawn(p)&&!p.frz)L.push({id:p.id,x:p.x,z:p.z});
+// who a floor-wide creature can go after: players standing in the maze. Anyone behind a door is out of reach (and, with away, listed apart).
+function tkTargets(away){
+  const L=[];
+  if(!P.down&&wofLive()&&!FX.frozen){if(!wofAway())L.push({id:'me',x:P.x,z:P.z});else if(away)L.push({id:'me',x:P.x,z:P.z,away:true})}
+  if(MP.on)for(const p of MP.peers.values()){
+    if(p.d!==R.depth||p.down||p.frz||!p.run||!mpFresh(p))continue;
+    if(p.away){if(away)L.push({id:p.id,x:p.x,z:p.z,away:true});continue}
+    if(mpDrawn(p))L.push({id:p.id,x:p.x,z:p.z});
+  }
   return L;
 }
 function tkTick(dt){
@@ -2682,7 +2768,7 @@ function tkTick(dt){
   T0.walk+=dt*T0.mv*9;
   T0.gT-=dt;if(T0.gT<=0){T0.gT=T0.pause>0?0.75:1.2+Math.random()*1.4;giggle(T0.x,T0.z,T0.pause>0?1.3:0.9)}
   // caught: you are tickled, which slows you right down
-  if(!P.down&&wofLive()&&!FX.frozen&&FX.curl!==1&&Math.hypot(T0.x-P.x,T0.z-P.z)<0.5){   // a curled hedgehog cannot be tickled
+  if(!P.down&&wofLive()&&!wofAway()&&!FX.frozen&&FX.curl!==1&&Math.hypot(T0.x-P.x,T0.z-P.z)<0.5){   // a curled hedgehog cannot be tickled
     if(FX.tickled<=0){say('Hee hee! He is tickling you! You can barely move.',2.5);giggle(P.x,P.z,1.1,1.5)}
     FX.tickled=FX_DUR.tickled;
   }
@@ -2691,12 +2777,15 @@ function tkTick(dt){
 /* ---------- every frame ---------- */
 function wofTick(dt){
   wofTickSpin(dt);
-  if(!wofLive()){if(FX.tin||FX.loud||TK||TS||FX.moon||FX.bob||FX.frozen||FX.pug||FX.rat||FX.plague||FX.fat||FX.pox||FX.dying)wofClear();return}
-  for(const k of FX_TIMERS)if(FX[k]>0)FX[k]=Math.max(0,FX[k]-dt);
+  if(!wofLive()){wofWasAway=false;if(FX.tin||FX.loud||TK||TS||FX.moon||FX.bob||FX.frozen||FX.pug||FX.rat||FX.plague||FX.fat||FX.pox||FX.dying)wofClear();return}
+  const away=wofAway();
+  if(away!==wofWasAway){wofWasAway=away;if(away){tints({});statusStrip([]);document.body.classList.remove('hedgehog');wofAudio()}else WOQ_T=Math.max(WOQ_T,1.5)}
+  if(!away)for(const k of FX_TIMERS)if(FX[k]>0)FX[k]=Math.max(0,FX[k]-dt);   // the clocks wait outside the door
   tkTick(dt);tsTick(dt);rrTick(dt);bombTick(dt);
+  if(!away)wofReplayTick(dt);
   // the hedgehog: hold Z (pad LB, touch CURL) to curl into a ball of spines, X (pad R3, touch ROLL) to roll
-  FX.curl=FX.hedge>0&&!P.down&&!FX.frozen?((keys.KeyZ||pad.curl||touch.curl)?1:(keys.KeyX||pad.roll||touch.roll)?2:0):0;
-  document.body.classList.toggle('hedgehog',FX.hedge>0);if(FX.hedge>0)hedgeButtons();
+  FX.curl=!away&&FX.hedge>0&&!P.down&&!FX.frozen?((keys.KeyZ||pad.curl||touch.curl)?1:(keys.KeyX||pad.roll||touch.roll)?2:0):0;
+  document.body.classList.toggle('hedgehog',FX.hedge>0&&!away);if(FX.hedge>0&&!away)hedgeButtons();
   if(FX.curl===1){P.inv=Math.max(P.inv,0.25);P.vx*=0.8;P.vz*=0.8}
   if(F&&!MP.guest){   // spines hurt: a shade that runs into a curled hedgehog recoils, stunned
     const balls=[];if(FX.curl===1)balls.push([P.x,P.z]);
@@ -2705,11 +2794,11 @@ function wofTick(dt){
   }
   // the plague rat: anyone or anything that comes near starts to die, slowly
   const carriers=[];
-  if(FX.plague>0&&!P.down)carriers.push([P.x,P.z]);
+  if(FX.plague>0&&!P.down&&!away)carriers.push([P.x,P.z]);
   if(MP.on)for(const p of MP.peers.values())if(p.form===3&&p.d===R.depth&&mpDrawn(p))carriers.push([p.x,p.z]);
   const near=(x,z,r)=>carriers.some(c=>(c[0]-x)**2+(c[1]-z)**2<r*r);
   if(F&&carriers.length){
-    if(!FX.dying&&FX.plague<=0&&!P.down&&near(P.x,P.z,1.4)){FX.dying=true;FX.dyT=6;say('You caught the Black Plague. You are dying, slowly.',4);cough()}
+    if(!FX.dying&&FX.plague<=0&&!P.down&&!away&&near(P.x,P.z,1.4)){FX.dying=true;FX.dyT=6;say('You caught the Black Plague. You are dying, slowly.',4);cough()}
     for(const n of F.npcs)if(!n.sick&&!n.fall&&near(n.x+(n.ox||0),n.z+(n.oz||0),1.4))n.sick=16;
     if(!MP.guest)for(const s of F.shades)if(!s.dead&&!s.sick&&s.x>0&&near(s.x,s.z,1.4))s.sick=10;
   }
@@ -2722,15 +2811,15 @@ function wofTick(dt){
   }
   if(FX.dying){
     if(P.down){FX.dying=false}
-    else if(FX.curl!==1){FX.dyT-=dt;if(FX.dyT<=0){FX.dyT=6;cough();P.ward=0;P.inv=0;hurt(null);if(state==='dead')return}}
+    else if(FX.curl!==1&&!away){FX.dyT-=dt;if(FX.dyT<=0){FX.dyT=6;cough();P.ward=0;P.inv=0;hurt(null);if(state==='dead')return}}
   }
   // smallpox: stand next to someone who has it for a second and you have it too
-  if(FX.pox<=0&&!P.down&&MP.on){
+  if(FX.pox<=0&&!P.down&&!away&&MP.on){
     let c=false;for(const p of MP.peers.values())if(p.pox&&p.d===R.depth&&mpDrawn(p)&&(p.x-P.x)**2+(p.z-P.z)**2<1.6*1.6){c=true;break}
     FX.poxNear=c?FX.poxNear+dt:Math.max(0,FX.poxNear-dt);
     if(FX.poxNear>1){FX.pox=FX_DUR.pox;FX.poxNear=0;FX.poxC=2;say('Smallpox. Someone breathed on you.',4)}
   }
-  if(FX.pox>0&&!P.down){FX.poxC-=dt;if(FX.poxC<=0){FX.poxC=5+Math.random()*5;cough();FX.stag=0.8}}
+  if(FX.pox>0&&!P.down&&!away){FX.poxC-=dt;if(FX.poxC<=0){FX.poxC=5+Math.random()*5;cough();FX.stag=0.8}}
   // what is on you right now
   const L=[],f=wofForm();
   if(f===4)L.push([FX.curl===1?'Hedgehog: curled up':FX.curl===2?'Hedgehog: rolling':(touch.on?'Hedgehog':'Hedgehog · Z curl · X roll'),FX.hedge]);
@@ -2745,8 +2834,9 @@ function wofTick(dt){
   if(FX.tickled>0)L.push(['Tickled',null]);
   if(TS)L.push(['Timeshare salesman about',null]);
   if(TK)L.push(['Tickle Monster loose',TK.t]);
+  if(away)L.length=0;
   statusStrip(L);
-  tints({plague:FX.dying?0.9:FX.plague>0?0.45:0,tickle:FX.tickled>0?0.8:0,pox:FX.pox>0?0.55:0,fat:FX.fat>0?0.6:0});
+  if(!away)tints({plague:FX.dying?0.9:FX.plague>0?0.45:0,tickle:FX.tickled>0?0.8:0,pox:FX.pox>0?0.55:0,fat:FX.fat>0?0.6:0});
   wofAudio();
 }
 function wofDraw(t,ex,ey,ez,dtR){
@@ -2908,6 +2998,7 @@ const ROOMS=createRooms(renderer,{post:POST,low:Q===0,ao:Q>=2,
   },
   rewardMooseGems:n=>{if(previewStamina)previewStamina.mooseGems+=n;else{wallet+=n;R.gems+=n;store.set('wallet',wallet)}},
   sta:P,speedMul:()=>moveMul(),lungs:()=>up.lungs|0,   // rooms share the player's stamina and the boots / cold modifiers
+  mob:(id,seed)=>rememberRoomMob(id,seed),
 
   control:roomControl,
   inputDevice:roomInputDevice,
@@ -2986,6 +3077,7 @@ function roomClose(){
     const {stam,winded,spikeTraps}=previewStamina;
     Object.assign(P,{stam,winded,spikeTraps});previewStamina=null;
   }
+  roomPauseHide(false);
   P.away=false;state='play';document.body.classList.remove('inroom','moose-table','room-look-only','room-cinematic','room-no-use','room-choice',...Object.values(DOOR_KINDS).flatMap(door=>door.css?[door.css]:[]));mouseL=false;ROOMS.untap();
   $('tFlash').textContent='FLASH';
   $('fade').style.transition='opacity .4s';$('fade').style.opacity=0;
@@ -3053,6 +3145,20 @@ function roomEnd(res){
   if(res.k==='maze-exit'){
     P.x=F.exit.x;P.z=F.exit.z;P.y=0;P.vx=P.vy=P.vz=0;P.pitch=0;
     onTileChange();sfx('noclip');
+    return;
+  }
+  if(res.why==='hamlet'){
+    if(res.k==='win'){
+      achieve('hamlet','Limb from limb','Cut the night thing apart with an obsidian-glass sword');
+      say('You step back through. The village keeps the dark.',3.5);
+      sfx('door');
+    }else if(res.k==='dead'){
+      mpSend({k:'sdr',r:'hamlet'});mpSys(myName()+' was taken by the thing in the village');
+      P.hp=0;$('deadTitle').textContent='THE NIGHT TAKES YOU';die();
+    }else{
+      say('You leave the village with the sun behind you.',3);
+      sfx('door');
+    }
     return;
   }
   if(res.why==='stillwood'){
@@ -3123,13 +3229,18 @@ let doorMsgT=0, tipTimers=[];
 let mapBig=false, usingLock=false, pausedAt=0, flashT=0, sealMsgT=0, lowFuelSaid=false, pingT=0, beatT=0;
 let sens=store.get('sens',1);
 $('sens').value=sens;
-$('sens').addEventListener('input',e=>{sens=+e.target.value;store.set('sens',sens)});
+$('sens').addEventListener('input',e=>{sens=+e.target.value;store.set('sens',sens);document.querySelectorAll('.sensP').forEach(o=>o.value=sens)});
+document.querySelectorAll('.sensP').forEach(el=>{el.value=sens;el.addEventListener('input',()=>{sens=+el.value;store.set('sens',sens);$('sens').value=sens;document.querySelectorAll('.sensP').forEach(o=>o.value=sens)})});
 $('startSel').addEventListener('change',e=>store.set('startDepth',+e.target.value));
 let bright=clamp(+store.get('bright',1.3)||1.3,0.6,3);
 function setBright(v,quiet){bright=clamp(v,0.6,3);store.set('bright',bright);document.querySelectorAll('.brightS').forEach(el=>el.value=bright);if(!quiet)say('Brightness '+Math.round(bright/1.3*100)+'%',1)}
 document.querySelectorAll('.brightS').forEach(el=>{el.value=bright;el.addEventListener('input',e=>setBright(+e.target.value,true))});
 $('qSel').value=QSET;
 $('qSel').addEventListener('change',e=>{lsSet('quality',e.target.value);lsSet('safe',0);location.reload()});
+// the pause-panel copies save the same way but never reload: that would throw the run away
+const gfxNote=()=>document.querySelector('#pause .gfxNote').classList.remove('hidden');
+document.querySelectorAll('.qSelP').forEach(el=>{el.value=QSET;el.addEventListener('change',()=>{lsSet('quality',el.value);lsSet('safe',0);$('qSel').value=el.value;document.querySelectorAll('.qSelP').forEach(o=>o.value=el.value);gfxNote()})});
+document.querySelectorAll('.gtxP').forEach(el=>{el.checked=WANT_GTX;el.addEventListener('change',()=>{lsSet('gtx',el.checked);lsSet('safe',0);$('gtx').checked=el.checked;document.querySelectorAll('.gtxP').forEach(o=>o.checked=el.checked);gfxNote()})});
 $('gtx').checked=WANT_GTX;
 $('gtx').addEventListener('change',e=>{lsSet('gtx',e.target.checked);lsSet('safe',0);location.reload()});
 
@@ -3137,6 +3248,14 @@ function solidAt(x,z){const tx=Math.floor(x),ty=Math.floor(z);return tx<0||ty<0|
 let panelLvl=1;
 function torchRadius(fu){if(fu===undefined)fu=state==='title'?100:P.fuel;return (1.6+6.0*Math.sqrt(Math.max(0,fu)/100))*(F.dark?0.5:1)*(F.back?0.45:1)}
 function blocked(x,z){return solidAt(x-PR,z-PR)||solidAt(x+PR,z-PR)||solidAt(x-PR,z+PR)||solidAt(x+PR,z+PR)}
+function mazeCell(x,z){
+  if(!F||x<0||z<0||x>=F.W||z>=F.H)return 2;
+  if(F.door&&F.door.tx===x&&F.door.ty===z)return 2;
+  const g=F.g[z*F.W+x];
+  if(g===2)return 2;
+  if((g&3)===1)return 1;
+  return 0;
+}
 function los(x0,z0,x1,z1){
   const dx=x1-x0,dz=z1-z0,l=Math.hypot(dx,dz),n=Math.ceil(l/0.2);
   for(let i=1;i<n;i++){const t=i/n;if(solidAt(x0+dx*t,z0+dz*t))return false}
@@ -3153,7 +3272,7 @@ function installFloor(depth,nextFloor,prepared=false){
   if(!prepared){buildMesh(F);buildStatic(F);buildSdf(F)}
   sweepWorld();if(F.npcs&&F.npcs.some(q=>q.type==='keeper'))keeperWarm();
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
-  P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;P.inSafe=false;nearNpc=nearDoor=null;
+  P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;P.inSafe=false;P.unseen=false;nearNpc=nearDoor=null;
   sealMsgT=0;doorMsgT=0;
   onTileChange();
   pkReapply();
@@ -3207,6 +3326,8 @@ function startFromMenu(seed,depth){
   if(!loading)startRun(seed,depth,false,true);
 }
 function enterRun(seed,sd,floor,landing,liftTrip){
+  if(seed===autoSeed&&!$('seedIn').value.trim()){autoSeed=randSeed();reWarm=true}
+  if(loading?.kind==='shaft')closeLoading(); // an unfinished title warm-up must not hold the doors shut or rebuild the world later
   roomLeave();$('deadTitle').textContent='THE DARK TAKES YOU';wofClear();WOF.done=true;WOF.plan=null;WOF.flap=0;
   showHub(false);
   if(!archiveRun)hub.reset();
@@ -3238,6 +3359,7 @@ function showTips(){
 function toTitle(){
   if(archiveRun){finishArchive();return}
   if(loading)closeLoading();
+  endWallClip();
   roomLeave();glFallEnd();GL.queued=null;
   if(MP.on)mpLeave(false);
   state='title';
@@ -3245,7 +3367,7 @@ function toTitle(){
   $('toast').style.opacity=0;
   showHub(true);
   showBest();
-  if(document.pointerLockElement)document.exitPointerLock();
+  if(document.pointerLockElement){usingLock=false;document.exitPointerLock()}
 }
 function showBest(){
   fillStartSel();
@@ -3258,9 +3380,37 @@ function pause(){
   $('pause').classList.remove('hidden');
 }
 function resume(withLock){
+  if(roomPaused){roomPauseHide(withLock);return}
   if(state!=='pause')return;
   state='play';$('pause').classList.add('hidden');
   if(withLock)lock();
+}
+/* ---------- Esc in the lobby / a door room: a small box, or the pause panel with settings. Only this player's input is held. ---------- */
+let lobbyPaused=false,roomPaused=false;
+function freeInput(){for(const k in keys)keys[k]=false;mouseL=false}
+function lobbyPauseShow(){
+  if(lobbyPaused||state!=='title'||activeStation||loading||touch.on||archiveRun)return;
+  lobbyPaused=true;pausedAt=performance.now();freeInput();
+  $('lobbyPause').classList.remove('hidden');
+  if(document.pointerLockElement){usingLock=false;document.exitPointerLock()}
+}
+function lobbyPauseHide(withLock){
+  if(!lobbyPaused)return;
+  lobbyPaused=false;$('lobbyPause').classList.add('hidden');
+  if(withLock&&!touch.on)lock();
+}
+function roomPauseShow(){
+  if(roomPaused||state!=='room'||archiveRun||touch.on||onMooseTable())return;
+  const mode=ROOMS.controlMode();
+  if(mode==='table'||mode==='read')return;
+  roomPaused=true;pausedAt=performance.now();freeInput();
+  mpPausePanel();document.querySelector('#pause .gfxNote').classList.add('hidden');
+  $('pause').classList.remove('hidden');
+}
+function roomPauseHide(withLock){
+  if(!roomPaused)return;
+  roomPaused=false;$('pause').classList.add('hidden');
+  if(withLock&&state==='room'&&!touch.on)lock();
 }
 function lock(){
   try{const p=canvas.requestPointerLock({unadjustedMovement:true});
@@ -3273,6 +3423,7 @@ function say(t,secs){const el=$('toast');el.textContent=t;el.style.opacity=1;cle
 function die(){
   if(archiveRun){state='dead';queueMicrotask(finishArchive);return}
   if(loading)closeLoading();
+  endWallClip();
   roomLeave();GL.queued=null;R.xray=0;R.guide=0;
   if(MP.on&&!MP.wiping){mpDown();return}
   state='dead';clearPrompt();
@@ -3574,7 +3725,23 @@ function mpSendRun(to,liftTrip){
   mpSend({k:'run',seed:R.seed,d:R.depth,sd:R.startDepth,t:r2(R.time),got,door:F.doorOpen?1:0,sdo:F.sdoors.map(q=>q.used?1:0),pk:(R.pk[R.depth]||[]).slice(0,64),sh:P.shards,ke:P.keys,blk:F.blk|0,liftTrip},to);
 }
 function mpApplyRun(r){
-  startRun(r.seed,r.d,true,true,()=>mpRestoreRun(r));
+  startRun(r.seed,r.d,true,true,()=>{
+    mpRestoreRun(r);
+    const host=MP.peers.get(MP.hostId);
+    if(!host||host.d!==R.depth||!Number.isFinite(host.x)||!Number.isFinite(host.z)||host.away)return;
+    const spot=mpBeside(host.x,host.z,host.yaw||0);
+    if(!spot)return;
+    Object.assign(P,spot);onTileChange();
+  });
+}
+// stand next to a friend instead of the floor's far entrance, so joining doesn't look like vanishing
+function mpBeside(x,z,yaw){
+  const spots=[[0.75,0],[-0.75,0],[0,0.75],[0,-0.75],[1.15,0.45],[-1.15,-0.45],[1.2,-0.3]];
+  for(const [ox,oz] of spots){
+    const nx=x+ox,nz=z+oz;
+    if(!blocked(nx,nz))return {x:nx,z:nz,yaw,pitch:0};
+  }
+  return null;
 }
 function mpRestoreRun(r){
   R.startDepth=r.sd;R.time=r.t;
@@ -3604,6 +3771,7 @@ function mpDown(){
 }
 function mpDescend(n,why){
   if(state==='pause')$('pause').classList.add('hidden');
+  roomPauseHide(false);
   if(state==='talk'){$('talk').classList.add('hidden');talk=null}
   descend(n,why);
 }
@@ -3622,8 +3790,12 @@ function mpRecv(m,from){
       if(!Array.isArray(a)||a.length!==4||!a.every(Number.isFinite))return;
       const [x,y,z,yaw]=a;
       if(Math.abs(x)>21||y< -10000||y>3||z< -34||z>16||Math.abs(yaw)>1e4)return;
-      const station=['settings','guide','lift'].includes(m.station)?m.station:null;
-      const ride=m.ride===sharedLift.trip?.id&&sharedLift.trip?.members.includes(from)?m.ride:null;
+      const station=['settings','guide','news','lift'].includes(m.station)?m.station:null;
+      let ride=null;
+      if(m.ride&&sharedLift.trip&&m.ride===sharedLift.trip.id){
+        ride=m.ride;
+        if(!sharedLift.trip.members.includes(from))sharedLift.trip.members.push(from);
+      }
       p.hub={x,y,z,yaw,station,ride,ready:!!m.ready,at:performance.now()};
       if(validLiftDepth(m.deepest))p.deepest=m.deepest;
       if(MP.host)terminalSession.expire();
@@ -3654,7 +3826,7 @@ function mpRecv(m,from){
       if(fromHost&&sharedLift.trip?.id===m.id&&[m.travel,m.extra].every(Number.isFinite)){
         const previous=sharedLift.trip.motion;
         if(previous&&(m.travel<previous.travel||m.extra<previous.extra||previous.docked&&!m.docked))return;
-        sharedLift.trip.motion={travel:m.travel,extra:m.extra,docked:!!m.docked};
+        sharedLift.trip.motion={travel:m.travel,extra:m.extra,docked:!!m.docked,gaps:Array.isArray(m.gaps)?m.gaps:null};
         if(m.docked)updateLiftScreen();
       }
       break;
@@ -3673,15 +3845,21 @@ function mpRecv(m,from){
         else if(hub.riding)mpSend({k:'liftStart',...sharedLift.trip.packet},from);
       }
       mpTitle();break;
-    case 'run':
+    case 'run':{
       if(!fromHost)return;
       MP.run=m;
-      if(MP.wantJoin&&!hub.riding&&(!m.liftTrip||m.liftTrip!==sharedLift.trip?.id))mpApplyRun(m);
-      mpTitle();break;
+      const sameTrip=!!(m.liftTrip&&sharedLift.trip&&m.liftTrip===sharedLift.trip.id);
+      // Same trip and already aboard: the landing walk enters the maze. Don't restart it.
+      if(MP.wantJoin&&!hub.riding&&!sameTrip)mpApplyRun(m);
+      // Anyone still in the hall gets the lift back, so they can catch up.
+      if(!hub.riding&&sharedLift.trip){
+        sharedLift.trip=null;sharedLift.pending=0;hub.watchLift(null);updateLiftScreen();
+      }
+      mpTitle();break;}
     case 'p':{
       const a=m.a;if(!Array.isArray(a))return;
       p.hub=null;
-      p.d=m.d;p.x=+a[0];p.z=+a[1];p.y=+a[2];p.yaw=+a[3];p.pitch=+a[4];p.fu=+a[5];p.down=!!(a[6]&1);p.safe=!!(a[6]&2);p.run=!!(a[6]&4);p.away=!!(a[6]&8);p.mounted=!!(a[6]&16);p.hp=a[7];p.form=a[6]>>5&3;p.fat=!!(a[6]&128);p.pox=!!(a[6]&256);p.frz=!!(a[6]&512);p.bob=!!(a[6]&1024);p.hedge=!!(a[6]&2048);p.curl=a[6]&4096?1:a[6]&8192?2:0;
+      p.d=m.d;p.x=+a[0];p.z=+a[1];p.y=+a[2];p.yaw=+a[3];p.pitch=+a[4];p.fu=+a[5];p.down=!!(a[6]&1);p.safe=!!(a[6]&2);p.run=!!(a[6]&4);p.away=!!(a[6]&8);p.mounted=!!(a[6]&16);p.unseen=!!(a[6]&32);p.hp=a[7];p.form=a[6]>>6&3;p.fat=!!(a[6]&256);p.pox=!!(a[6]&512);p.frz=!!(a[6]&1024);p.bob=!!(a[6]&2048);p.hedge=!!(a[6]&4096);p.curl=a[6]&8192?1:a[6]&16384?2:0;
       if(p.rx===undefined||p.rd!==p.d||Math.hypot(p.x-p.rx,p.z-p.rz)>3){p.rx=p.x;p.rz=p.z;p.ry=p.y;p.ryaw=p.yaw;p.rpitch=p.pitch;p.rd=p.d}
       break;}
     case 'm':{
@@ -3825,8 +4003,11 @@ function mpSpectate(){
   if(Math.floor(P.x)!==P.tx||Math.floor(P.z)!==P.ty)onTileChange();
 }
 function mpCycle(){const L=mpAlive();if(L.length<2)return;const i=L.findIndex(p=>p.id===MP.follow);MP.follow=L[(i+1)%L.length].id}
+// flags packed into a[6] of the per-frame position message: 1 down, 2 safe, 4 run, 8 away, 16 mounted, 32 unseen,
+// 64+128 wheel form, 256 fat, 512 pox, 1024 frozen, 2048 bobblehead, 4096 hedgehog, 8192/16384 curl (1 / 2)
+const mpPosFlags=()=>(P.down?1:0)|(P.inSafe||P.away||FX.frozen?2:0)|4|(P.away?8:0)|(P.mounted?16:0)|(P.unseen?32:0)|((wofForm()<4?wofForm():0)<<6)|(FX.fat>0?256:0)|(FX.pox>0?512:0)|(FX.frozen?1024:0)|(FX.bob>0?2048:0)|(FX.hedge>0?4096:0)|(FX.curl===1?8192:FX.curl===2?16384:0);
 const mpFresh=p=>performance.now()-(p.seen||0)<15000;
-const mpShown=p=>MP.on&&p.run&&!p.away&&p.d===R.depth&&p.rx!==undefined&&state!=='title'&&mpFresh(p);
+const mpShown=p=>MP.on&&p.run&&!p.away&&!p.unseen&&p.d===R.depth&&p.rx!==undefined&&state!=='title'&&mpFresh(p);
 function sendHubPresence(to){
   const {x,y,z,yaw,station,ride,ready}=hub.presence;
   mpSend({k:'hub',a:[r3(x),r3(y),r3(z),r3(wrapA(yaw))],station,ride,ready,deepest},to);
@@ -3859,7 +4040,7 @@ function mpTick(raw){
   MP.pt-=raw;
   if(MP.pt<=0){
     MP.pt=1/15;
-    mpSend({k:'p',d:R.depth,a:[r3(P.x),r3(P.z),r3(P.y),r3(P.yaw),r3(P.pitch),Math.round(P.fuel),(P.down?1:0)|(P.inSafe||P.away||FX.frozen?2:0)|4|(P.away?8:0)|(P.mounted?16:0)|(wofForm()<4?wofForm():0)<<5|(FX.fat>0?128:0)|(FX.pox>0?256:0)|(FX.frozen?512:0)|(FX.bob>0?1024:0)|(FX.hedge>0?2048:0)|(FX.curl===1?4096:FX.curl===2?8192:0),P.hp]});
+    mpSend({k:'p',d:R.depth,a:[r3(P.x),r3(P.z),r3(P.y),r3(P.yaw),r3(P.pitch),Math.round(P.fuel),mpPosFlags(),P.hp]});
   }
   rvT-=raw;
   if(state==='room'&&rvT<=0&&MP.peers.size){rvT=0.1;const q=ROOMS.snap();if(q)mpSend({k:'rv',d:R.depth,w:ROOMS.kind,q})}
@@ -4186,9 +4367,9 @@ function mimicPick(id){
   let r=Math.random()*tot;for(let i=0;i<P2.length;i++){r-=w[i];if(r<=0)return P2[i]}
   return P2[P2.length-1];
 }
-const MIM={x:-99,z:-99,rx:-99,rz:-99,face:0,rface:0,st:0,as:'',vic:'',t:0,hid:40,sayT:5,gx:0,gy:0,px:-1,py:-1,walk:0,spd:0,lastKey:'',vd:null,vdKey:'',voice:null,depth:0};
+const MIM={x:-99,z:-99,rx:-99,rz:-99,face:0,rface:0,st:0,as:'',vic:'',t:0,hid:53,sayT:5,gx:0,gy:0,px:-1,py:-1,walk:0,spd:0,lastKey:'',vd:null,vdKey:'',voice:null,depth:0};
 // st: 0 hidden, 1 stalking, 2 revealing (eating), 3 recoiling from a flash
-function mimicReset(){Object.assign(MIM,{x:-99,z:-99,rx:-99,rz:-99,st:0,hid:30+Math.random()*25,t:0,vd:null,vdKey:'',as:'',vic:'',mooseLure:null})}
+function mimicReset(){Object.assign(MIM,{x:-99,z:-99,rx:-99,rz:-99,st:0,hid:40+Math.random()*33,t:0,vd:null,vdKey:'',as:'',vic:'',mooseLure:null})}
 const tid=t=>t.loc?MP.id:t.p.id;
 function mimicHost(dt,TG){
   const M=MIM;
@@ -4209,7 +4390,7 @@ function mimicHost(dt,TG){
     return;
   }
   M.t+=dt;
-  if(M.st===3){if(M.t>0.7){M.st=0;M.x=M.z=-99;M.hid=18+Math.random()*12}return}
+  if(M.st===3){if(M.t>0.7){M.st=0;M.x=M.z=-99;M.hid=24+Math.random()*16}return}
   const V=TG.find(t=>tid(t)===M.vic);
   if(M.st===2){if(M.t>1.6){mimicReset()}return}
   if(followMoose(M,dt,2.65))return;
@@ -4251,13 +4432,16 @@ function mimicFlash(x,z){
 }
 // play one of the disguise's clips from where the mimic stands
 function mimicSay(key){
-  for(const L of CLIPS.values()){const c=L.find(q=>q.key===key);if(c){
+  for(const [id,L] of CLIPS){const c=L.find(q=>q.key===key);if(c){
+    // never replay a player's own recorded voice back to them (MIM.voice stays untouched)
+    if(id===MP.id||key.startsWith(MP.id+':'))return;
     VOX.playClip(key,c.buf,mpEar(MIM.rx,MIM.rz,R.depth,true)).then(h=>{MIM.voice=h});return}}
 }
 // you are the one it reached
 function mimicEat(){
   if(P.down||P.grab||state==='title'||state==='dead')return;
   P.grab={t:0,x:MIM.rx>0?MIM.rx:P.x+Math.cos(P.yaw),z:MIM.rx>0?MIM.rz:P.z+Math.sin(P.yaw)};for(const k in keys)keys[k]=false;
+  roomPauseHide(false);
   if(state==='pause'){$('pause').classList.add('hidden');state='play'}
   if(state==='talk'){$('talk').classList.add('hidden');talk=null;state='play'}
   if(chatOpen)chatClose(false);
@@ -4312,6 +4496,8 @@ addEventListener('keydown',e=>{
   if(loading){if(e.code==='Tab'||e.code==='Enter'||e.code==='Space')e.preventDefault();return}
   if(state==='title'&&activeStation){
     if(e.code==='Escape'){e.preventDefault();closeStation();return}
+    const scroll={ArrowUp:-60,ArrowDown:60,PageUp:-300,PageDown:300}[e.code];
+    if(scroll&&scrollNews(scroll)){e.preventDefault();return}
     if(e.code==='Tab'){
       const controls=stationControls(),first=controls[0],last=controls.at(-1);
       if(e.shiftKey&&e.target===first){e.preventDefault();last.focus()}
@@ -4332,6 +4518,14 @@ addEventListener('keydown',e=>{
   if(state==='title'&&(e.code==='Tab'||e.target?.closest?.('button')&&(e.code==='Enter'||e.code==='Space')))return;
   if(e.target===$('archiveBack')&&(e.code==='Enter'||e.code==='Space'))return;
   if(state==='room'&&(e.code==='Tab'||e.target?.closest?.('button')&&['Enter','NumpadEnter','Space'].includes(e.code)))return;
+  if(lobbyPaused||roomPaused){
+    const go=['Enter','NumpadEnter','KeyP'].includes(e.code)||(lobbyPaused&&e.code==='Space')||(e.code==='Escape'&&performance.now()-pausedAt>300);
+    if(go||e.code==='Tab'||e.code==='Space')e.preventDefault();
+    if(e.repeat)return;
+    if(go){if(lobbyPaused)lobbyPauseHide(true);else roomPauseHide(false)}
+    else if(roomPaused&&e.code==='KeyT')toTitle();
+    return;
+  }
   if(['Tab','Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
   if(roomMode==='table'&&['Backspace','Enter','NumpadEnter','Escape'].includes(e.code))e.preventDefault();
   if(e.repeat)return;
@@ -4371,11 +4565,12 @@ addEventListener('keydown',e=>{
   }
 });
 addEventListener('keyup',e=>{keys[e.code]=false});
-addEventListener('blur',()=>{for(const k in keys)keys[k]=false;mouseL=false;pause()});
-document.addEventListener('visibilitychange',()=>{if(document.hidden)pause()});
+const lobbyHadLock=()=>state==='title'&&(usingLock||!!document.pointerLockElement);
+addEventListener('blur',()=>{const lobby=lobbyHadLock();for(const k in keys)keys[k]=false;mouseL=false;pause();if(lobby)lobbyPauseShow()});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){const lobby=lobbyHadLock();pause();if(lobby)lobbyPauseShow()}});
 document.addEventListener('mousemove',e=>{
   const drag=(state==='title'||state==='room')&&(e.buttons&2);
-  if(loading||!['title','play','room'].includes(state)||(!drag&&document.pointerLockElement!==canvas))return;
+  if(loading||lobbyPaused||roomPaused||!['title','play','room'].includes(state)||(!drag&&document.pointerLockElement!==canvas))return;
   const mx=e.movementX,my=e.movementY;
   if(!isFinite(mx)||!isFinite(my)||Math.abs(mx)>600||Math.abs(my)>600)return;
   if(state==='title'){hub.look(mx*MOVE.mouse*sens,my*MOVE.mouse*sens);return}
@@ -4386,7 +4581,12 @@ document.addEventListener('mousemove',e=>{
 });
 document.addEventListener('pointerlockchange',()=>{
   if(document.pointerLockElement===canvas)usingLock=true;
-  else if(usingLock){usingLock=false;pause()}
+  else if(usingLock){
+    usingLock=false;
+    if(state==='title')lobbyPauseShow();
+    else if(state==='room')roomPauseShow();
+    else pause();
+  }
 });
 const onMooseTable=()=>state==='room'&&ROOMS.kind==='moose'&&ROOMS.state()?.table;
 document.addEventListener('pointerdown',e=>{
@@ -4398,6 +4598,7 @@ $('roomHud').addEventListener('click',e=>{
 });
 canvas.addEventListener('click',e=>{
   if(loading)return;
+  if(lobbyPaused){lobbyPauseHide(true);return}
   if(state==='title'){
     initAudio();
     if(document.pointerLockElement)hub.interact();
@@ -4413,6 +4614,7 @@ canvas.addEventListener('mousedown',e=>{if(loading)return;if(state==='room'&&!on
 addEventListener('mouseup',e=>{if(e.button===0)mouseL=false});
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 $('resumeBtn').addEventListener('click',()=>resume(true));
+$('lobbyPause').addEventListener('click',()=>{initAudio();lobbyPauseHide(true)});
 $('againBtn').addEventListener('click',()=>{startFromMenu();lock()});
 // touch controls
 const touch={on:false,mx:0,my:0,jump:false,stickId:null,lookId:null,tapId:null,sx:0,sy:0,lx:0,ly:0};
@@ -4524,6 +4726,12 @@ function pollPad(){
   const lx=curve(gp.axes[2]||0),ly=curve(gp.axes[3]||0);
   pad.lx=lx*(0.45+0.55*Math.abs(lx))*sens;pad.ly=ly*(0.45+0.55*Math.abs(ly))*sens;
   if(state==='room'&&(pad.roomButtons.some(Boolean)||pad.mx||pad.my||lx||ly))roomDevice='controller';
+  if(lobbyPaused||roomPaused){
+    if(hit(0)||hit(9)||(lobbyPaused&&hit(1)))lobbyPaused?lobbyPauseHide(false):roomPauseHide(false);
+    else if(roomPaused&&hit(8))toTitle();
+    for(let i=0;i<gp.buttons.length;i++)pad.prev[i]=B(i);
+    return;
+  }
   if(state==='play'){
     if(archiveRun&&hit(8)){finishArchive();pad.prev[8]=true;return}
     pad.jump=B(0)&&performance.now()>padHold;
@@ -4548,6 +4756,7 @@ function pollPad(){
         const controls=stationControls();
         (controls.includes(document.activeElement)?document.activeElement:controls[0])?.click();
       }
+      else if((hit(12)||hit(13))&&scrollNews(hit(12)?-90:90));
       else if(hit(12)||hit(13)){
         const controls=stationControls(),i=controls.indexOf(document.activeElement);
         controls[i<0?0:(i+(hit(12)?-1:1)+controls.length)%controls.length]?.focus();
@@ -4641,6 +4850,7 @@ function sfx(n){
     case 'scout':tone(780,.09,'sine',.027);tone(1040,.12,'sine',.022,.09);break;
     case 'seal':tone(110,0.4,'square',0.08,0,-30);break;
     case 'descend':[440,330,247,165].forEach((f,i)=>tone(f,0.6,'triangle',0.14,i*0.12));break;
+    case 'ding':tone(1046,0.22,'sine',0.16);tone(1568,0.32,'sine',0.11,0.07);break;
     case 'die':tone(220,1.6,'sawtooth',0.2,0,-180);break;
     case 'jump':tone(190,0.13,'sine',0.07,0,140);break;
     case 'spike':noise(0.07,0.22,3200,3);break;
@@ -4698,6 +4908,45 @@ function watcher(s,dt,pfx,pfz){
 /* ---------- update ---------- */
 // speed modifiers shared by the maze and the rooms: the cold slows you, boots speed you up
 const moveMul=()=>(P.chill>0?0.55:1)*(1+0.06*(up.boots|0))*wofSpeed();
+// A sprint clip does not pop you through. You are caught in the stone, the air goes, then you are shoved out.
+let wallClip=null;
+function endWallClip(){
+  if(!wallClip)return;
+  wallClip=null;
+  const f=$('fade').style;f.transition='opacity .35s';f.opacity='0';
+}
+function beginWallClip(dest,vx,vz,yaw){
+  if(wallClip)return false;
+  const x=(Math.floor(P.x)+Math.floor(dest.x))*0.5+0.5,z=(Math.floor(P.z)+Math.floor(dest.z))*0.5+0.5;
+  wallClip={x,z,hx:x,hz:z,dx:dest.x,dz:dest.z,vx,vz,yaw,t:0,hold:0.7,shove:0.26};
+  P.x=x;P.z=z;P.vx=P.vz=P.vy=0;P.y=0;P.wallTouch=true;P.unseen=true;
+  if(yaw!=null)P.yaw=yaw;
+  const f=$('fade').style;f.transition='none';f.opacity='0.55';
+  tone(52,0.9,'sine',0.2,0,-18);noise(0.75,0.22,110,0.4);tone(140,0.16,'sine',0.05,0.28,-30);
+  return true;
+}
+function wallClipTick(dt){
+  const C=wallClip;if(!C)return;
+  C.t+=dt;
+  const f=$('fade').style;f.transition='none';
+  if(C.t<C.hold){
+    C.hx=C.x;C.hz=C.z;
+    f.opacity=String(0.42+0.48*Math.sin(C.t/C.hold*Math.PI*3)**2);
+  }else{
+    const u=clamp((C.t-C.hold)/C.shove,0,1),e=u*u*(3-2*u);
+    C.hx=C.x+(C.dx-C.x)*e;C.hz=C.z+(C.dz-C.z)*e;
+    f.opacity=String(0.9*(1-u));
+    if(u>=1){
+      P.x=C.dx;P.z=C.dz;P.vx=C.vx;P.vz=C.vz;P.y=0;
+      if(C.yaw!=null)P.yaw=C.yaw;
+      wallClip=null;
+      f.transition='opacity .3s';f.opacity='0';
+      sfx('noclip');onTileChange();
+      return;
+    }
+  }
+  P.x=C.hx;P.z=C.hz;P.vx=P.vz=P.vy=0;P.y=0;
+}
 function update(dt){
   R.time+=dt;xrayTick(dt);guideTick(dt);mooseLureTick(dt);scoutTick(dt);
   // in a shared game the world keeps going while you pause or talk, but you stand still
@@ -4707,6 +4956,8 @@ function update(dt){
   else{
   // look and move: the shared movement system (src/movement.js), the same one the rooms use
   lookStep(P,dt,ctl?(keys.ArrowRight?1:0)-(keys.ArrowLeft?1:0)+pad.lx*MOVE.padTurn:0,ctl?pad.ly:0,MOVE.pitch);
+  if(wallClip)wallClipTick(dt);
+  else{
   const moon=FX.moon>0?-1:1;   // Moonwalk: forward is backward, left is right
   const fwd=moon*(ctl?((keys.KeyW||keys.ArrowUp)?1:0)-((keys.KeyS||keys.ArrowDown)?1:0)-pad.my-touch.my:0);
   const str=moon*(ctl?(keys.KeyD?1:0)-(keys.KeyA?1:0)+pad.mx+touch.mx:0);
@@ -4715,11 +4966,24 @@ function update(dt){
     {scale:1,speedMul:moveMul()*(P.mounted?1.25:1),lungs:up.lungs|0,blocked});
   if(ev.jumped)sfx('jump');
   if(ev.landed>0||ev.step)sfx('step');
+  if(ctl&&ev.ground&&(ev.blockedX||ev.blockedZ)){
+    if(!P.wallTouch){
+      P.wallTouch=true;
+      const full=MOVE.sprint*(1+0.06*(up.boots|0))*(P.mounted?1.25:1);
+      const dest=!ev.sprint||P.chill>0?null:noclipDest({x:P.x,z:P.z,hitVX:ev.hitVX,hitVZ:ev.hitVZ,sprint:true,fullSpeed:full,roll:Math.random(),cell:mazeCell,W:F.W,H:F.H});
+      if(dest&&!blocked(dest.x,dest.z)){
+        remember('glitches','clip',encounterSnapshot());
+        beginWallClip(dest,ev.hitVX,ev.hitVZ);
+      }
+    }
+  }else P.wallTouch=false;
+  }
   for(const q of F.pillars){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=0.2+PR;if(dd<m&&dd>1e-4){P.x=q[0]+ddx/dd*m;P.z=q[1]+ddz/dd*m}}
   if(F.safe){const ddx=P.x-F.safe.x,ddz=P.z-F.safe.z,dd=Math.hypot(ddx,ddz),m=0.3+PR;if(dd<m&&dd>1e-4){P.x=F.safe.x+ddx/dd*m;P.z=F.safe.z+ddz/dd*m}}
   for(const q of F.discs){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=q[2]+PR;if(dd<m&&dd>1e-4){const nx2=q[0]+ddx/dd*m,nz2=q[1]+ddz/dd*m;if(!blocked(nx2,nz2)){P.x=nx2;P.z=nz2}}}
   if(F.safe&&F.safe.wheel)for(const q of F.safe.wheel.discs){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=q[2]+PR;if(dd<m&&dd>1e-4){const nx2=q[0]+ddx/dd*m,nz2=q[1]+ddz/dd*m;if(!blocked(nx2,nz2)){P.x=nx2;P.z=nz2}}}
   for(const n of F.npcs){if(n.fall)continue;const X=n.x+(n.ox||0),Z=n.z+(n.oz||0),ddx=P.x-X,ddz=P.z-Z,dd=Math.hypot(ddx,ddz),m=0.16+PR;if(dd<m&&dd>1e-4){const nx2=X+ddx/dd*m,nz2=Z+ddz/dd*m;if(!blocked(nx2,nz2)){P.x=nx2;P.z=nz2}}}
+  if(wallClip){P.x=wallClip.hx;P.z=wallClip.hz;P.vx=P.vz=P.vy=0;P.y=0}
   if(Math.floor(P.x)!==P.tx||Math.floor(P.z)!==P.ty)onTileChange();
   // torch
   // sanctuary: the brazier feeds the torch and nothing hunts you here
@@ -4729,7 +4993,7 @@ function update(dt){
     else if(!F.back)P.fuel=Math.max(0,P.fuel-0.85*(1-0.15*(up.lamp|0))*dt);}
   // who is close enough to talk to
   {let best=null,bd=1.45;
-    for(const n of F.npcs){if(n.fall)continue;const d=Math.hypot(n.x-P.x,n.z-P.z);if(d<bd&&los(P.x,P.z,n.x,n.z)){bd=d;best=n}}
+    for(const n of F.npcs){if(n.type==='lurk'||n.fall)continue;const d=Math.hypot(n.x-P.x,n.z-P.z);if(d<bd&&los(P.x,P.z,n.x,n.z)){bd=d;best=n}}
     let nd=null;
     if(!best&&ctl){let dd=0.72;for(const D of F.sdoors){if(D.used)continue;const d=Math.hypot(D.x-P.x,D.z-P.z);if(d<dd&&(D.x-P.x)*Math.cos(P.yaw)+(D.z-P.z)*Math.sin(P.yaw)>d*0.45){dd=d;nd=D}}}
     if(best!==nearNpc||nd!==nearDoor){nearNpc=best;nearDoor=nd;if(state!=='room')$('tFlash').textContent=best?'TALK':nd?'OPEN':'FLASH'}
@@ -4874,6 +5138,7 @@ function update(dt){
       }
     }
   }
+  lurkTick(dt);if(state==='dead')return;
   if(TG)mimicHost(dt,TG);
   if(archiveMimic())mimicTick(dt);
   if(MP.on&&MIM.st)rememberMob('mimic',MIM);
@@ -4897,13 +5162,30 @@ function update(dt){
   }
 }
 
+function lurkTick(dt){
+  if(!F||P.away||!F.npcs)return;
+  for(const n of F.npcs){
+    if(n.type!=='lurk'||n.x<0)continue;
+    const r=lurkStep(n,dt,{x:P.x,z:P.z,yaw:P.yaw,down:!!P.down||state!=='play'},{
+      los:(x,z)=>los(P.x,P.z,x,z),
+      open:(x,z)=>x>0&&z>0&&x<F.W-1&&z<F.H-1&&F.g[z*F.W+x]===0&&!F.safeMask[z*F.W+x]&&!F.pocketMask[z*F.W+x],
+      rand:()=>Math.random(),
+    });
+    if(n.aggro&&!n.said){n.said=1;sfx('growl');say('It noticed you looking.',2.4)}
+    if(r.looking)rememberMob('lurk',n);
+    if(n.face!=null)n.yaw=n.face;
+    if(r.hurt&&state==='play'&&!P.down&&P.inv<=0&&!P.away)hurt(null);
+  }
+}
+
 /* ---------- fake glitches: things that look like bugs and are not ---------- */
 // Every one of these is deliberate. They are rare, they happen only on your own screen, and they
 // never start while something is hunting you, so they unsettle without ever costing a life.
-// __game.glitch('freeze'|'rubber'|'rubberfwd'|'replay'|'hud'|'tpose'|'hole'|'fall'|'loop') forces one for testing.
+// __game.glitch('freeze'|'rubber'|'rubberfwd'|'replay'|'hud'|'tpose'|'hole'|'fall'|'loop'|'clip') forces one for testing.
 const GL={cd:60,used:{},frz:0,frzAfter:null,buzz:null,hist:[],histT:0,rb:null,rbN:0,figs:[],hole:null,fall:null,loop:null,
   ghosts:[],walked:null,queued:null,qT:0,peerH:new Map(),hudOv:{},hudSeq:null,chatT:0,dip:0,netEl:null,netT:0};
 function glReset(){
+  endWallClip();
   glFallEnd();glClearFreeze();GL.queued=null;
   GL.cd=F.back?28+Math.random()*30:55+Math.random()*60;GL.used={};GL.frz=0;GL.frzAfter=null;GL.hist=[];GL.rb=null;
   GL.figs=[];GL.ghosts=[];GL.fall=null;GL.loop=null;GL.hudOv={};GL.hudSeq=null;GL.dip=0;GL.walked=new Uint8Array(F.W*F.H);
@@ -4999,6 +5281,7 @@ function glStartEffect(k,forced){
     case 'hole':return glHole();
     case 'fall':return glFall();
     case 'loop':return glLoopTry(forced);
+    case 'clip':return glClipForce();
   }
   return false;
 }
@@ -5086,8 +5369,9 @@ function glRubberTick(dt){
   }
 }
 // friends see a copy of you left standing where you were, torch flame stuck mid-flicker
-function glTellRoom(from){if(MP.on)mpSend({k:'gl',w:'rb',d:R.depth,x:r2(from[0]),z:r2(from[1]),yaw:r2(from[2])})}
+function glTellRoom(from){if(MP.on&&!P.unseen)mpSend({k:'gl',w:'rb',d:R.depth,x:r2(from[0]),z:r2(from[1]),yaw:r2(from[2])})}
 function glRecv(m,p){
+  if(p.unseen)return;
   if(m.w==='rb'&&m.d===R.depth&&state!=='title'&&state!=='dead'&&isFinite(+m.x)&&isFinite(+m.z))
     GL.ghosts.push({x:+m.x,z:+m.z,yaw:+m.yaw||0,col:p.col,id:p.id,t:7+Math.random()*3});
 }
@@ -5095,7 +5379,7 @@ function glRecv(m,p){
 function glReplay(){
   let best=null,bd=13;
   const fx=Math.cos(P.yaw),fz=Math.sin(P.yaw);
-  for(const p of mpAlive()){const d=Math.hypot(p.rx-P.x,p.rz-P.z),h=GL.peerH.get(p.id);
+  for(const p of mpAlive()){if(p.unseen)continue;const d=Math.hypot(p.rx-P.x,p.rz-P.z),h=GL.peerH.get(p.id);
     if(d<bd&&h&&h.length>=20&&((p.rx-P.x)*fx+(p.rz-P.z)*fz)/Math.max(d,0.1)>0.5&&los(P.x,P.z,p.rx,p.rz)){bd=d;best=p}}
   if(!best)return false;
   best.glRep={h:GL.peerH.get(best.id).slice(-20),i:0};
@@ -5379,12 +5663,53 @@ function glLoopTick(dt,chasing){
     }
   }else if(rel>0&&Lp.pass>=4&&rel>1.5)glLoopEnd();
 }
+function glClipForce(){
+  if(!F)return false;
+  for(let i=0;i<8;i++){
+    const a=P.yaw+i*Math.PI/4;
+    const dest=noclipDest({x:P.x,z:P.z,hitVX:Math.cos(a)*MOVE.sprint,hitVZ:Math.sin(a)*MOVE.sprint,sprint:true,fullSpeed:MOVE.sprint*0.9,roll:0,chance:1,cell:mazeCell,W:F.W,H:F.H});
+    if(dest&&!blocked(dest.x,dest.z))return beginWallClip(dest,Math.cos(a)*MOVE.sprint,Math.sin(a)*MOVE.sprint,a);
+  }
+  return false;
+}
 function glLoopEnd(){if(!GL.loop)return;for(const q of F.panels)q.dead=false;GL.loop=null}
 
 /* ---------- render ---------- */
 let rs=1,rsCeil=1,fAcc=0,fN=0,goodSecs=0,lastRaise=-99,clock=0,fpsShown=0;
 let composer=null,fxaaPass=null,bloomPass=null,gtaoPass=null,viewKey='';
 const charMesh=paintedMesh(CH.buf,true,0.012),decorMesh=paintedMesh(DEC.buf,false,0);
+const LURK={buf:new Float32Array(13*24000),n:0,cap:24000};
+const lurkMesh=paintedMesh(LURK.buf,true,0.012);
+lurkMesh.name='lurk-body';
+lurkMesh.castShadow=false;
+const lurkShadeMat=new THREE.MeshBasicMaterial({color:0x000000,colorWrite:!SHADOWS,depthWrite:false,transparent:!SHADOWS,opacity:SHADOWS?1:0.82});
+const lurkShadow=new THREE.Group();
+function lurkBox(w,h,d,x,y,z){
+  const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),lurkShadeMat);
+  m.position.set(x,y,z);m.castShadow=!!SHADOWS;m.layers.set(SHADOWS?1:0);lurkShadow.add(m);return m;
+}
+const lurkArmL=lurkBox(0.16,0.78,0.14,-0.38,0.72,0.08);
+const lurkArmR=lurkBox(0.16,0.82,0.14,0.4,0.68,-0.04);
+lurkBox(0.46,0.62,0.3,0,0.78,0);
+lurkBox(0.34,0.36,0.32,0.04,1.22,0.12);
+lurkBox(0.08,0.26,0.08,-0.12,1.48,0.06);
+lurkBox(0.08,0.24,0.08,0.14,1.46,0);
+lurkBox(0.22,0.1,0.26,-0.4,0.28,0.2);
+lurkBox(0.22,0.1,0.26,0.42,0.24,0.16);
+lurkBox(0.14,0.55,0.14,-0.12,0.28,0);
+lurkBox(0.14,0.5,0.14,0.14,0.26,0.04);
+lurkBox(0.12,0.16,0.42,0,0.62,-0.32);
+lurkBox(0.22,0.12,0.2,0.06,1.02,0.28);
+lurkShadow.visible=false;lurkShadow.name='lurk-shadow';scene.add(lurkShadow);
+function poseLurkShadow(n,t){
+  lurkShadow.visible=true;
+  lurkShadow.position.set(n.x+(n.ox||0),SHADOWS?0:0.02,n.z+(n.oz||0));
+  lurkShadow.rotation.y=-(n.yaw||n.face||0);
+  const k=n.aggro?1.15:0.4;
+  lurkArmL.rotation.z=Math.sin(t*3+(n.ph||0))*k;
+  lurkArmR.rotation.z=-Math.sin(t*3.3+(n.ph||0))*k;
+  lurkShadow.scale.set(1.28,SHADOWS?1.28:0.045,1.28);
+}
 // the torch hand is lit by its own flame, so it never blows out against the light it carries
 const HB={buf:new Float32Array(13*6000),n:0,cap:6000};
 const handMat=new THREE.ShaderMaterial({
@@ -5544,13 +5869,18 @@ function render(t){
     emit(mesh6('octa'),{p:[it.x,sh?y:y-0.12,it.z],R:rYaw((sh?t*1.4:t*2)+it.ph),lo:ZERO3},ZERO3,sh?[0.1,0.23,0.1]:[0.075,0.09,0.075],[c[0],c[1],c[2],11]);
   }
   {const dtR=Math.min(0.1,Math.max(0,t-(CH.lt||t)));CH.lt=t;
+  LURK.n=0;lurkShadow.visible=false;
   for(const n of F.npcs){
     const d2=(n.x-ex)**2+(n.z-ez)**2;if(d2>16*16)continue;
+    const lurk=n.type==='lurk';
+    if(lurk&&d2<144)poseLurkShadow(n,t);
     if((n.x-ex)*fwx+(n.z-ez)*fwz<-1.5)continue;
+    if(lurk)TB=LURK;
     const tN=performance.now();const o=buildNpc(n,t,ex,ey,ez,dtR);NPC_T.ms+=performance.now()-tN;NPC_T.n++;
+    if(lurk)TB=CH;
     if(o.lantern){const q=o.lantern,fl=1+Math.sin(t*10+n.ph)*0.1;spr(q[0],q[1]+0.012,q[2],0.045*fl,0.07*fl,11,1.0,0.6,0.2,1,1);spr(q[0],q[1],q[2],0.5,0.5,7,1.0,0.5,0.15,0.3,1)}
     if(o.lamp){const q=o.lamp;spr(q[0],q[1],q[2],0.22,0.22,7,1.0,0.75,0.3,0.4,1)}
-    if(!n.used&&n.type!=='keeper'){const y=o.top+0.08+Math.sin(t*3+n.ph)*0.03,X=n.x+(n.ox||0),Z=n.z+(n.oz||0);spr(X,y,Z,0.08,0.08,7,1.0,0.85,0.4,1,1);spr(X,y,Z,0.32,0.32,7,1.0,0.7,0.2,0.3,1)}
+    if(!lurk&&!n.used&&n.type!=='keeper'){const y=o.top+0.08+Math.sin(t*3+n.ph)*0.03,X=n.x+(n.ox||0),Z=n.z+(n.oz||0);spr(X,y,Z,0.08,0.08,7,1.0,0.85,0.4,1,1);spr(X,y,Z,0.32,0.32,7,1.0,0.7,0.2,0.3,1)}
   }
   wofDraw(t,ex,ey,ez,dtR);}
   drawMoose(t,title||!!STUDIO);drawScout(t,title||!!STUDIO);mpDrawPlayers(t,ex,ez,fwx,fwz);mimicDraw(t,ex,ez);glDraw(t,ex,ez,fwx,fwz);
@@ -5577,6 +5907,7 @@ function render(t){
   }
 
   upload(charMesh,CH);
+  upload(lurkMesh,LURK);
   // the torch in your hand, drawn close to the eye so it never pokes through a wall
   HB.n=0;
   if(!title&&state!=='dead'&&!P.down){
@@ -5738,7 +6069,7 @@ function drawMap(){
     dot(it.x,it.z,(it.type==='shard'||it.type==='key')?Math.max(3,ts*0.4):Math.max(1.6,ts*0.22),it.type==='shard'?'#7fe9ff':it.type==='key'?'#ffd35a':it.type==='oil'?'#ff9a2e':it.type==='gem'?'#ffd84a':it.type==='heart'?'#ff5a6a':'#ffffff');
   }
   if(F.safe&&F.seen[F.safe.ty*F.W+F.safe.tx+1])dot(F.safe.x,F.safe.z,Math.max(2.5,ts*0.3),'#ff8a2a');
-  for(const n of F.npcs)if(F.seen[Math.floor(n.z)*F.W+Math.floor(n.x)]){c.fillStyle=n.type==='keeper'?'#ffe0a0':'#8ff0d0';c.fillRect(ox+n.x*ts-2.5,oy+n.z*ts-2.5,5,5)}
+  for(const n of F.npcs)if(F.seen[Math.floor(n.z)*F.W+Math.floor(n.x)]){c.fillStyle=n.type==='lurk'&&n.aggro?'#ff2a4a':n.type==='keeper'?'#ffe0a0':'#8ff0d0';c.fillRect(ox+n.x*ts-2.5,oy+n.z*ts-2.5,5,5)}
   for(const s of F.shades)if(s.vis)dot(s.x,s.z,Math.max(3,ts*0.4),s.type===1?'#e6e0d2':s.type===2?'#5aa8ff':s.state===1?'#ff2a4a':'#a07cff');
   for(const p of MP.peers.values()){if(!mpShown(p))continue;
     c.save();c.translate(ox+p.rx*ts,oy+p.rz*ts);c.rotate(p.ryaw);c.fillStyle=p.down?'#777':p.hex;
@@ -5771,11 +6102,13 @@ function step(now){
   const raw=Math.max(0,(now-last)/1000);last=now;
   const dt=Math.min(raw,0.05);
   pollPad();
+  if(lobbyPaused&&(state!=='title'||activeStation||loading||touch.on))lobbyPauseHide(false);
+  if(roomPaused&&(state!=='room'||touch.on))roomPauseHide(false);
   if(loading){mpTick(raw);return raw}
   const moving=state==='play'||state==='room'||state==='title';
   if(moving!==wasPlaying){wasPlaying=moving;document.body.classList.toggle('playing',wasPlaying)}
   roomWatch();
-  if(state==='room'){ROOMS.update(dt,roomInput());if(state==='room'){$('fade').style.opacity=ROOMS.fade();$('roomCross').classList.toggle('on',ROOMS.aimed());mirrorBtns()}}
+  if(state==='room'){if(!roomPaused)ROOMS.update(dt,roomInput());else if(MP.on)ROOMS.update(dt,NOIN);if(state==='room'){$('fade').style.opacity=ROOMS.fade();$('roomCross').classList.toggle('on',ROOMS.aimed());mirrorBtns()}}
   else if(ROOMS.watching){ROOMS.update(dt,NOIN);$('fade').style.opacity=ROOMS.fade()}
   const live=()=>state==='play'||(MP.on&&(state==='pause'||state==='talk'||state==='room'));
   // a fake hang: nothing moves for you, though the room carries on
@@ -5786,18 +6119,27 @@ function step(now){
     else update(dt);
   }
   else if(state==='title'){
-    hub.update(dt,roomInput(),raw);
+    hub.update(dt,lobbyPaused?NOIN:roomInput(),raw);
+    if(sharedLift.trip&&!hub.riding)hub.watchLift(sharedLift.trip.motion);
+    else if(!hub.riding)hub.watchLift(null);
+    if(shaftQueue.length&&raw<0.02&&!hub.riding)shaftQueue.shift()();
+    else if(warmed&&warmed.left>0&&raw<0.02&&!hub.riding){warmed.task.advance();warmed.left--}
     hub.syncVisitors(MP.on?[...MP.peers.values()].filter(p=>p.hub&&now-p.hub.at<15000):[],dt,now/1000);
     updateSettingsScreen();
     $('hubCross').classList.toggle('ready',hub.aimed);
   }
+  else if(state==='room'&&!STUDIO)wofTick(dt);   // solo: update() sleeps behind a door, but the wheel and the floor's creatures do not
   mpTick(raw);
   return raw;
 }
 function frame(now){
+  try{frameBody(now)}catch(error){console.error(error)}
+  requestAnimationFrame(frame);
+}
+function frameBody(now){
   advanceLoading(now);
   const raw=step(now);
-  if(loading&&loading.index<loading.stages.length){requestAnimationFrame(frame);return}
+  if(loading&&loading.index<loading.stages.length)return;
   mpVoiceTick(Math.min(raw,0.1));chatTick();
   if(state==='play'&&!STUDIO&&!loading)adapt(raw);
   setHum();updateAmbience(Math.min(raw,0.1),{F,state,hold:GL.frz>0||!!GL.fall||P.away});
@@ -5809,13 +6151,12 @@ function frame(now){
         if(++titleFrames===20)selfCheck();
       }
       else if((state==='room'||ROOMS.watching)&&ROOMS.active){resize();renderer.toneMappingExposure=1;ROOMS.render()}
-      else if(FX.frozen&&BRK&&BRK.active){resize();renderer.toneMappingExposure=1;BRK.render(raw)}
+      else if(FX.frozen&&BRK&&BRK.active&&state!=='room'){resize();renderer.toneMappingExposure=1;BRK.render(raw)}
       else render(now/1000);
     }
     if(state!=='title'){drawHUD();if(state!=='room'&&!ROOMS.watching)drawMap()}
     mpTags();
   }
-  requestAnimationFrame(frame);
 }
 setInterval(()=>{
   if(!document.hidden)return;
@@ -5829,20 +6170,28 @@ const archiveCatalog={
     Object.entries(DOOR_KINDS).map(([id,door])=>[id,door.name[0].toUpperCase()+door.name.slice(1)]))},
   floors:{title:'Floor Archive',action:'Explore',hint:'Reach a floor type during a descent to record it.',entries:{
     maze:'Stone Maze',cave:'The Hollow',back:'The Humming Rooms',dark:'The Black Hush',forest:'The Dark Forest'}},
-  mobs:{title:'Mob Archive',action:'Encounter',hint:'Spot creatures during a descent to record them.',entries:{
-    0:'Shade',1:'Stalker',2:'Wisp',3:'Watcher',mimic:'Mimic'}},
+  mobs:{title:'Mob Archive',action:'Encounter',hint:'Spot creatures during a descent, in the maze or behind a strange door, to record them.',entries:{
+    0:'Shade',1:'Stalker',2:'Wisp',3:'Watcher',mimic:'Mimic',lurk:'Wrong Shadow',
+    ...Object.fromEntries(Object.entries(ROOM_MOBS).map(([id,mob])=>[id,mob.name]))}},
   glitches:{title:'Glitch Archive',action:'Replay',hint:'Experience anomalies during a descent to record them.',entries:{
     freeze:'Frozen Frame',rubber:'Rubber Band',rubberfwd:'Fast Forward',replay:'Player Rewind',
-    hud:'Corrupted HUD',tpose:'Rigid Figure',hole:'Unloaded Wall',fall:'Falling Through the World',loop:'Repeating Hall'}}
+    hud:'Corrupted HUD',tpose:'Rigid Figure',hole:'Unloaded Wall',fall:'Falling Through the World',loop:'Repeating Hall',
+    clip:'Passed Through a Wall'}}
 };
 const archive=Object.fromEntries(Object.keys(archiveCatalog).map(kind=>{
   const saved=store.get('archive.'+kind,{});
   return [kind,saved&&typeof saved==='object'&&!Array.isArray(saved)?saved:{}];
 }));
 const hub=createMenuRoom(renderer,{sfx,asset:exhibitAsset,activate:useMenuAsset,enterLanding:startFromLanding,
-  sampleFloor:genFloor,prepareLanding,onLeavePanel:()=>closeStation(),createVisitor:buildHubVisitor});
+  sampleFloor:memoFloor,prepareLanding:preparedLanding,landingGlimpse,passingLook,onLeavePanel:()=>closeStation(),createVisitor:buildHubVisitor});
 const board=$('title');
 const stationPanels=[...document.querySelectorAll('[data-station-panel]')];
+$('newsList').replaceChildren(...NEWS.map(post=>{
+  const item=document.createElement('article'),when=document.createElement('time'),head=document.createElement('h2'),text=document.createElement('p');
+  when.textContent=post.date;head.textContent=post.title;text.textContent=post.body;
+  item.append(when,head,text);return item;
+}));
+const scrollNews=dy=>{if(activeStation!=='news')return false;board.scrollBy({top:dy});return true};
 let activeStation=null;
 const sharedLift={selection:null,pending:0,trip:null,waiting:[]};
 const terminalPlayerName=id=>id===MP.id?myName():MP.peers.get(id)?.name||'Delver';
@@ -5879,15 +6228,28 @@ function resetSharedLift(){
 
 function updateLiftScreen(){
   const selection=sharedLift.selection;
-  hub.setSharedLift(selection,!!sharedLift.trip&&!hub.riding&&!MP.run&&state==='title');
+  // The cabin stays in the world while a car is away. watchLift moves it for anyone still in the hall.
+  hub.setSharedLift(selection,false);
   if(activeStation!=='lift')return;
-  const field=$('liftDepth');
+  const field=$('liftDepth'),go=$('liftGo');
+  const joining=!!(MP.guest&&MP.run&&!sharedLift.trip);
   field.max=selection?.max||liftFloorLimit();
+  if(joining){
+    field.value=MP.run.d;
+    field.disabled=$('liftDeepest').disabled=true;
+    go.disabled=false;
+    go.textContent='Join floor '+MP.run.d;
+    $('liftDeepest').textContent='Deepest reached · '+(selection?.deepest||deepest);
+    $('liftRunType').textContent=hostName()+' is on this floor. You will arrive beside them.';
+    return;
+  }
+  go.textContent='Descend';
   if(MP.on&&selection&&field.valueAsNumber!==selection.depth)field.value=selection.depth;
   $('liftDeepest').textContent='Deepest reached · '+(MP.on?selection?.deepest||deepest:deepest);
   $('liftRunType').textContent=MP.on?(selection?.pending?'Departing · riders on the platform go together':
     selection?.by?selection.by+' selected floor '+selection.depth:'Shared destination · all aboard ride together'):'Solo descent';
-  field.disabled=$('liftGo').disabled=$('liftDeepest').disabled=!!(MP.on&&(selection?.pending||MP.guest&&!MP.hostId));
+  // A guest can still press Descend; the click explains itself if the host has not answered yet.
+  field.disabled=go.disabled=$('liftDeepest').disabled=!!(MP.on&&selection?.pending);
 }
 
 function publishLiftSelection(to){
@@ -5935,12 +6297,13 @@ function startSharedLift(packet){
   MP.guest=!MP.host;
   MP.hostId=MP.host?null:pilot;
   MP.wantJoin=false;
-  if(members.includes(MP.id)&&hub.boarded){
+  // Anyone actually standing on the platform rides, even if their last pose
+  // had not reached the host when the member list was sealed.
+  if(state==='title'&&hub.boarded&&!hub.riding){
+    if(!members.includes(MP.id))members.push(MP.id);
     const ready=()=>members.every(member=>{
       if(member===MP.id)return true;
       const peer=MP.peers.get(member),pose=peer?.hub;
-      // A player who left before departure, disconnected or closed the game
-      // must not keep the platform suspended.
       if(pose?.ride===id)return pose.ready||!mpFresh(peer);
       return performance.now()-trip.started>1700;
     });
@@ -5975,7 +6338,7 @@ function tickSharedLift(){
     return;
   }
   const {depth,max}=sharedLift.selection;
-  const seed=($('seedIn').value.trim()||randSeed()).toUpperCase();
+  const seed=liftSeed();
   // The run must be hosted by someone on the platform. Keep the current
   // host whenever they are among the riders.
   const packet={id:newRoomCode(),depth,max,seed,pilot:members[0],members};
@@ -6038,6 +6401,17 @@ function rememberMob(id,mob){
   if(x<0||d>9||dx*Math.cos(P.yaw)+dz*Math.sin(P.yaw)<d*0.52||!los(P.x,P.z,x,z))return;
   remember('mobs',id,{...encounterSnapshot(),mob:[x,z]});
 }
+function rememberRoomMob(id,seed){
+  const spec=ROOM_MOBS[id];
+  if(!spec||state!=='room')return;
+  const door=archive.doors[spec.room]||{};
+  const roomSeed=Number.isInteger(seed)?seed>>>0:Number.isInteger(door.seed)?door.seed>>>0:0;
+  remember('mobs',id,{
+    seed:roomSeed,depth:R.depth||door.depth||1,room:spec.room,
+    pose:[P.x,P.z,P.yaw,P.pitch],gate:!!F?.doorOpen,breaks:R.pk?.[R.depth]?.slice(),blackout:F?.blk||0,
+    look:door.look,tx:door.tx,ty:door.ty,ph:door.ph,stone:door.stone||F?.stone?.slice()
+  });
+}
 function refreshHub(){
   hub.syncArchives(Object.fromEntries(Object.entries(archiveCatalog).map(([kind,catalog])=>[kind,
     Object.entries(catalog.entries).map(([id,name])=>({kind,id,name,data:archive[kind][id]}))])));
@@ -6046,7 +6420,9 @@ function showHub(on){
   closeStation();
   if(!on)settingsScreen.screen.hidden=true;
   $('menuHub').hidden=!on;
+  hub.setActive(on);
   document.body.classList.toggle('hub-room',on);
+  if(on&&reWarm&&state==='title'&&!loading){reWarm=false;retargetShaft()}
   if(on){refreshHub();$('tFlash').textContent='USE'}
   else $('tFlash').textContent='FLASH';
 }
@@ -6057,7 +6433,8 @@ function openStation(id){
   hub.focusPanel(id);
   initAudio();
   if(document.pointerLockElement){usingLock=false;document.exitPointerLock()}
-  $('stationTitle').textContent=id==='settings'?'Settings':id==='lift'?'Descent Control':'Field Guide';
+  $('stationTitle').textContent=id==='settings'?'Settings':id==='lift'?'Descent Control':id==='news'?'Update Log':'Field Guide';
+  if(id==='news')hub.markNewsSeen();
   if(id==='lift'){
     $('liftDepth').value=sharedLift.selection?.depth||defaultLiftFloor();
     updateLiftScreen();
@@ -6094,10 +6471,10 @@ function closeStation(){
 function useMenuAsset(entry){
   if(state!=='title'||loading)return;
   initAudio();
+  if(entry.locked){sfx('seal');say('Locked. The hangar door will not budge.',2.6);return}
   if(entry.station){openStation(entry.station);return}
   if(entry.lift){
     if(!hub.boarded||hub.riding)return;
-    if(MP.guest&&MP.run){mpJoinClick();return}
     openStation('lift');
     return;
   }
@@ -6113,7 +6490,17 @@ function startFromLanding(depth,seed,floor,position,tripId){
     if(MP.host)publishLiftMotion();
     if(MP.guest)MP.wantJoin=true;
   }
-  enterRun(seed,depth,floor,pose,tripId);
+  const fade=$('fade');
+  if(!fade){enterRun(seed,depth,floor,pose,tripId);return}
+  fade.style.transition='opacity .16s';
+  fade.style.opacity='1';
+  setTimeout(()=>{
+    enterRun(seed,depth,floor,pose,tripId);
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      fade.style.transition='opacity .28s';
+      fade.style.opacity='0';
+    }));
+  },170);
 }
 function buildHubVisitor(peer){
   const pose={id:peer.id,col:peer.col,rx:0,ry:0,rz:0,ryaw:0,rpitch:0,spd:0,walk:0};
@@ -6157,31 +6544,147 @@ function landingGeometry(floor){
   group.add(mesh);
   return group;
 }
+const glimpseCache=new Map(),glimpseProto=new Map();
+const lookMemo=new Map();
+function passingLook(depth){
+  const hit=lookMemo.get(depth);
+  if(hit)return hit;
+  const kind=floorKind(depth);
+  const bi=kind==='back'?4:kind==='forest'?8:biomeIx(depth);
+  const B=BIOMES[bi];
+  const look={kind:kind==='forest'?'forest':kind,forest:kind==='forest',dark:kind==='dark',back:kind==='back',
+    stone:B.stone,name:kind==='cave'?'The Hollow':kind==='dark'?'The Black Hush':B.name,biome:B,base:B.base,wet:B.wet};
+  lookMemo.set(depth,look);
+  return look;
+}
+function glimpseSurf(depth,turn){
+  const kind=floorKind(depth);
+  const bi=kind==='back'?4:kind==='forest'?8:biomeIx(depth);
+  return bi+':'+kind+':'+turn;
+}
+function buildGlimpseProto(depth,turn){
+  const surf=glimpseSurf(depth,turn);
+  const hit=glimpseProto.get(surf);
+  if(hit)return hit;
+  const kind=floorKind(depth);
+  const forest=kind==='forest';
+  const W=5,H=6,g=new Uint8Array(W*H).fill(1);
+  for(let y=1;y<=2;y++)for(let x=1;x<=3;x++)g[y*W+x]=0;
+  g[3*W+2]=0;g[4*W+2]=0;
+  if(turn===0)g[4*W+1]=0;else if(turn===2)g[4*W+3]=0;
+  const look={...passingLook(depth),W,H,g,forest,
+    tex:{v:0,seed:0,tint:[1,1,1]},
+    panelAt:new Uint8Array(W*H),pocketMask:new Uint8Array(W*H),phantoms:[],door:null,frames:[]};
+  const proto=buildMesh(look,true);
+  const tx=2,ty=1,yaw=Math.PI/2,fx=Math.cos(yaw),fz=Math.sin(yaw);
+  const ex=tx+0.5-fx*0.5,ez=ty+0.5-fz*0.5,angle=yaw+Math.PI/2,k=1.62/EYE;
+  proto.rotation.y=angle;proto.scale.setScalar(k);
+  proto.position.set(-k*(Math.cos(angle)*ex+Math.sin(angle)*ez),0,-k*(-Math.sin(angle)*ex+Math.cos(angle)*ez));
+  proto.userData.floor=look;
+  glimpseProto.set(surf,proto);
+  return proto;
+}
+// The mouth of a floor the car only passes. Surfaces are shared by biome, so a landing does not bake a new texture.
+function landingGlimpse(seed,depth,build=true){
+  const key=seed+'#'+depth;
+  const hit=glimpseCache.get(key);
+  if(hit)return hit;
+  const turn=hashStr(seed+'#mouth'+depth)%3;
+  if(!build&&!glimpseProto.has(glimpseSurf(depth,turn)))return null;
+  const proto=buildGlimpseProto(depth,turn);
+  const group=new THREE.Group();
+  group.name='Passing floor';group.add(proto.clone());group.userData.floor=proto.userData.floor;
+  glimpseCache.set(key,group);
+  return group;
+}
+const floorMemo=new Map();
+function memoFloor(seed,depth,look){
+  const key=seed+'#'+depth+'#'+(look?((look.bi??'')+':'+(look.ix??'')):'');
+  let floor=floorMemo.get(key);
+  if(!floor){floor=genFloor(seed,depth,look);floorMemo.set(key,floor)}
+  return floor;
+}
 function prepareLanding(seed,depth){
   let stage=0;
   const task={floor:null,model:null,progress:0,ready:false,
     advance(){
-      if(stage===0){task.floor=genFloor(seed,depth);task.progress=0.25}
-      else if(stage===1){buildMesh(task.floor);task.model=landingGeometry(task.floor);task.progress=0.56}
-      else if(stage===2){buildStatic(task.floor);buildSdf(task.floor);task.progress=0.78}
-      else if(stage===3){
-        renderer.compileAsync(scene,camera).catch(()=>{}).then(()=>{task.progress=1;task.ready=true});
-      }else return;
+      if(task.ready)return;
+      if(stage===0){task.floor=genFloor(seed,depth);task.progress=0.2}
+      else if(stage===1){buildMesh(task.floor);task.progress=0.45}
+      else if(stage===2){task.model=landingGeometry(task.floor);task.progress=0.6}
+      else if(stage===3){buildStatic(task.floor);buildSdf(task.floor);task.progress=0.8}
+      else if(stage===4){task.progress=1;task.ready=true}
+      else return;
       stage++;
     },
     dispose(){
-      if(task.model){task.model.removeFromParent();task.model.children[0].geometry.dispose()}
+      if(task.model){task.model.removeFromParent();if(task.model.children[0])task.model.children[0].geometry.dispose()}
     }
   };
   return task;
 }
+let warmed=null,shaftQueue=[];
+// the seed a lift ride uses while the seed field is blank; a new one is rolled once a run starts from it, so each ride is a new maze
+let autoSeed=randSeed(),reWarm=false;
+const liftSeed=()=>($('seedIn').value.trim()||autoSeed).toUpperCase();
+function preparedLanding(seed,depth){
+  if(warmed&&warmed.seed===seed&&warmed.depth===depth&&warmed.task){
+    const task=warmed.task;warmed.left=0;warmed.task=null;return task;
+  }
+  return prepareLanding(seed,depth);
+}
+function rememberShaft(seed,depth){
+  warmed?.task?.dispose();
+  const task=prepareLanding(seed,depth);
+  warmed={seed,depth,task,left:5};
+}
+function startShaftWarm(){
+  if(state!=='title')return;
+  const seed=liftSeed();
+  const depth=defaultLiftFloor();
+  if(!$('liftDepth').value)$('liftDepth').value=depth;
+  const stages=[],seen=new Set();
+  for(let n=1;n<=4;n++)for(let turn=0;turn<3;turn++){
+    const surf=glimpseSurf(n,turn);
+    if(seen.has(surf))continue;
+    seen.add(surf);
+    const floor=n,mouth=turn;
+    stages.push(['Opening landing '+n,()=>buildGlimpseProto(floor,mouth)]);
+  }
+  rememberShaft(seed,depth);
+  for(let i=0;i<5;i++)stages.push(['Preparing the maze',()=>warmed.task.advance()]);
+  warmed.left=0;
+  stages.push(['Lighting the shaft',()=>hub.primeShaft()]);
+  for(let n=5;n<=10;n++)for(let turn=0;turn<3;turn++){
+    const surf=glimpseSurf(n,turn);
+    if(seen.has(surf))continue;
+    seen.add(surf);
+    const floor=n,mouth=turn;
+    shaftQueue.push(()=>buildGlimpseProto(floor,mouth));
+  }
+  showLoading('Opening the entrance hall',stages);
+  loading.kind='shaft';
+}
+function retargetShaft(){
+  if(state!=='title'||hub.riding||loading)return;
+  const seed=liftSeed();
+  const typed=+$('liftDepth').value;
+  const depth=Number.isInteger(typed)&&typed>=1?typed:defaultLiftFloor();
+  if(warmed?.task&&warmed.seed===seed&&warmed.depth===depth)return;
+  rememberShaft(seed,depth);
+}
 function departFromLift(shortcut=false){
-  if(state!=='title'||activeStation!=='lift'||!hub.boarded)return;
+  if(state!=='title'||activeStation!=='lift'||!hub.boarded||loading)return;
+  if(MP.guest&&MP.run&&!sharedLift.trip){
+    if(!MP.hostId){say('Still looking for the host. Keep this page open.',2.5);return}
+    closeStation();mpJoinClick();return;
+  }
+  if(MP.on&&!MP.host&&!MP.hostId){say('Still looking for the host. Keep this page open.',2.5);return}
   if(MP.on&&shortcut){sendLiftAction({k:'liftDepart',shortcut:true});return}
   const depth=shortcut?deepest:$('liftDepth').valueAsNumber;
   if(!Number.isInteger(depth)||depth<1||depth>+$('liftDepth').max)return;
   if(MP.on){sendLiftAction({k:'liftDepart'});return}
-  const seed=($('seedIn').value.trim()||randSeed()).toUpperCase();
+  const seed=liftSeed();
   if(hub.engageLift(depth,seed))closeStation();
 }
 $('liftDestination').addEventListener('submit',event=>{
@@ -6192,7 +6695,9 @@ $('liftDeepest').addEventListener('click',()=>departFromLift(true));
 $('liftDepth').addEventListener('input',()=>{
   const depth=$('liftDepth').valueAsNumber;
   if(MP.on&&activeStation==='lift'&&hub.boarded&&validLiftDepth(depth)&&depth<=+$('liftDepth').max)sendLiftAction({k:'liftPick',depth});
+  retargetShaft();
 });
+$('seedIn').addEventListener('change',retargetShaft);
 let exhibitBuffer=null;
 function exhibitModel(draw,animated=false){
   exhibitBuffer??={buf:new Float32Array(13*60000),n:0,cap:60000};
@@ -6260,6 +6765,10 @@ function exhibitAsset({kind,id,data}){
     skins.splice(Math.ceil(skins.length/2),0,look);
     return lenticularDoor(skins.map(model));
   }
+  if(kind==='mobs'&&ROOM_MOBS[id]){
+    const model=roomMobExhibit(id);
+    return followInCase(model,time=>model.userData.pose?.(time));
+  }
   const group=new THREE.Group();
   if(id==='2'){
     const glow=new THREE.Mesh(new THREE.IcosahedronGeometry(0.11,2),new THREE.MeshBasicMaterial({color:0x8dd0ff}));
@@ -6282,12 +6791,22 @@ function exhibitAsset({kind,id,data}){
     if(id==='0')eyes=buildShade(mob,time,0,4).eyes;
     else if(id==='1')buildStalker(mob,time,0,4);
     else if(id==='3')eyes=buildWatcher(mob,time,0,4);
+    else if(id==='lurk')buildNpc({type:'lurk',guise:'map',x:0,z:0,ph:0.4,yaw:Math.PI/2,hy:0,hp:0,used:true},time,0,1.2,4,0.016);
     else{
       player.walk=time*7;player.spd=stride;player.rpitch=Math.sin(time*2.0)*0.17;
       buildPlayer(player,time,0.62+0.11*Math.sin(time*2.1),0.9);
     }
   },true);
   group.add(model);
+  if(id==='lurk'){
+    const mat=new THREE.MeshBasicMaterial({color:0x07060a});
+    const slab=(w,h,d,x,y,z)=>{const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);m.position.set(x,0.03,z);m.scale.y=0.08;group.add(m);return m};
+    slab(0.5,1.1,0.34,0.72,0,0.05);
+    slab(0.16,0.9,0.16,0.28,0,0.22);
+    slab(0.16,0.95,0.16,1.05,0,-0.08);
+    slab(0.22,0.2,0.28,0.55,0,0.48);
+    slab(0.14,0.45,0.4,0.7,0,-0.38);
+  }
   const lights=eyes.map(eye=>{
     const light=new THREE.Mesh(new THREE.SphereGeometry(0.014,8,6),new THREE.MeshBasicMaterial({color:id==='3'?0xffefb9:0xc4a5ff}));
     light.position.set(...eye);group.add(light);
@@ -6304,12 +6823,13 @@ function startArchive(kind,id,data){
   archiveRun={kind,id,wallet,up:{...up}};
   showLoading('Opening the '+archiveCatalog[kind].title,[['Preparing the replay',()=>{
     try{
-      const seed=kind==='doors'?'ARCHIVE':data.seed,floor=genFloor(seed,data.depth);
+      const roomReplay=kind==='doors'||!!data?.room;
+      const seed=roomReplay?'ARCHIVE':data.seed,floor=genFloor(seed,data.depth);
       enterRun(seed,data.depth,floor);
       $('archiveBack').hidden=false;
-      if(kind==='doors'){
+      if(roomReplay){
         previewStamina={stam:P.stam,winded:P.winded,spikeTraps:P.spikeTraps,mooseGems:wallet};
-        beginRoom(id,finishArchive,data.seed);
+        beginRoom(kind==='doors'?id:data.room,finishArchive,data.seed);
       }else if(kind==='mobs'||kind==='glitches'){
         restoreEncounter(data);
         if(kind==='mobs')replayMob(id,data);
@@ -6335,6 +6855,10 @@ function replayMob(id,data){
   const gx=Math.floor(x),gy=Math.floor(z);
   if(id==='mimic'){
     Object.assign(MIM,{x,z,gx,gy,st:1,depth:R.depth,as:'archive',vic:MP.id,sayT:Infinity});
+  }else if(id==='lurk'){
+    const n={type:'lurk',guise:'map',x,z,ph:1.1,used:true,gx,gy,px:-1,py:-1,stare:0,aggro:false,face:0,hitT:0,yaw:0};
+    const i=F.npcs.findIndex(q=>q.type==='lurk');
+    if(i>=0)F.npcs[i]=n;else F.npcs.push(n);
   }else{
     F.shades.push({type:Number(id),x,z,gx,gy,px:-1,py:-1,state:0,stun:0,think:0,vis:false,
       frozen:false,ph:0,d:99,snd:0,hid:0,seen:0,life:16});
@@ -6410,5 +6934,6 @@ function gripProbe(ts,talking){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='
   for(const t of ts){buildNpc(n,t,P.x,0.7,P.z,0.016);res.push({t,...GRIP_DBG})}talk=save;return res}
 function benchNpc(iters){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='keeper');const e=[P.x,0.7,P.z];buildNpc(n,1,e[0],e[1],e[2],0.016);let t0=performance.now();
   for(let i=0;i<iters;i++){CH.n=0;buildNpc(n,1+i*0.016,e[0],e[1],e[2],0.016)}return (performance.now()-t0)/iters}
-window.__game={wof:WOF,fx:FX,get tk(){return TK},get bomb(){return BOMB},get rr(){return RR},set rr(v){RR=v},rrAct,get ts(){return TS},get brk(){return BRK},set tk(v){TK=v},wofSpinStart,wofResolve,wofBegin,music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={wofQ:WOQ,tkTargets,rrStart,wofClear,wofTick,mpPosFlags,wof:WOF,fx:FX,get tk(){return TK},get bomb(){return BOMB},get rr(){return RR},set rr(v){RR=v},rrAct,get ts(){return TS},get brk(){return BRK},set tk(v){TK=v},wofSpinStart,wofResolve,wofBegin,NEWS,openStation,get activeStation(){return activeStation},hub,get lobbyPaused(){return lobbyPaused},get roomPaused(){return roomPaused},simLockLost(){if(document.pointerLockElement){document.exitPointerLock();return}usingLock=true;document.dispatchEvent(new Event("pointerlockchange"))},music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+if(state==='title')startShaftWarm();
 requestAnimationFrame(frame);

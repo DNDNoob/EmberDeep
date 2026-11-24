@@ -72,8 +72,12 @@ export function stepMove(b,dt,it,w){
     if(b.y<=g0&&b.vy<=0){ev.landed=-b.vy/sc;b.y=g0;b.vy=0}
   }
   if(w.blocked){
-    const nx=b.x+b.vx*dt;if(!w.blocked(nx,b.z))b.x=nx;else if(ground)b.vx=0;
-    const nz=b.z+b.vz*dt;if(!w.blocked(b.x,nz))b.z=nz;else if(ground)b.vz=0;
+    const nx=b.x+b.vx*dt;
+    if(!w.blocked(nx,b.z))b.x=nx;
+    else{ev.blockedX=true;ev.hitVX=b.vx;if(ground)b.vx=0}
+    const nz=b.z+b.vz*dt;
+    if(!w.blocked(b.x,nz))b.z=nz;
+    else{ev.blockedZ=true;ev.hitVZ=b.vz;if(ground)b.vz=0}
   }else{b.x+=b.vx*dt;b.z+=b.vz*dt}
   if(w.collide)w.collide(b);
   // walking down a slope or steps: stay on the floor instead of drifting off it (only for rooms that ask, with the largest drop to follow)
@@ -81,6 +85,26 @@ export function stepMove(b,dt,it,w){
   if(moving&&b.y<=g0&&bobAdvance(b,speed*dt,sc))ev.step=true;
   ev.moving=moving;ev.sprint=wantSprint;ev.speed=speed;ev.ground=b.y<=g0;
   return ev;
+}
+
+// A sprint into a solid wall, once per fresh impact. cell() is 0 open, 1 wall, 2 gate or blocked.
+// roll is in [0,1). Returns the open cell beyond the wall, or null. Never crosses a gate.
+export function noclipDest({x,z,hitVX=0,hitVZ=0,sprint,fullSpeed,roll,chance=0.07,cell,W,H}){
+  if(!sprint)return null;
+  const sp=Math.hypot(hitVX,hitVZ);
+  if(!(fullSpeed>0)||sp<fullSpeed*0.55)return null;
+  if(!(roll<chance))return null;
+  const ax=Math.abs(hitVX)>=Math.abs(hitVZ);
+  const dirx=ax?Math.sign(hitVX):0,dirz=ax?0:Math.sign(hitVZ);
+  if(!dirx&&!dirz)return null;
+  const tx=Math.floor(x),tz=Math.floor(z);
+  const wx=tx+dirx,wz=tz+dirz;
+  if(wx<1||wz<1||wx>=W-1||wz>=H-1)return null;
+  if(cell(wx,wz)!==1)return null;
+  const bx=wx+dirx,bz=wz+dirz;
+  if(bx<0||bz<0||bx>=W||bz>=H)return null;
+  if(cell(bx,bz)!==0)return null;
+  return {x:bx+0.5,z:bz+0.5};
 }
 
 // The default walker for a room, so a new room gets the full maze movement in a few lines:

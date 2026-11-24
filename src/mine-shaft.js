@@ -103,6 +103,8 @@ export function createMineLanding({height,numberSign,sampleFloor}){
   const stones=new THREE.InstancedMesh(boulderGeometry,rock,92);
   const minerals=new THREE.InstancedMesh(boulderGeometry,calcite,42);
   const terrain=new THREE.InstancedMesh(boxGeometry,floorMaterial,rows*columns*2);
+  stones.frustumCulled=minerals.frustumCulled=terrain.frustumCulled=false;
+  terrain.visible=false;
   const tile=new THREE.Object3D(),shade=new THREE.Color(),base=new THREE.Color();
   const alcove=new THREE.Group();
   alcove.add(terrain);group.add(stones,minerals,alcove);
@@ -112,81 +114,70 @@ export function createMineLanding({height,numberSign,sampleFloor}){
   lantern.position.set(-1.34,2.27,socket-0.45);
   alcove.add(lantern);
   const mazeMount=new THREE.Group();mazeMount.position.z=landingMazeZ;group.add(mazeMount);
-  const landingFace=new THREE.Group();
-  landingFace.visible=false;
-  group.add(landingFace);
-  // Dress the cut around the preview mesh without covering its walkable mouth.
-  beam(landingFace,rock,0,2.9,landingMazeZ+0.05,5.05,1.32,0.22);
-  for(const side of [-1,1]){
-    beam(landingFace,rock,side*1.79,1.14,landingMazeZ+0.05,1.48,2.28,0.22);
-  }
-  beam(landingFace,steel,0,-0.10,landingMazeZ+0.06,5.05,0.18,0.26);
-  let lastKey='',lastFloor;
+  // A thick rock collar from the car to the landing mouth, so the cut is not a window onto the void.
+  const vestibule=new THREE.Group();
+  group.add(vestibule);
+  const zNear=-11.06,zFar=-12.74,span=zNear-zFar,zMid=(zNear+zFar)/2;
+  beam(vestibule,rock,-2.84,1.5,zMid,0.66,3.0,span);
+  beam(vestibule,rock,2.84,1.5,zMid,0.66,3.0,span);
+  beam(vestibule,rock,0,3.02,zMid,5.75,1.7,span);
+  beam(vestibule,steel,0,-0.03,(-11.02+-12.46)/2,5.2,0.08,-11.02-(-12.46));
+  const cap=new THREE.Mesh(boxGeometry,rock);
+  cap.position.set(0,1.12,-12.5);cap.scale.set(4.9,2.24,0.18);vestibule.add(cap);
+  vestibule.visible=false;
+  let lastKey='',lastFloor,cursor=1e9,workKey='',workFloor=null;
+  const stoneN=stones.count,mineralN=minerals.count,batch=24;
   function assign(mesh,i,x,y,z,w,h,d,r=0){
     tile.position.set(x,y,z);tile.scale.set(w,h,d);tile.rotation.set(r*0.62,r,r*0.32);
     tile.updateMatrix();mesh.setMatrixAt(i,tile.matrix);
   }
   function update(seed,depth,prepared){
     const key=seed+':'+depth;
-    if(key===lastKey&&(!prepared||prepared===lastFloor))return;
-    lastKey=key;
+    if(key!==workKey){workKey=key;cursor=0;workFloor=prepared||null}
+    else if(cursor>=stoneN+mineralN)return false;
     const hash=(i,s)=>{
       const n=Math.sin(i*127.1+s*81.77+depth*19.13)*43758.5453;
       return n-Math.floor(n);
     };
-    for(let i=0;i<stones.count;i++){
-      const side=i%2===0?-1:1,broad=i>=68;
-      const x=broad?(hash(i,2)-0.5)*5.65:side*(3.18+hash(i,3)*0.31);
-      const y=broad?4.04+hash(i,3)*(height-4.9):hash(i,4)*height-0.2;
-      const z=broad?socket-0.78-hash(i,4)*0.26:-11.04+hash(i,5)*4.60;
-      const w=0.34+hash(i,6)*(broad?0.31:0.71);
-      const h=0.25+hash(i,7)*(broad?0.35:0.43);
-      const d=0.32+hash(i,8)*(broad?0.32:0.63);
-      assign(stones,i,x,y,z,w,h,d,hash(i,9)*6.28);
-      shade.setHex(i%19===0?0xbbb9ce:i%8===0?0xc79c8f:0x9d8f9d).multiplyScalar(0.55+hash(i,11)*0.58);
-      stones.setColorAt(i,shade);
-    }
-    stones.instanceMatrix.needsUpdate=true;stones.instanceColor.needsUpdate=true;stones.computeBoundingSphere();
-    for(let i=0;i<minerals.count;i++){
-      const cluster=Math.floor(i/7),side=cluster%2===0?1:-1;
-      assign(minerals,i,side*(2.87-hash(i,1)*0.16),0.65+cluster*height/7+hash(i,3)*0.48,
-        -10.7+hash(cluster,5)*3.44+hash(i,6)*0.52,0.06+hash(i,6)*0.08,0.11+hash(i,7)*0.20,0.05+hash(i,8)*0.10,hash(i,2)*5.5);
-      minerals.setColorAt(i,shade.setHex(cluster%3===0?0xa7a1d9:cluster%3===1?0x8fc4b4:0xcf8f56));
-    }
-    minerals.instanceMatrix.needsUpdate=true;minerals.instanceColor.needsUpdate=true;minerals.computeBoundingSphere();
-    const floor=prepared||(depth>0?sampleFloor(seed,depth):null);
-    lastFloor=floor;
-    plaque.setLabel(floor?['FLOOR '+depth,floor.name]:['L','ENTRANCE HALL']);
-    alcove.visible=!!floor;
-    if(!floor)return;
-    const fx=Math.round(Math.cos(floor.start.yaw)),fz=Math.round(Math.sin(floor.start.yaw));
-    base.setRGB(...floor.stone);
-    lantern.color.setHex(floor.forest?0x9eeab8:floor.dark?0x97aaff:floor.back?0xe8e7a1:floor.kind==='cave'?0xaabeff:0xffc294);
-    let n=0;
-    for(let row=0;row<rows;row++)for(let col=-2;col<=2;col++){
-      const x=floor.start.tx+fx*row-fz*col,z=floor.start.ty+fz*row+fx*col;
-      const tileIndex=z*floor.W+x;
-      const open=x>=0&&z>=0&&x<floor.W&&z<floor.H&&floor.g[tileIndex]===0;
-      const wx=col*dimension,wz=socket-platformDepth-row*dimension;
-      assign(terrain,n,wx,-0.061,wz,dimension*0.988,0.127,dimension*0.988);
-      shade.copy(base).multiplyScalar((floor.safeMask[tileIndex]?1.28:0.78)+hash(n,12)*0.24);
-      terrain.setColorAt(n++,shade);
-      if(!open){
-        const h=floor.kind==='cave'?1.1+hash(n,13)*0.45:1.89+hash(n,13)*0.36;
-        assign(terrain,n,wx,h/2,wz,dimension*0.986,h,dimension*0.986);
-        terrain.setColorAt(n++,shade.copy(base).multiplyScalar(0.84+hash(n,14)*0.36));
+    const end=Math.min(cursor+batch,stoneN+mineralN);
+    for(let n=cursor;n<end;n++){
+      if(n<stoneN){
+        const i=n,side=i%2===0?-1:1,broad=i>=68;
+        const x=broad?(hash(i,2)-0.5)*5.65:side*(3.18+hash(i,3)*0.31);
+        const y=broad?4.04+hash(i,3)*(height-4.9):hash(i,4)*height-0.2;
+        const z=broad?socket-0.78-hash(i,4)*0.26:-11.04+hash(i,5)*4.60;
+        assign(stones,i,x,y,z,0.34+hash(i,6)*(broad?0.31:0.71),0.25+hash(i,7)*(broad?0.35:0.43),0.32+hash(i,8)*(broad?0.32:0.63),hash(i,9)*6.28);
+        shade.setHex(i%19===0?0xbbb9ce:i%8===0?0xc79c8f:0x9d8f9d).multiplyScalar(0.55+hash(i,11)*0.58);
+        stones.setColorAt(i,shade);
+      }else{
+        const i=n-stoneN,cluster=Math.floor(i/7),side=cluster%2===0?1:-1;
+        assign(minerals,i,side*(2.87-hash(i,1)*0.16),0.65+cluster*height/7+hash(i,3)*0.48,
+          -10.7+hash(cluster,5)*3.44+hash(i,6)*0.52,0.06+hash(i,6)*0.08,0.11+hash(i,7)*0.20,0.05+hash(i,8)*0.10,hash(i,2)*5.5);
+        minerals.setColorAt(i,shade.setHex(cluster%3===0?0xa7a1d9:cluster%3===1?0x8fc4b4:0xcf8f56));
       }
     }
-    terrain.count=n;terrain.instanceMatrix.needsUpdate=true;terrain.instanceColor.needsUpdate=true;
-    terrain.computeBoundingSphere();
+    cursor=end;
+    stones.instanceMatrix.needsUpdate=true;
+    if(stones.instanceColor)stones.instanceColor.needsUpdate=true;
+    minerals.instanceMatrix.needsUpdate=true;
+    if(minerals.instanceColor)minerals.instanceColor.needsUpdate=true;
+    if(cursor<stoneN+mineralN)return true;
+    lastKey=key;lastFloor=workFloor;
+    plaque.setLabel(workFloor?['FLOOR '+depth,workFloor.name]:['L','ENTRANCE HALL']);
+    alcove.visible=vestibule.visible=!!workFloor;
+    if(workFloor)lantern.color.setHex(workFloor.forest?0x9eeab8:workFloor.dark?0x97aaff:workFloor.back?0xe8e7a1:workFloor.kind==='cave'?0xaabeff:0xffc294);
+    return true;
   }
   return {group,update,setMaze(model){
-    if((mazeMount.children[0]||null)===model&&terrain.visible===!model)return;
+    if((mazeMount.children[0]||null)===model)return;
     mazeMount.clear();
-    if(model)mazeMount.add(model);
-    landingFace.visible=!!model;
-    terrain.visible=!model;
-    for(const child of alcove.children)if(child!==terrain&&!child.isLight)child.visible=!model;
+    if(model){
+      const mask=group.layers.mask;
+      model.traverse(child=>{child.layers.mask=mask});
+      mazeMount.add(model);
+    }
+    cap.visible=!model;
+    terrain.visible=false;
   }};
 }
 
