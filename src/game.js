@@ -307,12 +307,6 @@ function genFloor(seedStr,depth,look){
     if(wt&&pool.length){const c=pool.pop(),w={type:wt,x:c[0]+0.5,z:c[1]+0.5,ph:rng()*6.28,used:false,gift:ri(3),tip:ri(6)};
       for(const d of DIRS)if(g[idx(c[0]+d[0],c[1]+d[1])]===1){w.ox=d[0]*0.27;w.oz=d[1]*0.27;w.wy=Math.atan2(-d[1],-d[0]);break}
       npcs.push(w)}}
-  // someone who looks like a neighbor, and is not one
-  if(depth>=2&&rng()<0.7&&pool.length){
-    const c=pool.pop(),guise=rng()<0.4?'delver':'map';
-    npcs.push({type:'lurk',guise,x:c[0]+0.5,z:c[1]+0.5,ph:rng()*6.28,gift:0,tip:0,
-      gx:c[0],gy:c[1],px:-1,py:-1,stare:0,aggro:false,face:rng()*6.28,hitT:0,used:true});
-  }
   take('gem',Math.round(nCells/6));
   // spike traps
   const traps=[];
@@ -439,6 +433,11 @@ function genFloor(seedStr,depth,look){
     // every door wears a look. A disguise kind (the trap) picks one with the door rng AFTER placement so positions and kinds never move.
     const own=doorDisguises();
     for(const D of sdoors){const k=DOOR_KINDS[D.kind]||{};D.look=k.disguise?(own[(dr()*own.length)|0]||'wood'):(k.look||'wood')}}
+  // someone who looks like a neighbor, and is not one. Drawn last, from its own dice and a spare cell, so the rest of the floor stays the same as it always was for a seed.
+  if(depth>=2){const lr=mulberry32(hashStr(seedStr+'#lurk'+depth)),ok=pool.filter(c=>!traps.some(q=>q.tx===c[0]&&q.ty===c[1])&&!sdoors.some(q=>q.tx===c[0]&&q.ty===c[1]));
+    if(lr()<0.7&&ok.length){const c=ok[(lr()*ok.length)|0],guise=lr()<0.4?'delver':'map';
+      npcs.push({type:'lurk',guise,x:c[0]+0.5,z:c[1]+0.5,ph:lr()*6.28,gift:0,tip:0,
+        gx:c[0],gy:c[1],px:-1,py:-1,stare:0,aggro:false,face:lr()*6.28,hitT:0,used:true})}}
   // face down an open corridor at the start
   let yaw=0;
   for(const d of DIRS){if(g[idx(stx+d[0],sty+d[1])]===0){yaw=Math.atan2(d[1],d[0]);break}}
