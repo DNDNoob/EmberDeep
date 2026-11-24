@@ -7,6 +7,8 @@
 // it is, or how to trigger it. No code names, file names, PR numbers or agent names.
 // Group small fixes into one post. Rebuild index.html afterwards (npm run build).
 export const NEWS=[
+  {date:'2026-11-24',title:'Rolling hills and big stones',
+    body:'The wood behind that certain door now rises and falls in gentle hills, and some very large boulders have settled among the trees. Look closer at the water, and keep your eyes open.'},
   {date:'2026-11-24',title:'A lusher, breezier wood',
     body:'The wood behind a certain door has grown thicker and greener, with grass underfoot, wildflowers in the clearings and a breeze that moves through everything. Take a slow walk.'},
   {date:'2026-11-24',title:'Quieter in the dark',

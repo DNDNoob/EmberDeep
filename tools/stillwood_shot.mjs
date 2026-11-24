@@ -16,7 +16,7 @@ const VIEWS={
   f:{q:'high',x:0.4,z:-9.0,yaw:0.0,pitch:-0.45},         // the pond close up
   g:{q:'high',walk:{x:0,z:-332},look:{dx:0,dz:0,back:9,pitch:-0.12}}, // the second pond after a long walk
   h:{q:'low',x:0.2,z:-6.2,yaw:0.0,pitch:-0.1},
-  k:{q:'high',find:'rock'},   // a big boulder outcrop
+  k:{q:'high',x:-23,z:-9,yaw:0,pitch:0.05},   // a big boulder outcrop
   l:{q:'high',find:'hill'},   // a view across the hills from a rise
   m:{q:'high',find:'circle'}, // circling the pond: the reflection, then the real door at the edge of the screen
   // the held door seen in the water from four sides of the first pond (door stands 4.2 m behind the player)
@@ -73,8 +73,8 @@ for(const k of want){
       S.WK.b.x=pd.x+Math.cos(th)*R0;S.WK.b.z=pd.z+Math.sin(th)*R0;S.yaw=0;S.pitch=-0.4;
       for(let i=0;i<30;i++)R.update(1/60,Z0);
       let extra=0,n=0;
-      while(n++<400&&extra<12){
-        th-=0.012;S.WK.b.x=pd.x+Math.cos(th)*R0;S.WK.b.z=pd.z+Math.sin(th)*R0;S.yaw=Math.atan2(pd.x-S.WK.b.x,-(pd.z-S.WK.b.z));S.pitch=-0.4;
+      while(n++<400&&extra<4){
+        th-=0.012;S.WK.b.x=pd.x+Math.cos(th)*R0;S.WK.b.z=pd.z+Math.sin(th)*R0;S.WK.b.y=S.H(S.WK.b.x,S.WK.b.z);S.yaw=Math.atan2(pd.x-S.WK.b.x,-(pd.z-S.WK.b.z));S.pitch=-Math.atan2(S.WK.b.y+1.6-pd.wy,R0-1);
         R.update(1/60,Z0);if(S.direct)extra++;
       }
       x=S.WK.b.x;z=S.WK.b.z;yaw=S.yaw;pitch=S.pitch;window.__circle={deg:(Math.PI/2-th)*180/Math.PI,direct:S.direct,pinned:S.pinned};
