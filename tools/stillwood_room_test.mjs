@@ -22,7 +22,7 @@ const r=await pg.evaluate(()=>{
   S.pitch=-0.4;S.pinned=false;
   
   const face=()=>{const dx=p.x-S.WK.b.x,dz=p.z-S.WK.b.z;S.yaw=Math.atan2(dx,-dz);S.pitch=-Math.atan2(S.WK.b.y+1.6-p.wy,Math.hypot(dx,dz)-1)};
-  th=Math.PI/2;S.WK.b.x=p.x+R0*Math.cos(th);S.WK.b.z=p.z+R0*Math.sin(th);face();for(let i=0;i<30;i++)R.update(1/60,Z);
+  th=Math.PI/2;S.WK.b.x=p.x+R0*Math.cos(th);S.WK.b.z=p.z+R0*Math.sin(th);face();for(let i=0;i<40;i++)R.update(1/60,Z);
   o.water=S.water;o.pinnedWater=S.pinned;o.glanceUp=(()=>{S.pitch=0.3;S.__keep=1;for(let i=0;i<20;i++)R.update(1/60,Z);const v=S.pinned;S.pitch=-0.4;for(let i=0;i<10;i++)R.update(1/60,Z);return v})();
   for(;steps<900&&!S.direct;steps++){th-=0.01;S.WK.b.x=p.x+R0*Math.cos(th);S.WK.b.z=p.z+R0*Math.sin(th);S.WK.b.y=H(S.WK.b.x,S.WK.b.z);face();R.update(1/60,Z);if(S.water)seenWater=true;(o.tr=o.tr||[]).push(steps%60==0?[steps,S.water,S.pinned,+S.fill.toFixed(2),Math.round(S.doorX),Math.round(S.doorZ),Math.round(S.WK.b.x),Math.round(S.WK.b.z)]:0)}
   o.seenWater=seenWater;o.direct=S.direct;o.pinnedAtDirect=S.pinned;o.steps=steps;

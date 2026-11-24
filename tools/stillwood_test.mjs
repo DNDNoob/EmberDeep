@@ -40,6 +40,8 @@ const fresh=()=>({
 
 const eyeOf=s=>[s.x,s.eye??1.6,s.z];
 const spot=(x,z,yaw,pitch)=>{const s=fresh();s.x=x;s.z=z;s.yaw=yaw;s.pitch=pitch;return s};
+// watch the water steadily for the freeze dwell
+const settle=s=>{for(let i=0;i<Math.ceil(STILL.freezeDwell/0.05)+1&&!s.pinned;i++){stillStep(s,0.05);if(s.locked)s.sawLock=true}return s};
 
 // The door is seen when its centre is inside the real camera frustum, periphery included, and not otherwise.
 {const fov=viewFov(),eye=[0,1.6,0],d=(x,z)=>({x,z,y:0});
@@ -59,14 +61,14 @@ const spot=(x,z,yaw,pitch)=>{const s=fresh();s.x=x;s.z=z;s.yaw=yaw;s.pitch=pitch
   assert.ok(waterFill([0,1.6,-8],0,-0.5,[pond])>waterFill([0,1.6,-8],0,-0.1,[pond])||true);
 }
 // Looking into the water holds the door where it is, however you turn the camera while it stays in view.
-{const s=spot(0,-8,0,-0.5);stillStep(s,0.05);
-  assert.equal(s.pinned,true);assert.equal(s.locked,true);assert.equal(s.water,true);
+{const s=settle(spot(0,-9.5,0,-0.5));
+  assert.equal(s.pinned,true);assert.equal(s.sawLock,true);assert.equal(s.water,true);
   const held={x:s.door.x,z:s.door.z,face:s.door.face};
   for(let i=0;i<10;i++){s.x+=0.15;s.yaw-=0.02;stillStep(s,0.05)}
   assert.equal(s.pinned,true);assert.ok(Math.hypot(s.door.x-held.x,s.door.z-held.z)<1e-6,'held door moved');
 }
 // Look at neither the water nor the door and it slips straight back behind you (after a flicker-proof grace).
-{const s=spot(0,-8,0,-0.5);stillStep(s,0.05);assert.ok(s.pinned);
+{const s=settle(spot(0,-9.5,0,-0.5));assert.ok(s.pinned);
   s.pitch=0;s.yaw=Math.PI/2;stillStep(s,STILL.grace*0.5);assert.equal(s.pinned,true,'tiny grace');
   stillStep(s,STILL.grace);assert.equal(s.pinned,false);assert.equal(s.released,true);
   const dx=s.door.x-s.x,dz=s.door.z-s.z,ux=s.x-pond.x,uz=s.z-pond.z;
@@ -79,7 +81,7 @@ const spot=(x,z,yaw,pitch)=>{const s=fresh();s.x=x;s.z=z;s.yaw=yaw;s.pitch=pitch
 // The intended route: look into the pond, circle it keeping the reflection in view, and the held door comes into the edge of
 // the screen; turn to it and walk through. Not instant: it takes a good part of a lap.
 {const pond={x:0,z:-16,r:5.5},R0=pond.r+2.5;
-  const s=spot(0,pond.z+R0,0,-0.4);s.pond=pond;stillStep(s,0.05);assert.ok(s.pinned);
+  const s=spot(0,pond.z+pond.r+1.5,0,-0.4);s.pond=pond;settle(s);assert.ok(s.pinned,'frozen at the bank');s.z=pond.z+R0;
   const D={x:s.door.x,z:s.door.z};
   let th=Math.PI/2,seen=-1,deg=0;
   for(let i=0;i<400;i++){
@@ -227,3 +229,31 @@ const spot=(x,z,yaw,pitch)=>{const s=fresh();s.x=x;s.z=z;s.yaw=yaw;s.pitch=pitch
   assert.ok(fm>0.15&&fd>0.15&&fx>0.25,'every biome is common enough');assert.ok(jump<0.2,'borders are smooth');
 }
 console.log('stillwood rules ok');
+
+// Freezing is deliberate: close to the water, water filling the view, and a short unbroken dwell.
+{const near=()=>spot(0,-9.5,0,-0.5);
+  const a=near();for(let i=0;i<Math.floor(STILL.freezeDwell/0.05)-2;i++)stillStep(a,0.05);assert.equal(a.pinned,false,'a glance is not enough');
+  const b=near();for(let i=0;i<8;i++)stillStep(b,0.05);b.pitch=0;stillStep(b,0.05);for(let i=0;i<8;i++){b.pitch=-0.5;stillStep(b,0.05)}
+  assert.equal(b.pinned,false,'looking away resets the dwell');
+  const c=spot(0,-4,0,-0.4);for(let i=0;i<60;i++)stillStep(c,0.05);assert.equal(c.pinned,false,'a pond across the grass (more than a few strides) does not catch it');
+  const d=spot(0,-3,0,-0.4);d.pond={x:0,z:-30,r:5.5};for(let i=0;i<60;i++)stillStep(d,0.05);assert.equal(d.pinned,false,'far pond');
+  const e=spot(0,-9.5,0,-0.5);e.pitch=-0.8;e.yaw=1.2;for(let i=0;i<60;i++)stillStep(e,0.05);assert.equal(e.pinned,false,'edge of the view only');
+  const f=settle(near());assert.equal(f.pinned,true);f.x=0;f.z=-4;f.pitch=-0.4;stillStep(f,0.02);assert.equal(f.pinned,true,'once frozen, keeping watch needs no dwell');
+}
+// Every part of the door counts: a door whose centre is just out of view but whose frame edge or top still shows is seen.
+{const fov=viewFov(),eye=[0,1.6,0],edge=8*Math.tan(fov.h/2);
+  assert.equal(doorSeen(eye,0,0,{x:edge+0.3,z:-8,y:0,face:0},fov,0),true,'frame edge on screen');
+  assert.equal(doorSeen(eye,0,0,{x:edge+2,z:-8,y:0,face:0},fov,0),false,'clear of the view');
+  assert.equal(doorSeen([0,5,0],0,-0.2,{x:0,z:-3,y:0,face:0},fov,0),true,'seen from a rooftop of rock: only its top is above the eye line');
+  assert.equal(doorSeen(eye,0,0,{x:0,z:-1.2,y:0,face:0},fov,0),true,'very near');
+  // the pad around the door hides it before it can be seen, from any pitch
+  let bad=0;
+  for(let k=0;k<4000;k++){
+    const r=n=>Math.sin(k*12.9898+n*78.233)*43758.5453%1,u=n=>Math.abs(r(n));
+    const s=fresh();s.x=0;s.z=0;s.yaw=(u(1)-0.5)*7;s.pitch=(u(2)-0.5)*2.4;s.eye=1.6+u(3)*3;
+    s.door={x:0,z:0,face:0};stillStep(s,0.05);
+    if(!s.hidden&&doorSeen([s.x,s.eye,s.z],s.yaw,s.pitch,s.door,viewFov(),0))bad++;
+  }
+  assert.equal(bad,0,'an unwatched door is never visible, whatever the yaw, pitch and eye height');
+}
+console.log('freeze/visibility ok');

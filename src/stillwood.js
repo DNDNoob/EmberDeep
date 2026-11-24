@@ -14,6 +14,7 @@ export const STILL={
   behind:4.2, doorHalf:0.52, doorH:2.2, pondR:5.5, pondEvery:304.8, pondMax:3,
   grace:0.15, seeMargin:0.03, hidePad:0.3, waterY:0.045,
   vfov:72*Math.PI/180, waterReach:25, waterFill:2/9,
+  freezeReach:12, freezeFill:0.4, freezeN:5, freezeSpan:0.8, freezeDwell:0.5,
 };
 
 export function horizForward(yaw){
@@ -147,23 +148,42 @@ export function rayHitsPond(eye,dir,pond,waterY=STILL.waterY,maxT=30){
 // Camera field of view as {v,h} radians for a vertical fov and an aspect ratio.
 export function viewFov(vfov=STILL.vfov,aspect=16/9){return {v:vfov,h:2*Math.atan(Math.tan(vfov/2)*aspect)}}
 const wrapA=a=>{a%=Math.PI*2;return a>Math.PI?a-Math.PI*2:a<-Math.PI?a+Math.PI*2:a};
-// Is the door on screen? Its centre must lie inside the real camera frustum, periphery included (margin in radians).
-export function doorSeen(eye,yaw,pitch,door,fov=viewFov(),margin=STILL.seeMargin){
-  const vx=door.x-eye[0],vz=door.z-eye[2],vy=(door.y||0)+1.15-eye[1],hd=Math.hypot(vx,vz);
-  if(hd<1.0)return true;           // standing at the doorway
-  if(hd>45)return false;
-  const dy=wrapA(Math.atan2(vx,-vz)-yaw),el=Math.atan2(vy,hd);
-  return Math.abs(dy)<fov.h/2+margin&&Math.abs(el-pitch)<fov.v/2+margin;
-}
-// Fraction of a 3x3 fan of view rays (spread over most of the screen) that strike pond water within `reach` metres.
-export function waterFill(eye,yaw,pitch,ponds,fov=viewFov(),reach=STILL.waterReach){
-  let hit=0;
-  for(const ox of [-0.6,0,0.6])for(const oy of [-0.6,0,0.6]){
-    const dir=lookDir(yaw+ox*fov.h/2,clamp(pitch+oy*fov.v/2,-1.5,1.5));
-    for(const p of ponds)if(rayHitsPond(eye,dir,p,STILL.waterY,reach)){hit++;break}
+// Points that cover the whole door (a box: frame width, thickness, height): corners, edge midpoints and the middle.
+const DOOR_T=0.14;
+export function doorPoints(door){
+  const fc=door.face||0,c=Math.cos(fc),sn=Math.sin(fc),y0=door.y||0,pts=[];
+  for(const u of [-STILL.doorHalf,0,STILL.doorHalf])for(const w of [-DOOR_T,0,DOOR_T])for(const h of [0,STILL.doorH/2,STILL.doorH]){
+    pts.push([door.x+c*u+sn*w,y0+h,door.z+sn*u-c*w]);
   }
-  return hit/9;
+  return pts;
 }
+// Is any part of the door on screen? Every point of its box is tested against the real camera frustum (margin in radians).
+export function doorSeen(eye,yaw,pitch,door,fov=viewFov(),margin=STILL.seeMargin){
+  const hd=Math.hypot(door.x-eye[0],door.z-eye[2]);
+  if(hd<1.6)return true;           // standing at (or very near) the doorway
+  if(hd>45)return false;
+  const f=lookDir(yaw,pitch),rx=Math.cos(yaw),rz=Math.sin(yaw);   // right = (cos yaw, 0, sin yaw)
+  const ux=-Math.sin(pitch)*Math.sin(yaw),uy=Math.cos(pitch),uz=Math.sin(pitch)*Math.cos(yaw);
+  for(const p of doorPoints(door)){
+    const vx=p[0]-eye[0],vy=p[1]-eye[1],vz=p[2]-eye[2];
+    const zc=vx*f[0]+vy*f[1]+vz*f[2];if(zc<=0.02)continue;
+    const xc=vx*rx+vz*rz,yc=vx*ux+vy*uy+vz*uz;
+    if(Math.abs(Math.atan2(xc,zc))<fov.h/2+margin&&Math.abs(Math.atan2(yc,zc))<fov.v/2+margin)return true;
+  }
+  return false;
+}
+// The 3x3 fan of view rays (spread over most of the screen): the fraction that strike pond water within `reach` metres,
+// and whether the centre ray does.
+export function waterRays(eye,yaw,pitch,ponds,fov=viewFov(),reach=STILL.waterReach,n=3,span=0.6){
+  let hit=0,centre=false;const mid=(n-1)/2;
+  for(let i=0;i<n;i++)for(let j=0;j<n;j++){
+    const ox=(i-mid)/mid*span,oy=(j-mid)/mid*span;
+    const dir=lookDir(yaw+ox*fov.h/2,clamp(pitch+oy*fov.v/2,-1.5,1.5));
+    for(const p of ponds)if(rayHitsPond(eye,dir,p,STILL.waterY,reach)){hit++;if(i===mid&&j===mid)centre=true;break}
+  }
+  return {fill:hit/(n*n),centre};
+}
+export function waterFill(eye,yaw,pitch,ponds,fov=viewFov(),reach=STILL.waterReach){return waterRays(eye,yaw,pitch,ponds,fov,reach).fill}
 // True when the segment from (x0,z0) to (x1,z1) passes through the doorway.
 export function crossedDoor(x0,z0,x1,z1,door,half=STILL.doorHalf){
   const nx=Math.sin(door.face),nz=-Math.cos(door.face);
@@ -175,10 +195,12 @@ export function crossedDoor(x0,z0,x1,z1,door,half=STILL.doorHalf){
   const side=(x-door.x)*(-nz)+(z-door.z)*nx;
   return Math.abs(side)<=half;
 }
-// One simulation step. s = {x,z,eye,yaw,pitch,aspect?,door:{x,z,y?,face},ponds:[{x,z,r,wy?}] (or pond),pinned,hold}
-// The door is frozen in world space exactly while the player SEES it: either its reflection (the water fills part of the view:
-// at least waterFill of the view rays strike a pond within waterReach) or the real door inside the camera frustum.
+// One simulation step. s = {x,z,eye,yaw,pitch,aspect?,door:{x,z,y?,face},ponds:[{x,z,r,wy?}] (or pond),pinned,hold,dwell}
+// The door is frozen in world space while the player SEES it: its reflection or the real door inside the camera frustum.
+// Freezing is deliberate: the pond must be close (freezeReach) and fill the view (centre ray on water and at least freezeFill of the
+// fan) for a short unbroken dwell. Once frozen it holds while any water (waterFill within waterReach) or the door is in view, with no dwell.
 // The instant neither holds (after a tiny grace against flicker) it slips back directly behind the player.
+// (s.eye, yaw and pitch must be the pose the camera will actually render with this frame.)
 export function stillStep(s,dt){
   const ponds=s.ponds||[s.pond],eye=[s.x,s.eye??EYE,s.z],fov=s.fov||viewFov(STILL.vfov,s.aspect||16/9),margin=s.seeMargin??STILL.seeMargin;
   const fill=waterFill(eye,s.yaw,s.pitch,ponds,fov,s.waterReach??STILL.waterReach);
@@ -189,15 +211,19 @@ export function stillStep(s,dt){
     s.direct=doorSeen(eye,s.yaw,s.pitch,s.door,fov,margin);
     if(water||s.direct)s.hold=s.grace??STILL.grace;
     else{s.hold-=dt;if(s.hold<=0){s.pinned=false;s.hold=0;s.released=true}}
+    s.dwell=0;
   }
   if(!s.pinned){
     // free: pond, you and the door in a straight line with you in the middle
     const p=placeLine(s.x,s.z,nearestOf(ponds,s.x,s.z),s.yaw,s.behind??STILL.behind,s.blocked);
     s.door.x=p.x;s.door.z=p.z;s.door.face=p.face;
     if(s.groundAt)s.door.y=s.groundAt(p.x,p.z);
-    // a spot on screen hides the door (never counted as seen) until it leaves the view: it cannot pop in ahead of you
+    // any part of the spot on screen hides the door (never counted as seen) until it leaves the view: it cannot pop in ahead of you
     s.hidden=doorSeen(eye,s.yaw,s.pitch,s.door,fov,margin+(s.hidePad??STILL.hidePad));
-    if(water&&!s.hidden){s.pinned=true;s.locked=true;s.hold=s.grace??STILL.grace}
+    const wr=waterRays(eye,s.yaw,s.pitch,ponds,fov,s.freezeReach??STILL.freezeReach,STILL.freezeN,STILL.freezeSpan);
+    const want=wr.centre&&wr.fill>=(s.freezeFill??STILL.freezeFill)-1e-9&&!s.hidden;
+    s.dwell=want?(s.dwell||0)+dt:0;
+    if(s.dwell>=(s.freezeDwell??STILL.freezeDwell)-1e-9){s.pinned=true;s.locked=true;s.hold=s.grace??STILL.grace;s.dwell=0}
   }
   s.fill=fill;s.water=water;s.sees=water||s.direct;
   return s;
@@ -562,9 +588,6 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
         uSeedA:{value:(seed^0x7a11)|0},uSeedB:{value:(seed^0x3c9d)|0},uSeedP:{value:(seed^0x1357)|0},uPondsT:GU.uPondsT},
       vertexShader:waterVS,fragmentShader:waterFS});
     const water=new THREE.Mesh(waterGeo,mat);water.rotation.x=-Math.PI/2;water.renderOrder=2;g.add(water);
-    const beam=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.55,9,8,1,true),
-      new THREE.MeshBasicMaterial({color:0xe7fff4,transparent:true,opacity:0.1,side:THREE.DoubleSide,depthWrite:false}));
-    beam.position.y=4.5;g.add(beam);
     const pads=new THREE.InstancedMesh(padGeo,padMat,PADS),cups=new THREE.InstancedMesh(cupGeo,cupMat,PADS);
     pads.frustumCulled=cups.frustumCulled=false;pads.instanceMatrix.setUsage(THREE.DynamicDrawUsage);cups.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     const col=new THREE.Color();
@@ -573,7 +596,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     const mp=new Float32Array(MOTES*3),mg=new THREE.BufferGeometry();mg.setAttribute('position',new THREE.BufferAttribute(mp,3));
     const motes=new THREE.Points(mg,new THREE.PointsMaterial({map:moteTex,size:0.16,transparent:true,opacity:0.85,depthWrite:false,blending:THREE.AdditiveBlending,color:0xeaffc0}));
     motes.frustumCulled=false;g.add(motes);
-    return {g,mat,water,beam,pads,cups,motes,mp,pond:null,rip:0,nextDrip:0,lastWalk:-9,pads0:[]};
+    return {g,mat,water,pads,cups,motes,mp,pond:null,rip:0,nextDrip:0,lastWalk:-9,pads0:[]};
   });
   const dummy=new THREE.Object3D();
   function assignPond(p){
@@ -894,6 +917,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     // metres ahead (along dx,dz) before the first chunk that has not been generated
     asmd:(dx,dz)=>{const L=Math.hypot(dx,dz)||1;for(let t=0;t<300;t+=6){const kx=Math.round((b.x+dx/L*t)/16),kz=Math.round((b.z+dz/L*t)/16);if(!asmKeys.has(kx+','+kz))return t}return 300},
     gen:(dx,dz)=>{const L=Math.hypot(dx,dz)||1;for(let t=0;t<300;t+=6){const kx=Math.round((b.x+dx/L*t)/16),kz=Math.round((b.z+dz/L*t)/16);if(!cache.has(kx+','+kz))return t}return 300}});
+  S.cam=cam;S.doorShown=()=>door.visible;
   S.H=H;S.rockList=()=>rocks.map(r=>({...r}));
   S.treeList=()=>trees.map(t=>({x:t.x,z:t.z,kind:t.s.kind,k:t.k}));
   // ground for the walker: the hills plus the top of every climbable stone
@@ -1013,6 +1037,12 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     pslots.forEach((sl,i)=>{sl.g.visible=vis[i]});door.visible=dv;slots.forEach((sl,i)=>{sl.near.count=cnt[i][0];sl.farM.count=cnt[i][1]});
     S.refl.ms=performance.now()-T0;S.refl.tris=renderer.info.render.triangles;S.refl.frames++;S.refl.pond=pd.i;
   };
+  // the camera pose this frame will render with; the door's visibility is decided from exactly this pose
+  const poseCam=dt=>{
+    if(camY===null||b.y>G(b.x,b.z)+0.05||Math.abs(b.y-camY)>3)camY=b.y;else camY+=(b.y-camY)*Math.min(1,dt*16);
+    cam.position.set(b.x,EYE+camY+bobY(b,walker.scale),b.z);
+    cam.rotation.set(S.pitch,-S.yaw,0,'YXZ');
+  };
   S.update=(dt,input)=>{
     S.t+=dt;let moving=false;
     if(!A.watching){
@@ -1028,13 +1058,14 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
         S.mist=2.4;
         o.tone(392,0.6,'sine',0.03,0,-90);
       }
+      poseCam(dt);
       const sim={
-        x:b.x,z:b.z,yaw:S.yaw,pitch:S.pitch,eye:EYE+b.y,aspect:cam.aspect||16/9,
+        x:b.x,z:b.z,yaw:S.yaw,pitch:S.pitch,eye:cam.position.y,aspect:cam.aspect||16/9,
         door:{x:S.doorX,z:S.doorZ,y:H(S.doorX,S.doorZ),face:S.doorFace},
-        ponds,pinned:S.pinned,hold:S.hold,blocked:blockedAt,groundAt:H,
+        ponds,pinned:S.pinned,hold:S.hold,dwell:S.dwell||0,blocked:blockedAt,groundAt:H,
       };
       stillStep(sim,dt);
-      S.pinned=sim.pinned;S.hold=sim.hold;S.doorX=sim.door.x;S.doorZ=sim.door.z;S.doorFace=sim.door.face;
+      S.pinned=sim.pinned;S.hold=sim.hold;S.dwell=sim.dwell;S.doorX=sim.door.x;S.doorZ=sim.door.z;S.doorFace=sim.door.face;
       S.water=sim.water;S.direct=sim.direct;S.fill=sim.fill;S.hidden=sim.hidden;
       if(S.pinned&&b.y-G(b.x,b.z)<1.4&&crossedDoor(ox,oz,b.x,b.z,sim.door)){
         finish({k:'leave',why:'stillwood'});return;
@@ -1056,9 +1087,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     UT.value=S.t;
     updatePonds(dt,b,moving);
     // the eye follows the feet smoothly on the ground (stepping onto or off a stone does not pop) and exactly in the air
-    if(camY===null||b.y>G(b.x,b.z)+0.05||Math.abs(b.y-camY)>3)camY=b.y;else camY+=(b.y-camY)*Math.min(1,dt*16);
-    cam.position.set(b.x,EYE+camY+bobY(b,walker.scale),b.z);
-    cam.rotation.set(S.pitch,-S.yaw,0,'YXZ');
+    if(A.watching)poseCam(dt);
   };
   onClear(()=>{
     deadClear=true;scene.background=prevBg;rt.dispose();ghostBody.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()});ghostDoor.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()});
@@ -1067,7 +1096,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     for(const g of gs)g.dispose();
     for(const m of Object.values(M))m.dispose();
     ground.material.dispose();padMat.dispose();cupMat.dispose();moteTex.dispose();
-    for(const sl of pslots){sl.mat.dispose();sl.beam.geometry.dispose();sl.beam.material.dispose();sl.motes.geometry.dispose();sl.motes.material.dispose();sl.pads.dispose();sl.cups.dispose()}
+    for(const sl of pslots){sl.mat.dispose();sl.motes.geometry.dispose();sl.motes.material.dispose();sl.pads.dispose();sl.cups.dispose()}
   });
   return S;
 }
