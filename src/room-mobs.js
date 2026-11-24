@@ -9,6 +9,7 @@ export const ROOM_MOBS={
   moose:{name:'Moose',room:'moose'},
   goose:{name:'Canada Goose',room:'moose'},
   mother:{name:'Mother Goose',room:'moose'},
+  nightthing:{name:'The Night Thing',room:'hamlet'},
 };
 
 // Same cone the maze uses: in front of the look direction and within maxDist.

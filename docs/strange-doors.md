@@ -45,9 +45,6 @@ sometimes seen in the mirror, and the zombie-moose mount. Maze creatures
 (Shade, Stalker, Wisp, Watcher, Mimic, Wrong Shadow) are recorded in
 `src/game.js` and stay ahead of room creatures. Do not add them here.
 
-The thing in the little village is a door-room creature and is not
-recorded yet. Add it the same way the next time that room changes.
-
 1. Append a stable id to `ROOM_MOBS` in `src/room-mobs.js`. Keep existing
    ids and their order. New exhibits are added at the end of the hall.
    Each entry is `{name, room}`, and `room` is that creature's

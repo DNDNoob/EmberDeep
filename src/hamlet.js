@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import {MOVE,bobY,createRoomWalker,lookStep} from './movement.js';
 import {crossedDoor} from './stillwood.js';
+import {spotted} from './room-mobs.js';
 
 const EYE=1.6;
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
@@ -245,6 +246,7 @@ export function hamletRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
         S.mx=clamp(step.x,-14,14);S.mz=clamp(step.z,-26,2);
         poseMon();
         monLight.position.set(0,1.6,0.2);
+        if(!S.noted){const cp=Math.cos(S.pitch);if(spotted([b.x,EYE+b.y,b.z],[Math.sin(S.yaw)*cp,Math.sin(S.pitch),-Math.cos(S.yaw)*cp],[S.mx,1.2,S.mz],14)){S.noted=true;o.mob?.('nightthing',seed)}}
         const bob=Math.sin(S.t*8)*0.08;
         if(parts.armL.visible)parts.armL.rotation.x=bob;
         if(parts.armR.visible)parts.armR.rotation.x=-bob;
