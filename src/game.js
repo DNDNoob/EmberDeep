@@ -6471,6 +6471,7 @@ function closeStation(){
 function useMenuAsset(entry){
   if(state!=='title'||loading)return;
   initAudio();
+  if(entry.locked){sfx('seal');say('Locked. The hangar door will not budge.',2.6);return}
   if(entry.station){openStation(entry.station);return}
   if(entry.lift){
     if(!hub.boarded||hub.riding)return;

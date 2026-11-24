@@ -16,3 +16,7 @@ Every change a player can notice (new door, floor, creature, item, room, sound, 
 - No code names, file names, PR numbers or agent names.
 - Group small fixes into one post. Pure refactors, tests and tooling need no post.
 - Then rebuild `index.html` (`npm run build`).
+
+## Spelling
+
+All player-facing text (UI, signs, stencils, terminal screens, Update Log posts, door/creature descriptions, NPC lines) uses American English spelling: color, center, gray, armor, authorized, realize, meter, favorite, traveled, defense.
