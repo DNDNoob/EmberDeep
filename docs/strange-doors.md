@@ -4,6 +4,13 @@ Start with a short room brief. Describe what the door hints at, what the
 player notices on arrival, what they can do, and how the visit can end.
 Decide whether each ending affects the visitor or the whole party.
 
+## No hints
+
+Door rooms normally give no on-screen hints or instructions: no HUD lines,
+no spoken tips. Players discover the rule themselves. Add a hint only when a
+room is otherwise unsolvable, and keep it cryptic (an image or a sound, not
+the answer). Atmospheric sound is fine; a spectator's name label is not a hint.
+
 ## Build the playable version
 
 1. Append a stable ID to `DOOR_KINDS` in `src/rooms.js`. Keep existing IDs

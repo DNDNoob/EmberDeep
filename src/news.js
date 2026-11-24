@@ -7,6 +7,16 @@
 // it is, or how to trigger it. No code names, file names, PR numbers or agent names.
 // Group small fixes into one post. Rebuild index.html afterwards (npm run build).
 export const NEWS=[
+  {date:'2026-11-24',title:'A song for the wood',
+    body:'The wood behind that certain door now has a quiet tune of its own that drifts in and out as you come and go. The glowing cone over the water is gone, and the wood is a little harder to fool: you will have to mean it.'},
+  {date:'2026-11-24',title:'Still water, smooth strides',
+    body:'The ponds in the wood now hold a proper mirror, with soft muddy banks, a visible bed in the shallows and a little sparkle on the ripples. Every boulder can be climbed if you can jump high enough (try hopping from a small one to a big one), the wood keeps up when you sprint, and the quiet instructions are gone: you will have to work things out yourself.'},
+  {date:'2026-11-24',title:'Meadows, deep woods and climbable stones',
+    body:'The wood behind that certain door now has regions of its own: sunny flower meadows, thick dark stretches of trees, and the mixed woods in between. Some of the boulders are low enough to jump up onto, so go exploring. Something about the way back has changed too.'},
+  {date:'2026-11-24',title:'Rolling hills and big stones',
+    body:'The wood behind that certain door now rises and falls in gentle hills, and some very large boulders have settled among the trees. Look closer at the water, and keep your eyes open.'},
+  {date:'2026-11-24',title:'A lusher, breezier wood',
+    body:'The wood behind a certain door has grown thicker and greener, with grass underfoot, wildflowers in the clearings and a breeze that moves through everything. Take a slow walk.'},
   {date:'2026-11-24',title:'Some luck can wait',
     body:'Whatever fate you are dealt at the sanctuary will now hold off while you are behind a strange door, and catch up with you once you step back out. Anyone not in the maze stays out of harm\'s way, too.'},
   {date:'2026-11-24',title:'Something big out back',

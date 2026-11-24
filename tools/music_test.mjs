@@ -12,9 +12,10 @@ const ev=(f,a)=>pg.evaluate(f,a),wait=s=>pg.waitForTimeout(s*1000);
 const M=f=>ev(f);
 // ---- registry and resolution
 const keys=await M(()=>Object.keys(window.__game.music.tracks));
-for(const k of ['lobby','elevator','stonework','moss','cinder','frost','hollow','blackhush','chase','The Bone Galleries','The Rustworks','The Glimmer Veins','forest'])ok(keys.includes(k),'track key '+k);
+for(const k of ['lobby','elevator','stonework','moss','cinder','frost','hollow','blackhush','chase','The Bone Galleries','The Rustworks','The Glimmer Veins','forest','stillwood'])ok(keys.includes(k),'track key '+k);
 const shipped=await M(()=>JSON.parse(JSON.stringify(window.__game.music.tracks)));
-ok(Object.values(shipped).every(a=>a.length===2),'every key ships two tracks');
+ok(Object.entries(shipped).every(([k,a])=>a.length===(k==='stillwood'?1:2)),'every key ships two tracks (the still wood reuses one)');
+ok(shipped.stillwood[0]==='music/glimmer-1.ogg','the still wood reuses an existing track');
 const dec=await ev(async urls=>{const ac=new OfflineAudioContext(2,44100,44100),out=[];for(const u of urls){try{const b=await (await fetch(u)).arrayBuffer();const a=await ac.decodeAudioData(b);
   const d=a.getChannelData(0);let s=0,pk=0,bad=0;for(let i=0;i<d.length;i++){const x=d[i];if(x!==x)bad++;s+=x*x;pk=Math.max(pk,Math.abs(x))}out.push({u,dur:a.duration,rms:Math.sqrt(s/d.length),pk,bad})}catch(e){out.push({u,err:String(e)})}}return out},[...new Set(Object.values(shipped).flat())]);
 ok(dec.length===26&&dec.every(x=>!x.err&&x.dur>55&&x.dur<65&&!x.bad&&x.rms>0.01&&x.rms<0.5&&x.pk<=1.01),'all 26 shipped tracks decode as real ~60 s music '+JSON.stringify(dec.filter(x=>x.err||x.bad||x.rms<=0.01||x.rms>=0.5||x.dur<=55)));
@@ -111,7 +112,15 @@ await ev(()=>{const G=window.__game;G.F.back=false;G.F.kind='cave'});await wait(
 ok(await M(()=>window.__game.music.playing==='hollow'),'cave floor resolves to the hollow track');
 await ev(()=>window.__game.music.override({inRoom:true}));await wait(6);
 ok(await M(()=>window.__game.music.playing===null),'strange-door room: faded to silence');
-await ev(()=>window.__game.music.override(null));await wait(4);
+await ev(()=>window.__game.music.override({inRoom:true,room:'mirror'}));await wait(2);
+ok(await M(()=>window.__game.music.playing===null),'other strange-door rooms stay silent');
+await ev(()=>{const m=window.__game.music;m.register('stillwood',[window.__u]);m.override({inRoom:true,room:'stillwood'})});await wait(5);
+ok(await M(()=>window.__game.music.playing==='stillwood'&&window.__game.music.key==='stillwood'),'still wood: its own track fades in');
+ok(await M(()=>window.__game.music.voices.filter(v=>v.key==='hollow').every(v=>v.gain<0.1)),'the floor track has faded out underneath');
+await ev(()=>window.__game.music.setVolumes({music:0}));await wait(0.5);
+ok(await M(()=>window.__game.music.bus.gain.value<0.01),'the Music volume setting silences it');
+await ev(()=>window.__game.music.setVolumes({music:0.35}));
+await ev(()=>window.__game.music.override(null));await wait(6);
 ok(await M(()=>window.__game.music.playing==='hollow'),'music returns after the room');
 // dead
 await ev(()=>window.__game.music.override({state:'dead'}));await wait(6);
