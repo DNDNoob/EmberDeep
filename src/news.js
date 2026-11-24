@@ -13,6 +13,8 @@ export const NEWS=[
     body:'The wood behind that certain door now rises and falls in gentle hills, and some very large boulders have settled among the trees. Look closer at the water, and keep your eyes open.'},
   {date:'2026-11-24',title:'A lusher, breezier wood',
     body:'The wood behind a certain door has grown thicker and greener, with grass underfoot, wildflowers in the clearings and a breeze that moves through everything. Take a slow walk.'},
+  {date:'2026-11-24',title:'Some luck can wait',
+    body:'Whatever fate you are dealt at the sanctuary will now hold off while you are behind a strange door, and catch up with you once you step back out. Anyone not in the maze stays out of harm\'s way, too.'},
   {date:'2026-11-24',title:'Something big out back',
     body:'There\'s a lot more room behind the lobby than it first appeared, and you can now see right into it through the glass. Somebody is clearly parked back there. The door is locked, for now.'},
   {date:'2026-11-24',title:'Quieter in the dark',
