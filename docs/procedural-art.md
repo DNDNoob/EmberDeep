@@ -85,6 +85,23 @@ Any 2D wall art (murals, posters, paintings, signs with pictures) is generated a
 
 **Pipeline.** `tools/pixel-art/` turns a reference image into the module (see its README). `src/art/uncle-sam.js` and `src/art/canadian-ranger.js` are the worked examples, used in `src/moose-arcade.js`.
 
+## Nature props (trees, rocks, plants, flowers)
+
+`src/nature.js` bakes ten seeded SDF props: `oak`, `fir`, `snag` (trees, 4-7 m), `boulder`, `slab`, `mossrock` (0.6-2.5 m), `shrub`, `succulent` (0.3-1.2 m), `tulip`, `daisy` (0.2-0.8 m). Same (kind, seed, opts) always gives the same mesh, so seed from the floor seed plus a placement index, e.g. `getProp('oak', hash(floorSeed + ':oak:' + i))`.
+
+```js
+import {getProp, natureMaterial, NATURE_KINDS} from './nature.js';
+const mat = natureMaterial({Q, UT});                 // one shared material; UT = {value: seconds} drives the sway; Q===0 is plain Lambert
+const p = await getProp('fir', seed, {palette: {leaf: '#3a4a46', bark: '#2a2826'}});  // optional palette override (dark-forest greys)
+const im = new THREE.InstancedMesh(p.near, mat, n);  // p.far for distant instances; origin is the base centre on y=0, metres
+```
+
+- `getProp` checks IndexedDB (key `nature-<kind>-<seed>[-<opts>]:<kit hash>`, newest kit version only) then bakes in ~8 ms slices. `bakePropGen` is the generator form for your own scheduling, `bakeProp` the sync one. `opts.size` (metres) rescales rocks, shrub, succulent and flowers.
+- Attributes: `color` (linear: region colour x mottling x baked AO), `aSw` sway weight (0 at rock and trunk base, 1 at tips), `aLf` leaf/petal mask (Q>0 rim and fake subsurface use it). Palette keys per kind are in the `PAL_*` tables; each gets seeded hue jitter.
+- Budgets (near / far triangles): trees 6800 / 1400, boulders 2400 / 480, plants and flowers 2400 / 480. Bake time is roughly 100-500 ms per prop (rocks fastest, trees and flower clumps slowest); spread it with `getProp` or `bakePropGen`.
+- Thin parts (flower stems and heads, fir tiers) are separate small parts at their own cell size; their far LOD is re-sculpted coarser (slightly inflated) because thin sheets cannot be simplified far enough.
+- `node tools/nature_test.mjs` checks determinism, budgets, NaNs and bounds. `node tools/nature_shot.mjs` renders the gallery (`src/nature-gallery.js`, not in index.html) to `shots/nature/`.
+
 ## Checklist for a new area or character
 
 1. Write the shape as a short list of hand-placed primitives.

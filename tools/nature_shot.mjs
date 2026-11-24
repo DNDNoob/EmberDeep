@@ -21,7 +21,8 @@ const shot = async (q, view, name) => {
   await pg.evaluate(v => window.__gal.setView(v), view);
   await pg.screenshot({path: resolve(A.out, name + '.png')});
   const st = await pg.evaluate(() => window.__gal.baked.map(b => b.kind + ':' + b.seed + ' ' + b.tris + '/' + b.farTris + ' ' + b.ms.toFixed(0) + 'ms').join('\n'));
-  console.log(name, errs.length ? errs : 'ok'); await pg.close(); return st;
+  if (name==="lineup") console.log(st);
+  console.log(name, errs.length ? errs : "ok"); await pg.close(); return st;
 };
 for (const v of A.views.split(',')) await shot(2, v, v);
 if (A.q0 !== 'no') await shot(0, 'lineup', 'lineup_q0');
