@@ -7,6 +7,8 @@
 // it is, or how to trigger it. No code names, file names, PR numbers or agent names.
 // Group small fixes into one post. Rebuild index.html afterwards (npm run build).
 export const NEWS=[
+  {date:'2026-11-24',title:'Meadows, deep woods and climbable stones',
+    body:'The wood behind that certain door now has regions of its own: sunny flower meadows, thick dark stretches of trees, and the mixed woods in between. Some of the boulders are low enough to jump up onto, so go exploring. Something about the way back has changed too.'},
   {date:'2026-11-24',title:'Rolling hills and big stones',
     body:'The wood behind that certain door now rises and falls in gentle hills, and some very large boulders have settled among the trees. Look closer at the water, and keep your eyes open.'},
   {date:'2026-11-24',title:'A lusher, breezier wood',

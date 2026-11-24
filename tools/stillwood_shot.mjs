@@ -79,7 +79,7 @@ for(const k of want){
     }
     if(V.find==='stand'){
       for(let i=0;i<3;i++)R.update(1/60,Z);
-      const rk=S.rockList().filter(r=>r.stand&&r.top>0.8&&Math.hypot(r.x,r.z)>8).sort((a,b)=>Math.hypot(a.x,a.z)-Math.hypot(b.x,b.z))[0];
+      const rk=S.rockList().filter(r=>r.stand&&r.top>1.0&&r.rg<1.6&&Math.hypot(r.x,r.z)>8).sort((a,b)=>Math.hypot(a.x,a.z)-Math.hypot(b.x,b.z))[0];
       if(rk){x=rk.x;z=rk.z;yaw=Math.atan2(-rk.x,rk.z);pitch=-0.3;window.__stand=rk}
     }
     if(V.find==='line'){
@@ -115,7 +115,7 @@ for(const k of want){
   await pg.screenshot({path:`${root}/shots/stillwood/${prefix}-${k}.png`});
   const info=await pg.evaluate(()=>{const S=window.__game.ROOMS.state();return S.stats?S.stats():{}});delete info.bake;
   if(process.env.KINDS)console.log(JSON.stringify(await pg.evaluate(()=>window.__game.ROOMS.state().byKind())));
-  console.log(k,JSON.stringify(info),JSON.stringify(await pg.evaluate(()=>window.__circle||null)),'rs',await pg.evaluate(()=>window.__game.rs));
+  console.log(k,JSON.stringify(info),JSON.stringify(await pg.evaluate(()=>window.__circle||window.__stand||null)),'rs',await pg.evaluate(()=>window.__game.rs));
   await ctx.close();
 }
 await br.close();
