@@ -140,6 +140,13 @@
   .panel{justify-content:flex-start}
   .panel::before,.panel::after{content:'';flex:1 0 0px}
   .panel{overflow:auto;padding:calc(14px + env(safe-area-inset-top)) calc(18px + env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) calc(18px + env(safe-area-inset-left))}
+  #lobbyPause{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:9;box-sizing:border-box;max-width:92vw;padding:20px 44px;text-align:center;cursor:pointer;
+    background:rgba(14,9,6,.92);border:1px solid rgba(255,190,110,.45);border-radius:12px;box-shadow:0 0 40px rgba(0,0,0,.8);user-select:none}
+  #lobbyPause h2{margin:0 0 8px;font-size:clamp(22px,5vw,32px)}
+  #lobbyPause div{font-size:15px;letter-spacing:.06em;opacity:.8}
+  #lobbyPause:hover{border-color:rgba(255,190,110,.8)}
+  .setHead{display:block;width:100%;margin:22px 0 -4px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#ffc27a;opacity:.9}
+  .gfxNote{margin:6px 0 0;color:#ffc27a;opacity:.85}
   #prompt{position:fixed;left:0;right:0;bottom:31%;text-align:center;font-size:17px;letter-spacing:.06em;color:#ffd9a0;pointer-events:none;text-shadow:0 2px 6px #000,0 0 12px #000}
   #talk{position:fixed;left:50%;bottom:calc(5% + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(580px,94vw);max-height:86vh;overflow:auto;box-sizing:border-box;
     background:rgba(14,9,6,.92);border:1px solid rgba(255,190,110,.45);border-radius:12px;padding:16px 18px;box-shadow:0 0 40px rgba(0,0,0,.8);text-align:left}
@@ -323,7 +330,7 @@
     <b>Space</b><span>Jump (or right mouse button). Hold it to keep hopping; a running jump goes farther</span>
     <b>E or left click</b><span>Flash bomb: stuns nearby creatures. Near a friendly face: talk. Facing a strange door: open it, if you dare</span>
     <b>M or Tab</b><span>Full map</span>
-    <b>F</b><span>Fullscreen &nbsp;·&nbsp; <b>V</b> mute &nbsp;·&nbsp; <b>[ ]</b> brightness &nbsp;·&nbsp; <b>Esc</b> pause</span>
+    <b>F</b><span>Fullscreen &nbsp;·&nbsp; <b>V</b> mute &nbsp;·&nbsp; <b>[ ]</b> brightness &nbsp;·&nbsp; <b>Esc</b> pause / settings</span>
   </div>
   <div class="tc sub" style="max-width:520px;line-height:1.5">Left thumb: move, push all the way to sprint. Right thumb: drag to look.<br>Buttons: jump and flash bomb. Tap the map to enlarge it.</div>
   <div class="tc hint" id="rotHint" style="color:#ffc27a;margin:0 0 10px"></div>
@@ -369,10 +376,25 @@
   </section>
 </div>
 
+<div id="lobbyPause" class="hidden" role="button" tabindex="-1" aria-label="Paused. Click to continue">
+  <h2>PAUSED</h2>
+  <div>Click to continue</div>
+</div>
+
 <div id="pause" class="panel hidden">
   <h2>PAUSED</h2>
   <div class="sub kb">Click Resume to capture the mouse, or press Enter to keep playing with the keyboard.</div>
   <button id="resumeBtn">RESUME</button>
+  <b class="setHead">Settings</b>
+  <div class="row">
+    <label><span class="kb">Mouse speed</span><span class="tc" style="display:inline">Look speed</span> <input class="sensP" type="range" min="0.4" max="2.5" step="0.1" value="1" aria-label="Mouse speed"></label>
+    <label>Brightness <input class="brightS" type="range" min="0.6" max="3" step="0.05" value="1.3"></label>
+  </div>
+  <div class="row">
+    <label>Graphics <select class="qSelP"><option value="auto">Auto</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
+    <label class="gpu-option" title="Asks the browser to use the dedicated graphics card. Turn off if the picture goes black."><input class="gtxP" type="checkbox"> Prefer dedicated GPU</label>
+  </div>
+  <div class="hint gfxNote hidden">Takes effect next time the game loads</div>
   <div class="row vols"><b class="vols-h">Sound</b>
     <label>Music <input class="volSl" data-bus="music" type="range" min="0" max="100" step="1" aria-label="Music volume"></label>
     <label>Effects <input class="volSl" data-bus="sfx" type="range" min="0" max="100" step="1" aria-label="Effects volume"></label>
@@ -397,7 +419,6 @@
     <div class="hint" id="guestOpts"></div>
     <div class="hint">Your voice clips stay in this room's browsers and are gone when you leave.</div>
   </div>
-  <div class="row"><label>Brightness <input class="brightS" type="range" min="0.6" max="3" step="0.05" value="1.3"></label></div>
   <div class="hint kb">Press T to give up this run and return to the title. On a controller: A resumes, Back quits.</div>
   <div class="row tc"><button id="quitBtn" style="font-size:13px;padding:8px 20px;background:rgba(255,255,255,.15);color:#fff;box-shadow:none">QUIT TO TITLE</button></div>
 </div>
