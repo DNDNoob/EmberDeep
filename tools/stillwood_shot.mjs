@@ -14,8 +14,13 @@ const VIEWS={
   d:{q:'low',x:0,z:-1.5,yaw:0.0,pitch:0.02},
   e:{q:'high',x:4,z:-1,yaw:-0.5,pitch:-0.12},          // grass and breeze at ground level
   f:{q:'high',x:0.4,z:-9.0,yaw:0.0,pitch:-0.45},         // the pond close up
-  g:{q:'high',walk:{x:0,z:-176},look:{dx:0,dz:0,back:9,pitch:-0.12}}, // the second pond after a long walk
+  g:{q:'high',walk:{x:0,z:-332},look:{dx:0,dz:0,back:9,pitch:-0.12}}, // the second pond after a long walk
   h:{q:'low',x:0.2,z:-6.2,yaw:0.0,pitch:-0.1},
+  // the held door seen in the water from four sides of the first pond (door stands 4.2 m behind the player)
+  r:{q:'high',x:0,z:-9.6,yaw:0,pitch:-0.75,pin:true},
+  s:{q:'high',x:0,z:-22.4,yaw:Math.PI,pitch:-0.75,pin:true},
+  t:{q:'high',x:6.6,z:-16,yaw:-Math.PI/2,pitch:-0.75,pin:true},
+  u:{q:'high',x:-6.6,z:-16,yaw:Math.PI/2,pitch:-0.75,pin:true},
 };
 const want=prefix==='before'?['a','b']:(process.argv[4]?process.argv[4].split(''):Object.keys(VIEWS));
 const br=await chromium.launch({args:['--use-angle=swiftshader','--enable-unsafe-swiftshader','--ignore-gpu-blocklist']});
@@ -49,9 +54,10 @@ for(const k of want){
       const dx=p.x-V.walk.x,dz=p.z-V.walk.z,L=Math.hypot(dx,dz);
       x=p.x-dx/L*(p.r+V.look.back);z=p.z-dz/L*(p.r+V.look.back);yaw=Math.atan2(dx,-dz);pitch=V.look.pitch;
     }
-    S.apply({x,z,y:0,yaw,pitch,dx:0,dz:z+4.2,face:yaw,pin:0});
+    const dxx=x-Math.sin(yaw)*4.2,dzz=z+Math.cos(yaw)*4.2,pin=V.pin?1:0;
+    S.apply({x,z,y:0,yaw,pitch,dx:dxx,dz:dzz,face:yaw,pin});
     for(let i=0;i<30;i++)R.update(1/60,Z);
-    S.apply({x,z,y:0,yaw,pitch,dx:0,dz:z+4.2,face:yaw,pin:0});
+    S.apply({x,z,y:0,yaw,pitch,dx:dxx,dz:dzz,face:yaw,pin});
     for(let i=0;i<200;i++)R.update(1/60,Z);   // mist, ripples and wind settle
     S.yaw=yaw;S.pitch=pitch;R.update(0.0001,Z);
     R.render();

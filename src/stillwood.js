@@ -403,8 +403,8 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   const UT={value:0};
   // wind: trees lean from the trunk as bodies (crowns move most) with a few cm of coherent clump drift; shrubs and grass sway outright; rocks never move
   const M={
-    fir:natureMaterial({Q,UT,sway:0,bend:0.0055,clump:0.016,dip:0.04}),
-    oak:natureMaterial({Q,UT,sway:0,bend:0.0045,clump:0.007}),
+    fir:natureMaterial({Q,UT,sway:0,bend:0.007,clump:0.024,dip:0.05}),
+    oak:natureMaterial({Q,UT,sway:0,bend:0.0055,clump:0.011}),
     snag:natureMaterial({Q,UT,sway:0,bend:0.004}),
     shrub:natureMaterial({Q,UT,sway:0.07,bend:0.02}),
     grass:natureMaterial({Q,UT,sway:0.06,bend:0.03}),
@@ -544,6 +544,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   const door=makeDoor();group.add(door);
   S={t:0,yaw:0,pitch:0,bloom:0.18,seed,pinned:false,hold:0,said:0,doorX:0,doorZ:4.2,doorFace:0,ready:false,bake,mist:0,build:0,spd:0,shim:0,bt:0};
   S.ponds=()=>ponds.map(p=>({...p}));
+  S.treeList=()=>trees.map(t=>({x:t.x,z:t.z,kind:t.s.kind,k:t.k}));
   const walker=createRoomWalker({o,eye:EYE,x:0,z:0,collide:b=>{
     for(const t of trees){
       const dx=b.x-t.x,dz=b.z-t.z,d=Math.hypot(dx,dz),m=0.32+treeR(t);
