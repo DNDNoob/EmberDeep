@@ -247,7 +247,7 @@ function mergeParts(parts){
   return out;
 }
 // ---- hills: a smooth seeded height field, flattened round the spawn and into a basin under every pond (same maths runs in the ground shader) ----
-export const HILL={amp1:4.6,len1:64,amp2:1.3,len2:30,flat0:5,flat1:14,pondFlat0:1.5,pondFlat1:9,dish:0.35};
+export const HILL={amp1:4.6,len1:64,amp2:1.3,len2:30,flat0:5,flat1:14,pondFlat0:1.5,pondFlat1:9,dish:0.35,rag:1.6};
 const sstep01=t=>{t=t<0?0:t>1?1:t;return t*t*(3-2*t)};
 function vnoise(u,v,s){
   const iu=Math.floor(u),iv=Math.floor(v),fu=sstep01(u-iu),fv=sstep01(v-iv);
@@ -262,7 +262,7 @@ export function terrainRaw(x,z,seed){
 export function terrainH(x,z,seed,ponds=[]){
   let h=terrainRaw(x,z,seed);
   for(const p of ponds){
-    const d=Math.hypot(x-p.x,z-p.z);
+    const d=Math.hypot(x-p.x,z-p.z)-HILL.rag*(vnoise(x/3.5,z/3.5,seed^0x1357)-0.5);   // an irregular shoreline
     h+=(p.y-h)*(1-sstep01((d-(p.r+HILL.pondFlat0))/(HILL.pondFlat1-HILL.pondFlat0)));
     h-=HILL.dish*(1-sstep01((d-(p.r-2))/2.2));
   }
@@ -302,6 +302,7 @@ const PROPS=[
   {kind:'bigmoss',bake:'mossrock',n:1,cap:[10,20],far:90,near:26,opts:{size:4.5,budget:{near:5000,far:900},palette:{moss:'#4f6e38',moss2:'#78914a',mossD:'#334d2a'}}},
   {kind:'snag',n:1,cap:[40,80],far:66,near:15},
 ];
+const REFL_SKIP=new Set(['grass','tulip','daisy','slab','reed']);
 const ROCKY=new Set(['bigrock','bigmoss','boulder','mossrock']);
 const BAKE_ORDER=['fir0','shrub0','mossrock0','oak0','grass0','tulip0','daisy0','reed0','slab0','bigrock0','boulder0','fir1','grass1','oak1','shrub1','bigmoss0','snag0','fir2','mossrock1','reed1','bigrock1','grass2','slab1'];
 // until a prop's bake lands (or is read from the cache) its slot shows one of these cheap stand-ins
@@ -353,28 +354,28 @@ function groundGeometry(){
   g.setAttribute('normal',new THREE.Float32BufferAttribute(pos.map((_,i)=>i%3===1?1:0),3));g.setIndex(idx);
   g.boundingSphere=new THREE.Sphere(new THREE.Vector3(),200);return g;
 }
-// ground: moss, meadow, leaf litter, dirt paths and sandy muddy banks, all from world position so it can follow the player; up to 3 ponds
-function groundMaterial(Q,seed,U3){
-  const m=Q===0?new THREE.MeshLambertMaterial({color:0xffffff}):new THREE.MeshStandardMaterial({color:0xffffff,roughness:1,metalness:0});
-  const U=Object.assign({uSeed:{value:(seed^0x51ed)|0},uSeedA:{value:(seed^0x7a11)|0},uSeedB:{value:(seed^0x3c9d)|0},uSeedC:{value:(seed^0xb10e)|0},uSeedD:{value:(seed^0x2f1d)|0}},U3);
-  m.onBeforeCompile=sh=>{
-    Object.assign(sh.uniforms,U);
-    const TERR=`uniform int uSeedA;uniform int uSeedB;uniform vec4 uPondsT[3];
+const TERR_GLSL=`uniform int uSeedA;uniform int uSeedB;uniform int uSeedP;uniform vec4 uPondsT[3];
 float hsI(ivec2 c,int sd){uint h=(uint(c.x)*374761393u)^(uint(c.y)*668265263u)^uint(sd);h=(h^(h>>13))*1274126177u;return float(h^(h>>16))/4294967296.0;}
 float vnI(vec2 q,int sd){vec2 i=floor(q),f=q-i;f=f*f*(3.-2.*f);ivec2 c=ivec2(i);return mix(mix(hsI(c,sd),hsI(c+ivec2(1,0),sd),f.x),mix(hsI(c+ivec2(0,1),sd),hsI(c+ivec2(1,1),sd),f.x),f.y);}
 float terrH(vec2 p){
   float h=(vnI(p/${HILL.len1.toFixed(1)},uSeedA)-.5)*2.*${HILL.amp1.toFixed(2)}+(vnI(p/${HILL.len2.toFixed(1)},uSeedB)-.5)*2.*${HILL.amp2.toFixed(2)};
   float t=clamp((length(p)-${HILL.flat0.toFixed(1)})/${(HILL.flat1-HILL.flat0).toFixed(1)},0.,1.);h*=t*t*(3.-2.*t);
-  for(int i=0;i<3;i++){vec4 q=uPondsT[i];float d=length(p-q.xy);
+  for(int i=0;i<3;i++){vec4 q=uPondsT[i];float d=length(p-q.xy)-${HILL.rag.toFixed(2)}*(vnI(p/3.5,uSeedP)-.5);
     float u=clamp((d-(q.z+${HILL.pondFlat0.toFixed(1)}))/${(HILL.pondFlat1-HILL.pondFlat0).toFixed(1)},0.,1.);h+=(q.w-h)*(1.-u*u*(3.-2.*u));
     float v=clamp((d-(q.z-2.))/2.2,0.,1.);h-=${HILL.dish.toFixed(2)}*(1.-v*v*(3.-2.*v));}
   return h;}`;
-    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nvarying vec2 vW;\n'+TERR)
+// ground: moss, meadow, leaf litter, dirt paths and sandy muddy banks, all from world position so it can follow the player; up to 3 ponds
+function groundMaterial(Q,seed,U3){
+  const m=Q===0?new THREE.MeshLambertMaterial({color:0xffffff}):new THREE.MeshStandardMaterial({color:0xffffff,roughness:1,metalness:0});
+  const U=Object.assign({uSeed:{value:(seed^0x51ed)|0},uSeedA:{value:(seed^0x7a11)|0},uSeedB:{value:(seed^0x3c9d)|0},uSeedP:{value:(seed^0x1357)|0},uSeedC:{value:(seed^0xb10e)|0},uSeedD:{value:(seed^0x2f1d)|0}},U3);
+  m.onBeforeCompile=sh=>{
+    Object.assign(sh.uniforms,U);
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nvarying vec2 vW;varying float vH;\n'+TERR_GLSL)
       .replace('#include <beginnormal_vertex>',`vec3 objectNormal;{vec2 w0=(modelMatrix*vec4(position,1.0)).xz;float e=.7;
   objectNormal=normalize(vec3(terrH(w0-vec2(e,0.))-terrH(w0+vec2(e,0.)),2.*e,terrH(w0-vec2(0.,e))-terrH(w0+vec2(0.,e))));}`)
-      .replace('#include <begin_vertex>','#include <begin_vertex>\nvW=(modelMatrix*vec4(position,1.0)).xz;transformed.y+=terrH(vW);');
+      .replace('#include <begin_vertex>','#include <begin_vertex>\nvW=(modelMatrix*vec4(position,1.0)).xz;transformed.y+=terrH(vW);vH=transformed.y;');
     sh.fragmentShader=sh.fragmentShader.replace('#include <common>',`#include <common>
-varying vec2 vW;uniform int uSeed;uniform int uSeedC;uniform int uSeedD;uniform vec3 uPonds[3];uniform vec4 uSegs[3];
+varying vec2 vW;varying float vH;uniform vec4 uPondsT[3];uniform int uSeedP;uniform int uSeed;uniform int uSeedC;uniform int uSeedD;uniform vec3 uPonds[3];uniform vec4 uSegs[3];
 float h21(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
 float vn(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(h21(i),h21(i+vec2(1,0)),f.x),mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x),f.y);}
 float hs(ivec2 c){uint h=(uint(c.x)*374761393u)^(uint(c.y)*668265263u)^uint(uSeed);h=(h^(h>>13))*1274126177u;return float(h^(h>>16))/4294967296.0;}
@@ -394,16 +395,20 @@ float clearF(vec2 p){vec2 q=p/14.;vec2 i=floor(q),f=q-i;f=f*f*(3.-2.*f);ivec2 c=
   float lt=smoothstep(.56,.78,vn(vW*.46+9.));lt=max(lt,bd*smoothstep(.3,.65,vn(vW*.55+4.)));c=mix(c,vec3(.12,.10,.045),lt*(.4+.35*bd)*(1.-cl));
   float ds=smoothstep(.6,.85,vn(vW*.9+21.));c=mix(c,vec3(.10,.085,.05),ds*.35);
   float gr=.78+.4*vn(vW*3.7)*vn(vW*13.+5.)+.18*(vn(vW*1.3)-.5);c*=gr;
-  float dq=1e9,dp=1e9;
+  float hA=1e9,dn=1e9,dp=1e9;
   for(int i=0;i<3;i++){
-    dq=min(dq,length(vW-uPonds[i].xy)-uPonds[i].z);
+    vec4 q=uPondsT[i];if(length(vW-q.xy)<q.z+9.){hA=min(hA,vH-(q.w-.04));dn=min(dn,length(vW-q.xy)-q.z-${HILL.rag.toFixed(2)}*(vnB(vW/3.5,uSeedP)-.5));}
     vec4 sg=uSegs[i];vec2 ab=sg.zw-sg.xy;float t=clamp(dot(vW-sg.xy,ab)/max(dot(ab,ab),1e-3),0.,1.);
     dp=min(dp,length(vW-sg.xy-ab*t));
   }
   dp+=(vn(vW*2.)-.5)*.5;
   c=mix(c,vec3(.115,.085,.05)*(.8+.4*vn(vW*8.)),(1.-smoothstep(.3,.95,dp))*.55);
-  c=mix(c,vec3(.03,.05,.03),(1.-smoothstep(0.,2.6,dq))*.55);
-  c=mix(c,vec3(.19,.16,.095)*(.85+.3*vn(vW*10.)),(1.-smoothstep(.05,.55+.35*vn(vW*1.5),dq))*.6);
+  // the bank: height above the water decides it, so it follows the irregular shore. Dark mud at the waterline, a pale silt rim, mossy damp above.
+  float nb=vn(vW*2.2)-.5;
+  c=mix(c,vec3(.03,.05,.03),(1.-smoothstep(.2,2.4,dn+nb*.8))*.4);
+  c=mix(c,vec3(.19,.16,.095)*(.85+.3*vn(vW*10.)),smoothstep(-.1,.15,dn+nb*.2)*(1.-smoothstep(.3,.75,dn+nb*.3))*.5);
+  float wet=1.-smoothstep(.0,.6,dn+nb*.25);
+  c=mix(c,vec3(.045,.036,.024)*(.8+.5*vn(vW*9.)),wet*.85);
   diffuseColor.rgb=c;
 }`);
   };
@@ -411,6 +416,35 @@ float clearF(vec2 p){vec2 q=p/14.;vec2 i=floor(q),f=q-i;f=f*f*(3.-2.*f);ivec2 c=
   return m;
 }
 
+// ---- the pond as a magic standing mirror (pure) ----
+// Reflect the ground point (x,z) through the vertical plane that stands m metres from the pond centre (cx,cz) toward the player at (px,pz) and faces them:
+// with the player 4.2 m in front of the door on the pond - player - door line, the door's image lands 4.2 m behind the player's image.
+export function mirrorPoint(cx,cz,px,pz,x,z,m=0){
+  let ux=px-cx,uz=pz-cz;const L=Math.hypot(ux,uz);if(L<1e-6)return null;ux/=L;uz/=L;
+  const k=2*((x-cx)*ux+(z-cz)*uz-m);   // m: how far from the pond's middle toward the player the mirror stands
+  return [x-k*ux,z-k*uz];
+}
+// the same reflection for a yaw (heading) so a mirrored figure turns the way a reflection does
+export function mirrorYaw(cx,cz,px,pz,yaw){
+  let ux=px-cx,uz=pz-cz;const L=Math.hypot(ux,uz);if(L<1e-6)return yaw;ux/=L;uz/=L;
+  const hx=Math.sin(yaw),hz=-Math.cos(yaw),k=2*(hx*ux+hz*uz);
+  return Math.atan2(hx-k*ux,-(hz-k*uz));
+}
+// a plain traveller (feet at y 0, eye at 1.6) that exists only in the reflection pass: legs swing from the hips with `walk`
+function makeBody(Q){
+  const mat=c=>Q===0?new THREE.MeshLambertMaterial({color:c}):new THREE.MeshStandardMaterial({color:c,roughness:0.9,metalness:0});
+  const root=new THREE.Group(),cloak=mat(0x56765f),cloth=mat(0x7a6a46),skin=mat(0xd8b48c),boot=mat(0x2c2218),trim=mat(0xb8c8a0);
+  const box=(w,h,d,x,y,z,m,par=root)=>{const o=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);o.position.set(x,y,z);par.add(o);return o};
+  const legs=[-1,1].map(sd=>{const g=new THREE.Group();g.position.set(sd*0.1,0.88,0);root.add(g);box(0.15,0.62,0.17,0,-0.31,0,cloth,g);box(0.16,0.2,0.24,0,-0.76,-0.03,boot,g);return g});
+  box(0.44,0.6,0.26,0,1.2,0,cloak);box(0.5,0.12,0.3,0,1.5,0,cloak);box(0.3,0.5,0.04,0,1.2,-0.14,trim);
+  box(0.5,0.5,0.22,0,0.9,0.1,cloak);                                   // the cloak hangs behind
+  const arms=[-1,1].map(sd=>{const g=new THREE.Group();g.position.set(sd*0.3,1.46,0);root.add(g);box(0.11,0.56,0.13,0,-0.28,0,cloak,g);box(0.1,0.1,0.11,0,-0.6,0,skin,g);return g});
+  const head=new THREE.Mesh(new THREE.SphereGeometry(0.125,10,8),skin);head.position.set(0,1.64,0);root.add(head);
+  box(0.28,0.1,0.28,0,1.74,0.01,cloak);
+  root.userData={legs,arms};
+  root.traverse(o=>o.layers.set(1));
+  return root;
+}
 function makeDoor(){
   const root=new THREE.Group();
   const wood=new THREE.MeshStandardMaterial({color:0x6a4a2c,roughness:0.86});
@@ -455,52 +489,65 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   const pathDist=(x,z)=>{let m=1e9;for(const p of ponds)m=Math.min(m,segDist(x,z,p.fx,p.fz,p.x,p.z));return m};
   const nearestPond=(x,z)=>{let m=1e9,q=ponds[0];for(const p of ponds){const d=Math.hypot(x-p.x,z-p.z)-p.r;if(d<m){m=d;q=p}}return q};
 
-  const rt=new THREE.WebGLRenderTarget(low?256:512,low?256:512);
-  const scryCam=new THREE.PerspectiveCamera(48,1,0.12,80);
+  // the water mirrors the real scene: the main camera is mirrored about the pond's water plane and drawn into this target (reduced resolution)
+  const reflH=low?176:288;
+  const rt=new THREE.WebGLRenderTarget(Math.round(reflH*16/9),reflH,{depthBuffer:true});
+  const vcam=new THREE.PerspectiveCamera();vcam.layers.enable(1);   // layer 1: things that exist only in the reflection (the player's double, the door's image)
+  const texM=new THREE.Matrix4(),reflU={value:texM};
   const TW={value:0};  // water clock, shared by every pond's material
 
   // a pond's dressing: water, light shaft, lily pads and flowers, drifting motes. Three slots; pond index i uses slot i%3.
   const moteTex=(()=>{const c=document.createElement('canvas');c.width=c.height=32;const g=c.getContext('2d'),gr=g.createRadialGradient(16,16,0,16,16,16);
     gr.addColorStop(0,'rgba(255,255,235,1)');gr.addColorStop(0.35,'rgba(230,255,200,0.5)');gr.addColorStop(1,'rgba(230,255,200,0)');g.fillStyle=gr;g.fillRect(0,0,32,32);
     const t=new THREE.CanvasTexture(c);return t})();
-  const waterVS=`varying vec2 vUv;varying vec3 vW;void main(){vUv=uv;vec4 w=modelMatrix*vec4(position,1.0);vW=w.xyz;gl_Position=projectionMatrix*viewMatrix*w;}`;
-  const waterFS=`uniform sampler2D uScry;uniform float uTime;uniform vec2 uCenter;uniform float uR;uniform vec4 uRip[4];uniform vec3 uFog;uniform float uFogD;uniform float uQ;uniform vec2 uYaw;uniform float uClear;uniform float uShim;
-    varying vec2 vUv;varying vec3 vW;
+  const waterVS=`varying vec3 vW;void main(){vec4 w=modelMatrix*vec4(position,1.0);vW=w.xyz;gl_Position=projectionMatrix*viewMatrix*w;}`;
+  // depth comes from the real terrain under the water (same maths as the ground), so the shoreline is soft and follows the bank, the bed shows
+  // through the shallows and fades to dark in the middle; the mirror image is the planar reflection, tinted and darkened.
+  const waterFS=TERR_GLSL+`uniform sampler2D uRefl;uniform mat4 uTex;uniform float uReflOn;uniform float uTime;uniform vec2 uCenter;uniform float uR;uniform vec4 uRip[4];uniform vec3 uFog;uniform float uFogD;uniform float uQ;uniform float uShim;
+    varying vec3 vW;
     float h21(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
     float vn(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(h21(i),h21(i+vec2(1,0)),f.x),mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x),f.y);}
+    float wave(vec2 p,float t){return vn(p*1.7+vec2(t*.06,t*.04))*.5+vn(p*4.3+vec2(-t*.09,t*.07))*.3+vn(p*11.+vec2(t*.17,-t*.13))*.2;}
     void main(){
-      vec2 rel=vW.xz-uCenter;float d=length(rel)/uR;
+      vec2 p=vW.xz;
+      float depth=vW.y-terrH(p);
+      if(depth<.003)discard;
       vec3 Vv=cameraPosition-vW;float dist=length(Vv);vec3 V=Vv/dist;
       float rp=0.;vec2 rd=vec2(0.);
       for(int i=0;i<4;i++){vec4 r=uRip[i];float age=uTime-r.z;
-        if(age>0.&&age<4.5){vec2 q=vW.xz-r.xy;float dq=length(q);float rad=age*0.85;float e=(dq-rad)*5.;
+        if(age>0.&&age<4.5){vec2 q=p-r.xy;float dq=length(q);float rad=age*0.85;float e=(dq-rad)*5.;
           float w=exp(-e*e)*r.w*(1.-age/4.5)*sin((dq-rad)*20.);rp+=w;rd+=q/(dq+1e-3)*w;}}
-      // wave normal: two drifting sine fields; its xz slope refracts the image
-      vec2 wv=vec2(sin(vW.x*3.1+uTime*.9)+sin(vW.z*2.3-uTime*.7)+.5*sin(vW.x*7.3+vW.z*5.1+uTime*1.7),sin(vW.z*3.7+uTime*.8)+sin(vW.x*2.9-uTime*1.1)+.5*sin(vW.z*6.7-vW.x*4.3+uTime*1.5));
-      float calm=1.-.85*uClear;
-      // the door image is laid out for the viewer: far side of the pond is up, and your right stays on the right, whatever side you stand
-      vec2 fw=uYaw,rt=vec2(-fw.y,fw.x);
-      vec2 suv=vec2(1.-(dot(rel,rt)/(2.*uR)+.5),dot(rel,fw)/(2.*uR)+.5);
-      suv=(suv-.5)*(1.+.25*(1.-uClear))+.5+(wv*.011+rd*.05)*calm;
-      vec3 scry=texture2D(uScry,suv).rgb*vec3(.8,.97,.9);
-      scry=mix(scry,scry*(.65+.5*vn(vW.xz*5.+uTime*.4)),(1.-uClear)*.5);
-      float steep=smoothstep(.1,.55,V.y),fr=pow(1.-clamp(V.y,0.,1.),4.);
-      float shallow=smoothstep(.55,1.,d);
-      vec3 col=mix(vec3(.018,.06,.055),vec3(.15,.19,.095),shallow);
-      if(uQ>.5){
-        vec2 p=vW.xz*1.3;float c1=sin(p.x*6.+sin(p.y*4.+uTime*.6)*1.5+uTime*.5)*sin(p.y*5.-uTime*.4+sin(p.x*3.)*2.);
-        float cau=pow(clamp(c1*.5+.5,0.,1.),5.);col+=vec3(.28,.34,.17)*cau*shallow*(.5+.5*vn(vW.xz*2.+uTime*.2));
-      }
+      // surface normal: broad swell + fine ripples (noise slopes) + the rings
+      float e=.1,w0=wave(p,uTime),wx=wave(p+vec2(e,0.),uTime),wz=wave(p+vec2(0.,e),uTime);
+      vec2 sl=vec2(w0-wx,w0-wz)/e*.045+vec2(sin(p.x*3.1+uTime*.9)+.5*sin(p.x*7.3+p.y*5.1+uTime*1.7),sin(p.y*3.7+uTime*.8)+.5*sin(p.y*6.7-p.x*4.3+uTime*1.5))*.012+rd*.05;
+      vec3 N=normalize(vec3(sl.x,1.,sl.y));
+      float cosv=clamp(dot(N,V),0.,1.);
+      // mirror image
+      vec4 pc=uTex*vec4(vW,1.);vec2 ruv=pc.xy/pc.w+N.xz*.07/(1.+dist*.08);
       vec3 treeC=mix(vec3(.045,.1,.07),uFog,.5);
-      vec3 skyc=mix(treeC,uFog*1.02,smoothstep(.0,.22,V.y+(vn(vW.xz*.7)-.5)*.06));
-      float sw=(mix(.12,.36,steep)*(1.-uClear)+uClear*mix(.6,.98,steep))*(1.-smoothstep(.82,1.,d)*.55);
-      col=mix(col,scry,sw);
-      col=mix(col,skyc,clamp(fr*(1.-steep)*.95,0.,.9));
+      vec3 refl=uReflOn>.5?texture2D(uRefl,ruv).rgb*vec3(.8,.93,.86):mix(treeC,uFog,.6);
+      // what lies under the surface: the bed (silt, stones) seen through the shallows, nothing but dark in the middle
+      vec2 bp=p+N.xz*.18;
+      float st=smoothstep(.6,.7,vn(bp*6.5+3.)),sj=vn(bp*2.7+7.);
+      vec3 bedC=mix(vec3(.06,.05,.03),vec3(.12,.105,.065),sj);bedC=mix(bedC,vec3(.3,.29,.26)*(.7+.5*vn(bp*19.)),st*.75);
+      float lite=.55+.45*vn(bp*1.3+uTime*.03);
+      if(uQ>.5){vec2 q2=p*1.3;float c1=sin(q2.x*6.+sin(q2.y*4.+uTime*.6)*1.5+uTime*.5)*sin(q2.y*5.-uTime*.4+sin(q2.x*3.)*2.);lite+=pow(clamp(c1*.5+.5,0.,1.),5.)*.5*(1.-smoothstep(.1,.9,depth));}
+      vec3 tr=exp(-depth*vec3(2.3,1.05,1.5)*3.6);
+      vec3 body=mix(vec3(.010,.036,.032),bedC*lite*vec3(.95,1.,.85),tr);
+      float F=mix(.2,1.,pow(1.-cosv,3.));F*=mix(.55,1.,smoothstep(.0,.5,depth));
+      vec3 col=mix(body,refl,F);
+      // sun glints on the fine ripples
+      vec3 L=normalize(vec3(40.,55.,18.));vec3 Rv=reflect(-V,N);float sd=max(dot(Rv,L),0.);
+      col+=vec3(1.,.96,.82)*(pow(sd,220.)*2.4+pow(sd,26.)*.12)*(.6+.4*vn(p*14.+uTime*.8));
+      // a little scum and foam along the waterline
+      float band=smoothstep(.0,.02,depth)*(1.-smoothstep(.02,.06+.09*vn(p*4.2+1.),depth));
+      float flk=.5+.5*vn(p*17.+uTime*.05);
+      col=mix(col,vec3(.62,.66,.46)*(.7+.3*flk),band*.55);
+      col=mix(col,vec3(.35,.4,.2),smoothstep(.55,.8,vn(p*2.6+9.))*(1.-smoothstep(.0,.35,depth))*.4);
       col+=vec3(.24,.3,.27)*rp*.45;
-      col+=vec3(.35,.5,.38)*uShim*exp(-pow((d-(1.-uShim)*1.15)*6.,2.))*.7+vec3(.1,.16,.12)*uShim*.35;
-      col=mix(col,vec3(.3,.38,.26),smoothstep(.97,1.,d)*.3);
+      col+=vec3(.35,.5,.38)*uShim*exp(-pow((length(p-uCenter)/uR-(1.-uShim)*1.15)*6.,2.))*.7+vec3(.1,.16,.12)*uShim*.35;
       float fogf=1.-exp(-uFogD*uFogD*dist*dist);col=mix(col,uFog,fogf);
-      gl_FragColor=vec4(col,1.);
+      gl_FragColor=vec4(col,smoothstep(.003,.06,depth));
       #include <colorspace_fragment>
     }`;
   const padGeo=new THREE.CircleGeometry(0.3,12,0.5,5.3);padGeo.rotateX(-Math.PI/2);
@@ -510,10 +557,11 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   const PADS=low?7:13,MOTES=low?6:14;
   const pslots=[0,1,2].map(k=>{
     const g=new THREE.Group();g.visible=false;group.add(g);
-    const mat=new THREE.ShaderMaterial({transparent:false,fog:false,toneMapped:true,
-      uniforms:{uScry:{value:rt.texture},uTime:TW,uCenter:{value:new THREE.Vector2()},uR:{value:5},uRip:{value:[0,1,2,3].map(()=>new THREE.Vector4(0,0,-99,0))},uFog:{value:new THREE.Vector3(FOGC.r,FOGC.g,FOGC.b)},uFogD:{value:fogD},uQ:{value:Q},uYaw:{value:new THREE.Vector2(0,-1)},uClear:{value:0},uShim:{value:0}},
+    const mat=new THREE.ShaderMaterial({transparent:true,depthWrite:false,fog:false,toneMapped:true,
+      uniforms:{uRefl:{value:rt.texture},uTex:reflU,uReflOn:{value:0},uTime:TW,uCenter:{value:new THREE.Vector2()},uR:{value:5},uRip:{value:[0,1,2,3].map(()=>new THREE.Vector4(0,0,-99,0))},uFog:{value:new THREE.Vector3(FOGC.r,FOGC.g,FOGC.b)},uFogD:{value:fogD},uQ:{value:Q},uShim:{value:0},
+        uSeedA:{value:(seed^0x7a11)|0},uSeedB:{value:(seed^0x3c9d)|0},uSeedP:{value:(seed^0x1357)|0},uPondsT:GU.uPondsT},
       vertexShader:waterVS,fragmentShader:waterFS});
-    const water=new THREE.Mesh(waterGeo,mat);water.rotation.x=-Math.PI/2;g.add(water);
+    const water=new THREE.Mesh(waterGeo,mat);water.rotation.x=-Math.PI/2;water.renderOrder=2;g.add(water);
     const beam=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.55,9,8,1,true),
       new THREE.MeshBasicMaterial({color:0xe7fff4,transparent:true,opacity:0.1,side:THREE.DoubleSide,depthWrite:false}));
     beam.position.y=4.5;g.add(beam);
@@ -530,7 +578,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   const dummy=new THREE.Object3D();
   function assignPond(p){
     const sl=pslots[p.i%3];sl.pond=p;sl.g.visible=true;sl.g.position.set(p.x,p.wy,p.z);
-    sl.water.scale.set(p.r,p.r,1);sl.mat.uniforms.uCenter.value.set(p.x,p.z);sl.mat.uniforms.uR.value=p.r;
+    sl.water.scale.set(p.r*1.5,p.r*1.5,1);sl.mat.uniforms.uCenter.value.set(p.x,p.z);sl.mat.uniforms.uR.value=p.r;
     for(const r of sl.mat.uniforms.uRip.value)r.set(0,0,-99,0);
     sl.nextDrip=S?S.t+1.5:1.5;
     sl.pads0=[];
@@ -550,8 +598,8 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   function pushRip(sl,x,z,amp){const R=sl.mat.uniforms.uRip.value;R[sl.rip++%4].set(x,z,TW.value,amp)}
   function updatePonds(dt,b,moving){
     TW.value=S.t;
-    const fy=horizForward(S.yaw),clr=S.pinned?1:S.water?0.5:0.15,shim=Math.max(0,S.shim||0);
-    for(const sl of pslots){const u=sl.mat.uniforms;u.uYaw.value.set(fy[0],fy[1]);u.uClear.value=clr;u.uShim.value=shim}
+    const shim=Math.max(0,S.shim||0);
+    for(const sl of pslots)sl.mat.uniforms.uShim.value=shim;
     for(const sl of pslots){
       const p=sl.pond;if(!p)continue;
       if(S.t>sl.nextDrip){const h=hash2(Math.floor(S.t*7),p.i,seed),h2=hash2(Math.floor(S.t*5),p.i+9,seed),a=h*6.283,rr=Math.sqrt(h2)*p.r*0.75;
@@ -834,6 +882,10 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   })();
 
   const door=makeDoor();group.add(door);
+  // reflection-only figures (layer 1): the player's double and the door's image
+  const ghostBody=makeBody(Q),ghostDoor=makeDoor();
+  ghostDoor.traverse(o=>{if(o.isLight)o.intensity=0});ghostDoor.traverse(o=>o.layers.set(1));
+  ghostBody.visible=ghostDoor.visible=false;group.add(ghostBody,ghostDoor);
   S={t:0,yaw:0,pitch:0,bloom:0.18,seed,pinned:false,hold:0,said:0,doorX:0,doorZ:4.2,doorFace:0,ready:false,bake,mist:0,shim:0,water:false,direct:false,fill:0};
   S.ponds=()=>ponds.map(p=>({...p}));
   S.dims=()=>slots.filter(s=>s.ready).map(s=>{const g=s.near.geometry;if(!g.boundingBox)g.computeBoundingBox();const b=g.boundingBox;return {id:s.id,w:+(b.max.x-b.min.x).toFixed(2),h:+(b.max.y-b.min.y).toFixed(2),y0:+b.min.y.toFixed(2),d:+(b.max.z-b.min.z).toFixed(2)}});
@@ -907,23 +959,59 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     }
     walker.watch(0.1,q.x,q.z,clamp(q.y,-12,14));
   };
-  let scryFlip=0,camY=null;
+  let camY=null;
+  const frustum=new THREE.Frustum(),pm=new THREE.Matrix4(),sph=new THREE.Sphere(),plane=new THREE.Plane(),clipV=new THREE.Vector4(),qv=new THREE.Vector4();
+  const cp=new THREE.Vector3(),cq=new THREE.Quaternion(),cs=new THREE.Vector3(),fw=new THREE.Vector3(),tg=new THREE.Vector3(),nrm=new THREE.Vector3(0,1,0),pt=new THREE.Vector3();
+  S.refl={ms:0,tris:0,on:false,frames:0,pond:-1};S.ghosts=()=>({body:[ghostBody.visible,ghostBody.position.x,ghostBody.position.y,ghostBody.position.z],door:[ghostDoor.visible,ghostDoor.position.x,ghostDoor.position.y,ghostDoor.position.z]});
+  let walkPh=0,lastWX=0,lastWZ=0,reflFlip=0;
   S.frame=()=>{
-    // the scrying image only matters when water is in view and you look toward it: skip it otherwise
-    const near=nearestPond(b.x,b.z),nd=Math.hypot(b.x-near.x,b.z-near.z)-near.r;
-    if(S.pitch>0.05&&nd>6||nd>40)return;
-    if((scryFlip^=1)&&S.pitch>-0.5&&nd>3)return;
-    const eyeY=EYE+camY+bobY(b,walker.scale);
-    scryCam.position.set(b.x,eyeY,b.z);
-    scryCam.lookAt(S.doorX,H(S.doorX,S.doorZ)+1.15,S.doorZ);
-    scryCam.updateMatrixWorld();
-    for(const sl of pslots)sl.water.visible=false;
+    cam.updateMatrixWorld();
+    // is a pond on screen? no water in view: no reflection pass at all
+    pm.multiplyMatrices(cam.projectionMatrix,cam.matrixWorldInverse);frustum.setFromProjectionMatrix(pm);
+    cam.matrixWorld.decompose(cp,cq,cs);
+    let prim=null,best=1e9;
+    for(const sl of pslots){const p=sl.pond;if(!p)continue;sph.set(pt.set(p.x,p.wy,p.z),p.r*1.5);if(!frustum.intersectsSphere(sph))continue;
+      const d=Math.hypot(cp.x-p.x,cp.z-p.z)-p.r;if(d<best&&d<70&&cp.y>p.wy+0.1){best=d;prim=sl}}
+    for(const sl of pslots)sl.mat.uniforms.uReflOn.value=sl===prim?1:0;
+    S.refl.on=!!prim;if(!prim)return;
+    if(low&&(reflFlip^=1))return;                 // low quality: a new reflection every other frame
+    const pd=prim.pond,wy=pd.wy,T0=performance.now();
+    // the double and the door's image stand where an upright mirror set in the pond would show them (see mirrorPoint)
+    const mm=pd.r*0.55,qp=mirrorPoint(pd.x,pd.z,b.x,b.z,b.x,b.z,mm),qd=mirrorPoint(pd.x,pd.z,b.x,b.z,S.doorX,S.doorZ,mm);
+    const show=!!qp&&Math.hypot(b.x-pd.x,b.z-pd.z)>1.2;
+    ghostBody.visible=ghostDoor.visible=show;
+    if(show){
+      const mv=Math.hypot(b.x-lastWX,b.z-lastWZ);lastWX=b.x;lastWZ=b.z;walkPh+=mv*2.6;
+      const sw=Math.sin(walkPh)*Math.min(0.7,mv*30);
+      ghostBody.position.set(qp[0],H(qp[0],qp[1])+Math.max(0,b.y-H(b.x,b.z)),qp[1]);
+      ghostBody.rotation.y=-mirrorYaw(pd.x,pd.z,b.x,b.z,S.yaw);
+      const ud=ghostBody.userData.legs,ua=ghostBody.userData.arms;ud[0].rotation.x=sw;ud[1].rotation.x=-sw;ua[0].rotation.x=-sw*0.8;ua[1].rotation.x=sw*0.8;
+      ghostDoor.position.set(qd[0],H(qd[0],qd[1]),qd[1]);
+      ghostDoor.rotation.y=Math.PI-mirrorYaw(pd.x,pd.z,b.x,b.z,S.doorFace);
+    }
+    // mirror the camera about the water plane y=wy
+    const asp=cam.aspect||16/9,rw=Math.round(reflH*asp);if(rt.width!==rw)rt.setSize(rw,reflH);
+    vcam.position.set(cp.x,2*wy-cp.y,cp.z);
+    fw.set(0,0,-1).applyQuaternion(cq);vcam.up.set(0,1,0).applyQuaternion(cq);vcam.up.y*=-1;
+    tg.set(cp.x+fw.x,2*wy-(cp.y+fw.y),cp.z+fw.z);vcam.lookAt(tg);
+    vcam.fov=cam.fov;vcam.aspect=asp;vcam.near=cam.near;vcam.far=cam.far;vcam.updateProjectionMatrix();vcam.updateMatrixWorld();
+    // oblique near plane: nothing below the water is drawn into the mirror
+    plane.setFromNormalAndCoplanarPoint(nrm,pt.set(0,wy,0));plane.applyMatrix4(vcam.matrixWorldInverse);
+    clipV.set(plane.normal.x,plane.normal.y,plane.normal.z,plane.constant);
+    const pe=vcam.projectionMatrix.elements;
+    qv.x=(Math.sign(clipV.x)+pe[8])/pe[0];qv.y=(Math.sign(clipV.y)+pe[9])/pe[5];qv.z=-1;qv.w=(1+pe[10])/pe[14];
+    clipV.multiplyScalar(2/clipV.dot(qv));
+    pe[2]=clipV.x;pe[6]=clipV.y;pe[10]=clipV.z+1-0.003;pe[14]=clipV.w;
+    texM.set(0.5,0,0,0.5,0,0.5,0,0.5,0,0,0.5,0.5,0,0,0,1);texM.multiply(vcam.projectionMatrix);texM.multiply(vcam.matrixWorldInverse);
+    // draw: without the water itself, and with the real door replaced by its mirrored image
+    const vis=pslots.map(sl=>sl.g.visible),dv=door.visible,cnt=slots.map(sl=>[sl.near.count,sl.farM.count]);
+    // keep the mirror cheap: no ground cover in it, and only the nearer part of the far LOD (the rest is fogged out anyway)
+    slots.forEach(sl=>{if(REFL_SKIP.has(sl.kind)){sl.near.count=0;sl.farM.count=0}else sl.farM.count=Math.ceil(sl.farM.count*0.55)});
+    for(const sl of pslots)sl.g.visible=false;door.visible=false;
     const prev=renderer.getRenderTarget();
-    renderer.setRenderTarget(rt);
-    renderer.clear();
-    renderer.render(scene,scryCam);
-    renderer.setRenderTarget(prev);
-    for(const sl of pslots)sl.water.visible=true;
+    renderer.setRenderTarget(rt);renderer.clear();renderer.render(scene,vcam);renderer.setRenderTarget(prev);
+    pslots.forEach((sl,i)=>{sl.g.visible=vis[i]});door.visible=dv;slots.forEach((sl,i)=>{sl.near.count=cnt[i][0];sl.farM.count=cnt[i][1]});
+    S.refl.ms=performance.now()-T0;S.refl.tris=renderer.info.render.triangles;S.refl.frames++;S.refl.pond=pd.i;
   };
   S.update=(dt,input)=>{
     S.t+=dt;let moving=false;
@@ -973,7 +1061,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     cam.rotation.set(S.pitch,-S.yaw,0,'YXZ');
   };
   onClear(()=>{
-    deadClear=true;scene.background=prevBg;rt.dispose();
+    deadClear=true;scene.background=prevBg;rt.dispose();ghostBody.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()});ghostDoor.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()});
     const gs=new Set([ground.geometry,padGeo,cupGeo,waterGeo,...Object.values(holders)]);
     for(const s of slots){gs.add(s.near.geometry);gs.add(s.farM.geometry);s.near.dispose();s.farM.dispose()}
     for(const g of gs)g.dispose();

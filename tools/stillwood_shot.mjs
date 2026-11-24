@@ -114,6 +114,7 @@ for(const k of want){
   await pg.waitForTimeout(300);
   await pg.screenshot({path:`${root}/shots/stillwood/${prefix}-${k}.png`});
   const info=await pg.evaluate(()=>{const S=window.__game.ROOMS.state();return S.stats?S.stats():{}});delete info.bake;
+  if(process.env.GH)console.log(JSON.stringify(await pg.evaluate(()=>{const S=window.__game.ROOMS.state();return {g:S.ghosts(),r:S.refl,b:[S.WK.b.x,S.WK.b.z,S.WK.b.y],p:S.ponds()[0]}})));
   if(process.env.KINDS)console.log(JSON.stringify(await pg.evaluate(()=>window.__game.ROOMS.state().byKind())));
   console.log(k,JSON.stringify(info),JSON.stringify(await pg.evaluate(()=>window.__circle||window.__stand||null)),'rs',await pg.evaluate(()=>window.__game.rs));
   await ctx.close();

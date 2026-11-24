@@ -1,6 +1,6 @@
 // node tools/stillwood_test.mjs
 import assert from 'node:assert/strict';
-import {STILL,horizForward,lookDir,placeBehind,rayHitsPond,crossedDoor,stillStep,doorSeen,waterFill,viewFov,terrainH,terrainRaw,biomeAt,rockSurface,rockPush,jumpTop,jumpReach,heightGrid,domeGrid,makeRock,STEP_MIN,placeLine,HILL,pondSpawnDue,pondSpawnAt,clearField,segDist} from '../src/stillwood.js';
+import {STILL,horizForward,lookDir,placeBehind,rayHitsPond,crossedDoor,stillStep,doorSeen,waterFill,viewFov,terrainH,terrainRaw,mirrorPoint,mirrorYaw,biomeAt,rockSurface,rockPush,jumpTop,jumpReach,heightGrid,domeGrid,makeRock,STEP_MIN,placeLine,HILL,pondSpawnDue,pondSpawnAt,clearField,segDist} from '../src/stillwood.js';
 
 const pond={x:0,z:-16,r:STILL.pondR};
 const fresh=()=>({
@@ -199,6 +199,24 @@ const spot=(x,z,yaw,pitch)=>{const s=fresh();s.x=x;s.z=z;s.yaw=yaw;s.pitch=pitch
   const bg=heightGrid(box,null);assert.ok(bg.top>0.99&&bg.top<1.01);
   const br=makeRock(bg,{x:0,z:0});assert.ok(Math.abs(rockSurface(br,0,0)-1)<0.02);
   const rot=makeRock(bg,{x:4,z:4,rot:Math.PI/2});assert.ok(Math.abs(rockSurface(rot,4,4.8)-1)<0.15,'rotated footprint follows');assert.ok(rockSurface(rot,4.9,4)<=0.2,'and is narrow the other way');
+}
+
+// The pond as a magic standing mirror: the player's image and the door's image lie on one line with the door behind the player's reflection.
+{const C={x:3,z:-20},m=3;
+  for(const [px,pz] of [[3,-12],[10,-24],[-4,-30],[3,-40]]){
+    const L=Math.hypot(px-C.x,pz-C.z),ux=(px-C.x)/L,uz=(pz-C.z)/L;
+    const dx=px+ux*STILL.behind,dz=pz+uz*STILL.behind;           // the real door on the pond - player - door line
+    const q=mirrorPoint(C.x,C.z,px,pz,px,pz,m),d=mirrorPoint(C.x,C.z,px,pz,dx,dz,m);
+    assert.ok(Math.abs(Math.hypot(q[0]-C.x-ux*m,q[1]-C.z-uz*m)-(L-m))<1e-9,'the image is as far behind the mirror as the player is in front');
+    assert.ok(Math.abs(Math.hypot(d[0]-q[0],d[1]-q[1])-STILL.behind)<1e-9,'the door image is 4.2 m behind the player image');
+    assert.ok(((d[0]-q[0])*ux+(d[1]-q[1])*uz)<-STILL.behind+1e-9,'and farther from the viewer than the player image, on the same line');
+    assert.ok(Math.abs((d[0]-q[0])*uz-(d[1]-q[1])*ux)<1e-9,'on one line');
+    // a figure facing the mirror is mirrored to face the player; one facing sideways is unchanged
+    const yFace=Math.atan2(-ux,uz),ym=mirrorYaw(C.x,C.z,px,pz,yFace);
+    assert.ok(Math.abs(Math.sin(ym)-ux)<1e-9&&Math.abs(-Math.cos(ym)-uz)<1e-9,'faces the viewer');
+    const ys=Math.atan2(uz,ux),ys2=mirrorYaw(C.x,C.z,px,pz,ys);assert.ok(Math.abs(Math.sin(ys2)-Math.sin(ys))<1e-9);
+  }
+  assert.equal(mirrorPoint(1,1,1,1,0,0),null);
 }
 // Biomes: deterministic, smooth, all three kinds occur, and the mixed wood is a good share.
 {const a=biomeAt(120,-45,7),b=biomeAt(120,-45,7);assert.deepEqual(a,b);assert.notDeepEqual(biomeAt(120,-45,7),biomeAt(120,-45,9));
