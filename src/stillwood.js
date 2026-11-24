@@ -12,8 +12,8 @@ const clamp=(v,a,b)=>v<a?a:v>b?b:v;
 
 export const STILL={
   behind:4.2, doorHalf:0.52, doorH:2.2, pondR:5.5, pondEvery:304.8, pondMax:3,
-  grace:2.0, seeDot:0.6, lookDown:-0.28, waterY:0.045,
-  lockPitch:-0.5, lockNear:2.0, lockSpeed:0.6, buildTime:2.5,
+  grace:0.15, seeMargin:0.03, waterY:0.045,
+  vfov:72*Math.PI/180, waterReach:25, waterFill:2/9,
 };
 
 export function horizForward(yaw){
@@ -33,19 +33,34 @@ export function placeBehind(x,z,yaw,dist=STILL.behind,blocked){
   }
   return {x:px,z:pz,face:yaw};
 }
-export function rayHitsPond(eye,dir,pond,waterY=STILL.waterY){
+export function rayHitsPond(eye,dir,pond,waterY=STILL.waterY,maxT=30){
   if(dir[1]>=-0.05)return null;
-  const t=(waterY-eye[1])/dir[1];
-  if(t<0.15||t>30)return null;
+  const wy=pond.wy??waterY;
+  const t=(wy-eye[1])/dir[1];
+  if(t<0.15||t>maxT)return null;
   const x=eye[0]+dir[0]*t,z=eye[2]+dir[2]*t;
   if((x-pond.x)**2+(z-pond.z)**2>pond.r*pond.r)return null;
   return {x,z,t};
 }
-export function doorSeen(eye,dir,door,minDot=STILL.seeDot){
-  const vx=door.x-eye[0],vy=1.15-eye[1],vz=door.z-eye[2];
-  const d=Math.hypot(vx,vy,vz);
-  if(d<0.35||d>16)return false;
-  return (dir[0]*vx+dir[1]*vy+dir[2]*vz)/d>minDot;
+// Camera field of view as {v,h} radians for a vertical fov and an aspect ratio.
+export function viewFov(vfov=STILL.vfov,aspect=16/9){return {v:vfov,h:2*Math.atan(Math.tan(vfov/2)*aspect)}}
+const wrapA=a=>{a%=Math.PI*2;return a>Math.PI?a-Math.PI*2:a<-Math.PI?a+Math.PI*2:a};
+// Is the door on screen? Its centre must lie inside the real camera frustum, periphery included (margin in radians).
+export function doorSeen(eye,yaw,pitch,door,fov=viewFov(),margin=STILL.seeMargin){
+  const vx=door.x-eye[0],vz=door.z-eye[2],vy=(door.y||0)+1.15-eye[1],hd=Math.hypot(vx,vz);
+  if(hd<1.0)return true;           // standing at the doorway
+  if(hd>45)return false;
+  const dy=wrapA(Math.atan2(vx,-vz)-yaw),el=Math.atan2(vy,hd);
+  return Math.abs(dy)<fov.h/2+margin&&Math.abs(el-pitch)<fov.v/2+margin;
+}
+// Fraction of a 3x3 fan of view rays (spread over most of the screen) that strike pond water within `reach` metres.
+export function waterFill(eye,yaw,pitch,ponds,fov=viewFov(),reach=STILL.waterReach){
+  let hit=0;
+  for(const ox of [-0.6,0,0.6])for(const oy of [-0.6,0,0.6]){
+    const dir=lookDir(yaw+ox*fov.h/2,clamp(pitch+oy*fov.v/2,-1.5,1.5));
+    for(const p of ponds)if(rayHitsPond(eye,dir,p,STILL.waterY,reach)){hit++;break}
+  }
+  return hit/9;
 }
 // True when the segment from (x0,z0) to (x1,z1) passes through the doorway.
 export function crossedDoor(x0,z0,x1,z1,door,half=STILL.doorHalf){
@@ -58,35 +73,27 @@ export function crossedDoor(x0,z0,x1,z1,door,half=STILL.doorHalf){
   const side=(x-door.x)*(-nz)+(z-door.z)*nx;
   return Math.abs(side)<=half;
 }
-// One simulation step. s = {x,z,yaw,pitch,speed,door:{x,z,face},pond:{x,z,r},pinned,hold,build}
-// Holding the door takes intent: stand within lockNear of the water, look steeply down into it (pitch below lockPitch) and keep
-// still (speed under lockSpeed) for buildTime. Any break (moving, looking up or away, stepping back) resets the build-up.
-// Once held it lasts only while you keep looking at the door or into the water; look away for `grace` and it slips behind you.
+// One simulation step. s = {x,z,eye,yaw,pitch,aspect?,door:{x,z,y?,face},ponds:[{x,z,r,wy?}] (or pond),pinned,hold}
+// The door is frozen in world space exactly while the player SEES it: either its reflection (the water fills part of the view:
+// at least waterFill of the view rays strike a pond within waterReach) or the real door inside the camera frustum.
+// The instant neither holds (after a tiny grace against flicker) it slips back directly behind the player.
 export function stillStep(s,dt){
-  const eye=[s.x,s.eye??EYE,s.z];
-  const dir=lookDir(s.yaw,s.pitch);
-  const hit=rayHitsPond(eye,dir,s.pond,s.waterY??STILL.waterY);
-  const down=s.pitch<(s.lookDown??STILL.lookDown)&&!!hit;
-  const direct=doorSeen(eye,dir,s.door,s.seeDot??STILL.seeDot);
-  const sees=down||direct;
-  const edge=Math.hypot(s.x-s.pond.x,s.z-s.pond.z)-s.pond.r;
-  const intent=!s.pinned&&!!hit&&s.pitch<(s.lockPitch??STILL.lockPitch)&&edge<=(s.lockNear??STILL.lockNear)&&(s.speed??0)<=(s.lockSpeed??STILL.lockSpeed);
-  s.locked=false;
-  if(s.pinned){
-    s.build=0;
-    if(sees)s.hold=s.grace??STILL.grace;
-    else{s.hold-=dt;if(s.hold<=0){s.pinned=false;s.hold=0}}
-  }else{
-    s.build=intent?(s.build||0)+dt:0;
-    if(s.build>=(s.buildTime??STILL.buildTime)){s.pinned=true;s.hold=s.grace??STILL.grace;s.build=0;s.locked=true}
-  }
+  const ponds=s.ponds||[s.pond],eye=[s.x,s.eye??EYE,s.z],fov=s.fov||viewFov(STILL.vfov,s.aspect||16/9);
+  const fill=waterFill(eye,s.yaw,s.pitch,ponds,fov,s.waterReach??STILL.waterReach);
+  const water=fill>=(s.waterFill??STILL.waterFill)-1e-9;
+  const direct=doorSeen(eye,s.yaw,s.pitch,s.door,fov,s.seeMargin??STILL.seeMargin);
+  const sees=water||direct;
+  s.locked=false;s.released=false;
+  if(sees){if(!s.pinned)s.locked=true;s.pinned=true;s.hold=s.grace??STILL.grace}
+  else if(s.pinned){s.hold-=dt;if(s.hold<=0){s.pinned=false;s.hold=0;s.released=true}}
   if(!s.pinned){
     const p=placeBehind(s.x,s.z,s.yaw,s.behind??STILL.behind,s.blocked);
     s.door.x=p.x;s.door.z=p.z;s.door.face=p.face;
   }
-  s.down=down;s.direct=direct;s.sees=sees;s.intent=intent;
+  s.fill=fill;s.water=water;s.direct=direct;s.sees=sees;
   return s;
 }
+
 // A new pond is due once the player is a long walk (500 ft) from the newest one.
 export function pondSpawnDue(px,pz,last,every=STILL.pondEvery){
   return Math.hypot(px-last.x,pz-last.z)>=every;
@@ -130,6 +137,29 @@ function mergeParts(parts){
   out.computeVertexNormals();
   return out;
 }
+// ---- hills: a smooth seeded height field, flattened round the spawn and into a basin under every pond (same maths runs in the ground shader) ----
+export const HILL={amp1:4.6,len1:64,amp2:1.3,len2:30,flat0:5,flat1:14,pondFlat0:1.5,pondFlat1:9,dish:0.35};
+const sstep01=t=>{t=t<0?0:t>1?1:t;return t*t*(3-2*t)};
+function vnoise(u,v,s){
+  const iu=Math.floor(u),iv=Math.floor(v),fu=sstep01(u-iu),fv=sstep01(v-iv);
+  return lerp(lerp(hash2(iu,iv,s),hash2(iu+1,iv,s),fu),lerp(hash2(iu,iv+1,s),hash2(iu+1,iv+1,s),fu),fv);
+}
+// terrain before any pond is carved in (the level a pond is set at)
+export function terrainRaw(x,z,seed){
+  const h=(vnoise(x/HILL.len1,z/HILL.len1,seed^0x7a11)-0.5)*2*HILL.amp1+(vnoise(x/HILL.len2,z/HILL.len2,seed^0x3c9d)-0.5)*2*HILL.amp2;
+  return h*sstep01((Math.hypot(x,z)-HILL.flat0)/(HILL.flat1-HILL.flat0));
+}
+// ponds: [{x,z,r,y}]  y = water level reference (terrainRaw at the centre)
+export function terrainH(x,z,seed,ponds=[]){
+  let h=terrainRaw(x,z,seed);
+  for(const p of ponds){
+    const d=Math.hypot(x-p.x,z-p.z);
+    h+=(p.y-h)*(1-sstep01((d-(p.r+HILL.pondFlat0))/(HILL.pondFlat1-HILL.pondFlat0)));
+    h-=HILL.dish*(1-sstep01((d-(p.r-2))/2.2));
+  }
+  return h;
+}
+
 // ---- terrain and placement helpers (pure, seeded: every player gets the same wood) ----
 const lerp=(a,b,t)=>a+(b-a)*t;
 const sstep=t=>t*t*(3-2*t);
@@ -195,19 +225,45 @@ const TRUNK0={fir:0.21,oak:0.35,snag:0.44}; // before the bake: what the baked s
 const TRUNK_PAD={fir:0.55,oak:0.1,snag:0.1};  // a fir's skirt of boughs starts at knee height
 const TREE_KINDS=['fir','oak','snag'];
 
+// a polar grid in the XZ plane that is fine near the player and coarse far away; the vertex shader lifts it onto the hills
+function groundGeometry(){
+  const rings=[0];let r=0,step=0.45;while(r<98){r+=step;step*=1.05;rings.push(r)}
+  const seg=96,pos=[0,0,0],idx=[];
+  for(let k=1;k<rings.length;k++)for(let j=0;j<seg;j++){const a=j/seg*Math.PI*2;pos.push(Math.cos(a)*rings[k],0,Math.sin(a)*rings[k])}
+  const v=(k,j)=>k===0?0:1+(k-1)*seg+(j%seg);
+  for(let k=0;k<rings.length-1;k++)for(let j=0;j<seg;j++){
+    if(k===0)idx.push(0,v(1,j+1),v(1,j));
+    else idx.push(v(k,j),v(k,j+1),v(k+1,j),v(k,j+1),v(k+1,j+1),v(k+1,j));
+  }
+  const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+  g.setAttribute('normal',new THREE.Float32BufferAttribute(pos.map((_,i)=>i%3===1?1:0),3));g.setIndex(idx);
+  g.boundingSphere=new THREE.Sphere(new THREE.Vector3(),200);return g;
+}
 // ground: moss, meadow, leaf litter, dirt paths and sandy muddy banks, all from world position so it can follow the player; up to 3 ponds
 function groundMaterial(Q,seed,U3){
   const m=Q===0?new THREE.MeshLambertMaterial({color:0xffffff}):new THREE.MeshStandardMaterial({color:0xffffff,roughness:1,metalness:0});
-  const U=Object.assign({uSeed:{value:seed^0x51ed}},U3);
+  const U=Object.assign({uSeed:{value:(seed^0x51ed)|0},uSeedA:{value:(seed^0x7a11)|0},uSeedB:{value:(seed^0x3c9d)|0}},U3);
   m.onBeforeCompile=sh=>{
     Object.assign(sh.uniforms,U);
-    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nvarying vec2 vW;')
-      .replace('#include <begin_vertex>','#include <begin_vertex>\nvW=(modelMatrix*vec4(position,1.0)).xz;');
+    const TERR=`uniform int uSeedA;uniform int uSeedB;uniform vec4 uPondsT[3];
+float hsI(ivec2 c,int sd){uint h=(uint(c.x)*374761393u)^(uint(c.y)*668265263u)^uint(sd);h=(h^(h>>13))*1274126177u;return float(h^(h>>16))/4294967296.0;}
+float vnI(vec2 q,int sd){vec2 i=floor(q),f=q-i;f=f*f*(3.-2.*f);ivec2 c=ivec2(i);return mix(mix(hsI(c,sd),hsI(c+ivec2(1,0),sd),f.x),mix(hsI(c+ivec2(0,1),sd),hsI(c+ivec2(1,1),sd),f.x),f.y);}
+float terrH(vec2 p){
+  float h=(vnI(p/${HILL.len1.toFixed(1)},uSeedA)-.5)*2.*${HILL.amp1.toFixed(2)}+(vnI(p/${HILL.len2.toFixed(1)},uSeedB)-.5)*2.*${HILL.amp2.toFixed(2)};
+  float t=clamp((length(p)-${HILL.flat0.toFixed(1)})/${(HILL.flat1-HILL.flat0).toFixed(1)},0.,1.);h*=t*t*(3.-2.*t);
+  for(int i=0;i<3;i++){vec4 q=uPondsT[i];float d=length(p-q.xy);
+    float u=clamp((d-(q.z+${HILL.pondFlat0.toFixed(1)}))/${(HILL.pondFlat1-HILL.pondFlat0).toFixed(1)},0.,1.);h+=(q.w-h)*(1.-u*u*(3.-2.*u));
+    float v=clamp((d-(q.z-2.))/2.2,0.,1.);h-=${HILL.dish.toFixed(2)}*(1.-v*v*(3.-2.*v));}
+  return h;}`;
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nvarying vec2 vW;\n'+TERR)
+      .replace('#include <beginnormal_vertex>',`vec3 objectNormal;{vec2 w0=(modelMatrix*vec4(position,1.0)).xz;float e=.7;
+  objectNormal=normalize(vec3(terrH(w0-vec2(e,0.))-terrH(w0+vec2(e,0.)),2.*e,terrH(w0-vec2(0.,e))-terrH(w0+vec2(0.,e))));}`)
+      .replace('#include <begin_vertex>','#include <begin_vertex>\nvW=(modelMatrix*vec4(position,1.0)).xz;transformed.y+=terrH(vW);');
     sh.fragmentShader=sh.fragmentShader.replace('#include <common>',`#include <common>
-varying vec2 vW;uniform float uSeed;uniform vec3 uPonds[3];uniform vec4 uSegs[3];
+varying vec2 vW;uniform int uSeed;uniform vec3 uPonds[3];uniform vec4 uSegs[3];
 float h21(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
 float vn(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(h21(i),h21(i+vec2(1,0)),f.x),mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x),f.y);}
-float hs(ivec2 c){uint h=(uint(c.x)*374761393u)^(uint(c.y)*668265263u)^uint(int(uSeed));h=(h^(h>>13))*1274126177u;return float(h^(h>>16))/4294967296.0;}
+float hs(ivec2 c){uint h=(uint(c.x)*374761393u)^(uint(c.y)*668265263u)^uint(uSeed);h=(h^(h>>13))*1274126177u;return float(h^(h>>16))/4294967296.0;}
 float clearF(vec2 p){vec2 q=p/14.;vec2 i=floor(q),f=q-i;f=f*f*(3.-2.*f);ivec2 c=ivec2(i);
   return mix(mix(hs(c),hs(c+ivec2(1,0)),f.x),mix(hs(c+ivec2(0,1)),hs(c+ivec2(1,1)),f.x),f.y);}`)
     .replace('#include <color_fragment>',`#include <color_fragment>
@@ -258,8 +314,9 @@ function makeDoor(){
 
 export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=7}){
   const Q=o.low?0:1,low=!!o.low;
-  const mkPond0=()=>({x:((seed%5)-2)*2.2,z:-16,r:STILL.pondR,i:0,fx:0,fz:0});
-  let ponds=[mkPond0()];
+  const lvl=p=>{p.y=terrainRaw(p.x,p.z,seed);p.wy=p.y-0.04;return p};
+  let ponds=[lvl({x:((seed%5)-2)*2.2,z:-16,r:STILL.pondR,i:0,fx:0,fz:0})];
+  const H=(x,z)=>terrainH(x,z,seed,ponds);
   cam.fov=72;cam.near=0.08;cam.far=160;
   const prevBg=scene.background;
   const FOG=0xc5ddd0,fogD=low?0.034:0.026;
@@ -271,9 +328,9 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   const FOGC=new THREE.Color(FOG);
 
   // ---- pond bookkeeping shared by ground, placement and the water ----
-  const GU={uPonds:{value:[0,1,2].map(()=>new THREE.Vector3(1e5,1e5,1))},uSegs:{value:[0,1,2].map(()=>new THREE.Vector4(1e5,1e5,1e5+1,1e5))}};
-  const ground=new THREE.Mesh(new THREE.CircleGeometry(96,28),groundMaterial(Q,seed,GU));
-  ground.rotation.x=-Math.PI/2;ground.position.y=0;group.add(ground);
+  const GU={uPondsT:{value:[0,1,2].map(()=>new THREE.Vector4(1e5,1e5,1,0))},uPonds:{value:[0,1,2].map(()=>new THREE.Vector3(1e5,1e5,1))},uSegs:{value:[0,1,2].map(()=>new THREE.Vector4(1e5,1e5,1e5+1,1e5))}};
+  const ground=new THREE.Mesh(groundGeometry(),groundMaterial(Q,seed,GU));
+  ground.frustumCulled=false;group.add(ground);
   const pondDist=(x,z)=>{let m=1e9;for(const p of ponds){const d=Math.hypot(x-p.x,z-p.z)-p.r;if(d<m)m=d}return m};
   const pathDist=(x,z)=>{let m=1e9;for(const p of ponds)m=Math.min(m,segDist(x,z,p.fx,p.fz,p.x,p.z));return m};
   const nearestPond=(x,z)=>{let m=1e9,q=ponds[0];for(const p of ponds){const d=Math.hypot(x-p.x,z-p.z)-p.r;if(d<m){m=d;q=p}}return q};
@@ -336,7 +393,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     const mat=new THREE.ShaderMaterial({transparent:false,fog:false,toneMapped:true,
       uniforms:{uScry:{value:rt.texture},uTime:TW,uCenter:{value:new THREE.Vector2()},uR:{value:5},uRip:{value:[0,1,2,3].map(()=>new THREE.Vector4(0,0,-99,0))},uFog:{value:new THREE.Vector3(FOGC.r,FOGC.g,FOGC.b)},uFogD:{value:fogD},uQ:{value:Q},uYaw:{value:new THREE.Vector2(0,-1)},uClear:{value:0},uShim:{value:0}},
       vertexShader:waterVS,fragmentShader:waterFS});
-    const water=new THREE.Mesh(waterGeo,mat);water.rotation.x=-Math.PI/2;water.position.y=STILL.waterY;g.add(water);
+    const water=new THREE.Mesh(waterGeo,mat);water.rotation.x=-Math.PI/2;g.add(water);
     const beam=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.55,9,8,1,true),
       new THREE.MeshBasicMaterial({color:0xe7fff4,transparent:true,opacity:0.1,side:THREE.DoubleSide,depthWrite:false}));
     beam.position.y=4.5;g.add(beam);
@@ -352,7 +409,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   });
   const dummy=new THREE.Object3D();
   function assignPond(p){
-    const sl=pslots[p.i%3];sl.pond=p;sl.g.visible=true;sl.g.position.set(p.x,0,p.z);
+    const sl=pslots[p.i%3];sl.pond=p;sl.g.visible=true;sl.g.position.set(p.x,p.wy,p.z);
     sl.water.scale.set(p.r,p.r,1);sl.mat.uniforms.uCenter.value.set(p.x,p.z);sl.mat.uniforms.uR.value=p.r;
     for(const r of sl.mat.uniforms.uRip.value)r.set(0,0,-99,0);
     sl.nextDrip=S?S.t+1.5:1.5;
@@ -364,16 +421,16 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     for(let i=0;i<MOTES;i++){sl.mp[i*3]=0}
   }
   function setPonds(list){
-    ponds=list;
+    ponds=list.map(lvl);
     for(const sl of pslots){sl.pond=null;sl.g.visible=false}
-    GU.uPonds.value.forEach(v=>v.set(1e5,1e5,1));GU.uSegs.value.forEach(v=>v.set(1e5,1e5,1e5+1,1e5));
-    ponds.forEach((p,k)=>{assignPond(p);GU.uPonds.value[k].set(p.x,p.z,p.r);GU.uSegs.value[k].set(p.fx,p.fz,p.x,p.z)});
+    GU.uPondsT.value.forEach(v=>v.set(1e5,1e5,1,0));GU.uPonds.value.forEach(v=>v.set(1e5,1e5,1));GU.uSegs.value.forEach(v=>v.set(1e5,1e5,1e5+1,1e5));
+    ponds.forEach((p,k)=>{assignPond(p);GU.uPondsT.value[k].set(p.x,p.z,p.r,p.y);GU.uPonds.value[k].set(p.x,p.z,p.r);GU.uSegs.value[k].set(p.fx,p.fz,p.x,p.z)});
     chunkX=1e9;
   }
   function pushRip(sl,x,z,amp){const R=sl.mat.uniforms.uRip.value;R[sl.rip++%4].set(x,z,TW.value,amp)}
   function updatePonds(dt,b,moving){
     TW.value=S.t;
-    const fy=horizForward(S.yaw),clr=S.pinned?1:clamp((S.build||0)/STILL.buildTime,0,1),shim=Math.max(0,S.shim||0);
+    const fy=horizForward(S.yaw),clr=S.pinned?1:S.water?0.5:0.15,shim=Math.max(0,S.shim||0);
     for(const sl of pslots){const u=sl.mat.uniforms;u.uYaw.value.set(fy[0],fy[1]);u.uClear.value=clr;u.uShim.value=shim}
     for(const sl of pslots){
       const p=sl.pond;if(!p)continue;
@@ -381,7 +438,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
         pushRip(sl,p.x+Math.cos(a)*rr,p.z+Math.sin(a)*rr,0.7);sl.nextDrip=S.t+2.6+hash2(Math.floor(S.t),p.i+3,seed)*3.5}
       const dx=b.x-p.x,dz=b.z-p.z,dd=Math.hypot(dx,dz);
       if(moving&&dd<p.r+1.3&&dd>p.r-0.8&&S.t-sl.lastWalk>0.45){sl.lastWalk=S.t;pushRip(sl,p.x+dx/dd*(p.r-0.15),p.z+dz/dd*(p.r-0.15),0.9)}
-      const wy=STILL.waterY;
+      const wy=0;
       for(let k=0;k<sl.pads0.length;k++){
         const d=sl.pads0[k],bob=Math.sin(S.t*0.9+d.ph)*0.006;
         dummy.position.set(d.x,wy+0.008+bob,d.z);dummy.rotation.set(Math.sin(S.t*0.7+d.ph)*0.03,d.rot+Math.sin(S.t*0.15+d.ph)*0.2,Math.cos(S.t*0.6+d.ph)*0.03);dummy.scale.setScalar(d.s);dummy.updateMatrix();
@@ -446,7 +503,9 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
       if(d>sl.far*(low?0.75:1))return null;
       const far=d>sl.nearR*(low?0.7:1),im=far?sl.farM:sl.near;
       if(im.count>=im.instanceMatrix.count)return null;
-      dummy.position.set(x,y,z);dummy.rotation.set(0,rot,0);dummy.scale.set(sxz,sy,sxz);dummy.updateMatrix();
+      let gy=H(x,z);
+      if(sl.pad>0||TRUNK0[kind]){const e=0.6,gr=Math.max(Math.abs(H(x+e,z)-H(x-e,z)),Math.abs(H(x,z+e)-H(x,z-e)))/(2*e);gy-=0.06+0.45*gr}
+      dummy.position.set(x,y+gy,z);dummy.rotation.set(0,rot,0);dummy.scale.set(sxz,sy,sxz);dummy.updateMatrix();
       im.setMatrixAt(im.count++,dummy.matrix);
       return sl;
     };
@@ -542,10 +601,11 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   })();
 
   const door=makeDoor();group.add(door);
-  S={t:0,yaw:0,pitch:0,bloom:0.18,seed,pinned:false,hold:0,said:0,doorX:0,doorZ:4.2,doorFace:0,ready:false,bake,mist:0,build:0,spd:0,shim:0,bt:0};
+  S={t:0,yaw:0,pitch:0,bloom:0.18,seed,pinned:false,hold:0,said:0,doorX:0,doorZ:4.2,doorFace:0,ready:false,bake,mist:0,shim:0,water:false,direct:false,fill:0};
   S.ponds=()=>ponds.map(p=>({...p}));
+  S.H=H;
   S.treeList=()=>trees.map(t=>({x:t.x,z:t.z,kind:t.s.kind,k:t.k}));
-  const walker=createRoomWalker({o,eye:EYE,x:0,z:0,collide:b=>{
+  const walker=createRoomWalker({o,eye:EYE,x:0,z:0,groundAt:H,snap:0.7,collide:b=>{
     for(const t of trees){
       const dx=b.x-t.x,dz=b.z-t.z,d=Math.hypot(dx,dz),m=0.32+treeR(t);
       if(d<m&&d>1e-4){b.x=t.x+dx/d*m;b.z=t.z+dz/d*m}
@@ -563,7 +623,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     return {tris:Math.round(near+far),nearTris:Math.round(near),farTris:Math.round(far),nearInst:n,farInst:f,trees:trees.length,ponds:ponds.length,ready:S.ready,bake};
   };
   const poseDoor=()=>{
-    door.position.set(S.doorX,0,S.doorZ);
+    door.position.set(S.doorX,H(S.doorX,S.doorZ),S.doorZ);
     door.rotation.y=Math.PI-S.doorFace;
   };
   setPonds(ponds);
@@ -586,7 +646,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
       const same=list.length===ponds.length&&list.every((p,k)=>p.i===ponds[k].i&&p.x===ponds[k].x&&p.z===ponds[k].z);
       if(list.length&&!same){setPonds(list);S.mist=2.4}
     }
-    walker.watch(0.1,q.x,q.z,clamp(q.y,0,3));
+    walker.watch(0.1,q.x,q.z,clamp(q.y,-12,14));
   };
   let scryFlip=0;
   S.frame=()=>{
@@ -596,7 +656,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     if((scryFlip^=1)&&S.pitch>-0.5&&nd>3)return;
     const eyeY=EYE+b.y+bobY(b,walker.scale);
     scryCam.position.set(b.x,eyeY,b.z);
-    scryCam.lookAt(S.doorX,1.15,S.doorZ);
+    scryCam.lookAt(S.doorX,H(S.doorX,S.doorZ)+1.15,S.doorZ);
     scryCam.updateMatrixWorld();
     for(const sl of pslots)sl.water.visible=false;
     const prev=renderer.getRenderTarget();
@@ -621,26 +681,23 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
         S.mist=2.4;
         o.say('Water again, ahead.',3.5);o.tone(392,0.6,'sine',0.03,0,-90);
       }
-      const eye=[b.x,EYE+b.y,b.z],dir=lookDir(S.yaw,S.pitch);
-      const pd=ponds.find(p=>rayHitsPond(eye,dir,p))||nearestPond(b.x,b.z);
-      S.spd+=(Math.hypot(b.x-ox,b.z-oz)/Math.max(dt,1e-3)-S.spd)*Math.min(1,dt*8);
       const sim={
-        x:b.x,z:b.z,yaw:S.yaw,pitch:S.pitch,eye:EYE+b.y,speed:S.spd,build:S.build,
-        door:{x:S.doorX,z:S.doorZ,face:S.doorFace},
-        pond:pd,pinned:S.pinned,hold:S.hold,blocked:trunkAt,
+        x:b.x,z:b.z,yaw:S.yaw,pitch:S.pitch,eye:EYE+b.y,aspect:cam.aspect||16/9,
+        door:{x:S.doorX,z:S.doorZ,y:H(S.doorX,S.doorZ),face:S.doorFace},
+        ponds,pinned:S.pinned,hold:S.hold,blocked:trunkAt,
       };
       stillStep(sim,dt);
-      S.pinned=sim.pinned;S.hold=sim.hold;S.build=sim.build;S.doorX=sim.door.x;S.doorZ=sim.door.z;S.doorFace=sim.door.face;
-      if(S.pinned&&b.y<1.4&&crossedDoor(ox,oz,b.x,b.z,sim.door)){
+      S.pinned=sim.pinned;S.hold=sim.hold;S.doorX=sim.door.x;S.doorZ=sim.door.z;S.doorFace=sim.door.face;
+      S.water=sim.water;S.direct=sim.direct;S.fill=sim.fill;
+      if(S.pinned&&b.y-H(b.x,b.z)<1.4&&crossedDoor(ox,oz,b.x,b.z,sim.door)){
         finish({k:'leave',why:'stillwood'});return;
       }
-      if(sim.locked){S.said=2;S.shim=1.2;o.say('The water holds the door where it stands.',3.5);o.tone(494,0.6,'sine',0.045,0,-180);o.tone(740,0.8,'sine',0.02,0.12)}
-      else if(!S.pinned&&S.said===2){S.said=3;o.say('It is behind you again.',2.5)}
+      // a quiet cue when the door becomes watched or lets go
+      if(sim.locked){S.shim=1.2;o.tone(494,0.5,'sine',0.03,0,-160);o.tone(740,0.7,'sine',0.014,0.1);if(S.said<2){S.said=2;o.say('The water holds the door where it stands.',3.5)}}
+      else if(sim.released){o.tone(330,0.4,'sine',0.018,0,90);if(S.said===2){S.said=3;o.say('It is behind you again.',2.5)}}
       else if(S.said===0&&S.t>0.8){S.said=1;o.say('The way back will not stay where you can look.',4.5)}
-      // the build-up is quiet: a soft tone that climbs while you stay still over the water
-      if(S.build>0){S.bt-=dt;if(S.bt<=0){S.bt=0.45;o.tone(300+S.build/STILL.buildTime*260,0.5,'sine',0.012)}}else S.bt=0;
-      const near=pondDist(b.x,b.z)<3;
-      const hint=A.watching?A.label:S.pinned?'The door is held. Turn and walk through it.':S.build>0?'Stay still.':near?'Be still and look into the water.':'The way back stays behind you.';
+      const near=pondDist(b.x,b.z)<14;
+      const hint=A.watching?A.label:S.pinned?(S.direct?'The door waits. Walk through it.':'The water remembers what is behind you.'):near?'Look into the water.':'The way back stays behind you.';
       o.hud('<small>'+hint+'</small>');
       if(near&&!A.watching&&Math.floor(S.t)%5===0&&S.t%5<dt)o.tone(880+Math.sin(S.t)*40,0.12,'sine',0.015);
     }else{
