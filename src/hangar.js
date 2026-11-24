@@ -7,7 +7,7 @@ export const WALL_Z=15.03;                 // centre of the lobby stone wall (0.
 export const WINDOWS=[{x0:-6.4,x1:-0.7,y0:1.15,y1:4.25},{x0:0.7,x1:6.4,y0:1.15,y1:4.25}];
 export const DOOR={x:-15.35,w:2.6,h:3.3};
 const HALF=21,ZMIN=15.12,ZMAX=42,TOP=14;   // hangar volume (world coordinates)
-const SHIP={x:0.6,y:2.9,z:24.5,yaw:0.34,scale:1.15};
+const SHIP={x:10.4,y:2.9,z:33,yaw:0.8,scale:0.95};
 
 // Rectangles [x0,x1,y0,y1] that make up the back wall around the window and door openings.
 export function wallRects(bottom,top,half){
@@ -89,8 +89,7 @@ function floorTexture(){
     g.setLineDash([px*0.9,px*0.6]);g.beginPath();g.arc(cx,cy,px*6.6,0,7);g.stroke();g.setLineDash([]);
     g.lineWidth=px*0.12;g.beginPath();g.moveTo(cx-px*9,cy);g.lineTo(cx+px*9,cy);g.moveTo(cx,cy-px*9);g.lineTo(cx,cy+px*9);g.stroke();
     g.fillStyle='rgba(235,238,240,.82)';g.font=`bold ${px*2.6}px sans-serif`;g.textAlign='center';g.textBaseline='middle';
-    g.save();g.translate(cx+px*11.5,cy);g.rotate(-Math.PI/2);g.fillText('BAY 3',0,0);g.restore();
-    g.save();g.translate(cx-px*11.5,cy);g.rotate(Math.PI/2);g.fillText('BAY 3',0,0);g.restore();
+    g.font=`bold ${px*1.7}px sans-serif`;g.save();g.translate(cx,sz(17.1));g.rotate(Math.PI);g.fillText('BAY 3',0,0);g.restore();
     g.strokeStyle='#4aa37f';g.lineWidth=px*0.2; // walkway lane
     g.strokeRect(sx(-19.4),sz(16.6),sx(-7)-sx(-19.4),sz(40.4)-sz(16.6));
     g.fillStyle='#4aa37f';g.font=`bold ${px*0.9}px sans-serif`;g.fillText('FOOT TRAFFIC',sx(-13.2),sz(18));
@@ -114,19 +113,19 @@ function hullTexture(){
     for(let i=0;i<90;i++){g.fillStyle='rgba(40,46,56,.5)';g.beginPath();g.arc(r()*w,r()*h,1.5,0,7);g.fill()} // rivets
     for(let i=0;i<14;i++){g.fillStyle='rgba(30,34,40,.7)';g.fillRect(w*(.3+r()*.5),h*(r()<.5?.19:.69)+r()*40,26,6)} // vents
     g.fillStyle='rgba(30,34,40,.9)';g.font='bold 34px sans-serif';g.textAlign='left';
-    g.fillText('EK-4471',w*.42,h*.082);g.fillText('EK-4471',w*.42,h*.382);
+    g.fillText('EK-4471',w*.42,h*.082);g.save();g.translate(w*.42+110,0);g.scale(-1,1);g.fillText('EK-4471',0,h*.382);g.restore();
     for(let i=0;i<30;i++){const x=r()*w,gr=g.createLinearGradient(0,0,0,150);gr.addColorStop(0,'rgba(60,50,40,.12)');gr.addColorStop(1,'rgba(60,50,40,0)');g.fillStyle=gr;g.save();g.translate(x,r()*h);g.fillRect(0,0,4,150);g.restore()}
   },{repeat:false,aniso:8});
 }
-function doorTexture(){
+function doorTexture(ty=0.42){
   return canvasTex(512,650,(g,w,h)=>{
     g.fillStyle='#6a737e';g.fillRect(0,0,w,h);
     for(let y=0;y<h;y+=64){g.fillStyle='rgba(0,0,0,.35)';g.fillRect(0,y,w,4);g.fillStyle='rgba(255,255,255,.1)';g.fillRect(0,y+4,w,2)}
     g.fillStyle='#d8aa2a';g.fillRect(0,0,w,56);g.fillRect(0,h-56,w,56);
     g.fillStyle='#1b1c20';for(let x=-60;x<w;x+=56){for(const y of [0,h-56]){g.beginPath();g.moveTo(x,y+56);g.lineTo(x+28,y+56);g.lineTo(x+84,y);g.lineTo(x+56,y);g.fill()}}
-    g.fillStyle='rgba(230,232,236,.9)';g.font='bold 120px sans-serif';g.textAlign='center';g.fillText('HANGAR',w/2,h*.42);
-    g.font='bold 52px sans-serif';g.fillText('AUTHORISED ONLY',w/2,h*.42+70);
-    g.fillStyle='#cc2d2d';g.fillRect(w*.3,h*.27,w*.4,10);
+    g.fillStyle='rgba(230,232,236,.9)';g.font='bold 120px sans-serif';g.textAlign='center';g.fillText('HANGAR',w/2,h*ty);
+    g.font='bold 52px sans-serif';g.fillText('AUTHORISED ONLY',w/2,h*ty+70);
+    g.fillStyle='#cc2d2d';g.fillRect(w*.3,h*(ty-0.15),w*.4,10);
     g.fillStyle='rgba(20,22,28,.7)';g.fillRect(w/2-3,60,6,h-120);
   },{aniso:8});
 }
@@ -241,8 +240,8 @@ function buildShip(glowMap){
   const mats={
     hull:new THREE.MeshStandardMaterial({map:Object.assign(hullTexture(),{flipY:false}),roughness:0.42,metalness:0.3}),
     plate:new THREE.MeshStandardMaterial({map:null,color:0xc4c9cf,roughness:0.5,metalness:0.3}),
-    dark:new THREE.MeshStandardMaterial({color:0x4a525c,roughness:0.5,metalness:0.25,side:THREE.DoubleSide}),
-    steel:new THREE.MeshStandardMaterial({color:0xaab3bd,roughness:0.35,metalness:0.4}),
+    dark:new THREE.MeshStandardMaterial({color:0x6a737e,roughness:0.5,metalness:0.2,emissive:0x20262e,side:THREE.DoubleSide}),
+    steel:new THREE.MeshStandardMaterial({color:0xaab3bd,roughness:0.35,metalness:0.4,emissive:0x1a1e24}),
     accent:new THREE.MeshStandardMaterial({color:0xe07a2e,roughness:0.5,metalness:0.2}),
     teal:new THREE.MeshStandardMaterial({color:0x2f9fa6,roughness:0.45,metalness:0.2}),
   };
@@ -314,7 +313,7 @@ function buildShip(glowMap){
   lamp(-4.2,-0.1,5.85,0x35ff7a,'nav');lamp(-4.2,-0.1,-5.85,0xff3030,'nav');
   lamp(-7.2,1.0,0,0xffffff,'tail');
   lamp(0.2,1.12,0,0xff4040,'beacon');lamp(0.5,-0.82,0,0xff4040,'beacon2');
-  lamp(-4.2,0.0,5.85,0xffffff,'strobe');lamp(-4.2,0.0,-5.85,0xffffff,'strobe');
+  lamp(-4.2,0.16,5.85,0xffffff,'strobe');lamp(-4.2,0.16,-5.85,0xffffff,'strobe');
   return {group:ship,mats,glow:glowMat,sprites,lights,
     update(t){
       glowMat.opacity=0.5+0.07*Math.sin(t*3.1)+0.04*Math.sin(t*7.7);
@@ -327,6 +326,7 @@ function buildShip(glowMap){
         else if(l.kind==='nav')k=0.85;
         else k=0.8;
         l.m.color.copy(l.color).multiplyScalar(0.25+0.75*k);
+        if(l.kind==='strobe')l.m.visible=k>0;
         l.sp.material.opacity=k*0.8;
       }
     }};
@@ -383,7 +383,7 @@ export function buildHangar(parent){
   }
   for(const s of [-1,1])for(let z=ZMIN+3;z<ZMAX;z+=5)B('stripW',s*(HALF-0.52),9.8,z,0.08,0.24,2.4,4);
   // the big bay door on the back wall
-  const doorMat=new THREE.MeshStandardMaterial({map:doorTexture(),roughness:0.6,metalness:0.25});
+  const doorMat=new THREE.MeshStandardMaterial({map:doorTexture(0.17),roughness:0.6,metalness:0.25});
   const bay=new THREE.Mesh(new THREE.PlaneGeometry(14,10),doorMat);bay.position.set(0,5,ZMAX-0.01);bay.rotation.y=Math.PI;root.add(bay);
   B('truss',0,10.2,ZMAX-0.12,14.8,0.4,0.3,4);for(const s of [-1,1])B('truss',s*7.2,5,ZMAX-0.12,0.4,10,0.3,4);
   // catwalk across the back wall
@@ -397,11 +397,11 @@ export function buildHangar(parent){
   // props: crates, cart, tug, fuel tanks, bollards
   const cr=[[-18,0.7,19,1.4,1.4,1.4],[-18,2.05,19,1.2,1.3,1.2],[-16.3,0.55,19.4,1.1,1.1,1.1],[16,0.7,37,1.4,1.4,1.4],[17.6,0.55,37.4,1.1,1.1,1.1],[16.4,1.9,37,1.1,1.3,1.1],[-19,0.7,38,1.5,1.4,1.5]];
   for(const [x,y,z,w,h,d] of cr)B('crate',x,y,z,w,h,d,1.5,(x*3)%1);
-  bag.cyl('red',-8.5,1.0,35,0.9,0.9,3.4,0,0,Math.PI/2,18);B('truss',-8.5,0.4,35,3.2,0.3,1.0,4);
-  for(const x of [-9.8,-7.2])for(const z of [34.5,35.5])bag.cyl('rubber',x,0.25,z,0.25,0.25,0.18,0,0,Math.PI/2,10);
-  B('yellow',11,0.7,21.5,2.6,0.9,1.4,4);B('yellow',10.4,1.45,21.5,1.2,0.7,1.3,4);B('truss',10.4,1.55,20.82,1.0,0.5,0.04,4);
-  for(const x of [10,12])for(const z of [20.9,22.1])bag.cyl('rubber',x,0.3,z,0.3,0.3,0.2,Math.PI/2,0,0,10);
-  for(const x of [-12,-4,10,17])for(const z of [30,33])bag.cyl('yellow',x,0.5,z,0.1,0.1,1.0,0,0,0,8);
+  bag.cyl('red',-7,1.0,29,0.9,0.9,3.4,0,0,Math.PI/2,18);B('truss',-7,0.4,29,3.2,0.3,1.0,4);
+  for(const x of [-8.3,-5.7])for(const z of [28.5,29.5])bag.cyl('rubber',x,0.25,z,0.25,0.25,0.18,0,0,Math.PI/2,10);
+  B('yellow',-12,0.7,22,2.6,0.9,1.4,4);B('yellow',-12.6,1.45,22,1.2,0.7,1.3,4);B('truss',-12.6,1.55,21.32,1.0,0.5,0.04,4);
+  for(const x of [-13,-11])for(const z of [21.4,22.6])bag.cyl('rubber',x,0.3,z,0.3,0.3,0.2,Math.PI/2,0,0,10);
+  for(const x of [-12,-4,-14])for(const z of [30,33])bag.cyl('yellow',x,0.5,z,0.1,0.1,1.0,0,0,0,8);
   bag.flush(root,mats);
 
   // overhead bridge crane (drifts slowly)
@@ -419,7 +419,7 @@ export function buildHangar(parent){
   const shaftMat=new THREE.ShaderMaterial({transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,side:THREE.DoubleSide,
     uniforms:{c:{value:new THREE.Color(0.55,0.65,0.8)}},
     vertexShader:'varying vec3 n;varying vec3 v;varying float k;void main(){n=normalMatrix*normal;vec4 m=modelViewMatrix*vec4(position,1.);v=-m.xyz;k=clamp(uv.y,0.,1.);gl_Position=projectionMatrix*m;}',
-    fragmentShader:'uniform vec3 c;varying vec3 n;varying vec3 v;varying float k;void main(){float f=pow(abs(dot(normalize(n),normalize(v))),2.5);gl_FragColor=vec4(c*f*k*k*0.22,1.);}'});
+    fragmentShader:'uniform vec3 c;varying vec3 n;varying vec3 v;varying float k;void main(){float f=pow(abs(dot(normalize(n),normalize(v))),2.5);gl_FragColor=vec4(c*f*k*k*0.11,1.);}'});
   for(const [x,z] of [[-5,22],[5,22],[-5,32],[5,32]]){
     const m=new THREE.Mesh(new THREE.ConeGeometry(4.6,TOP-2.6,24,1,true),shaftMat);
     m.position.set(x,(TOP-2.6)/2+0.1,z);m.renderOrder=2;root.add(m);
@@ -431,11 +431,11 @@ export function buildHangar(parent){
   root.updateMatrixWorld(true);
   // fuel hose from a wall hydrant, across the floor, to a belly port on the ship
   const port=ship.group.localToWorld(new THREE.Vector3(-0.4,-0.78,0.0));
-  const hose=new THREE.CatmullRomCurve3([new THREE.Vector3(-HALF+0.6,1.0,ZMAX-3),new THREE.Vector3(-12,0.1,34),new THREE.Vector3(-6,0.08,30.5),new THREE.Vector3(-1.5,0.1,29),new THREE.Vector3(port.x-0.6,0.6,port.z+0.3),port]);
+  const hose=new THREE.CatmullRomCurve3([new THREE.Vector3(-HALF+0.6,1.0,ZMAX-3),new THREE.Vector3(-8,0.1,33),new THREE.Vector3(0,0.08,30),new THREE.Vector3(port.x-1.5,0.1,port.z+1.2),new THREE.Vector3(port.x-0.6,0.6,port.z+0.3),port]);
   root.add(new THREE.Mesh(new THREE.TubeGeometry(hose,48,0.07,6),mats.rubber));
 
   // two real lights: cool overhead wash on the ship and a warm fill
-  const keyLight=new THREE.PointLight(0xcfe3ff,330,26,2);keyLight.position.set(-2,TOP-3,25);root.add(keyLight);
+  const keyLight=new THREE.PointLight(0xcfe3ff,330,26,2);keyLight.position.set(7,TOP-3,30);root.add(keyLight);
   const fill=new THREE.PointLight(0xffc99a,110,18,2);fill.position.set(14,6,33);root.add(fill);
 
   return {
