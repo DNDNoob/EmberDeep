@@ -103,6 +103,36 @@ function teenPack(){
   return root;
 }
 
+// The village night thing: the same blocky limbs as in hamlet.js, red eyes, a long jaw. Feet at y=0.
+function nightThing(){
+  const root=new THREE.Group();
+  const box=new THREE.BoxGeometry(1,1,1);
+  const body=skinMat(0x2a2433),gore=skinMat(0x6a2030),eyeMat=new THREE.MeshBasicMaterial({color:0xff3344});
+  const arms=[];
+  for(const [s,h,y] of [[-1,0.85,1.15],[1,0.9,1.12]]){
+    const arm=new THREE.Group();arm.position.set(s*0.42,y+h/2,0.02);root.add(arm);
+    part(arm,box,body,0,-h/2,0,0.16,h,0.16);arms.push(arm);
+  }
+  for(const s of [-1,1])part(root,box,body,s*0.16,0.4,0,0.2,0.7,0.2);
+  part(root,box,body,0,1.15,0,0.55,0.7,0.36);
+  part(root,box,body,0,1.7,0.06,0.4,0.38,0.36);
+  const jaw=new THREE.Group();jaw.position.set(0.05,1.48,0.22);root.add(jaw);
+  part(jaw,box,body,0,0,0,0.28,0.12,0.22);
+  for(const s of [-1,1])part(root,box,eyeMat,s*0.1,1.74,0.24,0.08,0.08,0.06);
+  part(root,box,gore,0,1.32,0.19,0.3,0.1,0.02);
+  part(root,box,body,-0.12,1.95,0,0.1,0.28,0.1);
+  part(root,box,body,0.14,1.92,0.02,0.1,0.26,0.1);
+  root.scale.setScalar(0.68);
+  root.userData.pose=time=>{
+    const bob=Math.sin(time*8)*0.08;
+    arms[0].rotation.x=-bob;arms[1].rotation.x=bob;
+    jaw.rotation.x=0.1+0.2*Math.max(0,Math.sin(time*2.4));
+    const glow=0.8+0.3*Math.sin(time*3);
+    eyeMat.color.setRGB(1.2*glow,0.2*glow,0.28*glow);
+  };
+  return root;
+}
+
 function marched(model,scale,flying,lift=0){
   model.scale.setScalar(scale);
   model.position.y=lift;
@@ -113,7 +143,7 @@ function marched(model,scale,flying,lift=0){
 export function roomMobExhibit(id){
   const group=new THREE.Group();
   const model=id==='guest'?guestModel():id==='teens'?teenPack():
-    id==='moose'?mooseModel(false):id==='mother'?gooseModel():id==='goose'?gooseModel():null;
+    id==='moose'?mooseModel(false):id==='mother'?gooseModel():id==='goose'?gooseModel():id==='nightthing'?nightThing():null;
   if(!model)return group;
   if(id==='moose'){
     model.scale.setScalar(0.52);

@@ -307,12 +307,6 @@ function genFloor(seedStr,depth,look){
     if(wt&&pool.length){const c=pool.pop(),w={type:wt,x:c[0]+0.5,z:c[1]+0.5,ph:rng()*6.28,used:false,gift:ri(3),tip:ri(6)};
       for(const d of DIRS)if(g[idx(c[0]+d[0],c[1]+d[1])]===1){w.ox=d[0]*0.27;w.oz=d[1]*0.27;w.wy=Math.atan2(-d[1],-d[0]);break}
       npcs.push(w)}}
-  // someone who looks like a neighbor, and is not one
-  if(depth>=2&&rng()<0.7&&pool.length){
-    const c=pool.pop(),guise=rng()<0.4?'delver':'map';
-    npcs.push({type:'lurk',guise,x:c[0]+0.5,z:c[1]+0.5,ph:rng()*6.28,gift:0,tip:0,
-      gx:c[0],gy:c[1],px:-1,py:-1,stare:0,aggro:false,face:rng()*6.28,hitT:0,used:true});
-  }
   take('gem',Math.round(nCells/6));
   // spike traps
   const traps=[];
@@ -439,6 +433,11 @@ function genFloor(seedStr,depth,look){
     // every door wears a look. A disguise kind (the trap) picks one with the door rng AFTER placement so positions and kinds never move.
     const own=doorDisguises();
     for(const D of sdoors){const k=DOOR_KINDS[D.kind]||{};D.look=k.disguise?(own[(dr()*own.length)|0]||'wood'):(k.look||'wood')}}
+  // someone who looks like a neighbor, and is not one. Drawn last, from its own dice and a spare cell, so the rest of the floor stays the same as it always was for a seed.
+  if(depth>=2){const lr=mulberry32(hashStr(seedStr+'#lurk'+depth)),ok=pool.filter(c=>!traps.some(q=>q.tx===c[0]&&q.ty===c[1])&&!sdoors.some(q=>q.tx===c[0]&&q.ty===c[1]));
+    if(lr()<0.7&&ok.length){const c=ok[(lr()*ok.length)|0],guise=lr()<0.4?'delver':'map';
+      npcs.push({type:'lurk',guise,x:c[0]+0.5,z:c[1]+0.5,ph:lr()*6.28,gift:0,tip:0,
+        gx:c[0],gy:c[1],px:-1,py:-1,stare:0,aggro:false,face:lr()*6.28,hitT:0,used:true})}}
   // face down an open corridor at the start
   let yaw=0;
   for(const d of DIRS){if(g[idx(stx+d[0],sty+d[1])]===0){yaw=Math.atan2(d[1],d[0]);break}}
@@ -2514,6 +2513,8 @@ function startFromMenu(seed,depth){
   if(!loading)startRun(seed,depth,false,true);
 }
 function enterRun(seed,sd,floor,landing,liftTrip){
+  if(seed===autoSeed&&!$('seedIn').value.trim()){autoSeed=randSeed();reWarm=true}
+  if(loading?.kind==='shaft')closeLoading(); // an unfinished title warm-up must not hold the doors shut or rebuild the world later
   roomLeave();$('deadTitle').textContent='THE DARK TAKES YOU';
   showHub(false);
   if(!archiveRun)hub.reset();
@@ -4277,7 +4278,7 @@ function lurkTick(dt){
     if(n.aggro&&!n.said){n.said=1;sfx('growl');say('It noticed you looking.',2.4)}
     if(r.looking)rememberMob('lurk',n);
     if(n.face!=null)n.yaw=n.face;
-    if(r.hurt&&!MP.guest&&state==='play'&&!P.down)hurt(null);
+    if(r.hurt&&state==='play'&&!P.down&&P.inv<=0&&!P.away)hurt(null);
   }
 }
 
@@ -5426,7 +5427,7 @@ function tickSharedLift(){
     return;
   }
   const {depth,max}=sharedLift.selection;
-  const seed=($('seedIn').value.trim()||randSeed()).toUpperCase();
+  const seed=liftSeed();
   // The run must be hosted by someone on the platform. Keep the current
   // host whenever they are among the riders.
   const packet={id:newRoomCode(),depth,max,seed,pilot:members[0],members};
@@ -5508,7 +5509,9 @@ function showHub(on){
   closeStation();
   if(!on)settingsScreen.screen.hidden=true;
   $('menuHub').hidden=!on;
+  hub.setActive(on);
   document.body.classList.toggle('hub-room',on);
+  if(on&&reWarm&&state==='title'&&!loading){reWarm=false;retargetShaft()}
   if(on){refreshHub();$('tFlash').textContent='USE'}
   else $('tFlash').textContent='FLASH';
 }
@@ -5693,7 +5696,7 @@ function prepareLanding(seed,depth){
   const task={floor:null,model:null,progress:0,ready:false,
     advance(){
       if(task.ready)return;
-      if(stage===0){task.floor=memoFloor(seed,depth);task.progress=0.2}
+      if(stage===0){task.floor=genFloor(seed,depth);task.progress=0.2}
       else if(stage===1){buildMesh(task.floor);task.progress=0.45}
       else if(stage===2){task.model=landingGeometry(task.floor);task.progress=0.6}
       else if(stage===3){buildStatic(task.floor);buildSdf(task.floor);task.progress=0.8}
@@ -5708,6 +5711,9 @@ function prepareLanding(seed,depth){
   return task;
 }
 let warmed=null,shaftQueue=[];
+// the seed a lift ride uses while the seed field is blank; a new one is rolled once a run starts from it, so each ride is a new maze
+let autoSeed=randSeed(),reWarm=false;
+const liftSeed=()=>($('seedIn').value.trim()||autoSeed).toUpperCase();
 function preparedLanding(seed,depth){
   if(warmed&&warmed.seed===seed&&warmed.depth===depth&&warmed.task){
     const task=warmed.task;warmed.left=0;warmed.task=null;return task;
@@ -5721,9 +5727,7 @@ function rememberShaft(seed,depth){
 }
 function startShaftWarm(){
   if(state!=='title')return;
-  const field=$('seedIn');
-  let seed=(field.value||'').trim().toUpperCase();
-  if(!seed){seed=randSeed();field.value=seed}
+  const seed=liftSeed();
   const depth=defaultLiftFloor();
   if(!$('liftDepth').value)$('liftDepth').value=depth;
   const stages=[],seen=new Set();
@@ -5746,13 +5750,14 @@ function startShaftWarm(){
     shaftQueue.push(()=>buildGlimpseProto(floor,mouth));
   }
   showLoading('Opening the entrance hall',stages);
+  loading.kind='shaft';
 }
 function retargetShaft(){
   if(state!=='title'||hub.riding||loading)return;
-  const seed=($('seedIn').value||'').trim().toUpperCase();
+  const seed=liftSeed();
   const typed=+$('liftDepth').value;
   const depth=Number.isInteger(typed)&&typed>=1?typed:defaultLiftFloor();
-  if(!seed||(warmed&&warmed.seed===seed&&warmed.depth===depth))return;
+  if(warmed?.task&&warmed.seed===seed&&warmed.depth===depth)return;
   rememberShaft(seed,depth);
 }
 function departFromLift(shortcut=false){
@@ -5766,7 +5771,7 @@ function departFromLift(shortcut=false){
   const depth=shortcut?deepest:$('liftDepth').valueAsNumber;
   if(!Number.isInteger(depth)||depth<1||depth>+$('liftDepth').max)return;
   if(MP.on){sendLiftAction({k:'liftDepart'});return}
-  const seed=($('seedIn').value.trim()||randSeed()).toUpperCase();
+  const seed=liftSeed();
   if(hub.engageLift(depth,seed))closeStation();
 }
 $('liftDestination').addEventListener('submit',event=>{
