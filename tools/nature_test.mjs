@@ -20,7 +20,7 @@ for (const kind of NATURE_KINDS) {
   for (const g of [a.near, a.far]) { for (const v of g.attributes.aSw.array) if (v < 0 || v > 1) rng01 = false; for (const v of g.attributes.aLf.array) if (v < 0 || v > 1) rng01 = false; for (const v of g.attributes.color.array) if (v < 0 || v > 1.5) rng01 = false; }
   ok(nan === 0, kind + ': no NaN/Inf'); ok(rng01, kind + ': colour, sway and leaf mask in range');
   const bb = a.near.boundingBox, sz = bb.getSize(new (bb.min.constructor)()), fb = a.far.boundingBox;
-  const [hlo, hhi] = {oak: [4, 7.5], fir: [4, 7.5], snag: [3.5, 7], boulder: [0.3, 2.5], slab: [0.5, 2.8], mossrock: [0.3, 1.8], shrub: [0.3, 1.3], succulent: [0.15, 0.6], tulip: [0.2, 0.9], daisy: [0.2, 0.9]}[kind];
+  const [hlo, hhi] = {oak: [4, 7.5], fir: [4, 7.5], snag: [3.5, 7], boulder: [0.3, 2.5], slab: [0.5, 2.8], mossrock: [0.3, 1.8], shrub: [0.3, 1.3], succulent: [0.15, 0.6], tulip: [0.2, 0.9], daisy: [0.2, 0.9], grass: [0.15, 0.6]}[kind];
   ok(bb.min.y > -0.12 && bb.min.y < 0.1, kind + ': base on y=0 (min y ' + bb.min.y.toFixed(3) + ')');
   ok(bb.max.y >= hlo && bb.max.y <= hhi, kind + ': height ' + bb.max.y.toFixed(2) + ' m within ' + hlo + '-' + hhi);
   ok(Math.abs(bb.min.x + bb.max.x) < 3 && Math.max(sz.x, sz.z) < 8, kind + ': footprint ' + sz.x.toFixed(2) + ' x ' + sz.z.toFixed(2) + ' m');

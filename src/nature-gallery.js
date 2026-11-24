@@ -30,7 +30,7 @@ const UT = {value: 0}, mat = natureMaterial({Q, UT});
 const cache = new Map(), baked = [];
 const get = (kind, seed) => { const k = kind + seed; if (!cache.has(k)) { const r = bakeProp(kind, seed); cache.set(k, r); baked.push({kind, seed, ...r.stats}); } return cache.get(k); };
 let group = null;
-const WID = {oak: 4.6, fir: 3.4, snag: 2.8, boulder: 2.4, slab: 2.4, mossrock: 2.4, shrub: 1.5, succulent: 1.1, tulip: 0.9, daisy: 0.9};
+const WID = {oak: 4.6, fir: 3.4, snag: 2.8, boulder: 2.4, slab: 2.4, mossrock: 2.4, shrub: 1.5, succulent: 1.1, tulip: 0.9, daisy: 0.9, grass: 0.8};
 function place(items) {
   if (group) { scene.remove(group); }
   group = new THREE.Group();
@@ -51,7 +51,7 @@ const VIEWS = {
   far() { const a = row(NATURE_KINDS, 3, -2, 'near'), b = row(NATURE_KINDS, 3, 3.5, 'far'); place([...a, ...b]); cam([0, 4.6, 21], [0, 1.6, 0.8], 42); },
   trees() { const a = row(['oak', 'fir', 'snag'], 3, 0, 'near', 1.5), b = row(['oak', 'fir', 'snag'], 21, 7, 'near', 1.5); place([...a, ...b]); cam([0, 3.2, 22], [0, 2.7, 2.5], 34); },
   rocks() { const a = row(['boulder', 'slab', 'mossrock'], 3, 0, 'near', 1.2), b = row(['boulder', 'slab', 'mossrock'], 21, 4.2, 'near', 1.2); place([...a, ...b]); cam([0, 3.2, 13], [0, 0.8, 2], 36); },
-  plants() { const a = row(['shrub', 'succulent'], 3, 0, 'near', 0.6), b = row(['shrub', 'succulent'], 21, 2.5, 'near', 0.6); place([...a, ...b]); cam([0, 1.7, 6.2], [0, 0.35, 1.2], 34); },
+  plants() { const a = row(['shrub', 'succulent', 'grass'], 3, 0, 'near', 0.6), b = row(['shrub', 'succulent', 'grass'], 21, 2.5, 'near', 0.6); place([...a, ...b]); cam([0, 1.7, 6.2], [0, 0.35, 1.2], 34); },
   flowers() { const a = row(['tulip', 'daisy'], 3, 0, 'near', 0.5), b = row(['tulip', 'daisy'], 21, 1.7, 'near', 0.5); place([...a, ...b]); cam([0, 1.0, 3.6], [0, 0.22, 0.8], 32); },
   // seed variation sheets: one row per kind, four seeds along x
   seeds() { sheet(['oak', 'fir', 'snag'], 8.5, [0, 12, 26], [0, 1.6, 1], 40); },

@@ -6,13 +6,13 @@ import * as THREE from 'three';
 import {sdEllipsoid, sdRoundCone, sdSphere, smin, smax, ssub, smoothstep, noise, fbm, worley, setSeed, sculptGen, simplifyGen, flattenGen} from './sculpt.js';
 import {loadBake, saveBake} from './npc_cache.js';
 
-export const NATURE_KINDS = ['oak', 'fir', 'snag', 'boulder', 'slab', 'mossrock', 'shrub', 'succulent', 'tulip', 'daisy'];
+export const NATURE_KINDS = ['oak', 'fir', 'snag', 'boulder', 'slab', 'mossrock', 'shrub', 'succulent', 'tulip', 'daisy', 'grass'];
 const KIT_HASH = typeof __KIT_HASH__ !== 'undefined' ? __KIT_HASH__ : 'dev';
 // triangle budgets {near, far}
 export const NATURE_BUDGET = {
   oak: {near: 6800, far: 1400}, fir: {near: 6800, far: 1400}, snag: {near: 6800, far: 1400},
   boulder: {near: 2400, far: 480}, slab: {near: 2400, far: 480}, mossrock: {near: 2400, far: 480},
-  shrub: {near: 2400, far: 480}, succulent: {near: 2400, far: 480}, tulip: {near: 2400, far: 480}, daisy: {near: 2400, far: 480},
+  shrub: {near: 2400, far: 480}, succulent: {near: 2400, far: 480}, tulip: {near: 2400, far: 480}, daisy: {near: 2400, far: 480}, grass: {near: 1500, far: 300},
 };
 
 /* ---------- small helpers ---------- */
@@ -685,10 +685,53 @@ function daisy(R, P, opts) {
   return {parts, protos, aoReach: 0.02 * sc, aoFloor: 0.35};
 }
 
+/* ---------- 11. grass: a clump of tapered, drooping strap blades (opts.tall: reeds with cattail heads) ---------- */
+const PAL_GRASS = {base: '#2c4a22', leaf: '#5d8a30', tip: '#b5bf56', dry: '#a89a52', cat: '#4a2c1a'};
+function grass(R, P, opts) {
+  const tall = !!opts.tall, sc = opts.size ? opts.size / (tall ? 1.2 : 0.4) : 1, n = tall ? 9 + (R() * 5 | 0) : 13 + (R() * 12 | 0);
+  const spread = (tall ? 0.1 : 0.085) * sc, Hm = (tall ? 1.0 : 0.36) * sc, blades = [], pts = [], dryK = R() < 0.3 ? 0.4 + R() * 0.4 : 0;
+  const ph = [R() * 40, R() * 40];
+  for (let i = 0; i < n; i++) {
+    const a = R() * TAU, rr = Math.sqrt(R()) * spread, lean = 0.08 + R() * (tall ? 0.28 : 0.55), la = a + (R() - 0.5) * 0.8;
+    const L = Hm * (0.5 + 0.7 * R()) * (1 - 0.35 * rr / spread);
+    const base = [Math.cos(a) * rr, 0.002, Math.sin(a) * rr], dir = [Math.cos(la) * lean, 1, Math.sin(la) * lean];
+    const b = mkBlade(base, dir, L, (tall ? 0.017 : 0.0125) * sc * (0.8 + 0.5 * R()), (tall ? 0.0075 : 0.0055) * sc, (0.08 + 0.5 * R() * lean) / L);
+    b.tint = R(); b.H = L; blades.push(b);
+    pts.push(base, [base[0] + b.fr.ez[0] * L, base[1] + b.fr.ez[1] * L - b.arch * L * L, base[2] + b.fr.ez[2] * L]);
+  }
+  const heads = [];
+  if (tall) {
+    const nh = 2 + (R() * 2 | 0);
+    for (let i = 0; i < nh; i++) {
+      const a = R() * TAU, rr = R() * spread * 0.6, h = Hm * (1.05 + R() * 0.3), x = Math.cos(a) * rr, z = Math.sin(a) * rr, lx = (R() - 0.5) * 0.12, lz = (R() - 0.5) * 0.12;
+      heads.push(mkSeg([x, 0, z], [x + lx * 0.7, h * 0.78, z + lz * 0.7], 0.0075 * sc, 0.0055 * sc, 0.01), mkSeg([x + lx * 0.7, h * 0.78, z + lz * 0.7], [x + lx, h, z + lz], 0.021 * sc, 0.016 * sc, 0.01));
+      pts.push([x, 0, z], [x + lx, h, z + lz]);
+    }
+  }
+  const bl = bladesSdf(blades, tall ? 0.012 : 0.008), hd = heads.length ? segsSdf(heads) : null, cell = (tall ? 0.0135 : 0.0105) * sc, gc = groundCull(cell);
+  const bs = boundsOfPts(pts, 0.05 * sc); bs[1] = -cell * 3;
+  const sdf = (x, y, z) => { let d = bl(x, y, z); if (hd) d = smin(d, hd(x, y, z), 0.01); return groundClip(d, y, cell); };
+  const part = {
+    sdf, bounds: bs, cell, w: 1, cull: (x, y, z) => gc(y),
+    shade(x, y, z, nx, ny, nz, ao, o) {
+      const hn = clamp(y / Hm, 0, 1.2);
+      if (hd && y > Hm * 0.45 && hd(x, y, z) < 0.004 && hd(x, y, z) < bl(x, y, z)) { setc(o, y > Hm * 0.78 ? P.cat : P.leaf); mulo(o, (0.8 + 0.4 * noise(x * 60, y * 60, z * 60)) * Math.pow(ao, 0.8)); o[3] = 0.5 + 0.5 * hn; o[4] = y > Hm * 0.78 ? 0 : 0.5; return; }
+      let bi = 0, bd = 1e9;
+      for (let i = 0; i < blades.length; i++) { const b = blades[i], d = Math.hypot(x - b.cx, y - b.cy, z - b.cz) - b.br; if (d < bd) { bd = d; bi = i; } }
+      const b = blades[bi], t = clamp(y / (b.H * 0.9), 0, 1);
+      if (t < 0.45) mixc(o, P.base, P.leaf, t / 0.45); else mixc(o, P.leaf, P.tip, (t - 0.45) / 0.55);
+      if (dryK && b.tint < dryK) mixo(o, P.dry, 0.35 + 0.5 * t);
+      mulo(o, (0.85 + 0.3 * b.tint + 0.15 * (noise(x * 50, y * 20, z * 50 + ph[0]) - 0.5)) * Math.pow(ao, 0.9));
+      o[3] = Math.pow(clamp(y / (Hm * 0.95), 0, 1), 1.15); o[4] = 1;
+    },
+  };
+  return {parts: [part], aoReach: 0.04 * sc, aoFloor: 0.35};
+}
+
 const RECIPES = {
   oak: [oak, PAL_OAK, 0.04], fir: [fir, PAL_FIR, 0.03], snag: [snag, PAL_SNAG, 0.02],
   boulder: [boulder, PAL_BOULDER, 0.03], slab: [slab, PAL_SLAB, 0.02], mossrock: [mossrock, PAL_MOSSROCK, 0.03],
-  shrub: [shrub, PAL_SHRUB, 0.04], succulent: [succulent, PAL_SUCC, 0.03], tulip: [tulip, PAL_TULIP, 0.02], daisy: [daisy, PAL_DAISY, 0.02],
+  shrub: [shrub, PAL_SHRUB, 0.04], succulent: [succulent, PAL_SUCC, 0.03], tulip: [tulip, PAL_TULIP, 0.02], daisy: [daisy, PAL_DAISY, 0.02], grass: [grass, PAL_GRASS, 0.03],
 };
 
 /* ============================================================================================================================
