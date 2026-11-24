@@ -4,6 +4,7 @@ import {createArchiveHall, worldSign} from './archive-hall.js';
 import {buildAsteroidLobby,TELESCOPE_PANEL} from './asteroid-lobby.js';
 import {createKeplerOrrery} from './kepler-orrery.js';
 import {NEWS} from './news.js';
+import {DOOR,WALL_Z,buildHangar,buildHangarFront,wallRects} from './hangar.js';
 import {createMineLanding,createMineRockGap,createShaftHead,landingMazeZ} from './mine-shaft.js';
 
 const portals=[
@@ -111,7 +112,9 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   light(lobby,0x83b7ef,111,18.3,3.8,4,18);
   light(lobby,0xc3b4f4,163,0,7.9,4,30);
   box(lobby,dark,0,-0.19,3.97,41.1,0.35,21.94);
-  box(lobby,stone,0,2.29,15.03,41.4,4.62,0.18);
+  for(const [x0,x1,y0,y1] of wallRects(-0.02,4.6,20.7))box(lobby,stone,(x0+x1)/2,(y0+y1)/2,WALL_Z,x1-x0,y1-y0,0.18);
+  const hangar=buildHangar(lobby),hangarFront=buildHangarFront(lobby);
+  target(lobby,{locked:'hangar'},DOOR.x,DOOR.h/2,WALL_Z-0.12,DOOR.w,DOOR.h,0.1);
   const skyMat=buildAsteroidLobby(lobby);
   orrery=createKeplerOrrery();
   lobby.add(orrery.group);
@@ -195,9 +198,6 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     box(desk,settings?green:gold,w*.45,y-h/2-.13,0.012,0.071,0.041,0.024);
     target(desk,{station:id},0,y,0.025,w,h,0.04);
   }
-  mounted(lobby,['ENTRANCE HALL','WASD or left stick to walk · E, X or click to interact'],0,1.65,14.916,5,0.69,{
-    font:'600 74px Georgia',subFont:'500 35px "Segoe UI"',reverse:true
-  });
 
   const overhead=[];
   const cabin=new THREE.Group(),well=new THREE.Group();
@@ -603,6 +603,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     if(panel&&!(sharedVisible&&panel==='settings')&&!projectPanel(width,height,panel,stationForm))stationForm.style.visibility='hidden';
     if(!ride)for(const hall of galleries.values())hall.animate(time,camera.position);
     orrery.animate(time);
+    hangar.update(time||0);hangarFront.update(time||0);
     if(skyMat&&skyMat.uniforms&&skyMat.uniforms.uBody)orrery.fillWindow(skyMat.uniforms,time||0);
     pose();
     renderer.toneMappingExposure=exposure;renderer.setRenderTarget(null);renderer.render(scene,camera);
@@ -642,6 +643,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       if(hidden)well.visible=false;
     },
     get liftMotion(){return ride&&{travel:ride.travel,extra:0,docked:ride.docked,gaps:Array.from(ride.stretch)}},
+    get hangarStats(){return hangar.stats()},
     get aimed(){return !!focus},
     setSkyTime(t){if(skyMat&&skyMat.uniforms)skyMat.uniforms.uTime.value=t},
     get skyTime(){return skyMat&&skyMat.uniforms?skyMat.uniforms.uTime.value:0},
