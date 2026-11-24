@@ -18,6 +18,7 @@ export function hamletRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
   const rnd=mulberry((seed*1e6)|0);
   cam.fov=72;cam.near=0.08;cam.far=180;
   const sky=new THREE.Color(0x8ecaf2);
+  const prevBg=scene.background;
   scene.background=sky;
   scene.fog=new THREE.Fog(0x8ecaf2,28,78);
   const hemi=new THREE.HemisphereLight(0xcfe8ff,0x3e6a32,0.72);
@@ -293,6 +294,6 @@ export function hamletRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
     cam.rotation.set(S.pitch,-S.yaw,0,'YXZ');
     S.vx=b.x;S.vz=b.z;
   };
-  onClear(()=>{scene.fog=null});
+  onClear(()=>{scene.fog=null;scene.background=prevBg});
   return S;
 }
