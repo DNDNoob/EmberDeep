@@ -140,7 +140,7 @@ const PROPS=[
   {kind:'shrub',n:2,cap:[110,130],far:34,near:14,opts:{palette:{leaf:'#4a7a42',leaf2:'#80a652',leafD:'#2d5330'}}},
   {kind:'mossrock',n:2,cap:[60,70],far:44,near:15,opts:{palette:{moss:'#4f6e38',moss2:'#78914a',mossD:'#334d2a'}}},
   {kind:'oak',n:2,cap:[50,150],far:66,near:15,opts:{palette:{leaf:'#5b8040',leaf2:'#93b055',leafD:'#3d5e30'}}},
-  {kind:'grass',n:3,cap:[110,200],far:26,near:9,opts:{}},
+  {kind:'grass',n:3,cap:[110,200],far:26,near:9,opts:{palette:{base:'#3a5c2c',leaf:'#74a03c',tip:'#c6d062'}}},
   {kind:'tulip',n:1,cap:[110,60],far:26,near:12},
   {kind:'daisy',n:1,cap:[110,60],far:26,near:12},
   {kind:'reed',bake:'grass',n:2,cap:[40,40],far:44,near:14,opts:{tall:true}},
