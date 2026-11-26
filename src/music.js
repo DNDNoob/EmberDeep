@@ -38,6 +38,7 @@ export function resolveMusicKey(F){
   const has=k=>k&&MUSIC_TRACKS[k]&&MUSIC_TRACKS[k].length;
   if(!F)return null;
   if(F.back||F.kind==='back')return null;
+  if(F.music==='silent')return null;   // a floor that brings its own music (a boss arena)
   if(has(F.music))return F.music;
   const k=F.kind&&KIND_KEY[F.kind];if(has(k))return k;
   const n=F.biome&&F.biome.name,b=n&&BIOME_KEY[n];if(has(b))return b;

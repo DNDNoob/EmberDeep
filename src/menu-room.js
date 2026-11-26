@@ -4,6 +4,8 @@ import {createArchiveHall, worldSign} from './archive-hall.js';
 import {buildAsteroidLobby,TELESCOPE_PANEL} from './asteroid-lobby.js';
 import {createKeplerOrrery} from './kepler-orrery.js';
 import {NEWS} from './news.js';
+import {BOSSES} from './bosses.js';
+import {createLightPool} from './light-pool.js';
 import {DOOR,WALL_Z,buildHangar,buildHangarFront,wallRects} from './hangar.js';
 import {createMineLanding,createMineRockGap,createShaftHead,landingMazeZ} from './mine-shaft.js';
 
@@ -16,6 +18,7 @@ const portals=[
 const wallZ=-7,eye=1.62,floorMin=8.2,floorMax=17;
 const liftGateZ=-10.75,landingEntranceZ=landingMazeZ-0.8,liftExitHalfWidth=0.47;
 const terminalWidth=4.5,terminalHeight=2.98;
+const TROPHY={x:-15.35,z:14.62};
 const screenWidth=900,screenHeight=596;
 const clamp=THREE.MathUtils.clamp;
 export const onLiftPlatform=({x,z})=>Math.abs(x)<1.66&&z<wallZ-0.3&&z>liftGateZ;
@@ -101,6 +104,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       const f=desk.f||1,d=f*(b.z-desk.z);
       if(Math.abs(b.x-desk.x)<2.48&&d>-0.45&&d<0.57)b.z=desk.z+f*0.57;
     }
+    if(Math.abs(b.x-TROPHY.x)<2.45&&b.z>TROPHY.z-0.75)b.z=TROPHY.z-0.75;
     orrery?.block(b);
     const panel=TELESCOPE_PANEL;
     if(Math.abs(b.z-panel.z)<panel.w*0.5+0.15&&b.x>panel.x-0.42)b.x=panel.x-0.42;
@@ -198,6 +202,34 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     box(desk,settings?green:gold,w*.45,y-h/2-.13,0.012,0.071,0.041,0.024);
     target(desk,{station:id},0,y,0.025,w,h,0.04);
   }
+
+  // The trophy case stands against the back wall, facing into the room: one place for each boss, dark until that boss falls.
+  const trophyCase=new THREE.Group(),trophySlots=[];
+  trophyCase.position.set(TROPHY.x,0,TROPHY.z);trophyCase.rotation.y=Math.PI;lobby.add(trophyCase);
+  box(trophyCase,iron,0,1.25,-0.32,4.3,2.5,0.12);box(trophyCase,brass,0,2.55,-0.2,4.4,0.12,0.36);
+  for(const y of [0.08,1.08])box(trophyCase,dark,0,y+0.04,-0.12,4.3,0.12,0.42);
+  for(const x of [-2.15,2.15])box(trophyCase,iron,x,1.25,-0.12,0.1,2.5,0.42);
+  mounted(trophyCase,'TROPHIES',0,2.3,-0.25,1.7,0.28,{font:'bold 150px Georgia'});
+  light(trophyCase,0xffd9a8,9,0,2.1,0.9,5);
+  const dim=material(0x2c2a33),cupMat=new THREE.MeshStandardMaterial({color:0xe0b25a,metalness:0.8,roughness:0.3});
+  const cupGeo=new THREE.CylinderGeometry(0.11,0.05,0.16,14),stemGeo=new THREE.CylinderGeometry(0.025,0.025,0.1,8),baseGeo=new THREE.CylinderGeometry(0.08,0.09,0.04,14),gemGeo=new THREE.OctahedronGeometry(0.06);
+  BOSSES.forEach((b,i)=>{
+    const x=(i%5-2)*0.82,y=i<5?1.2:0.2,slot=new THREE.Group();slot.position.set(x,y,-0.1);trophyCase.add(slot);
+    const gem=new THREE.MeshBasicMaterial({color:new THREE.Color(b.col)});
+    const parts=[new THREE.Mesh(baseGeo,cupMat),new THREE.Mesh(stemGeo,cupMat),new THREE.Mesh(cupGeo,cupMat),new THREE.Mesh(gemGeo,gem)];
+    parts[0].position.y=0.02;parts[1].position.y=0.09;parts[2].position.y=0.22;parts[3].position.y=0.38;parts.forEach(m=>slot.add(m));
+    const plate=worldSign(slot,['???',''],0,0.7,-0.21,0.74,0.2,{font:'600 60px Georgia',subFont:'500 46px "Segoe UI"',background:'#1d1a24',border:'#6d5a40'});
+    plate.position.set(0,0.64,-0.06);
+    trophySlots.push({b,parts,cupMat,plate,gem,got:null});
+  });
+  function setTrophies(T){
+    for(const q of trophySlots){
+      const e=T&&T[q.b.id],got=!!(e&&e.n>0);const key=got?e.n+'/'+e.best:'';if(q.got===key)continue;q.got=key;
+      q.parts.forEach((m,k)=>{m.material=got?(k===3?q.gem:cupMat):dim;m.visible=got||k<3});
+      q.plate.setLabel(got?[q.b.name,'Beaten '+e.n+'x  ·  deepest '+e.best]:['???','Waits on floor '+(5*(BOSSES.indexOf(q.b)+1))],got);
+    }
+  }
+  setTrophies(null);
 
   const overhead=[];
   const cabin=new THREE.Group(),well=new THREE.Group();
@@ -350,7 +382,8 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     }else{
       const step=Math.min(dt,0.055);
       const destination=floorDist(ride.depth);
-      const cruise=THREE.MathUtils.clamp(Math.max(destination,floorMin)/18,2.4,5);
+      // an express car: top speed grows with the distance, so a deep ride takes seconds, not a minute (it still waits for loading)
+      const cruise=THREE.MathUtils.clamp(Math.max(destination,floorMin)/4.5,2.4,70),accel=Math.max(2.1,cruise/1.4),brake=Math.max(1.6,cruise/2.2);
       let next=1,acc=0;
       while(next<=ride.depth&&acc+floorMin+ride.stretch[next]<=ride.travel+0.04){acc+=floorMin+ride.stretch[next];next++}
       next=Math.min(next,ride.depth);
@@ -358,9 +391,9 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       const loaded=next<ride.depth?ride.settle[next]===1:!!(ride.task&&ride.task.ready&&(!ride.group||ride.group.ready()));
       const open=Math.max(0,floorMax-floorMin-ride.stretch[next]);
       const closing=loaded||open<=0;
-      const desired=closing?Math.min(cruise,Math.sqrt(2*1.6*Math.max(0,destination-ride.travel))):cruise;
+      const desired=closing?Math.min(cruise,Math.sqrt(2*brake*Math.max(0,destination-ride.travel))):cruise;
       const prev=ride.speed;
-      ride.speed=prev+THREE.MathUtils.clamp(desired-prev,-2.1*step,2.1*step);
+      ride.speed=prev+THREE.MathUtils.clamp(desired-prev,-accel*step,accel*step);
       const movement=Math.max(0,(prev+ride.speed)*0.5*step);
       if(!loaded&&open>0){
         const copy=Math.min(open,Math.max(movement,step*3.2));
@@ -582,6 +615,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       ? `Close view of ${orrery.name(study)}. Click another body to go there. Scroll to move closer. Q walks again.`
       : orreryAim ? `E: look closer at ${orrery.name(orreryAim)}` : '';
   }
+  let lights=null,lightT=null;   // see light-pool.js: a fixed handful of real lights stands in for every lamp
   function render(exposure,time){
     if(skyMat&&skyMat.uniforms)skyMat.uniforms.uTime.value=time||0;
     const width=innerWidth,height=innerHeight;
@@ -606,6 +640,8 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     hangar.update(time||0);hangarFront.update(time||0);
     if(skyMat&&skyMat.uniforms&&skyMat.uniforms.uBody)orrery.fillWindow(skyMat.uniforms,time||0);
     pose();
+    lights??=createLightPool(scene,8);
+    lights.update(camera,Math.min(0.1,Math.max(0,(time||0)-(lightT??(time||0)))));lightT=time||0;
     renderer.toneMappingExposure=exposure;renderer.setRenderTarget(null);renderer.render(scene,camera);
   }
   function markNewsSeen(){
@@ -615,7 +651,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     const label=stationLabels.news;
     if(!label.text)label.screen.setLabel(newsIdle());
   }
-  return {update,render,markNewsSeen,get newsUnseen(){return !newsSeen},syncArchives,syncVisitors,watchLift,liftMode,setSharedLift,engageLift,reset,resetLift,setActive,
+  return {get scene(){return scene},get camera(){return camera},update,render,markNewsSeen,get newsUnseen(){return !newsSeen},syncArchives,syncVisitors,watchLift,liftMode,setSharedLift,engageLift,reset,resetLift,setActive,
     sharedSettings(screen,display){
       sharedSettings=screen;
       sharedTexture=new THREE.CanvasTexture(display);
@@ -672,6 +708,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       if(orreryAim){beginStudy(orreryAim);return}
       if(walker.b.z<wallZ-0.3&&Math.abs(walker.b.x)<1.66)activate({lift:true});
     },
+    setTrophies,
     tap(x,y){
       const hit=aim(x,y);
       if(hit){activate(hit);return true}

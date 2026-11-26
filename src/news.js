@@ -7,6 +7,14 @@
 // it is, or how to trigger it. No code names, file names, PR numbers or agent names.
 // Group small fixes into one post. Rebuild index.html afterwards (npm run build).
 export const NEWS=[
+  {date:'2026-11-25',title:'Nature calls',
+    body:'A new strange door has turned up in the maze. You will know it when you see it, and you will not be leaving until the job is done. The Boogie Man has also been practicing: expect a much longer dance-off.'},
+  {date:'2026-11-25',title:'Weapons that grow with you',
+    body:'Your weapons now earn experience every time you fight with them, and you can see their level right on the hot bar. Reach level 4 and the Blacksmith will help you choose a path; reach level 10 for a second path, or something stranger. Gems you already spent on upgrades have been turned into experience.'},
+  {date:'2026-11-25',title:'A faster, smoother way down',
+    body:'The entrance hall opens sooner and runs smoother, and the lift is now an express: even the deepest floors are only a short ride away, without the hitches on the way down. The Disco Pit also finally has the music it deserves.'},
+  {date:'2026-11-25',title:'Something waits every five floors',
+    body:'Every fifth floor is no longer a maze. Ten very strange bosses are waiting down there, each with a trick of its own, and they come back meaner if you go deep enough. Beat one for a big haul and a trophy in the new case in the lobby. No weapon? Bring your fists.'},
   {date:'2026-11-24',title:'Some luck can wait',
     body:'Whatever fate you are dealt at the sanctuary will now hold off while you are behind a strange door, and catch up with you once you step back out. Anyone not in the maze stays out of harm\'s way, too.'},
   {date:'2026-11-24',title:'Something big out back',
