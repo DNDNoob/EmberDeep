@@ -29,7 +29,7 @@ export const DOOR_KINDS={
   theater:{name:'the picture house',look:'theater',action:'TALK'},
   monoliths:{name:'the whispering monoliths',look:'monoliths',touchUse:false},
   moose:{name:'Mosquito Outpost',look:'moose',css:'mooseroom'}, // walkable arcade with a tabletop camera
-  stillwood:{name:'a door into the still wood',look:'stillwood',touchUse:false},
+  stillwood:{name:'a door into the still wood',look:'stillwood',touchUse:false,infinite:true},
   hamlet:{name:'a door into a little village',look:'hamlet'},
 };
 const modeOf=k=>DOOR_KINDS[k]?.mode||'walk';

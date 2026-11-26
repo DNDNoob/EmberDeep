@@ -13,6 +13,7 @@ import {createVoice} from './voice.js';
 import {guidePath,guideBeacon,GUIDE_RANGE} from './guide.js';
 import {createRooms,kilnGame,KILN,DOOR_KINDS} from './rooms.js';
 import {animalHitEffects,mooseModel,scoutGooseModel,MOOSE_ACH,MOOSE_SPIKE_PRICE} from './moose-defense.js';
+import {stillwoodWarm,stillwoodWarmState} from './stillwood.js';
 import {ROOM_MOBS} from './room-mobs.js';
 import {roomMobExhibit} from './room-mob-exhibits.js';
 import {roomActions,roomControlLabel} from './room-controls.js';
@@ -1933,7 +1934,7 @@ const DUST=[];{const dr=mulberry32(99);for(let i=0;i<(Q>=2?90:Q>=1?45:0);i++)DUS
 let state='title';           // title | play | pause | trans | dead
 let F=null;                  // current floor
 const P={pick:0,spikeTraps:0,moose:false,mounted:false,y:0,vy:0,vx:0,vz:0,airSpeed:2.7,jumpQ:0,keys:0,x:0,z:0,yaw:0,pitch:0,hp:3,fuel:100,stam:100,winded:false,flash:1,ward:0,shards:0,inv:0,bob:0,tx:-1,ty:-1,stepPh:0};
-const R={seed:'',depth:1,score:0,time:0,gems:0,wind:false,pk:{},guide:0};
+const R={seed:'',depth:1,score:0,time:0,gems:0,wind:false,pk:{},guide:0,mirror:false};
 const mooseLures=new Map(),mooseVisuals=[],mooseHeartMaps=[];
 const MOOSE_LURE_SPEED=5.2;
 let mooseEffects;
@@ -2831,6 +2832,7 @@ function wofTick(dt){
   if(FX.pox>0)L.push(['Smallpox',FX.pox]);
   if(FX.moon>0)L.push(['Moonwalk',FX.moon]);
   if(FX.bob>0)L.push(['Bobblehead',FX.bob]);
+  if(R.mirror)L.push(['Mirror on the back of your head',null]);
   if(FX.tickled>0)L.push(['Tickled',null]);
   if(TS)L.push(['Timeshare salesman about',null]);
   if(TK)L.push(['Tickle Monster loose',TK.t]);
@@ -3030,15 +3032,25 @@ function roomWatch(showProgress=true){
     if(state!=='room'){$('fade').style.transition='opacity .4s';$('fade').style.opacity=0}
   }
 }
+const doorSeed=D=>hashStr(R.seed+'#theater'+R.depth+','+D.tx+','+D.ty);
+// a floor with a still wood door bakes that forest in the background once the floor is up, so the room opens on the real trees
+let swWarmTimer=0;
+function stillwoodWarmSoon(){
+  clearTimeout(swWarmTimer);
+  const fl=F,D=fl&&fl.sdoors&&fl.sdoors.find(q=>q.kind==='stillwood'&&!q.used);if(!D)return;
+  const go=()=>{if(F!==fl)return;if(loading||state==='title'){swWarmTimer=setTimeout(go,1000);return}stillwoodWarm(doorSeed(D))};
+  swWarmTimer=setTimeout(go,1500);
+}
 function sdoorOpen(D,showProgress=false){
   if(loading||state!=='play'||D.used||P.down||P.grab)return;
   D.used=true;nearDoor=null;clearPrompt();RW=null;document.body.classList.remove('rwatch');
   mpSend({k:'sd',d:R.depth,i:F.sdoors.indexOf(D),w:D.kind});
   sfx('door');
-  const seed=hashStr(R.seed+'#theater'+R.depth+','+D.tx+','+D.ty);
+  const seed=doorSeed(D);
   remember('doors',D.kind,{seed,depth:R.depth,look:doorLookOf(D),tx:D.tx,ty:D.ty,ph:D.ph,stone:F.stone.slice()});
   if(!showProgress)buildStatic(F);
   beginRoom(D.kind,roomEnd,seed,showProgress);
+  if(DOOR_KINDS[D.kind]?.infinite)achieve('infinite',ACH_DEFS.infinite.title,ACH_DEFS.infinite.desc);
 }
 function beginRoom(kind,onEnd,seed,showProgress=false){
   const door=DOOR_KINDS[kind]||{};
@@ -3163,7 +3175,8 @@ function roomEnd(res){
   }
   if(res.why==='stillwood'){
     achieve('stillwood','Held in the water','Saw the door behind you in a still pond, and walked back out');
-    say('You step back through. The wood does not follow.',3.5);
+    if(!R.mirror){R.mirror=true;say('You step back through. Something from the water came with you: a small mirror now rides on the back of your head.',5)}
+    else say('You step back through. The wood does not follow.',3.5);
     sfx('door');
     return;
   }
@@ -3278,6 +3291,7 @@ function installFloor(depth,nextFloor,prepared=false){
   pkReapply();
   if(MP.guest&&MP.hostId)mpSend({k:'pkq',d:depth},MP.hostId);
   glReset();
+  stillwoodWarmSoon();
 }
 function onTileChange(){
   P.tx=Math.floor(P.x);P.ty=Math.floor(P.z);
@@ -3332,7 +3346,7 @@ function enterRun(seed,sd,floor,landing,liftTrip){
   showHub(false);
   if(!archiveRun)hub.reset();
   P.down=false;
-  R.seed=seed;R.pk={};P.pick=0;P.spikeTraps=0;P.moose=P.mounted=false;P.moosePending=null;R.score=0;R.time=0;R.gems=0;R.startDepth=sd;
+  R.seed=seed;R.pk={};R.mirror=false;P.pick=0;P.spikeTraps=0;P.moose=P.mounted=false;P.moosePending=null;R.score=0;R.time=0;R.gems=0;R.startDepth=sd;
   P.hp=maxHp();P.fuel=100;P.stam=100;P.winded=false;P.flash=1+Math.floor((sd-1)/3)+(up.band|0);P.ward=0;R.wind=false;P.inv=0;P.chill=0;lowFuelSaid=false;
   installFloor(sd,floor,!!landing);
   if(landing){
@@ -3482,7 +3496,7 @@ function openDoor(quiet){
   if(!quiet){sfx('door');say('The gate grinds open',2.5)}
 }
 /* ---------- achievements: a tiny generic list, kept in localStorage (emberdeep.ach: id -> time first earned) ---------- */
-const ACH_DEFS={knowledge:{title:'Knowledge is power',desc:'Silence the peasants of the picture house'},...MOOSE_ACH};
+const ACH_DEFS={infinite:{title:"It's Bigger on the Inside",desc:'Discover your first infinite room'},knowledge:{title:'Knowledge is power',desc:'Silence the peasants of the picture house'},...MOOSE_ACH};
 const ACH=(()=>{const a=store.get('ach',{});return a&&typeof a==='object'&&!Array.isArray(a)?a:{}})();
 function achLine(){const got=Object.keys(ACH_DEFS).filter(k=>ACH[k]);$('achLine').textContent=got.length?'Achievements: '+got.map(k=>ACH_DEFS[k].title).join(' · '):''}
 // the toast shows every time it is earned; the time it was first earned is kept
@@ -3859,7 +3873,7 @@ function mpRecv(m,from){
     case 'p':{
       const a=m.a;if(!Array.isArray(a))return;
       p.hub=null;
-      p.d=m.d;p.x=+a[0];p.z=+a[1];p.y=+a[2];p.yaw=+a[3];p.pitch=+a[4];p.fu=+a[5];p.down=!!(a[6]&1);p.safe=!!(a[6]&2);p.run=!!(a[6]&4);p.away=!!(a[6]&8);p.mounted=!!(a[6]&16);p.unseen=!!(a[6]&32);p.hp=a[7];p.form=a[6]>>6&3;p.fat=!!(a[6]&256);p.pox=!!(a[6]&512);p.frz=!!(a[6]&1024);p.bob=!!(a[6]&2048);p.hedge=!!(a[6]&4096);p.curl=a[6]&8192?1:a[6]&16384?2:0;
+      p.d=m.d;p.x=+a[0];p.z=+a[1];p.y=+a[2];p.yaw=+a[3];p.pitch=+a[4];p.fu=+a[5];p.down=!!(a[6]&1);p.safe=!!(a[6]&2);p.run=!!(a[6]&4);p.away=!!(a[6]&8);p.mounted=!!(a[6]&16);p.unseen=!!(a[6]&32);p.hp=a[7];p.form=a[6]>>6&3;p.fat=!!(a[6]&256);p.pox=!!(a[6]&512);p.frz=!!(a[6]&1024);p.bob=!!(a[6]&2048);p.hedge=!!(a[6]&4096);p.curl=a[6]&8192?1:a[6]&16384?2:0;p.mirror=!!(a[6]&32768);
       if(p.rx===undefined||p.rd!==p.d||Math.hypot(p.x-p.rx,p.z-p.rz)>3){p.rx=p.x;p.rz=p.z;p.ry=p.y;p.ryaw=p.yaw;p.rpitch=p.pitch;p.rd=p.d}
       break;}
     case 'm':{
@@ -3958,9 +3972,9 @@ function mpRecv(m,from){
 // the host's view of everyone the creatures can hunt
 function mpTargets(){
   const T=[];
-  if(!P.down)T.push({x:P.x,z:P.z,yaw:P.yaw,fuel:P.fuel,inSafe:P.inSafe||P.away||!!FX.frozen,inv:P.inv,loc:true,tx:P.tx,ty:P.ty});
+  if(!P.down)T.push({x:P.x,z:P.z,yaw:P.yaw,fuel:P.fuel,inSafe:P.inSafe||P.away||!!FX.frozen,inv:P.inv,loc:true,mirror:R.mirror,tx:P.tx,ty:P.ty});
   if(MP.host)for(const p of MP.peers.values())
-    if(p.run&&!p.down&&p.d===R.depth&&p.x!==undefined&&mpFresh(p))T.push({x:p.x,z:p.z,yaw:p.yaw,fuel:p.fu,inSafe:p.safe,inv:p.inv,loc:false,p,tx:Math.floor(p.x),ty:Math.floor(p.z)});
+    if(p.run&&!p.down&&p.d===R.depth&&p.x!==undefined&&mpFresh(p))T.push({x:p.x,z:p.z,yaw:p.yaw,fuel:p.fu,inSafe:p.safe,inv:p.inv,loc:false,mirror:!!p.mirror,p,tx:Math.floor(p.x),ty:Math.floor(p.z)});
   return T;
 }
 // path distance from every tile to the nearest player
@@ -3981,7 +3995,7 @@ function mpWatched(T,s){
   for(const t of T){
     const eu=Math.hypot(s.x-t.x,s.z-t.z);if(eu>=9||eu>=torchRadius(t.fuel)+0.5)continue;
     const facing=((s.x-t.x)*Math.cos(t.yaw)+(s.z-t.z)*Math.sin(t.yaw))/Math.max(eu,0.001);
-    if(facing>0.55&&los(s.x,s.z,t.x,t.z))return true;
+    if((facing>0.55||(t.mirror&&facing<-0.55))&&los(s.x,s.z,t.x,t.z))return true;   // the mirror on the back of the head watches behind
   }
   return false;
 }
@@ -4004,8 +4018,8 @@ function mpSpectate(){
 }
 function mpCycle(){const L=mpAlive();if(L.length<2)return;const i=L.findIndex(p=>p.id===MP.follow);MP.follow=L[(i+1)%L.length].id}
 // flags packed into a[6] of the per-frame position message: 1 down, 2 safe, 4 run, 8 away, 16 mounted, 32 unseen,
-// 64+128 wheel form, 256 fat, 512 pox, 1024 frozen, 2048 bobblehead, 4096 hedgehog, 8192/16384 curl (1 / 2)
-const mpPosFlags=()=>(P.down?1:0)|(P.inSafe||P.away||FX.frozen?2:0)|4|(P.away?8:0)|(P.mounted?16:0)|(P.unseen?32:0)|((wofForm()<4?wofForm():0)<<6)|(FX.fat>0?256:0)|(FX.pox>0?512:0)|(FX.frozen?1024:0)|(FX.bob>0?2048:0)|(FX.hedge>0?4096:0)|(FX.curl===1?8192:FX.curl===2?16384:0);
+// 64+128 wheel form, 256 fat, 512 pox, 1024 frozen, 2048 bobblehead, 4096 hedgehog, 8192/16384 curl (1 / 2), 32768 mirror on the back of the head
+const mpPosFlags=()=>(P.down?1:0)|(P.inSafe||P.away||FX.frozen?2:0)|4|(P.away?8:0)|(P.mounted?16:0)|(P.unseen?32:0)|((wofForm()<4?wofForm():0)<<6)|(FX.fat>0?256:0)|(FX.pox>0?512:0)|(FX.frozen?1024:0)|(FX.bob>0?2048:0)|(FX.hedge>0?4096:0)|(FX.curl===1?8192:FX.curl===2?16384:0)|(R.mirror?32768:0);
 const mpFresh=p=>performance.now()-(p.seen||0)<15000;
 const mpShown=p=>MP.on&&p.run&&!p.away&&!p.unseen&&p.d===R.depth&&p.rx!==undefined&&state!=='title'&&mpFresh(p);
 function sendHubPresence(to){
@@ -4100,6 +4114,7 @@ function buildPlayer(p,t,rev,et){
   ball(HS,[-0.03,0.1,0],[0.088,0.1,0.094],cloak);
   ball(HS,[-0.05,0.04,0],[0.07,0.07,0.09],cloakD,true);
   if(p.pox)for(let i=0;i<7;i++)ball(HS,[0.075+((i*3)%4)*0.004,0.03+((i*7)%9)*0.011,((i*5)%11-5)*0.011],0.007,[0.82,0.12,0.1,1],true);   // smallpox
+  if(p.mirror)ball(HS,[-0.098,0.085,0],[0.012,0.046,0.046],[0.78,0.9,0.96,1],true);   // a small round mirror on the back of the head
   return {torch:fpt(U,[tt[0],tt[1]+0.035,tt[2]])};
 }
 // the chest splits like a pair of doors: a ring of teeth, a red throat, and tentacles that reach
@@ -6934,6 +6949,6 @@ function gripProbe(ts,talking){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='
   for(const t of ts){buildNpc(n,t,P.x,0.7,P.z,0.016);res.push({t,...GRIP_DBG})}talk=save;return res}
 function benchNpc(iters){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='keeper');const e=[P.x,0.7,P.z];buildNpc(n,1,e[0],e[1],e[2],0.016);let t0=performance.now();
   for(let i=0;i<iters;i++){CH.n=0;buildNpc(n,1+i*0.016,e[0],e[1],e[2],0.016)}return (performance.now()-t0)/iters}
-window.__game={wofQ:WOQ,tkTargets,rrStart,wofClear,wofTick,mpPosFlags,wof:WOF,fx:FX,get tk(){return TK},get bomb(){return BOMB},get rr(){return RR},set rr(v){RR=v},rrAct,get ts(){return TS},get brk(){return BRK},set tk(v){TK=v},wofSpinStart,wofResolve,wofBegin,NEWS,openStation,get activeStation(){return activeStation},hub,get lobbyPaused(){return lobbyPaused},get roomPaused(){return roomPaused},simLockLost(){if(document.pointerLockElement){document.exitPointerLock();return}usingLock=true;document.dispatchEvent(new Event("pointerlockchange"))},music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={stillwoodWarmState,stillwoodWarm,doorSeed,wofQ:WOQ,tkTargets,rrStart,wofClear,wofTick,mpPosFlags,wof:WOF,fx:FX,get tk(){return TK},get bomb(){return BOMB},get rr(){return RR},set rr(v){RR=v},rrAct,get ts(){return TS},get brk(){return BRK},set tk(v){TK=v},wofSpinStart,wofResolve,wofBegin,NEWS,openStation,get activeStation(){return activeStation},hub,get lobbyPaused(){return lobbyPaused},get roomPaused(){return roomPaused},simLockLost(){if(document.pointerLockElement){document.exitPointerLock();return}usingLock=true;document.dispatchEvent(new Event("pointerlockchange"))},music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 if(state==='title')startShaftWarm();
 requestAnimationFrame(frame);
