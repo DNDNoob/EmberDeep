@@ -7,6 +7,8 @@
 // it is, or how to trigger it. No code names, file names, PR numbers or agent names.
 // Group small fixes into one post. Rebuild index.html afterwards (npm run build).
 export const NEWS=[
+  {date:'2026-11-26',title:'Smoother lift rides',
+    body:'The first few floors, and everything it takes to light and draw them, are now prepared quietly in the background while you wander the lobby, so the ride down and your first steps in the maze are much less stuttery. Slower computers get their share of that quiet preparation too.'},
   {date:'2026-11-26',title:'Dance like everyone is watching',
     body:'The Disco Pit is now a proper dance-off, with the camera swinging around the floor so you can see everyone bust a move. Take turns with your partner, and stay on your toes when it is his turn: he brings more stamina the more friends you bring. Also, a certain quiet wood now lets you know when it is still growing, instead of leaving you in the dark.'},
   {date:'2026-11-26',title:'Something to take home',

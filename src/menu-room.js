@@ -64,6 +64,13 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     const lamp=new THREE.PointLight(color,power,range);
     lamp.position.set(x,y,z);parent.add(lamp);
   }
+  // The point-light count must stay fixed or three.js relinks every lit material (see light-pool.js: 8 real lights stand in for all lamps).
+  // The pool is created up front, and any lamp that is about to be compiled or drawn is swept into it first, so ride, dock and
+  // compile all see the same count.
+  let lights=null,lightT=null;
+  function pool(){lights??=createLightPool(scene,8);return lights}
+  // hide an object's own lamps while it compiles (they belong to the pool once it is in the scene)
+  const withoutLamps=(object,fn)=>{const off=[];object.traverse(o=>{if(o.isPointLight&&o.visible){o.visible=false;off.push(o)}});try{return fn()}finally{for(const o of off)o.visible=true}};
   function target(parent,entry,x,y,z,w,h,d){
     const mesh=box(parent,proxy,x,y,z,w,h,d);
     mesh.userData.entry=entry;hallTargets.push(mesh);targets.push(mesh);
@@ -615,7 +622,6 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       ? `Close view of ${orrery.name(study)}. Click another body to go there. Scroll to move closer. Q walks again.`
       : orreryAim ? `E: look closer at ${orrery.name(orreryAim)}` : '';
   }
-  let lights=null,lightT=null;   // see light-pool.js: a fixed handful of real lights stands in for every lamp
   function render(exposure,time){
     if(skyMat&&skyMat.uniforms)skyMat.uniforms.uTime.value=time||0;
     const width=innerWidth,height=innerHeight;
@@ -640,7 +646,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     hangar.update(time||0);hangarFront.update(time||0);
     if(skyMat&&skyMat.uniforms&&skyMat.uniforms.uBody)orrery.fillWindow(skyMat.uniforms,time||0);
     pose();
-    lights??=createLightPool(scene,8);
+    pool();
     lights.update(camera,Math.min(0.1,Math.max(0,(time||0)-(lightT??(time||0)))));lightT=time||0;
     renderer.toneMappingExposure=exposure;renderer.setRenderTarget(null);renderer.render(scene,camera);
   }
@@ -670,13 +676,27 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     },
     get boarded(){return !liftAway&&onLiftPlatform(walker.b)},
     get riding(){return !!ride},
+    get lightPeak(){let n=0;scene.traverseVisible(o=>{if(o.isPointLight)n++});return n},
     primeShaft(){
       if(ride)return;
       const hidden=!well.visible;
       well.visible=true;
       camera.updateMatrixWorld();
+      pool().rescan();
       try{renderer.compile(scene,camera)}catch(e){}
       if(hidden)well.visible=false;
+    },
+    // compile an off-screen landing or glimpse against the shaft's lights so its first sight in a ride costs nothing
+    compileObject(object){
+      if(ride)return null;
+      const hidden=!well.visible;
+      well.visible=true;
+      camera.updateMatrixWorld();
+      let result=null;
+      pool().rescan();
+      try{result=withoutLamps(object,()=>renderer.compileAsync?renderer.compileAsync(object,camera,scene):(renderer.compile(object,camera,scene),null))}catch(e){}
+      if(hidden)well.visible=false;
+      return result;
     },
     get liftMotion(){return ride&&{travel:ride.travel,extra:0,docked:ride.docked,gaps:Array.from(ride.stretch)}},
     get hangarStats(){return hangar.stats()},

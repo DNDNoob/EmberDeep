@@ -961,11 +961,14 @@ function buildMesh(F,preview=false){
   const mesh=new THREE.Mesh(geo,mats);mesh.castShadow=true;mesh.receiveShadow=true;mesh.frustumCulled=false;
   // A passing landing only needs this mesh. Do not touch the playable world.
   if(preview)return mesh;
+  installWorldMesh(F,mesh);
+}
+function installWorldMesh(F,mesh){
   mesh.matrixAutoUpdate=false;
   if(worldMesh){scene.remove(worldMesh);worldMesh.geometry.dispose()}
   worldMesh=mesh;scene.add(worldMesh);
   if(forestGrp){FOREST.dispose(forestGrp);forestGrp=null}
-  if(fr&&!preview){forestGrp=FOREST.build(F);scene.add(forestGrp);F.fo.stats=forestGrp.userData.stats}
+  if(F.forest){forestGrp=FOREST.build(F);scene.add(forestGrp);F.fo.stats=forestGrp.userData.stats}
   for(const l of shadLights)l.userData.key='';
 }
 function buildSdf(){}
@@ -6034,7 +6037,8 @@ function installFloor(depth,nextFloor,prepared=false){
   if(F?.npcs)for(const npc of F.npcs)disposeGpuRig(npc);
   R.xray=0;R.guide=0;GD.have=false;GD.key='';F=nextFloor;bossReset();
   POT.zones=[];POT.proj=[];POT.fx=[];W.shots=[];P.fizz=0;P.woozy=0;P.hug=null;POT.hist=[];POT.apo=null;POT.stop=0;canvas.style.filter='';for(const k of['life','allmon','xray','gems','phase','hold'])POT.ps[k]=0;TK=null;WOF.here=false;panelLvl=1;P.grab=null;clearMooseLures();mimicReset();
-  if(!prepared&&F.built!==2){buildMesh(F);buildStatic(F);buildSdf(F)}
+  if(prepared)landingOf.get(F)?.install();
+  else if(F.built!==2){buildMesh(F);buildStatic(F);buildSdf(F)}
   wofModel();
   sweepWorld();if(F.npcs&&F.npcs.some(q=>q.type==='keeper'))keeperWarm();
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
@@ -6149,6 +6153,7 @@ function startFromMenu(seed,depth){
 }
 function enterRun(seed,sd,floor,landing,liftTrip){
   if(seed===autoSeed&&!$('seedIn').value.trim()){autoSeed=randSeed();reWarm=true}
+  liftCacheClear();
   if(loading?.kind==='shaft')closeLoading(); // an unfinished title warm-up must not hold the doors shut or rebuild the world later
   roomLeave();$('deadTitle').textContent='THE DARK TAKES YOU';wofClear();WOF.done=true;WOF.plan=null;WOF.flap=0;WOF.party=0;
   showHub(false);
@@ -9016,7 +9021,7 @@ function drawMap(){
 }
 
 /* ---------- main loop ---------- */
-let last=performance.now(),wasPlaying=false;
+let last=performance.now(),wasPlaying=false,idleStepAt=0;
 function step(now){
   const raw=Math.max(0,(now-last)/1000);last=now;
   const dt=Math.min(raw,0.05);
@@ -9041,9 +9046,12 @@ function step(now){
     hub.update(dt,lobbyPaused?NOIN:roomInput(),raw);
     if(sharedLift.trip&&!hub.riding)hub.watchLift(sharedLift.trip.motion);
     else if(!hub.riding)hub.watchLift(null);
-    SURFS.idle();
-    if(shaftQueue.length&&raw<0.034&&!hub.riding)shaftQueue.shift()();
-    else if(warmed&&warmed.left>0&&raw<0.02&&!hub.riding){warmed.task.advance();warmed.left--}
+    // Idle work, one small step per frame. A frame under 40 ms counts as idle (so a 30 to 50 fps machine still gets its turn); on a slower one a step still runs every so often.
+    if(!hub.riding&&!loading&&(raw<0.04||now-idleStepAt>800)){
+      idleStepAt=now;
+      SURFS.idle();
+      if(!liftCachePump()&&!pipeWarmPump()&&shaftQueue.length)shaftQueue.shift()();
+    }
     hub.syncVisitors(MP.on?[...MP.peers.values()].filter(p=>p.hub&&now-p.hub.at<15000):[],dt,now/1000);
     updateSettingsScreen();
     $('hubCross').classList.toggle('ready',hub.aimed);
@@ -9068,7 +9076,8 @@ function frameBody(now){
   if(GL.frz<=0){
     if(!window.__norender){
       if(state==='title'){
-        resize();hub.render(Math.sqrt(bright/1.3),now/1000);
+        resize();if(PIPE.draw)pipeDraw();
+        hub.render(Math.sqrt(bright/1.3),now/1000);
         if(++titleFrames===20)selfCheck();
       }
       else if((state==='room'||ROOMS.watching)&&ROOMS.active){resize();renderer.toneMappingExposure=1;ROOMS.render()}
@@ -9431,8 +9440,8 @@ function buildHubVisitor(peer){
   avatar.scale.setScalar(1.62/EYE);
   return avatar;
 }
-function landingGeometry(floor){
-  const source=worldMesh.geometry,{position,normal,uv}=source.attributes;
+function landingGeometry(floor,world=worldMesh){
+  const source=world.geometry,{position,normal,uv}=source.attributes;
   const {tx,ty,yaw}=floor.start,fx=Math.cos(yaw),fz=Math.sin(yaw);
   const ex=tx+0.5-fx*0.5,ez=ty+0.5-fz*0.5;
   const points=[],normals=[],coords=[],geometry=new THREE.BufferGeometry();
@@ -9457,7 +9466,7 @@ function landingGeometry(floor){
   geometry.setAttribute('position',new THREE.Float32BufferAttribute(points,3));
   geometry.setAttribute('normal',new THREE.Float32BufferAttribute(normals,3));
   geometry.setAttribute('uv',new THREE.Float32BufferAttribute(coords,2));
-  const group=new THREE.Group(),mesh=new THREE.Mesh(geometry,worldMesh.material);
+  const group=new THREE.Group(),mesh=new THREE.Mesh(geometry,world.material);
   group.name='Prepared maze entrance';
   const angle=yaw+Math.PI/2,k=1.62/EYE;
   mesh.rotation.y=angle;mesh.scale.setScalar(k);
@@ -9526,43 +9535,211 @@ function memoFloor(seed,depth,look){
   if(!floor){floor=genFloor(seed,depth,look);floorMemo.set(key,floor)}
   return floor;
 }
-// The lift prepares the landing while it rides down, one small step per frame so the ride stays smooth: generate the maze, build its
-// walls (textures queued, not painted), compile the texture shaders in parallel, paint the textures a couple per frame, place the
-// details, then compile every shader the maze needs (in parallel) before the doors open.
+// A prepared landing owns its own world mesh and decor snapshot (the world itself is only swapped in when the ride docks),
+// so several landings can wait in the cache at once. A forest floor builds its world straight away as it always did, so it is only ever cached alone.
+const landingOf=new WeakMap();
 function prepareLanding(seed,depth){
   let stage=0,waiting=false;
   const wait=p=>{waiting=true;p.then(()=>{waiting=false;stage++},()=>{waiting=false;stage++})};
-  const task={floor:null,model:null,progress:0,ready:false,
+  // the wall textures are queued while the mesh is built, then their shaders compile in parallel and they are painted a couple per step
+  const task={floor:null,model:null,mesh:null,decor:null,decorN:0,own:true,installed:false,progress:0,ready:false,
     advance(){
       if(task.ready||waiting)return;
-      if(stage===0){task.floor=genFloor(seed,depth);task.progress=0.15;stage++}
-      else if(stage===1){SURFS.defer(true);try{buildMesh(task.floor)}finally{SURFS.defer(false)}task.model=landingGeometry(task.floor);task.progress=0.3;stage++}
-      else if(stage===2){task.progress=0.35;wait(SURFS.compileQueued())}
-      else if(stage===3){if(!SURFS.pump(1))stage++;task.progress=Math.max(task.progress,0.4+0.3*(1-SURFS.pending/12))}
-      else if(stage===4){buildStatic(task.floor);buildSdf(task.floor);task.floor.built=2;task.progress=0.78;stage++}
-      else if(stage===5){wofModel(task.floor);task.progress=0.85;wait(Promise.all([compileScene(),compilePasses()]))}
-      else if(stage===6){warmPost();task.progress=1;task.ready=true;stage++}   // inside the frame, before the lobby draws
+      if(stage===0){
+        task.floor=genFloor(seed,depth);task.own=!task.floor.forest;
+        landingOf.set(task.floor,task);task.progress=0.15;stage++;
+      }
+      else if(stage===1){
+        SURFS.defer(true);
+        try{
+          if(task.own)task.mesh=buildMesh(task.floor,true);
+          else{buildMesh(task.floor);task.mesh=worldMesh}
+        }finally{SURFS.defer(false)}
+        task.progress=0.3;stage++;
+      }
+      else if(stage===2){task.model=landingGeometry(task.floor,task.mesh);task.progress=0.4;stage++}
+      else if(stage===3){task.progress=0.45;wait(SURFS.compileQueued())}
+      else if(stage===4){if(!SURFS.pump(1))stage++;task.progress=Math.max(task.progress,0.5+0.2*(1-SURFS.pending/12))}
+      else if(stage===5){
+        buildStatic(task.floor);buildSdf(task.floor);
+        task.decorN=DEC.n;task.decor=DEC.buf.slice(0,DEC.n*13);
+        task.progress=0.85;stage++;
+      }
+      else if(stage===6){task.progress=1;task.ready=true;stage++}
+    },
+    // called as the run takes this floor: puts its own world and decor in place
+    install(){
+      task.installed=true;
+      if(task.own&&task.mesh)installWorldMesh(task.floor,task.mesh);
+      if(task.decor){DEC.buf.set(task.decor);DEC.n=task.decorN;upload(decorMesh,DEC)}
     },
     dispose(){
-      if(task.model){task.model.removeFromParent();if(task.model.children[0])task.model.children[0].geometry.dispose()}
+      if(task.model){task.model.removeFromParent();if(task.model.children[0])task.model.children[0].geometry.dispose();task.model=null}
+      if(task.own&&task.mesh&&!task.installed){task.mesh.geometry.dispose();task.mesh=null}
+      task.decor=null;
     }
   };
   return task;
 }
-let warmed=null,shaftQueue=[];
+// Landings built ahead of time for the lift, keyed by seed and depth: floors 1 to 5 plus the selected floor.
+// A landing is handed out once and never reused, since a run mutates its floor.
+const LIFT_CACHE_MAX=6;
+const liftCache=new Map(),glimpseCompiled=new Set();
+let shaftQueue=[],liftCacheAt=0,liftCompiling=0;
 // the seed a lift ride uses while the seed field is blank; a new one is rolled once a run starts from it, so each ride is a new maze
 let autoSeed=randSeed(),reWarm=false;
 const liftSeed=()=>($('seedIn').value.trim()||autoSeed).toUpperCase();
+function selectedLiftDepth(){
+  const typed=+$('liftDepth').value;
+  return Number.isInteger(typed)&&typed>=1?typed:defaultLiftFloor();
+}
+function liftWanted(){
+  const sel=selectedLiftDepth(),max=+$('liftDepth').max,out=[sel];
+  for(let d=1;d<=5;d++)if(d!==sel&&!(max>=1&&d>max))out.push(d);
+  return out.slice(0,LIFT_CACHE_MAX);
+}
+function liftEntry(seed,depth){
+  const key=seed+'#'+depth;
+  let e=liftCache.get(key);
+  if(!e){e={seed,depth,task:prepareLanding(seed,depth),compiled:false};liftCache.set(key,e)}
+  return e;
+}
+function liftCacheTrim(seed,wanted){
+  for(const [key,e] of liftCache)if(e.seed!==seed||!wanted.includes(e.depth)){e.task.dispose();liftCache.delete(key)}
+}
+function liftCacheClear(){liftCacheTrim(null,[])}
 function preparedLanding(seed,depth){
-  if(warmed&&warmed.seed===seed&&warmed.depth===depth&&warmed.task){
-    const task=warmed.task;warmed.left=0;warmed.task=null;return task;
-  }
+  const key=seed+'#'+depth,e=liftCache.get(key);
+  if(e){liftCache.delete(key);return e.task}
   return prepareLanding(seed,depth);
 }
-function rememberShaft(seed,depth){
-  warmed?.task?.dispose();
-  const task=prepareLanding(seed,depth);
-  warmed={seed,depth,task,left:5};
+function compileAhead(object,done){
+  liftCompiling++;
+  const finish=()=>{liftCompiling--;done()};
+  const p=hub.compileObject(object);
+  if(p&&p.then)p.then(finish,finish);else finish();
+}
+// One small step per idle frame: build the next missing landing, compile a finished one, then compile the near floors' glimpses.
+function liftCachePump(){
+  if(liftCompiling>0||performance.now()<liftCacheAt)return true;
+  const seed=liftSeed(),wanted=liftWanted();
+  liftCacheTrim(seed,wanted);
+  for(const depth of wanted){
+    const e=liftEntry(seed,depth);
+    if(!e.task.ready){e.task.advance();return true}
+    if(!e.compiled){
+      e.compiled=true;
+      if(e.task.model){compileAhead(e.task.model,()=>{});return true}
+    }
+  }
+  for(let n=1;n<=10;n++)for(let turn=0;turn<3;turn++){
+    const surf=glimpseSurf(n,turn);
+    if(glimpseCompiled.has(surf))continue;
+    glimpseCompiled.add(surf);
+    compileAhead(buildGlimpseProto(n,turn),()=>{});
+    return true;
+  }
+  return false;
+}
+/* ---------- warm the in-game render pipeline in the lobby ---------- */
+// The first frames of a floor used to link dozens of programs on the spot: the world surfaces lit by the game's lights and shadows,
+// the characters and sprites, and every pass of the post chain. Each link can stall the page for a good fraction of a second, so the
+// lobby does it ahead of time. The programs are requested in the background (compileAsync), each against the render target they will
+// really draw into, and then one real frame of the game scene goes through the composer inside a lobby frame that the hub immediately
+// paints over, so nothing is ever shown. Landings that arrive later in the cache (another seed or floor) only compile their own surfaces.
+const PIPE={pre:[()=>{if(Q>0)hairTex()},
+  ()=>{if(!WOF.grp){WOF.grp=wheelModel();WOF.grp.visible=false;scene.add(WOF.grp)}},
+  ()=>{glFallBuild()}],busy:false,fx:false,draw:false,runs:0,warmed:new WeakSet(),geo:null,mark:[]};
+const pipeTasks=()=>[...liftCache.values()].map(e=>e.task).filter(t=>t.ready&&!PIPE.warmed.has(t));
+function pipeWarmState(){
+  const all=[...liftCache.values()];
+  return {busy:PIPE.busy,runs:PIPE.runs,fx:PIPE.fx,pending:pipeTasks().length,done:PIPE.fx&&!PIPE.busy&&!pipeTasks().length&&all.length>0};
+}
+// everything a pass draws with: full-screen shader materials, plus the plain materials a pass lays over the whole scene (the AO normals and depth)
+function pipePassMaterials(){
+  const shader=new Set(),over=new Set(),last=new Set();
+  if(!composer)return {shader,over,last};
+  composer.passes.forEach((pass,i)=>{
+    // the output pass picks its tone mapping defines on its first frame: set them now so the program built ahead is the one it will use
+    if(pass._toneMapping!==undefined&&renderer.toneMapping===THREE.ACESFilmicToneMapping){
+      pass._outputColorSpace=renderer.outputColorSpace;pass._toneMapping=renderer.toneMapping;
+      const d={};if(THREE.ColorManagement.getTransfer(pass._outputColorSpace)===THREE.SRGBTransfer)d.SRGB_TRANSFER='';
+      d.ACES_FILMIC_TONE_MAPPING='';pass.material.defines=d;pass.material.needsUpdate=true;
+    }
+    const add=m=>{if(!m||!m.isMaterial)return;(m.isShaderMaterial?shader:over).add(m);if(i===composer.passes.length-1&&m.isShaderMaterial)last.add(m)};
+    for(const k in pass){const v=pass[k];if(Array.isArray(v))v.forEach(add);else add(v)}
+    if(pass.fsQuad)add(pass.fsQuad.material);
+  });
+  return {shader,over,last};
+}
+function pipeBoard(materials){
+  const board=new THREE.Scene();
+  PIPE.geo??=new THREE.PlaneGeometry(1,1);
+  for(const m of materials){const o=new THREE.Mesh(PIPE.geo,m);o.frustumCulled=false;board.add(o)}
+  return board;
+}
+async function pipeWarm(tasks){
+  const was=renderer.getRenderTarget(),into=composer?composer.renderTarget1:null;
+  const run=async(target,object,over,bare)=>{
+    renderer.setRenderTarget(target);
+    let p=null;
+    const fog=scene.fog;
+    if(bare)scene.fog=null;   // a shadow map pass draws with no scene of its own: no fog, but the real lights
+    try{camera.updateMatrixWorld();p=renderer.compileAsync(object,camera,over)}catch(e){}
+    scene.fog=fog;
+    renderer.setRenderTarget(was);
+    if(p)await p;
+  };
+  const {shader,over,last}=pipePassMaterials();
+  if(!PIPE.fx){
+    // a draped garment's own materials (made when a keeper or similar first comes into view); kept for good so the programs stay alive
+    PIPE.drape=drapeMaterials();
+    {const g=new THREE.BufferGeometry(),z=n=>new THREE.BufferAttribute(new Float32Array(3*n),n===0?3:3);
+      g.setAttribute('position',z(3));g.setAttribute('normal',z(3));g.setAttribute('color',z(3));
+      g.setAttribute('aLoc',new THREE.BufferAttribute(new Float32Array(12),4));g.setAttribute('aBand',z(3));
+      const o=new THREE.Mesh(g,PIPE.drape.m);o.customDepthMaterial=PIPE.drape.dm;o.customDistanceMaterial=PIPE.drape.ds;o.castShadow=true;o.receiveShadow=true;o.frustumCulled=false;
+      const board=new THREE.Scene(),d=new THREE.Mesh(g,PIPE.drape.ds);d.frustumCulled=false;board.add(o);PIPE.drapeBoard=board;
+      // a shadow caster's side decides which way the depth pass culls, which is part of the program: cover each side
+      const dists=[];
+      for(const side of [THREE.FrontSide,THREE.BackSide,THREE.DoubleSide]){
+        const a=new THREE.MeshDistanceMaterial(),b=PIPE.drape.ds.clone();a.side=b.side=side;
+        b.onBeforeCompile=PIPE.drape.ds.onBeforeCompile;b.customProgramCacheKey=PIPE.drape.ds.customProgramCacheKey;dists.push(a,b);
+      }
+      PIPE.castBoard=pipeBoard(dists)}
+    await run(into,scene);                                  // the standing scene: world, characters, decor, sprites, torch hand, shadow casters
+    if(shader.size)await run(into,pipeBoard(shader));       // post chain, drawing into the composer's targets
+    // plain materials laid over the scene and the point light shadow depth, as they are drawn against the real lights
+    await run(into,pipeBoard([...over]),scene);
+    await run(into,PIPE.drapeBoard,scene);
+    await run(into,PIPE.castBoard,scene,true);
+    if(last.size)await run(null,pipeBoard(last));           // the last pass draws to the screen
+  }
+  for(const t of tasks)if(t.own&&t.mesh)await run(into,t.mesh,scene); // each landing's own surfaces, one at a time
+}
+function pipeWarmPump(){
+  if(PIPE.busy)return true;
+  if(!renderer.compileAsync)return false;
+  // things the first frames of a floor would otherwise build on the spot, one per idle frame
+  if(PIPE.pre.length){PIPE.pre.shift()();return true}
+  const tasks=pipeTasks();
+  if(!tasks.length&&PIPE.fx)return false;
+  // wait until the first landing is built: its surfaces are what the first frames will need
+  if(!tasks.length)return false;
+  PIPE.busy=true;PIPE.mark=tasks;
+  pipeWarm(tasks).then(()=>{PIPE.draw=true},()=>{PIPE.draw=true});
+  return true;
+}
+// one real frame of the game scene through the composer, inside a lobby frame that the hub paints over straight after
+function pipeDraw(){
+  PIPE.draw=false;
+  if(state!=='title'||hub.riding||loading){PIPE.busy=false;return}
+  try{
+    for(const l of shadLights)l.shadow.needsUpdate=true;
+    if(composer)composer.render(0);else renderer.render(scene,camera);
+    PIPE.runs++;PIPE.fx=true;
+    for(const t of PIPE.mark)PIPE.warmed.add(t);
+  }catch(e){console.error(e)}
+  PIPE.busy=false;
 }
 function startShaftWarm(){
   if(state!=='title')return;
@@ -9579,20 +9756,16 @@ function startShaftWarm(){
     if(n===1)stages.push(['Opening landing '+n,()=>buildGlimpseProto(floor,mouth)]);
     else shaftQueue.push(()=>buildGlimpseProto(floor,mouth));
   }
-  rememberShaft(seed,depth);
-  for(let i=0;i<5;i++)stages.push(['Preparing the maze',()=>warmed.task.advance()]);
-  warmed.left=0;
+  const entry=liftEntry(seed,depth);
+  for(let i=0;i<5;i++)stages.push(['Preparing the maze',()=>entry.task.advance()]);
   stages.push(['Lighting the shaft',()=>hub.primeShaft()]);
   showLoading('Opening the entrance hall',stages);
   loading.kind='shaft';
 }
+// the seed or floor changed: the pump drops landings that no longer match and builds the new ones, after a short pause so typing does not thrash
 function retargetShaft(){
   if(state!=='title'||hub.riding||loading)return;
-  const seed=liftSeed();
-  const typed=+$('liftDepth').value;
-  const depth=Number.isInteger(typed)&&typed>=1?typed:defaultLiftFloor();
-  if(warmed?.task&&warmed.seed===seed&&warmed.depth===depth)return;
-  rememberShaft(seed,depth);
+  liftCacheAt=performance.now()+400;
 }
 function departFromLift(shortcut=false){
   if(state!=='title'||activeStation!=='lift'||!hub.boarded||loading)return;
@@ -9855,7 +10028,7 @@ function gripProbe(ts,talking){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='
   for(const t of ts){buildNpc(n,t,P.x,0.7,P.z,0.016);res.push({t,...GRIP_DBG})}talk=save;return res}
 function benchNpc(iters){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='keeper');const e=[P.x,0.7,P.z];buildNpc(n,1,e[0],e[1],e[2],0.016);let t0=performance.now();
   for(let i=0;i<iters;i++){CH.n=0;buildNpc(n,1+i*0.016,e[0],e[1],e[2],0.016)}return (performance.now()-t0)/iters}
-window.__game={stillwoodWarmState,stillwoodWarm,doorSeed,wofQ:WOQ,tkTargets,rrStart,wofClear,wofTick,mpPosFlags,wof:WOF,fx:FX,get tk(){return TK},get bomb(){return BOMB},get rr(){return RR},set rr(v){RR=v},rrAct,get ts(){return TS},get brk(){return BRK},set tk(v){TK=v},get cg(){return CG},set cg(v){CG=v},departFromLift,wofSpinStart,wofResolve,wofBegin,planSpin,pickSlice,sliceAt,spinAngle,NEWS,openStation,get activeStation(){return activeStation},hub,get lobbyPaused(){return lobbyPaused},get roomPaused(){return roomPaused},simLockLost(){if(document.pointerLockElement){document.exitPointerLock();return}usingLock=true;document.dispatchEvent(new Event("pointerlockchange"))},music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch,patYell,initAudio,fizzTick,fizzMe,FIZZ,grannyTick,grannyWoozy,grannyGrab,grannyMash,GRAN,smith:SMITH,W,wAttack,sprList,wApply,wStats,wHeld,wCycle,clickL,clickR,WEAPONS,pot:POT,PFX,potLand,potDrink,potThrow,beltAdd,potBrew,potMon,potTouch,POTIONS,INGREDIENTS,brew,brewAny,potInfo,ps,potHud,wLevelOf,wRanks,wChoice,wGainXp,wXpFor,wReward,smithTalk,BS,BOSSES,bossAt,danceKey,danceChart,bossStart,bossWin,bossTrophies,bMain,wPunch};
+window.__game={pipelineWarm:pipeWarmState,liftCache:()=>[...liftCache.values()].map(e=>({seed:e.seed,depth:e.depth,ready:e.task.ready,compiled:e.compiled})),stillwoodWarmState,stillwoodWarm,doorSeed,wofQ:WOQ,tkTargets,rrStart,wofClear,wofTick,mpPosFlags,wof:WOF,fx:FX,get tk(){return TK},get bomb(){return BOMB},get rr(){return RR},set rr(v){RR=v},rrAct,get ts(){return TS},get brk(){return BRK},set tk(v){TK=v},get cg(){return CG},set cg(v){CG=v},departFromLift,wofSpinStart,wofResolve,wofBegin,planSpin,pickSlice,sliceAt,spinAngle,NEWS,openStation,get activeStation(){return activeStation},hub,get lobbyPaused(){return lobbyPaused},get roomPaused(){return roomPaused},simLockLost(){if(document.pointerLockElement){document.exitPointerLock();return}usingLock=true;document.dispatchEvent(new Event("pointerlockchange"))},music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch,patYell,initAudio,fizzTick,fizzMe,FIZZ,grannyTick,grannyWoozy,grannyGrab,grannyMash,GRAN,smith:SMITH,W,wAttack,sprList,wApply,wStats,wHeld,wCycle,clickL,clickR,WEAPONS,pot:POT,PFX,potLand,potDrink,potThrow,beltAdd,potBrew,potMon,potTouch,POTIONS,INGREDIENTS,brew,brewAny,potInfo,ps,potHud,wLevelOf,wRanks,wChoice,wGainXp,wXpFor,wReward,smithTalk,BS,BOSSES,bossAt,danceKey,danceChart,bossStart,bossWin,bossTrophies,bMain,wPunch};
 if(state==='title')startShaftWarm();
 // the lobby's shaders compile in parallel before its first frame (a few seconds at most; never wait forever)
 {let go=false;const start=()=>{if(!go){go=true;requestAnimationFrame(frame)}};

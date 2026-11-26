@@ -103,6 +103,8 @@ export function createMineLanding({height,numberSign,sampleFloor}){
   const stones=new THREE.InstancedMesh(boulderGeometry,rock,92);
   const minerals=new THREE.InstancedMesh(boulderGeometry,calcite,42);
   const terrain=new THREE.InstancedMesh(boxGeometry,floorMaterial,rows*columns*2);
+  // give both instanced rocks their colors up front: a program is keyed on whether an instance color exists, so waiting for the first fill relinks it mid-ride
+  {const white=new THREE.Color(1,1,1);stones.setColorAt(0,white);minerals.setColorAt(0,white)}
   stones.frustumCulled=minerals.frustumCulled=terrain.frustumCulled=false;
   terrain.visible=false;
   const tile=new THREE.Object3D(),shade=new THREE.Color(),base=new THREE.Color();
