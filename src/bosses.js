@@ -5,7 +5,7 @@
 export const BOSSES = [
   {id: 'rat', name: 'King Ratbag', title: 'Lord of the Sewers', arena: 'The Sewer Throne', bi: 6, hp: 70, rad: 0.55, gems: 25, col: '#9a8270',
     intro: 'Something enormous is gnawing on the dark.', taunt: 'SQUEEEEAK!'},
-  {id: 'boogie', name: 'The Boogie Man', title: 'He only respects the dance', arena: 'The Disco Pit', bi: 7, hp: 320, rad: 0.4, gems: 30, col: '#ff4fd8',
+  {id: 'boogie', name: 'The Boogie Man', title: 'He only respects the dance', arena: 'The Disco Pit', bi: 7, hp: 420, rad: 0.4, gems: 30, col: '#ff4fd8',
     intro: 'A disco ball turns in the dark. Somebody is waiting for a partner.', taunt: 'DANCE OFF!'},
   {id: 'gloop', name: 'The Gloop', title: 'It splits when it is hurt', arena: 'The Ooze Pit', bi: 1, hp: 50, rad: 0.7, gems: 35, col: '#6ee05a',
     intro: 'The floor is wet, and the wet is moving.', taunt: 'BLORP.'},
@@ -24,7 +24,8 @@ export const BOSSES = [
   {id: 'heart', name: 'The Ember Heart', title: 'The burning heart of the deep', arena: 'The Heart of the Deep', bi: 3, hp: 200, rad: 0.62, gems: 100, col: '#ff6a1a',
     intro: 'The whole deep is beating, like a drum, like a heart.', taunt: 'BA-BOOM.'},
 ];
-// the Boogie Man's 320: rounds 1 and 2 hold at most 84 + 168 damage even hitting every arrow perfectly, so he always lasts into round 3
+// the Boogie Man's 420 (more with more players): only your half of each round hurts him, and rounds 1 and 2 hold at most 84 + 168 damage
+// even hitting every arrow perfectly, so he always lasts into round 3, and usually to round 4
 export const BOSS = Object.fromEntries(BOSSES.map((b, i) => [b.id, {...b, i}]));
 
 // which boss guards a depth: floors 5, 10, 15 ... (bosses 1-10), then round again. cyc counts the times round (0 the first time).

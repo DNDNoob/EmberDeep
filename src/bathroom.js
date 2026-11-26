@@ -117,11 +117,10 @@ export function bathroomRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
     if(!S.sit||G.done)return;
     const r=G.wipe(S.t);showPaper();
     o.noise(0.18,0.12,2600,0.8);o.noise(0.12,0.08,1400,0.6);
-    if(r.k==='red'){o.tone(392,0.25,'sawtooth',0.06,0,-150);o.say(r.hurt?'OW! That is it, you are bleeding. Gently!':'Ow! Too quick.',1.6);
+    if(r.k==='red'){o.tone(392,0.25,'sawtooth',0.06,0,-150);o.tone(330,0.3,'square',0.04,0.08,-120);
       if(r.hurt){if(o.damage&&o.damage()){finish({k:'dead',why:'bathroom'});return true}o.hurtFx&&o.hurtFx()}}
-    else if(r.k==='done'){o.say('The paper comes back white. You may leave.',3.2);o.tone(784,0.2,'triangle',0.06);o.tone(1046,0.3,'triangle',0.06,0.12);
+    else if(r.k==='done'){o.tone(784,0.2,'triangle',0.06);o.tone(1046,0.3,'triangle',0.06,0.12);o.noise(0.1,0.15,1200,2,0.3);   // and the lock clicks open
       lockMat.emissive.setHex(0x2aff5a);lock.material.color.setHex(0x003300);lockLight.color.setHex(0x3aff6a)}
-    else if(S.said<3){S.said=3;o.say('Still brown. Keep going, gently.',1.8)}
     return false;
   }
   function sit(on){
@@ -143,7 +142,6 @@ export function bathroomRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
   };
   S.update=(dt,input)=>{
     S.t+=dt;
-    const use=o.control?o.control('press'):'E',back=o.control?o.control('back'):'Esc';
     if(!A.watching){
       const press=!!input.press&&!S.wasP;S.wasP=!!input.press;
       const bk=!!input.back&&!S.wasB;S.wasB=!!input.back;
@@ -156,19 +154,13 @@ export function bathroomRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
         if(press&&nearToilet()&&!G.done){sit(true);S.sitT=S.t}
         else if(press&&nearDoor()){
           if(G.done){finish({k:'win',why:'bathroom',reds:G.redTotal});return}
-          o.say('The door will not open. Not like this.',2);o.tone(110,0.2,'square',0.05);
+          o.tone(110,0.2,'square',0.05);o.noise(0.25,0.12,600,1);   // the handle rattles: locked
         }
       }
-      if(S.said===0&&S.t>0.9){S.said=1;o.say('The door locks behind you. Nature calls.',3.2)}
+      if(S.said===0&&S.t>0.4){S.said=1;o.noise(0.12,0.2,900,2);o.tone(220,0.08,'square',0.05,0.05)}   // the bolt clicks shut behind you
     }
-    // the HUD: what to do, and how gentle you are being
-    let hint;
-    if(A.watching)hint=A.label||'';
-    else if(S.sit){
-      const ready=clamp((S.t-G.last)/LOO.gentle,0,1),bar='<span style="display:inline-block;width:90px;height:7px;border:1px solid #fff8;vertical-align:middle;margin-left:6px"><span style="display:block;height:100%;width:'+(ready*100).toFixed(0)+'%;background:'+(ready>=1?'#7dff9a':'#ff7a5a')+'"></span></span>';
-      hint=G.done?'Clean. '+back+' to stand up, then leave by the door.':use+' to wipe, gently '+bar+'  ·  '+back+' to stand up';
-    }else hint=G.done?(nearDoor()?use+' to leave':'Clean. The door is open.'):nearToilet()?use+' to sit down':'Wipe until the paper comes back white. Then you may leave.';
-    o.hud('<small>'+hint+'</small>');
+    // no instructions (door rooms are discovered, not explained): only a watcher's name label
+    o.hud(A.watching?'<small>'+(A.label||'')+'</small>':'');
     // the camera, seated or walking
     if(S.sit){cam.position.set(T.x,SEAT_EYE,T.z+0.12)}
     else cam.position.set(b.x,EYE+b.y+bobY(b,walker.scale),b.z);
