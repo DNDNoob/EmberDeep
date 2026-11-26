@@ -4922,6 +4922,7 @@ const bossVuln=s=>s.type===6?s.vulnK||1:1;
 function bossStart(quiet){
   if(BS.started||!F||!F.boss)return;BS.started=true;
   const m=bMain();if(m&&!MP.guest&&m.state===0)bSet(m,1,0.5);
+  if(m&&!MP.guest&&BOSSES[m.boss].id==='boogie'){const n=Math.max(1,mpTargets().length),k=1+0.75*(n-1);m.hpMax=Math.round(m.hpMax*k);m.hp=m.hpMax}   // +75% for each extra dancer
   if(!MP.guest&&!quiet)mpSend({k:'bst',d:R.depth});
   const D=bDef();bossCard(D.name,D.title+(F.boss.cyc?'  ·  round '+(F.boss.cyc+1):''));
   tone(55,1.6,'sawtooth',0.18,0,-20);tone(82,1.6,'sawtooth',0.12,0.05,-25);noise(1.2,0.12,300,0.5);rumble(400,0.6,0.6);
@@ -4941,7 +4942,7 @@ function bossWin(){
 }
 const bossTrophies=()=>{const t=store.get('trophies',{});return t&&typeof t==='object'&&!Array.isArray(t)?t:{}};
 // a new floor: forget the last fight
-function bossReset(){BS.hz.length=0;BS.started=false;BS.won=false;BS.wake=0;BS.dance=null;BS.frz=null;BS.dust=0;BS.reveal=0;BS.goo=0;BS.cool=0;BS.said={};danceHide();if(BS.el)BS.el.style.display='none'}
+function bossReset(){BS.dcam=null;BS.groove=100;BS.hz.length=0;BS.started=false;BS.won=false;BS.wake=0;BS.dance=null;BS.frz=null;BS.dust=0;BS.reveal=0;BS.goo=0;BS.cool=0;BS.said={};danceHide();if(BS.el)BS.el.style.display='none'}
 
 // ---- the host's turn for a boss creature (instead of the usual chase; after the shade loop's dead check)
 function bossTick(s,dt,TG){
@@ -4999,8 +5000,13 @@ const BTICK=[
   (s,dt,T0,T)=>{
     s.face=turnTo(s.face,bAim(s,T),2*dt);
     const cx=F.W/2,cz=F.H/2-1;if(Math.hypot(s.x-cx,s.z-cz)>0.3)bMove(s,(cx-s.x)*0.8,(cz-s.z)*0.8,dt);
-    if(s.state===1&&s.t<=0){s.round=(s.round|0)+1;const seed=(Math.random()*1e9)|0,ch=danceChart(seed,s.round);bzAdd({k:'ddr',seed,round:s.round,delay:2.6,life:2.6+ch.len+1});bSet(s,2,2.6+ch.len+1.5)}
-    else if(s.state===2&&s.t<=0)bSet(s,1,3.5);
+    // each round: your dance (every arrow you hit hurts him), then his (every arrow is an attack: hit it to dodge). States 1 a breather,
+    // 2 your dance, 3 "my turn", 4 his dance.
+    const go=part=>{const seed=(Math.random()*1e9)|0,ch=danceChart(seed,s.round+(part==='him'?1:0));bzAdd({k:'ddr',seed,round:s.round,part,delay:2.4,life:2.4+ch.len+1});return 2.4+ch.len+1.2};
+    if(s.state===1&&s.t<=0){s.round=(s.round|0)+1;bSet(s,2,go('you'))}
+    else if(s.state===2&&s.t<=0)bSet(s,3,1.6);
+    else if(s.state===3&&s.t<=0)bSet(s,4,go('him'));
+    else if(s.state===4&&s.t<=0)bSet(s,1,2.2);
   },
   // 2 The Gloop (and every piece of it): hops after you, splats a shockwave and a puddle; the big one leaps onto you
   (s,dt,T0,T)=>{
@@ -5329,8 +5335,9 @@ const LANE_KEYS={ArrowLeft:0,KeyA:0,ArrowDown:1,KeyS:1,ArrowUp:2,KeyW:2,ArrowRig
 const LANE_COL=['#ff5fd2','#5fd8ff','#7dff6a','#ffb24a'];
 function danceStart(h){
   const ch=danceChart(h.seed,h.round),t0=performance.now()/1000+h.delay;
-  BS.dance={ch,t0,notes:ch.notes.map(n=>({...n,j:null})),groove:BS.dance?BS.dance.groove:100,fb:'',fbT:0,beatN:-8,round:h.round,cmb:0};
-  say('DANCE OFF! Round '+h.round+': hit the arrows as they reach the top.',2.6);
+  const him=h.part==='him';
+  BS.dance={ch,t0,notes:ch.notes.map(n=>({...n,j:null})),groove:BS.groove??100,fb:'',fbT:0,beatN:-8,round:h.round,cmb:0,him};
+  say(him?'My turn! Hit the arrows to dodge his moves.':'DANCE OFF! Round '+h.round+': your turn. Every arrow you hit hurts him.',2.6);
   danceShow();
 }
 function danceKey(code){
@@ -5340,9 +5347,11 @@ function danceKey(code){
   D.flash=D.flash||[0,0,0,0];D.flash[L]=0.12;
   const j=best?judge(now-best.t):null;
   if(!j)return true;   // a stray press costs nothing
-  best.j=j;D.cmb++;D.groove=Math.min(100,D.groove+(j==='perfect'?5:2));D.fb=j==='perfect'?'PERFECT':'GOOD';D.fbT=0.5;
+  best.j=j;D.cmb++;D.groove=Math.min(100,D.groove+(j==='perfect'?5:2));D.fb=D.him?'DODGE':j==='perfect'?'PERFECT':'GOOD';D.fbT=0.5;BS.groove=D.groove;
   tone([523,587,659,784][L]*(j==='perfect'?2:1),0.08,'triangle',0.06);
-  const m=bMain();if(m)wSend([{i:F.shades.indexOf(m),d:j==='perfect'?3:2,ddr:1}]);
+  const m=bMain();if(m&&!D.him)wSend([{i:F.shades.indexOf(m),d:j==='perfect'?3:2,ddr:1}]);
+  if(D.him){best.dodge=R.time;noise(0.08,0.06,5000,2)}
+  BS.move={lane:L,t:R.time};mpSend({k:'bdm',d:R.depth,l:L});
   return true;
 }
 function danceTick(dt){
@@ -5351,14 +5360,18 @@ function danceTick(dt){
   if(state!=='play')return;
   const now=performance.now()/1000-D.t0;
   // the beat
-  for(const n of D.notes)if(!n.j&&now-n.t>0.15){n.j='miss';D.cmb=0;D.groove-=16;D.fb='MISS';D.fbT=0.5;
-    if(D.groove<=0){D.groove=60;if(P.inv<=0){hurt(null);say('Out of step! The Boogie Man zaps you.',1.6)}}}
+  for(const n of D.notes)if(!n.j&&now-n.t>0.15){n.j='miss';D.cmb=0;D.fbT=0.5;
+    if(D.him){   // his move lands on you: four of those and it costs a heart
+      D.groove-=25;D.fb='HIT!';n.hitT=R.time;tone(140,0.18,'sawtooth',0.1,0,-60);const h=$('hurt');h.style.transition='none';h.style.opacity=0.45;requestAnimationFrame(()=>{h.style.transition='opacity .5s';h.style.opacity=0});pkShake=Math.max(pkShake,0.25)}
+    else{D.groove-=16;D.fb='MISS'}
+    if(D.groove<=0){D.groove=60;if(P.inv<=0){hurt(null);say(D.him?'He got you! Keep dodging.':'Out of step! The Boogie Man zaps you.',1.6)}}
+    BS.groove=D.groove}
   if(D.fbT>0)D.fbT-=dt;if(D.flash)for(let i=0;i<4;i++)D.flash[i]=Math.max(0,D.flash[i]-dt);
   if(now>D.ch.len+0.6){BS.dance=null;danceHide();return}
   danceDraw(now);
 }
 function danceShow(){
-  if(!BS.dc){const c=document.createElement('canvas');c.width=360;c.height=640;c.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);height:min(80vh,640px);z-index:6;pointer-events:none;display:none';
+  if(!BS.dc){const c=document.createElement('canvas');c.width=360;c.height=640;c.style.cssText='position:fixed;top:50%;right:3vw;transform:translateY(-50%);height:min(78vh,620px);z-index:6;pointer-events:none;display:none';   // to the side, so the dance floor shows
     c.addEventListener('pointerdown',e=>{const r=c.getBoundingClientRect(),L=clamp(Math.floor((e.clientX-r.left)/r.width*4),0,3);danceKey(['ArrowLeft','ArrowDown','ArrowUp','ArrowRight'][L]);e.preventDefault()});
     document.body.appendChild(c);BS.dc=c}
   BS.dc.style.display='block';BS.dc.style.pointerEvents=touch.on?'auto':'none';
@@ -5378,10 +5391,43 @@ function danceDraw(now){
   x.fillStyle='rgba(0,0,0,.6)';x.fillRect(20,H-28,W-40,12);x.fillStyle=D.groove>40?'#7dff6a':'#ff5a4a';x.fillRect(20,H-28,(W-40)*clamp(D.groove/100,0,1),12);
   x.font='bold 20px Georgia';x.textAlign='center';x.fillStyle='#ffe1b0';x.fillText('GROOVE',W/2,H-36);
   if(now<0){x.font='bold 64px Georgia';x.fillText(String(Math.ceil(-now)),W/2,H/2)}
-  if(D.fbT>0){x.font='bold 34px Georgia';x.fillStyle=D.fb==='MISS'?'#ff6a5a':D.fb==='PERFECT'?'#fff27a':'#9cf';x.fillText(D.fb,W/2,top+90)}
+  x.font='bold 18px Georgia';x.fillStyle=D.him?'#ff8ad8':'#9cf';x.fillText(D.him?'HIS TURN: DODGE':'YOUR TURN: ATTACK',W/2,top+48);
+  if(D.fbT>0){x.font='bold 34px Georgia';x.fillStyle=D.fb==='MISS'||D.fb==='HIT!'?'#ff6a5a':D.fb==='PERFECT'?'#fff27a':'#9cf';x.fillText(D.fb,W/2,top+90)}
   if(D.cmb>4){x.font='bold 22px Georgia';x.fillStyle='#fff';x.fillText(D.cmb+' combo',W/2,top+124)}
 }
 
+// ---- the dance-off camera: during a round everyone's view pulls back to take in the whole dance floor (every player and the
+// Boogie Man), and you see yourself dance with the others
+function danceFight(){return !!(F&&F.boss&&BOSSES[F.boss.i].id==='boogie'&&BS.started&&!BS.won&&!P.down&&state==='play')}
+// shots, each held for two bars of the music: [angle from behind the dancers, distance, height, drift]
+const DANCE_SHOTS=[[0,1,1.08,0.18],[0.95,0.82,0.92,-0.3],[-0.95,0.82,0.92,0.3],[Math.PI,0.9,1.1,0.12],[0.45,0.62,0.62,0.35],[-0.5,1.05,1.15,-0.2],[Math.PI-0.7,0.7,0.75,-0.25],[1.6,0.95,1.0,0.22]];
+function danceCam(){
+  if(!danceFight())return null;
+  const m=bMain();if(!m||m.x<0)return null;
+  const pts=[[P.x,P.z]];if(MP.on)for(const p of MP.peers.values())if(mpDrawn(p)&&p.rx!==undefined)pts.push([p.rx,p.rz]);
+  let ax=0,az=0;for(const q of pts){ax+=q[0];az+=q[1]}ax/=pts.length;az/=pts.length;
+  let dx=ax-m.x,dz=az-m.z,l=Math.hypot(dx,dz);if(l<0.3){dx=0;dz=1;l=1}dx/=l;dz/=l;
+  const mx=(ax+m.x)/2,mz=(az+m.z)/2;let sp=1;for(const q of[...pts,[m.x,m.z]])sp=Math.max(sp,Math.hypot(q[0]-mx,q[1]-mz));
+  // which shot: cut on the bar line of whatever is playing (the round's chart, or the song between rounds)
+  const D=BS.dance,beat=D?D.ch.beat:60/DISCO.bpm,tt=D?performance.now()/1000-D.t0:R.time,n=Math.floor(tt/(beat*8)),ix=((n%DANCE_SHOTS.length)+DANCE_SHOTS.length)%DANCE_SHOTS.length;
+  const sh=D&&D.him&&n%3===1?[Math.PI,0.75,0.85,0.2]:DANCE_SHOTS[ix],ph=(tt/(beat*8))-n;   // his turn often cuts to behind him, looking at you
+  const base=Math.atan2(dz,dx)+sh[0]+sh[3]*(ph-0.5)*1.2,want=(sp/Math.tan(0.55)+0.55)*sh[1];
+  const x=clamp(mx+Math.cos(base)*want,1.35,F.W-1.35),z=clamp(mz+Math.sin(base)*want,1.35,F.H-1.35),y=Math.min(1.15,sh[2]),d=Math.hypot(mx-x,mz-z)||1;
+  const C=BS.dcam||(BS.dcam={x:P.x,z:P.z,y:EYE,yaw:P.yaw,pitch:0,ix});
+  const cut=C.ix!==ix&&D;C.ix=ix;const k=cut?0.35:0.06;   // a quick swing on the cut, then a slow drift
+  C.x+=(x-C.x)*k;C.z+=(z-C.z)*k;C.y+=(y-C.y)*k;
+  const yaw=Math.atan2(mz-C.z,mx-C.x),pitch=-Math.atan2(C.y-0.6,d);
+  C.yaw+=angD(C.yaw,yaw)*Math.min(1,k*2);C.pitch+=(pitch-C.pitch)*Math.min(1,k*2);
+  return {x:C.x,y:C.y,z:C.z,yaw:C.yaw,pitch:C.pitch};
+}
+function danceSelf(t){
+  const id=MP.on?MP.id:'me',m=bMain();
+  if(m)P.yaw=turnTo(P.yaw,Math.atan2(m.z-P.z,m.x-P.x),0.2);   // you face your partner
+  BS.self=BS.self||{};Object.assign(BS.self,{id,col:MP.on?MP_COLS[hashStr(MP.id||'')%MP_COLS.length]:[0.62,0.32,0.2],rx:P.x,rz:P.z,ry:P.y,ryaw:P.yaw,rpitch:0,spd:0,walk:0,
+    dz:BS.move||{lane:-1,t:R.time-1},fat:FX.fat>0,pox:FX.pox>0});
+  const q=buildPlayer(BS.self,t).torch;
+  if(P.fuel>0){spr(q[0],q[1]+0.02,q[2],0.07,0.12,11,1.0,0.6,0.2,1,1);spr(q[0],q[1],q[2],0.5,0.5,7,1.0,0.5,0.15,0.25,1)}
+}
 // ---- bare fists: on a boss floor with no weapon in hand you still have your fists
 function wPunch(){
   if(!canUse()||potHeld()||W.cd>0)return;W.cd=0.5;W.swing=1;W.swingT=0.25;
@@ -5438,13 +5484,15 @@ const BDRAW=[
     for(let x=-3;x<=3;x++)for(let z=-3;z<=3;z++){const v=(Math.floor(bt)+x*3+z*5)%4,c=hex3(LANE_COL[(v+4)%4]),k=0.25+0.35*((x+z+Math.floor(bt))%2===0?1:0);slab({p:[cx+x,0.006,cz+z],R:ID3},[0,0,0],[0.46,0.004,0.46],[c[0]*k,c[1]*k,c[2]*k,7])}
     {const db={p:[cx,1.05,cz],R:rYaw(t*0.8)};ball(db,[0,0,0],0.13,[0.9,0.9,1,4]);seg(db,[0,0.12,0],[0,0.2,0],0.005,0.005,[0.3,0.3,0.3,4]);
       for(let i=0;i<8;i++){const a=t*0.8+i*0.785,e=0.4+0.3*Math.sin(t*3+i);spr(cx+Math.cos(a)*0.14,1.05+Math.sin(i*2.1)*0.08,cz+Math.sin(a)*0.14,0.05,0.05,7,e*2,e*2,e*2.2,1,1)}}
-    const dance=s.state===2,sw=Math.sin(bt*Math.PI)*(dance?0.12:0.05),pt=Math.floor(bt)%2,suit=[0.95,0.93,0.88,2],sk=[0.1,0.04,0.16,8],gl=[0.03,0.02,0.04,4];
+    const his=s.state===4,dance=s.state===2||his,sw=Math.sin(bt*Math.PI)*(his?0.2:dance?0.1:0.05),pt=Math.floor(bt*(his?2:1))%2,suit=[0.95,0.93,0.88,2],sk=[0.1,0.04,0.16,8],gl=[0.03,0.02,0.04,4];
     const B=fr(s,0,rZ(0),1.05),U=subF(B,[0,0.5,0],m3(rX(sw),rZ(-0.05)));
     for(const z of[-1,1]){const k=z>0?sw:-sw;seg(B,[0,0.5,z*0.06],[0.02,0.25,z*(0.08+Math.max(0,k))],0.05,0.045,suit);seg(B,[0.02,0.25,z*(0.08+Math.max(0,k))],[0,0.06,z*0.1],0.045,0.1,suit);slab(B,[0.03,0.03,z*0.1],[0.07,0.03,0.045],[0.95,0.75,0.2,4])}
     seg(U,[0,0,0],[0,0.3,0],0.09,0.12,suit);slab(U,[0.1,0.22,0],[0.01,0.1,0.06],sk);
     for(const z of[-1,1])slab(U,[0.11,0.27,z*0.06],[0.01,0.04,0.05],suit,rX(z*0.5));
     for(const z of[-1,1]){const up=dance?(pt===(z>0?1:0)):z>0,sh=[0,0.28,z*0.13];
-      if(up)limb(U,sh,[0.05,0.45,z*0.2],[0.08,0.66,z*0.24],0.04,0.035,0.03,suit,suit,sk,0.035);
+      if(s.state===3&&z>0)limb(U,sh,[0.2,0.3,z*0.16],[0.42,0.34,z*0.12],0.04,0.035,0.03,suit,suit,sk,0.035);   // "my turn": he points at you
+      else if(his&&up)limb(U,sh,[0.18,0.36,z*0.18],[0.36,0.42,z*0.12],0.04,0.035,0.03,suit,suit,sk,0.035);   // throwing a move at you
+      else if(up)limb(U,sh,[0.05,0.45,z*0.2],[0.08,0.66,z*0.24],0.04,0.035,0.03,suit,suit,sk,0.035);
       else limb(U,sh,[0.1,0.16,z*0.22],[0.12,0.0,z*0.32],0.04,0.035,0.03,suit,suit,sk,0.035)}
     seg(U,[0,0.3,0],[0,0.36,0],0.04,0.04,sk);
     const Hd=subF(U,[0,0.44,0],rZ(Math.sin(bt*Math.PI*2)*0.08));
@@ -5452,6 +5500,19 @@ const BDRAW=[
     slab(Hd,[0.085,0.015,0],[0.012,0.022,0.075],gl);for(const z of[-1,1])ball(Hd,[0.098,0.015,z*0.035],0.014,[2.6,0.5,2.2,7],true);
     slab(Hd,[0.08,-0.05,0],[0.01,0.008,0.035],[2,2,2,7]);   // a grin
     spr(s.x,1.0,s.z,1.6,1.6,7,0.6,0.1,0.5,0.15,1);
+    const D=BS.dance;
+    if(D&&D.him&&!P.down){   // every arrow of his turn is a glittering shot flying at you, arriving with its arrow
+      const now=performance.now()/1000-D.t0,fx=s.x+Math.cos(s.face||0)*0.3,fz=s.z+Math.sin(s.face||0)*0.3,FL=1.3;
+      for(const n of D.notes){
+        const c=hex3(LANE_COL[n.lane]),left=n.t-now;
+        if(!n.j&&left>0&&left<FL){const k=1-left/FL,side=(n.lane-1.5)*0.35*Math.sin(k*Math.PI);
+          const x=fx+(P.x-fx)*k+side*Math.sin(s.face||0),z=fz+(P.z-fz)*k-side*Math.cos(s.face||0),y=0.85+Math.sin(k*Math.PI)*0.25-0.2*k;
+          ball({p:[x,y,z],R:ID3},[0,0,0],0.05,[c[0]*2.5,c[1]*2.5,c[2]*2.5,7],true);spr(x,y,z,0.32,0.32,7,c[0],c[1],c[2],0.8,1);
+          for(let q=1;q<4;q++){const k2=Math.max(0,k-q*0.04);spr(fx+(P.x-fx)*k2,0.85+Math.sin(k2*Math.PI)*0.25-0.2*k2,fz+(P.z-fz)*k2,0.12,0.12,7,c[0],c[1],c[2],0.5-q*0.12,1)}}
+        else if(n.dodge&&R.time-n.dodge<0.4){const a=(R.time-n.dodge)/0.4;for(let q=0;q<6;q++){const an=q*1.05+n.lane;spr(P.x+Math.cos(an)*a*0.8,0.8+Math.sin(q*2)*a*0.4,P.z+Math.sin(an)*a*0.8,0.08,0.08,7,c[0],c[1],c[2],1-a,1)}}
+        else if(n.hitT&&R.time-n.hitT<0.3){const a=(R.time-n.hitT)/0.3;spr(P.x,0.8,P.z,0.3+a,0.3+a,7,1,0.3,0.6,0.8*(1-a),1)}
+      }
+    }
   },
   // the Gloop: a shining green blob with two bobbing eyes (squashes when it lands, stretches when it jumps)
   (s,t,ag)=>{
@@ -6672,6 +6733,7 @@ function mpRecv(m,from){
     case 'wh':{if(!MP.host||!inRun||!here||!Array.isArray(m.h))break;for(const h of m.h.slice(0,24))if(h&&Number.isInteger(h.i)&&Number.isFinite(+h.d)&&+h.d<50)wApply(h,from);break}
     case 'gw':{if(fromHost&&inRun&&here)grannyWoozy();break}
     case 'bz':{if(fromHost&&inRun&&here&&F.boss&&m.h&&typeof m.h==='object'){const h={...m.h,t:0};if(!BS.hz.some(q=>q.id===h.id))BS.hz.push(h)}break}
+    case 'bdm':{if(inRun&&here&&p){p.dz={lane:clamp(m.l|0,0,3),t:R.time}}break}
     case 'bst':{if(fromHost&&inRun&&here)bossStart(true);break}
     case 'bd':{if(fromHost&&inRun&&here)bossWin();break}
     case 'bfx':{if(fromHost&&inRun&&here&&m.w==='fuel')bFuelMe(Math.min(60,+m.a||0),String(m.why||'').slice(0,80));break}
@@ -6860,6 +6922,9 @@ function buildPlayer(p,t,rev,et){
   const S=AV,v=(x,y,z)=>[x*S,y*S,z*S],ph=hashStr(p.id)%100;
   const mv=Math.min(1,p.spd/2.7),w=p.walk,sw=Math.sin(w)*mv,bob=Math.abs(Math.cos(w))*0.018*mv,breath=Math.sin(t*1.7+ph)*0.004;
   const B={p:[p.rx,Math.max(0,p.ry),p.rz],R:rYaw(p.ryaw)};
+  // the dance-off: a groove while the round lasts, and a move for each arrow hit (lane 0 left, 1 down, 2 up, 3 right)
+  const dz=p.dz&&R.time-p.dz.t<0.55?p.dz:null,dk=dz?Math.sin(Math.min(1,(R.time-dz.t)/0.55)*Math.PI)**0.6:0,dl=dz?dz.lane:-1,dancing=p.dz&&R.time-p.dz.t<3;
+  if(dancing){B.p[1]+=Math.abs(Math.sin(R.time*7+ph))*0.02+(dl===2?0.07*dk:dl===1?-0.05*dk:0);B.R=m3(B.R,rX((dl===0?-0.22:dl===3?0.22:0)*dk+Math.sin(R.time*3.5+ph)*0.06))}
   for(const z of[-1,1]){
     const st=sw*z;
     const hip=v(0,0.45,z*0.052),knee=v(0.012+0.09*st,0.25+0.03*Math.max(0,st),z*0.058),ank=v(0.17*st,0.05+0.06*Math.max(0,-st),z*0.062);
@@ -6875,9 +6940,15 @@ function buildPlayer(p,t,rev,et){
   else mimicMaw(U,v,S,rev,t,et,cloak);
   ball(U,v(-0.035,0.2+breath,0),[0.055*S,0.12*S,0.095*S],cloakD);
   const la=-sw*0.09;
-  limb(U,v(0,0.225+breath,-0.1),v(-0.01+la*0.6,0.11+breath,-0.135),v(0.02+la,0.01,-0.115),0.03*S,0.027*S,0.023*S,cloak,cloak,skin,0.026*S);
-  const W1=v(0.16,0.17+breath,0.12);
-  limb(U,v(0,0.225+breath,0.1),v(0.05,0.11+breath,0.15),W1,0.03*S,0.027*S,0.023*S,cloak,cloak,skin,0.026*S);
+  const mix=(a,b,k)=>a.map((q,i)=>q+(b[i]-q)*k);
+  let LH=v(0.02+la,0.01,-0.115),LE=v(-0.01+la*0.6,0.11+breath,-0.135),W1=v(0.16,0.17+breath,0.12),RE=v(0.05,0.11+breath,0.15);
+  if(dz){
+    const L2=dl===0?v(0.02,0.4,-0.34):dl===2?v(0.03,0.52,-0.12):dl===1?v(0.16,0.12,-0.1):v(0.04,0.2,-0.2);
+    const R2=dl===3?v(0.02,0.4,0.34):dl===2?v(0.03,0.52,0.12):dl===1?v(0.18,0.12,0.1):v(0.04,0.2,0.2);
+    LH=mix(LH,L2,dk);W1=mix(W1,R2,dk);LE=mix(LE,[(0+LH[0])/2,(0.225*S+LH[1])/2,(-0.1*S+LH[2])/2-0.03*S],dk);RE=mix(RE,[(0+W1[0])/2,(0.225*S+W1[1])/2,(0.1*S+W1[2])/2+0.03*S],dk);
+  }
+  limb(U,v(0,0.225+breath,-0.1),LE,LH,0.03*S,0.027*S,0.023*S,cloak,cloak,skin,0.026*S);
+  limb(U,v(0,0.225+breath,0.1),RE,W1,0.03*S,0.027*S,0.023*S,cloak,cloak,skin,0.026*S);
   const tb=[W1[0]+0.004,W1[1]-0.05,W1[2]],tt=[W1[0]+0.03,W1[1]+0.13,W1[2]];
   seg(U,tb,tt,0.011,0.013,wood);ball(U,tt,[0.02,0.018,0.02],rag,true);
   seg(U,v(0,0.27+breath,0),v(0.003,0.31+breath,0),0.027*S,0.026*S,skin);
@@ -7762,7 +7833,7 @@ function update(dt){
   R.time+=dt;xrayTick(dt);guideTick(dt);mooseLureTick(dt);scoutTick(dt);
   // in a shared game the world keeps going while you pause or talk, but you stand still
   if(P.grab)mimicGrabTick(dt);
-  const ctl=state==='play'&&!P.grab&&!GL.fall&&!(GL.rb&&!GL.rb.fwd)&&!FX.frozen&&FX.curl!==1&&!potHeld()&&!P.hug&&!BS.dance;
+  const ctl=state==='play'&&!P.grab&&!GL.fall&&!(GL.rb&&!GL.rb.fwd)&&!FX.frozen&&FX.curl!==1&&!potHeld()&&!P.hug&&!BS.dance&&!danceFight();
   if(P.down)mpSpectate();
   else{
   // look and move: the shared movement system (src/movement.js), the same one the rooms use
@@ -8610,7 +8681,7 @@ function render(t){
   if(!F){renderer.clear();return}
   UT.value=t;
   const title=state==='title';
-  const SC=STUDIO&&STUDIO.cam;
+  const DC=title?null:danceCam(),SC=STUDIO&&STUDIO.cam||DC;
   const yaw=SC?SC.yaw:P.yaw, pitch=SC?SC.pitch:title?0:P.pitch;
   const riding=P.mounted&&!P.down&&!P.away;
   const ex=SC?SC.x:P.x, ez=SC?SC.z:P.z, ey=SC?SC.y:Math.min(CAM_TOP,EYE*(title?1:wofEye()*potEye())+(title?0:P.y+bobY(P,1)+(riding?.16:0)));
@@ -8717,7 +8788,7 @@ function render(t){
     if(!lurk&&!n.used&&n.type!=='keeper'){const y=o.top+0.08+Math.sin(t*3+n.ph)*0.03,X=n.x+(n.ox||0),Z=n.z+(n.oz||0);spr(X,y,Z,0.08,0.08,7,1.0,0.85,0.4,1,1);spr(X,y,Z,0.32,0.32,7,1.0,0.7,0.2,0.3,1)}
   }
   wofDraw(t,ex,ey,ez,dtR);}
-  drawMoose(t,title||!!STUDIO);drawScout(t,title||!!STUDIO);mpDrawPlayers(t,ex,ez,fwx,fwz);mimicDraw(t,ex,ez);glDraw(t,ex,ez,fwx,fwz);
+  if(DC)danceSelf(t);drawMoose(t,title||!!STUDIO);drawScout(t,title||!!STUDIO);mpDrawPlayers(t,ex,ez,fwx,fwz);mimicDraw(t,ex,ez);glDraw(t,ex,ez,fwx,fwz);
   if(F.safe&&(F.safe.x-ex)**2+(F.safe.z-ez)**2<22*22){
     const fl=F.safe.fl||1,X=F.safe.x,Z=F.safe.z;
     spr(X,0.72,Z,0.42*fl,0.62*fl,11,1.0,0.55,0.16,1,1);
@@ -8753,7 +8824,7 @@ function render(t){
   upload(lurkMesh,LURK);
   // the torch in your hand, drawn close to the eye so it never pokes through a wall
   HB.n=0;
-  if(!title&&state!=='dead'&&!P.down){
+  if(!title&&state!=='dead'&&!P.down&&!DC){
     const fm=wofForm();
     TB=HB;const q=fm?buildCritter({rx:P.x,rz:P.z,ry:P.y,ryaw:yaw,rpitch:pitch,walk:P.bob,spd:Math.hypot(P.vx,P.vz),fat:FX.fat>0,pox:FX.pox>0,curl:FX.curl},t,fm,true).torch:buildHand(t,ex,ey,ez,yaw,pitch);if(!fm)wDrawHand(t,ex,ey,ez,yaw,pitch);TB=CH;
     const hk=0.3,b=HB.buf;
