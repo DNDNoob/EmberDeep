@@ -28,6 +28,7 @@ export const WOF_SLICES=[
   {name:'Circle of Life',col:'#f2a8b8',dark:true},
   {name:'Russian Roulette',col:'#7a0e14'},
   {name:'Bomb',col:'#ff8a1a',dark:true},
+  {name:'Crunch Gremlin',col:'#c2551e'},
 ];
 export const WOF_N=WOF_SLICES.length;
 export const WOF_W=Math.PI*2/WOF_N;              // one slice
@@ -40,16 +41,23 @@ export const sliceAt=a=>Math.floor(mod(a,TAU)/WOF_W)%WOF_N;
 
 // rest inside the slice, clear of the pegs at its edges (the flapper must hang free when the wheel stops)
 export function planSpin(index,from,rnd=Math.random){
-  const turns=6+Math.floor(rnd()*3);
-  const inSlice=0.13+rnd()*0.1;                   // radians past the slice's leading peg (the pegs hold the flapper from W-0.05 to 0.11; W is 0.3 with 21 slices)
+  // every spin is its own: 4 to 11 full turns, 9 to 19 seconds, and a coast curve from a quick stop (e 2.2) to a long, teasing crawl (e 4.6),
+  // so how hard it was spun, how long it runs and how it slows all vary independently of where it lands
+  const turns=4+Math.floor(rnd()*8);
+  const inSlice=0.13+rnd()*0.085;                   // radians past the slice's leading peg (the pegs hold the flapper from W-0.05 to 0.11)
   const base=from-mod(from,TAU)+TAU*turns;
   const to=base+index*WOF_W+inSlice;
-  return {from,to,dur:12+rnd()*2.5};
+  return {from,to,dur:9+rnd()*10,e:2.2+rnd()*2.4};
 }
-// a long coast: fast at first, then a crawl past the last few pegs
+// a long coast: fast at first, then a crawl past the last few pegs (how long the crawl is depends on the spin's e)
 export function spinAngle(plan,t){
-  const u=Math.min(1,Math.max(0,t/plan.dur)),k=1-Math.pow(1-u,3.2);
+  const u=Math.min(1,Math.max(0,t/plan.dur)),k=1-Math.pow(1-u,plan.e||3.2);
   return plan.from+(plan.to-plan.from)*k;
+}
+// pick a slice: any of them can come up, but the last few results are much less likely to come straight back
+export function pickSlice(recent,n,rnd=Math.random){
+  const w=Array.from({length:n},(_,i)=>{const k=recent.lastIndexOf(i);return k<0?1:0.08+0.12*(recent.length-1-k)/Math.max(1,recent.length)});
+  let r=rnd()*w.reduce((a,b)=>a+b,0);for(let i=0;i<n;i++){r-=w[i];if(r<=0)return i}return n-1;
 }
 
 // the flapper is pushed aside by the peg coming up under it, slips off and swings back.
@@ -90,7 +98,7 @@ export function drawWheelFace(){
     const lines=words.length>2?[words.slice(0,2).join(' '),words.slice(2).join(' ')]:words.length===2&&WOF_SLICES[i].name.length>11?words:[words.join(' ')];
     g.save();g.translate(cx,cy);g.rotate(a);   // -y of this frame points out through the middle of the slice
     g.textAlign='center';g.textBaseline='middle';
-    const len=340,fs=Math.min(40,Math.floor(len/Math.max(...lines.map(s=>s.length))/0.74));
+    const len=340,fs=Math.min(36,Math.floor(len/Math.max(...lines.map(s=>s.length))/0.74));
     g.font=`900 ${fs}px "Arial Black",Impact,Arial,sans-serif`;
     lines.forEach((s,k)=>{
       const off=((lines.length-1)/2-k)*(fs*1.05);

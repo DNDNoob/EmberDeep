@@ -503,13 +503,17 @@ export function createBreaks(renderer,{onBeep,ui}){
   }
   return {
     get active(){return !!cur},get kind(){return cur&&cur.kind},
-    start(kind,onDone,o){if(cur)this.stop(true);cur=kind==='ad'?ad(onDone):kind==='dmv'?dmv(onDone):kind==='birth'?birth(onDone):kind==='roulette'?roulette(onDone,o):walmart(onDone);ui.open(kind)},
+    start(kind,onDone,o){if(cur)this.stop(true);cur=kind==='ad'?ad(onDone):kind==='dmv'?dmv(onDone):kind==='birth'?birth(onDone):kind==='roulette'?roulette(onDone,o):walmart(onDone);ui.open(kind);
+      // compile the scene's shaders in parallel first; until then the screen stays dark instead of freezing
+      const c=cur;c.ready=false;const ok=()=>{c.ready=true};try{renderer.compileAsync(c.S.sc,c.S.cam).then(ok,ok)}catch(e){ok()}setTimeout(ok,3000)},
     seek(t){if(cur)cur.t=t},   // for tools/wheel_test.mjs
     look(dx,dy){if(!cur||cur.kind==='ad'||cur.kind==='birth')return;cur.yaw=clamp(cur.yaw-dx,-1.6,1.6);cur.pitch=clamp(cur.pitch-dy,-0.9,0.7)},
     stop(silent){if(!cur)return;const c=cur;cur=null;ui.close();c.S.sc.traverse(o=>{if(o.geometry&&!Object.values(G).includes(o.geometry))o.geometry.dispose()});if(!silent&&c.onDone)c.onDone()},
     render(dt){
       if(!cur)return;
-      const c=cur,alive=c.tick(Math.min(dt,1));
+      const c=cur;
+      if(!c.ready)return;   // the last frame stays up for the moment it takes
+      const alive=c.tick(Math.min(dt,1));
       const s=renderer.getSize(new THREE.Vector2());c.S.cam.aspect=s.x/Math.max(1,s.y);c.S.cam.updateProjectionMatrix();
       renderer.render(c.S.sc,c.S.cam);
       if(!alive)this.stop();

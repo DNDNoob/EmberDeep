@@ -330,7 +330,7 @@ const PROPS=[
 ];
 const REFL_SKIP=new Set(['grass','tulip','daisy','slab','reed']);
 const ROCKY=new Set(['bigrock','bigmoss','boulder','mossrock']);
-const HOLD_MAX=8;
+const HOLD_MAX=4;   // a first visit (nothing baked or cached yet) opens on stand-ins after this, rather than a long black wait
 const BAKE_ORDER=['fir0','shrub0','mossrock0','oak0','grass0','tulip0','daisy0','reed0','slab0','bigrock0','boulder0','fir1','grass1','oak1','shrub1','bigmoss0','snag0','fir2','mossrock1','reed1','bigrock1','grass2','slab1'];
 // which prop each BAKE_ORDER id is for a room seed: the room and stillwoodWarm both read this, so their getProp keys always match
 const bakeFam=seed=>(seed%3)*10;
@@ -1108,8 +1108,8 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   S.update=(dt,input)=>{
     if(holding){
       holdT+=dt;
-      if(S.ready||holdT>HOLD_MAX){holding=false;S.fade=0;S.in=0}
-      else{S.fade=1;return}
+      if(S.ready||holdT>HOLD_MAX){holding=false;S.fade=0;S.in=0;o.hud('')}
+      else{S.fade=1;o.hud('<small>The wood is growing... '+Math.round(100*bake.done/bake.total)+'%</small>');return}   // so the black is never a mystery
     }
     S.t+=dt;let moving=false;
     if(!A.watching){

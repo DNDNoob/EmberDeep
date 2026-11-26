@@ -33,9 +33,12 @@ import {createSettingsScreen,createTerminalSession} from './shared-terminal.js';
 import {landingMazeZ} from './mine-shaft.js';
 import {NEWS} from './news.js';
 import {floorDiorama,lenticularDoor} from './archive-hall.js';
-import {wheelModel,planSpin,spinAngle,pegPush,sliceAt,WOF_SLICES,WOF_N,WOF_W} from './wheel.js';
+import {wheelModel,planSpin,spinAngle,pegPush,sliceAt,pickSlice,WOF_SLICES,WOF_N,WOF_W} from './wheel.js';
 import {announce,statusStrip,tints,coinFlip,breakUI} from './wheel-screens.js';
 import {createBreaks} from './wheel-breaks.js';
+import {WEAPONS,WEAPON} from './weapons.js';
+import {BOSSES,bossAt,bossHp,bossSpeed,bossGems,danceChart,judge} from './bosses.js';
+import {INGREDIENTS,POTIONS,SLUDGE,hex3,brew,brewAny,potInfo,recipeText,DEBUFF,MAX_ID,TIER_K,TIER_M} from './potions.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('gl');
@@ -49,6 +52,9 @@ let renderer=null;
 try{
   renderer=new THREE.WebGLRenderer({canvas,antialias:Q===0&&!SAFE,alpha:false,stencil:false,powerPreference:WANT_GTX&&!SAFE?'high-performance':'default'});
 }catch(e){renderer=null}
+// Reading a shader's log forces the driver to finish compiling it right there, freezing the frame. Leave it to ?debug, so shaders
+// compile in parallel (renderer.compileAsync, behind the loading screens) instead of stalling the first frames of play.
+if(renderer)renderer.debug.checkShaderErrors=/[?&]debug\b/.test(location.search);
 if(!renderer){
   document.body.innerHTML = '<div class="panel"><h2>WebGL2 is not available</h2><div class="sub">Open this page in a current Chrome, Edge or Firefox with hardware acceleration turned on.</div></div>';
   throw new Error('no webgl2');
@@ -61,7 +67,7 @@ function hashStr(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt
 function randSeed(){const c='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';let s='';for(let i=0;i<6;i++)s+=c[Math.random()*c.length|0];return s}
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
 let archiveRun=null;
-const runSaveKeys=new Set(['wallet','up','ach','best','deepest']);
+const runSaveKeys=new Set(['wallet','up','ach','best','deepest','brewBag','smith']);
 const store={
   get:lsGet,
   set(k,v){if(!archiveRun||!runSaveKeys.has(k))lsSet(k,v)}
@@ -113,12 +119,13 @@ function bfs(g,W,H,sx,sy){
 // every floor that is not a Humming Rooms floor moves on to the next biome
 const ORDER=[0,1,2,3,5,6,7];
 function biomeIx(depth){return ORDER[(depth-1-Math.floor(depth/4))%ORDER.length]}
-function floorKind(depth){if(depth>=4&&depth%4===0)return 'back';if(depth>=7&&depth%8===7)return 'forest';if(depth>=3&&depth%4===3)return 'cave';if(depth>=5&&depth%4===1)return 'dark';return 'maze'}
+function floorKind(depth){if(bossAt(depth))return 'arena';if(depth>=4&&depth%4===0)return 'back';if(depth>=7&&depth%8===7)return 'forest';if(depth>=3&&depth%4===3)return 'cave';if(depth>=5&&depth%4===1)return 'dark';return 'maze'}
 function genFloor(seedStr,depth,look){
   const rng=mulberry32(hashStr(seedStr+'#'+depth));
   const ri=n=>(rng()*n)|0;
   let kind=floorKind(depth);
-  const cw=Math.min(8+depth,20), ch=cw, W=cw*2+1, H=ch*2+1;
+  const BA=kind==='arena'?bossAt(depth):null;   // a boss floor: one open arena
+  const cw=BA?8:Math.min(8+depth,20), ch=cw, W=cw*2+1, H=ch*2+1;
   const idx=(x,y)=>y*W+x;
   const shuffle=a=>{for(let i=a.length-1;i>0;i--){const j=ri(i+1);const t=a[i];a[i]=a[j];a[j]=t}return a};
   let g=null,stx=1,sty=1,cells=[];
@@ -180,7 +187,14 @@ function genFloor(seedStr,depth,look){
     for(let cy=0;cy<ch;cy++)for(let cx=0;cx<cw;cx++)if(!g[idx(cx*2+1,cy*2+1)])cells.push([cx*2+1,cy*2+1]);
     const stc=cells[ri(cells.length)];stx=stc[0];sty=stc[1];
   }
-  if(kind!=='cave'&&kind!=='back'){
+  if(kind==='arena'){
+    // the boss's arena: one big open hall, walls all round, you come in at the south end and the way down is at the north end
+    g=new Uint8Array(W*H).fill(1);
+    for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++)g[idx(x,y)]=0;
+    stx=cw;sty=H-2;
+    for(let y=1;y<H-1;y+=2)for(let x=1;x<W-1;x+=2)cells.push([x,y]);
+  }
+  if(kind!=='cave'&&kind!=='back'&&kind!=='arena'){
     g=new Uint8Array(W*H).fill(1);
     const vis=new Uint8Array(cw*ch);
     const sx=ri(cw), sy=ri(ch);
@@ -213,7 +227,8 @@ function genFloor(seedStr,depth,look){
   }
   // sanctuary: a 3x3 safe room around a brazier (tile value 4). Creatures never enter it.
   let safe=null;
-  if(kind==='cave'||kind==='back'){
+  if(kind==='arena'){}
+  else if(kind==='cave'||kind==='back'){
     const sc=[];
     for(let y=2;y<H-2;y++)for(let x=2;x<W-2;x++){
       let ok=Math.abs(x-stx)+Math.abs(y-sty)>3;
@@ -240,11 +255,13 @@ function genFloor(seedStr,depth,look){
       let ok=true;for(let dy=-1;dy<=1&&ok;dy++)for(let dx=-1;dx<=1;dx++)if(g[idx(x+dx,y+dy)]){ok=false;break}
       if(ok&&rng()<0.07){g[idx(x,y)]=3;pillars.push([x+0.5,y+0.5])}
     }
-  }else if(kind!=='back')for(let y=2;y<H-2;y+=2)for(let x=2;x<W-2;x+=2)if(g[idx(x,y)]===0&&rng()<0.6){g[idx(x,y)]=3;pillars.push([x+0.5,y+0.5])}
+  }else if(kind==='arena'){for(const c of bossPillars(BA.i,W,H)){g[idx(c[0],c[1])]=3;pillars.push([c[0]+0.5,c[1]+0.5])}}
+  else if(kind!=='back')for(let y=2;y<H-2;y+=2)for(let x=2;x<W-2;x+=2)if(g[idx(x,y)]===0&&rng()<0.6){g[idx(x,y)]=3;pillars.push([x+0.5,y+0.5])}
   const d0=bfs(g,W,H,stx,sty);
   // exit = farthest spot from the start
   let ex=stx,ey=sty,best=-1;
   for(const c of cells){const dd=d0[idx(c[0],c[1])];if(dd>best){best=dd;ex=c[0];ey=c[1]}}
+  if(BA){ex=cw;ey=1}
   let cand=cells.filter(c=>!(c[0]===stx&&c[1]===sty)&&!(c[0]===ex&&c[1]===ey));
   // shards: spread out with farthest-point sampling on walking distance
   const minD=new Int32Array(W*H).fill(1e9);
@@ -252,7 +269,7 @@ function genFloor(seedStr,depth,look){
   addField(stx,sty);addField(ex,ey);
   const items=[];
   const put=(type,c)=>items.push({type,tx:c[0],ty:c[1],x:c[0]+0.5,z:c[1]+0.5,got:false,ph:rng()*6.28});
-  for(let s=0;s<3;s++){
+  for(let s=0;s<(BA?0:3);s++){
     let bi=0,bv=-1;
     for(let i=0;i<cand.length;i++){const v=minD[idx(cand[i][0],cand[i][1])]+rng()*2;if(v>bv){bv=v;bi=i}}
     const c=cand.splice(bi,1)[0];put('shard',c);addField(c[0],c[1]);
@@ -265,7 +282,8 @@ function genFloor(seedStr,depth,look){
   far=far.filter(c=>!safeMask[idx(c[0],c[1])]);
   const spawn=(type,n)=>{for(let i=0;i<n&&far.length;i++){const c=far.splice(ri(far.length),1)[0];
     shades.push({type,x:c[0]+0.5,z:c[1]+0.5,gx:c[0],gy:c[1],px:-1,py:-1,state:0,stun:0,think:rng()*0.2,vis:false,frozen:false,ph:rng()*6.28,d:99,snd:0})}};
-  if(kind==='back'){spawn(0,Math.max(1,Math.min(Math.floor(depth*0.3),4)));spawn(3,1+(depth>=12?1:0))}
+  if(BA){}
+  else if(kind==='back'){spawn(0,Math.max(1,Math.min(Math.floor(depth*0.3),4)));spawn(3,1+(depth>=12?1:0))}
   else{
     spawn(0,Math.min(1+Math.floor((depth-1)*0.6),7));
     spawn(1,depth>=3?1+(depth>=7?1:0)+(depth>=11?1:0):0);
@@ -277,17 +295,18 @@ function genFloor(seedStr,depth,look){
   const take=(type,n)=>{for(let i=0;i<n&&pool.length;i++)put(type,pool.pop())};
   take('oil',Math.round((Math.round(nCells/20)+1)*(kind==='dark'?1.5:1)));
   take('flash',1+(depth>3?1:0));
+  if(BA)take('oil',BA.i===4?5:2);   // the arena: a little more oil (a lot more where Mother Tallow blows out your torch)
   if(depth>1&&rng()<0.6)take('heart',1);
   // corridor tiles: exactly two open neighbours, opposite each other
   const corr=[];
-  if(kind!=='cave'&&kind!=='back')for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
+  if(kind!=='cave'&&kind!=='back'&&!BA)for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
     if(g[idx(x,y)]||safeMask[idx(x,y)]||((x&1)===(y&1)))continue;
     const l=g[idx(x-1,y)],r=g[idx(x+1,y)],u=g[idx(x,y-1)],dn=g[idx(x,y+1)];
     if((!l&&!r&&u&&dn)||(l&&r&&!u&&!dn))corr.push([x,y]);
   }
   // one locked gate that seals off part of the floor; its key is always on the near side
   let door=null;
-  if(kind!=='cave'&&kind!=='back'&&depth>=2){
+  if(kind!=='cave'&&kind!=='back'&&!BA&&depth>=2){
     let total=0;for(let i=0;i<W*H;i++)if(!g[i])total++;
     for(const c of shuffle(corr.slice())){
       const di=idx(c[0],c[1]);
@@ -318,13 +337,13 @@ function genFloor(seedStr,depth,look){
       discs:[[wx-nx*0.03,wz-nz*0.03,0.24],[wx+nz*0.38,wz-nx*0.38,0.07],[wx-nz*0.38,wz+nx*0.38,0.07]]};   // the stand's middle and both posts, for collision
   }
   {const r=rng(),wt=depth===1?'map':r<0.4?'map':r<0.75?'delver':null;
-    if(wt&&pool.length){const c=pool.pop(),w={type:wt,x:c[0]+0.5,z:c[1]+0.5,ph:rng()*6.28,used:false,gift:ri(3),tip:ri(6)};
+    if(wt&&pool.length&&!BA){const c=pool.pop(),w={type:wt,x:c[0]+0.5,z:c[1]+0.5,ph:rng()*6.28,used:false,gift:ri(3),tip:ri(6)};
       for(const d of DIRS)if(g[idx(c[0]+d[0],c[1]+d[1])]===1){w.ox=d[0]*0.27;w.oz=d[1]*0.27;w.wy=Math.atan2(-d[1],-d[0]);break}
       npcs.push(w)}}
   take('gem',Math.round(nCells/6));
   // spike traps
   const traps=[];
-  if(depth>=2){
+  if(depth>=2&&!BA){
     let tc;
     if(kind==='cave'){tc=[];for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++)if(!g[idx(x,y)]&&!safeMask[idx(x,y)]&&(x+y)%2===1&&d0[idx(x,y)]>4)tc.push([x,y])}
     else tc=corr.filter(c=>d0[idx(c[0],c[1])]>3&&g[idx(c[0],c[1])]===0&&!(door&&Math.abs(c[0]-door.tx)+Math.abs(c[1]-door.ty)<=2));
@@ -338,11 +357,11 @@ function genFloor(seedStr,depth,look){
     const sc=[];
     for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){if(g[idx(x,y)]!==0)continue;
       for(const d of DIRS)if(g[idx(x+d[0],y+d[1])]===1){sc.push([x,y,d[0],d[1]]);break}}
-    shuffle(sc);const maxS=Math.round(nCells/(kind==='cave'?30:16));
+    shuffle(sc);const maxS=BA?14:Math.round(nCells/(kind==='cave'?30:16));
     for(const c of sc){
       if(sconces.length>=maxS)break;
       const px=c[0]+0.5+c[2]*0.44,pz=c[1]+0.5+c[3]*0.44;
-      if(Math.hypot(px-stx-0.5,pz-sty-0.5)<2||sconces.some(q=>Math.hypot(q.x-px,q.z-pz)<5.5))continue;
+      if(Math.hypot(px-stx-0.5,pz-sty-0.5)<2||sconces.some(q=>Math.hypot(q.x-px,q.z-pz)<(BA?3.6:5.5)))continue;
       sconces.push({x:px,z:pz,dx:c[2],dz:c[3],lx:c[0]+0.5+c[2]*0.2,lz:c[1]+0.5+c[3]*0.2,ph:rng()*6.28});
     }
   }
@@ -360,7 +379,7 @@ function genFloor(seedStr,depth,look){
   if(kind==='back')for(const c of cells)if(rng()<0.72){const bad=rng()<0.13;panelAt[idx(c[0],c[1])]=bad?2:1;panels.push({x:c[0]+0.5,z:c[1]+0.5,ph:c[0]*1.7+c[1]*2.3,bad})}
   // noclip pockets: a wall you can walk through, hiding a scrap of somewhere else
   const pocketMask=new Uint8Array(W*H),phantoms=[],pockets=[];
-  if(kind!=='back'){
+  if(kind!=='back'&&!BA){
     const pc=[];
     for(let y=2;y<H-2;y++)for(let x=2;x<W-2;x++){
       if(g[idx(x,y)]!==1)continue;
@@ -437,7 +456,7 @@ function genFloor(seedStr,depth,look){
       }
     }
     for(let i=dc.length-1;i>0;i--){const j=(dr()*(i+1))|0;const t=dc[i];dc[i]=dc[j];dc[j]=t}
-    const plan=doorPlan(seedStr,depth),want=plan.count;
+    const plan=doorPlan(seedStr,depth),want=BA?0:plan.count;
     const place=gap=>{for(const c of dc){
       if(sdoors.length>=want)break;
       if(sdoors.some(q=>Math.abs(q.tx-c[0])+Math.abs(q.ty-c[1])<gap))continue;
@@ -448,14 +467,15 @@ function genFloor(seedStr,depth,look){
     const own=doorDisguises();
     for(const D of sdoors){const k=DOOR_KINDS[D.kind]||{};D.look=k.disguise?(own[(dr()*own.length)|0]||'wood'):(k.look||'wood')}}
   // someone who looks like a neighbor, and is not one. Drawn last, from its own dice and a spare cell, so the rest of the floor stays the same as it always was for a seed.
-  if(depth>=2){const lr=mulberry32(hashStr(seedStr+'#lurk'+depth)),ok=pool.filter(c=>!traps.some(q=>q.tx===c[0]&&q.ty===c[1])&&!sdoors.some(q=>q.tx===c[0]&&q.ty===c[1]));
+  if(depth>=2&&!BA){const lr=mulberry32(hashStr(seedStr+'#lurk'+depth)),ok=pool.filter(c=>!traps.some(q=>q.tx===c[0]&&q.ty===c[1])&&!sdoors.some(q=>q.tx===c[0]&&q.ty===c[1]));
     if(lr()<0.7&&ok.length){const c=ok[(lr()*ok.length)|0],guise=lr()<0.4?'delver':'map';
       npcs.push({type:'lurk',guise,x:c[0]+0.5,z:c[1]+0.5,ph:lr()*6.28,gift:0,tip:0,
         gx:c[0],gy:c[1],px:-1,py:-1,stare:0,aggro:false,face:lr()*6.28,hitT:0,used:true})}}
   // face down an open corridor at the start
   let yaw=0;
   for(const d of DIRS){if(g[idx(stx+d[0],sty+d[1])]===0){yaw=Math.atan2(d[1],d[0]);break}}
-  const bi=look&&look.bi!=null?look.bi:kind==='back'?4:kind==='forest'?8:biomeIx(depth);
+  if(BA)yaw=-Math.PI/2;   // into the arena, toward the boss
+  const bi=look&&look.bi!=null?look.bi:BA?BOSSES[BA.i].bi:kind==='back'?4:kind==='forest'?8:biomeIx(depth);
   // looks are drawn last, from their own dice, so nothing above ever moves
   const vr=mulberry32(hashStr(seedStr+'#var#'+depth)),variant=pickVariant(vr,bi,look&&look.ix),B=BIOMES[bi];
   const litter=[];
@@ -471,11 +491,18 @@ function genFloor(seedStr,depth,look){
   }
   const stone=[B.stone[0]*variant.stone[0],B.stone[1]*variant.stone[1],B.stone[2]*variant.stone[2]];
   const forest=bi===8;
+  // ingredients for the Brewer, from their own dice so nothing else moves
+  potSeedIngredients(seedStr,depth,g,W,H,safeMask,pocketMask,items,[[stx,sty],[ex,ey]],d0,bi,nCells);
+  fizzPlace(seedStr,depth,g,W,H,safeMask,pocketMask,d0,shades,kind);
+  if(BA)bossSpawn(BA,W,H,shades);
+  grannyPlace(seedStr,depth,g,W,H,safeMask,pocketMask,d0,shades,kind);   // Granny, about one floor in twenty   // the Fizzler, about one floor in ten
   // Pat joins after props and items are placed, so he changes nothing else about the floor
   if(safe&&safe.wheel)npcs.push({type:'pat',x:safe.wheel.pat[0],z:safe.wheel.pat[1],ph:(safe.tx*7.31+safe.ty*3.7)%6.28,used:true});
+  potPlaceBrewer(safe,npcs);smithPlace(safe,npcs);
   return {W,H,g,cw,ch,kind:forest?'forest':kind==='forest'?'maze':kind,dark:kind==='dark',back:kind==='back',base:B.base,variant,litter,stone,wet:clamp(B.wet*variant.wetK,0,1),fogK:variant.fogK,ambK:variant.ambK,ambT:variant.ambT,torchT:variant.torch,tex:{v:variant.tex,seed:variant.seed,tint:variant.tint},panels,panelAt,pocketMask,phantoms,pockets,blk:0,boT:22+rng()*25,props,discs,safe,safeMask,npcs,reveal:false,door,sdoors,traps,pillars,sconces,rubble,frames:[],start:{tx:stx,ty:sty,yaw},exit:{tx:ex,ty:ey,x:ex+0.5,z:ey+0.5},items,shades,
           seen:new Uint8Array(W*H),dist:d0,bi,biome:B,...(forest?{forest:true,fo:{seed:seedStr,depth}}:{}),
-          name:kind==='cave'?'The Hollow':kind==='dark'?'The Black Hush':BIOMES[bi].name};
+          ...(BA?{boss:BA,music:'silent'}:{}),   // no floor music in an arena: the fight brings its own
+          name:BA?BOSSES[BA.i].arena:kind==='cave'?'The Hollow':kind==='dark'?'The Black Hush':BIOMES[bi].name};
 }
 function trapExt(tr,time){const t=(time+tr.ph)%2.8;return t<0.12?t/0.12:t<1.0?1:t<1.2?1-(t-1)/0.2:0}
 
@@ -1023,7 +1050,7 @@ function emit(mesh,f,c,s,col,R2){
     const x=mesh[i]*s0,y=mesh[i+1]*s1,z=mesh[i+2]*s2;
     let nx=mesh[i+3]*i0,ny=mesh[i+4]*i1,nz=mesh[i+5]*i2;const l=1/(Math.hypot(nx,ny,nz)||1);nx*=l;ny*=l;nz*=l;
     b[o++]=p[0]+R[0]*x+R[1]*y+R[2]*z;b[o++]=p[1]+R[3]*x+R[4]*y+R[5]*z;b[o++]=p[2]+R[6]*x+R[7]*y+R[8]*z;
-    b[o++]=R[0]*nx+R[1]*ny+R[2]*nz;b[o++]=R[3]*nx+R[4]*ny+R[5]*nz;b[o++]=R[6]*nx+R[7]*ny+R[8]*nz;
+    {const wx=R[0]*nx+R[1]*ny+R[2]*nz,wy=R[3]*nx+R[4]*ny+R[5]*nz,wz=R[6]*nx+R[7]*ny+R[8]*nz,il=1/(Math.hypot(wx,wy,wz)||1);b[o++]=wx*il;b[o++]=wy*il;b[o++]=wz*il}   // unit normals even in a scaled frame (the AO pass reads them raw)
     b[o++]=c0;b[o++]=c1;b[o++]=c2;b[o++]=l0+x;b[o++]=l1+y;b[o++]=l2+z;b[o++]=mat;
   }
   T.n+=cnt;
@@ -1380,13 +1407,16 @@ function buildNpc(n,t,ex,ey,ez,dtR){
     const sway=Math.sin(t*0.9+ph)*0.006,dead=!!n.fall;
     // which hand is on the wheel's side
     const W0=F&&F.safe&&F.safe.wheel,sd=W0?(Math.hypot(fpt(B,[0,0,0.3])[0]-W0.x,fpt(B,[0,0,0.3])[2]-W0.z)<Math.hypot(fpt(B,[0,0,-0.3])[0]-W0.x,fpt(B,[0,0,-0.3])[2]-W0.z)?1:-1):1;
-    const present=dead?0:!WOF.done?1:0.35+0.3*Math.max(0,Math.sin(t*0.6+ph)),bounce=!WOF.done?Math.abs(Math.sin(t*6))*0.01:0;
+    const pt=dead?0:WOF.party||0,shout=pt>0&&pt<PAT_PARTY.shout||!dead&&WOF.yell>0,dance=pt>=PAT_PARTY.shout&&pt<PAT_PARTY.end,bt=(pt-PAT_PARTY.shout)*4,sh=Math.sin(bt*Math.PI);
+    const present=dead?0:!WOF.done?1:0.35+0.3*Math.max(0,Math.sin(t*0.6+ph)),bounce=!WOF.done?Math.abs(Math.sin(t*6))*0.01:shout?Math.min(1,(pt||1)*5)*0.02:dance?Math.abs(sh)*0.04:0;
     for(const z of[-1,1]){
-      const hip=v(0,0.45,z*0.055),knee=v(0.012,0.25,z*0.058),ank=v(0,0.06,z*0.06);
+      // the shuffle: one foot kicks out and back while the other slides, swapping every beat
+      const kk=dance?Math.max(0,z*sh):0,sl=dance?Math.sin(bt*Math.PI*0.5)*0.03:0;
+      const hip=v(0,0.45,z*0.055),knee=v(0.012+0.16*kk,0.25+0.1*kk,z*(0.058+0.03*kk)+sl),ank=v(0.22*kk-0.05*(dance?1-kk:0),0.06+0.14*kk,z*(0.06+0.09*kk)+sl);
       seg(B,hip,knee,0.052*S,0.044*S,suit);ball(B,knee,0.044*S,suit,true);seg(B,knee,ank,0.044*S,0.038*S,suit);
-      ball(B,v(0.035,0.032,z*0.06),[0.072*S,0.034*S,0.04*S],shoe,true);
+      ball(B,[ank[0]+0.035*S,ank[1]-0.028*S,ank[2]],[0.072*S,0.034*S,0.04*S],shoe,true);
     }
-    const U=subF(B,v(sway,0.45+bounce,0),rX(sway*2));
+    const U=subF(B,v(sway,0.45+bounce,0),dance?m3(rX(sway*2+sh*0.12),rYaw(0.45*Math.sin(bt*Math.PI*0.5))):shout?rZ(0.18*Math.min(1,(pt||1)*5)):rX(sway*2));
     seg(U,v(0,-0.1,0),v(0,0.08,0),0.12*S,0.088*S,suit);                       // jacket skirt
     seg(U,v(0,0.04,0),v(0,0.07,0),0.09*S,0.088*S,suitD);                       // waist seam
     ball(U,v(0,0.17+breath,0),[0.072*S,0.122*S,0.098*S],suit);                // chest
@@ -1398,20 +1428,24 @@ function buildNpc(n,t,ex,ey,ez,dtR){
     for(const z of[-1,1])ball(U,v(-0.005,0.24+breath,z*0.096),[0.052*S,0.042*S,0.05*S],suit,true);
     // presenting arm: out towards the wheel, palm open
     const lift=present*0.11;
-    const E1=v(0.05,0.14+lift*0.6+breath,sd*0.17),W1=v(0.1+0.04*present,0.12+lift*1.4+breath,sd*(0.22+0.07*present));
+    let E1=v(0.05,0.14+lift*0.6+breath,sd*0.17),W1=v(0.1+0.04*present,0.12+lift*1.4+breath,sd*(0.22+0.07*present));
+    // shouting: both fists in the air. dancing: arms pumping to the beat
+    const pump=z=>dance?Math.max(0,z*sh):0;
+    if(shout){E1=v(0.02,0.33,sd*0.16);W1=v(0.04,0.47+Math.sin(t*14)*0.01,sd*0.17)}
+    else if(dance){E1=v(0.07,0.15+0.05*pump(sd),sd*0.16);W1=v(0.17,0.16+0.2*pump(sd),sd*0.12)}
     limb(U,v(0,0.23+breath,sd*0.1),E1,W1,0.034*S,0.03*S,0.025*S,suit,suit,null);
     seg(U,[W1[0]-0.01*S,W1[1]-0.004*S,W1[2]-sd*0.014*S],W1,0.027*S,0.026*S,shirt);
     ball(U,[W1[0]+0.012*S,W1[1]+0.004*S,W1[2]+sd*0.012*S],[0.026*S,0.012*S,0.03*S],skin,true);
     // the other hand holds the cue cards at the chest
-    const W2=v(0.13,0.13+breath,-sd*0.05);
-    limb(U,v(0,0.23+breath,-sd*0.1),v(0.03,0.11+breath,-sd*0.15),W2,0.034*S,0.03*S,0.025*S,suit,suit,skin,0.028*S);
+    const W2=shout?v(0.04,0.47+Math.cos(t*14)*0.01,-sd*0.17):dance?v(0.17,0.16+0.2*pump(-sd),-sd*0.12):v(0.13,0.13+breath,-sd*0.05);
+    limb(U,v(0,0.23+breath,-sd*0.1),shout?v(0.02,0.33,-sd*0.16):dance?v(0.07,0.15,-sd*0.15):v(0.03,0.11+breath,-sd*0.15),W2,0.034*S,0.03*S,0.025*S,suit,suit,skin,0.028*S);
     slab(U,[W2[0]+0.012*S,W2[1]+0.04*S,W2[2]],[0.004*S,0.05*S,0.036*S],card,rZ(-0.25));
     seg(U,v(0,0.262+breath,0),v(0,0.288+breath,0),0.036*S,0.034*S,shirt);    // collar
     seg(U,v(0,0.27+breath,0),v(0.003,0.31+breath,0),0.03*S,0.028*S,skin);
-    const H=subF(U,v(0.003,0.305+breath,0),m3(m3(rYaw(n.hy),rZ(n.hp+nod+(dead?0.4:0))),rX(Math.sin(t*0.6+ph)*0.04)));
+    const H=subF(U,v(0.003,0.305+breath,0),m3(m3(rYaw(dance?n.hy*0.3:n.hy),rZ(n.hp+nod+(dead?0.4:0)+(shout?0.45:0)+(dance?0.08*Math.abs(sh):0))),rX(Math.sin(t*0.6+ph)*0.04+(dance?Math.sin(bt*Math.PI)*0.12:0))));
     const K=S*1.25,HS={p:H.p,R:H.R.map(q=>q*K)};                              // a big friendly head on a small man
     face(HS,{skin,blink:dead?0.05:blink,iris:[0.35,0.45,0.62],brow:[0.62,0.6,0.58,5],browH:0.008,browTilt:-0.18,browUp:0.004,eyeS:1.05,nose:[0.017,0.019,0.016],ears:true,
-      mouth:[0.45,0.12,0.12],mouthW:0.034,talk:jaw+(!WOF.done?Math.max(0,Math.sin(t*7))*0.006:0.003)});
+      mouth:[0.45,0.12,0.12],mouthW:0.034,talk:WOF.yell>0&&!dead?0.006+Math.abs(Math.sin(t*13))*0.016:shout?0.018:dance?0.008:jaw+(!WOF.done?Math.max(0,Math.sin(t*7))*0.006:0.003)});
     slab(HS,[0.083,0.041,0],[0.004,0.004,0.028],[0.98,0.97,0.94,5]);           // the grin
     ball(HS,[0.07,0.05,0.045],[0.012,0.008,0.014],[0.95,0.6,0.5,1],true);ball(HS,[0.07,0.05,-0.045],[0.012,0.008,0.014],[0.95,0.6,0.5,1],true);
     ball(HS,[-0.014,0.122,0],[0.087,0.052,0.089],hair);                         // silver hair, neatly parted
@@ -1457,6 +1491,39 @@ function buildNpc(n,t,ex,ey,ez,dtR){
     ball(HS,[-0.01,0.12,0],[0.09,0.058,0.092],hair);ball(HS,[0.03,0.16,0],[0.06,0.03,0.07],hair);        // gelled
     for(const z of[-1,1])slab(HS,[0.03,0.178,z*0.03],[0.02,0.008,0.022],glass);slab(HS,[0.035,0.18,0],[0.004,0.004,0.012],glass);  // sunglasses up top
     out.top=S;
+  }else if(n.type==='crunch'){
+    // The Crunch Gremlin: a short, stout cave gremlin in rust-orange hide, a heavy stone jaw that grinds, a pretzel in each fist,
+    // and a trail of crumbs behind it
+    const S=0.66,v=(x,y,z)=>[x*S,y*S,z*S];
+    const hide=[0.76,0.33,0.12,5],hideD=[0.55,0.22,0.08,5],belly=[0.9,0.62,0.36,5],stone=[0.48,0.47,0.45,9],stoneD=[0.34,0.33,0.32,9],tooth=[0.92,0.9,0.8,9],
+          eyeW=[0.98,0.9,0.4,7],pupil=[0.05,0.03,0.02,8],pretz=[0.62,0.36,0.12,6],salt=[0.98,0.98,0.95,9],claw=[0.25,0.18,0.12,4];
+    const w=n.walk||0,mv=n.mv||0,sw=Math.sin(w)*mv,bob=Math.abs(Math.cos(w))*0.03*mv,chew=n.chew||0,jaw=0.02+Math.max(0,Math.sin(t*(chew?16:5)))*(chew?0.09:0.035);
+    for(const z of[-1,1]){const st=sw*z;   // short thick legs, waddling
+      const hip=v(0,0.32,z*0.11),ft=v(0.1*st,0.04,z*0.13);seg(B,hip,ft,0.08*S,0.065*S,hideD);ball(B,[ft[0]+0.03*S,ft[1]-0.01*S,ft[2]],[0.1*S,0.05*S,0.07*S],hideD,true);
+      for(const c of[-1,0,1])seg(B,[ft[0]+0.1*S,0.02*S,ft[2]+c*0.03*S],[ft[0]+0.14*S,0.01*S,ft[2]+c*0.035*S],0.012*S,0.004*S,claw)}
+    const U=subF(B,v(0,0.3+bob,0),m3(rYaw(sw*0.2),rZ(-0.12*mv+Math.sin(t*2.2)*0.03)));
+    ball(U,v(0,0.22,0),[0.26*S,0.27*S,0.27*S],hide);                                    // the round barrel of a body
+    ball(U,v(0.1,0.17,0),[0.18*S,0.2*S,0.21*S],belly);
+    for(let i=0;i<7;i++){const a=i*0.9;ball(U,v(-0.08+Math.cos(a)*0.12,0.3+Math.sin(a*1.7)*0.12,Math.sin(a)*0.18),0.03*S,hideD,true)}   // knobbly warts
+    // stubby arms, a pretzel in each fist, taking turns going to the mouth
+    for(const z of[-1,1]){const lift=Math.max(0,Math.sin(t*3+(z>0?0:Math.PI)))*(chew?1:0.5);
+      const Sh=v(0.02,0.36,z*0.25),E=v(0.12,0.26+lift*0.08,z*0.31),Wr=v(0.24+lift*0.04,0.3+lift*0.2,z*(0.24-lift*0.1));
+      limb(U,Sh,E,Wr,0.07*S,0.06*S,0.05*S,hide,hide,hideD,0.065*S);
+      const P0=subF(U,[Wr[0]+0.04*S,Wr[1]+0.03*S,Wr[2]],rX(z*0.6));                     // a pretzel: three loops
+      seg(P0,[0,0,-0.05*S],[0,0.06*S,0],0.014*S,0.014*S,pretz);seg(P0,[0,0.06*S,0],[0,0,0.05*S],0.014*S,0.014*S,pretz);seg(P0,[0,0,-0.05*S],[0,0,0.05*S],0.014*S,0.014*S,pretz);
+      ball(P0,[0,0.035*S,-0.025*S],0.006*S,salt,true);ball(P0,[0,0.03*S,0.03*S],0.006*S,salt,true)}
+    // the head sits low on the shoulders: heavy brow, little yellow eyes, and a stone jaw that grinds
+    const H=subF(U,v(0.12,0.48,0),m3(rYaw((n.hy||0)*0.6),rZ((n.hp||0)*0.5+0.05)));
+    ball(H,v(0,0,0),[0.16*S,0.13*S,0.17*S],hide);
+    slab(H,v(0.12,0.06,0),[0.05*S,0.03*S,0.15*S],hideD,rZ(-0.25));                       // the brow
+    for(const z of[-1,1]){ball(H,v(0.14,0.03,z*0.065),[0.03*S,0.03*S,0.03*S],eyeW,true);ball(H,v(0.165,0.03,z*0.065),[0.012*S,0.016*S,0.012*S],pupil,true);
+      ball(H,v(-0.02,0.1,z*0.15),[0.03*S,0.07*S,0.03*S],hideD,true)}                  // ears like horns
+    ball(H,v(0.17,-0.01,0),[0.035*S,0.03*S,0.04*S],hideD,true);                          // a snub nose
+    const J=subF(H,v(0.04,-0.06-jaw,0),rZ(-jaw*1.2));                                     // the stone jaw
+    slab(J,v(0.08,-0.03,0),[0.12*S,0.05*S,0.15*S],stone);slab(J,v(0.08,-0.06,0),[0.11*S,0.02*S,0.14*S],stoneD);
+    for(let i=0;i<6;i++)slab(J,v(0.17,0.03,-0.1+i*0.04),[0.012*S,0.025*S,0.012*S],tooth);
+    slab(H,v(0.14,-0.06,0),[0.06*S,0.02*S,0.14*S],stone);for(let i=0;i<5;i++)slab(H,v(0.18,-0.08,-0.08+i*0.04),[0.01*S,0.02*S,0.012*S],tooth);
+    out.top=0.62*S;
   }else if(n.type==='tickle'){
     // The Tickle Monster: a sleazy old man, hunched, bald on top with a grey comb-over and mullet, open trench coat, sunglasses, gold chain,
     // both hands out in front pumping and wiggling like he is already tickling someone
@@ -1505,7 +1572,8 @@ function buildNpc(n,t,ex,ey,ez,dtR){
     ball(HS,[0.098,0.06,0],[0.016,0.018,0.016],[0.88,0.55,0.48,1],true);                                    // a red old nose
     for(const z of[-1,1])seg(HS,[0.086,0.072,z*0.05],[0.08,0.064,z*0.062],0.002,0.002,[0.6,0.42,0.34,1]);   // crow's feet
     out.top=S;
-  }
+  }else if(n.type==='brewer')potBuildBrewer(n,B,t,ph,breath,blink,talking,out);
+  else if(n.type==='smith')smithBuild(n,B,t,ph,breath,blink,talking,out);
   return out;
 }
 /* ---------- creatures in the same jointed style ---------- */
@@ -1848,6 +1916,18 @@ const DOOR_LOOKS={
     },
     glow(D,t){return[1,0.72,0.35,0.42+0.12*Math.sin(t*2+D.ph)]}
   },
+  // a plain white restroom door with a little blue sign
+  bathroom:{
+    leaf(f,D){
+      slab(f,[0.02,0.52,0],[0.04,1.04,0.5],[0.92,0.9,0.84,6]);
+      slab(f,[0.045,0.52,0],[0.012,0.9,0.4],[0.86,0.84,0.78,6]);
+      slab(f,[0.06,0.86,0],[0.012,0.1,0.12],[0.25,0.5,0.95,11]);
+      ball(f,[0.066,0.885,-0.035],0.016,[1.2,1.2,1.3,11],true);ball(f,[0.066,0.885,0.035],0.016,[1.2,1.2,1.3,11],true);
+      slab(f,[0.066,0.84,-0.035],[0.004,0.03,0.014],[1.2,1.2,1.3,11]);slab(f,[0.066,0.84,0.035],[0.004,0.03,0.022],[1.2,1.2,1.3,11]);
+      doorKnob(f,[0.8,0.8,0.85,4]);
+    },
+    glow(D,t){return[0.6,0.8,1,0.3+0.1*Math.sin(t*2.6+D.ph)]}
+  },
 };
 const DOOR_EXPLORE_PER_MIN=150;
 const doorOrder=()=>Object.keys(DOOR_KINDS);
@@ -1857,8 +1937,10 @@ const doorCountFor=depth=>{const cw=Math.min(8+depth,20);return Math.max(2,Math.
 // and carrying on where the previous floor stopped (start point = per-seed offset + doors of earlier floors). Deterministic from (seed, depth, registry).
 const doorPlan=(seedStr,depth,order=doorOrder())=>{
   const N=order.length;if(!N)return{kinds:[],count:0};
-  let cur=hashStr(seedStr+'#doorrot')%N;for(let d=1;d<depth;d++)cur+=Math.min(N,doorCountFor(d));
-  const n=Math.min(N,doorCountFor(depth)),kinds=[];for(let i=0;i<n;i++)kinds.push(order[(cur+i)%N]);
+  // a boss arena has no strange doors, so it takes none from the rotation: the next floor carries on where the last one stopped
+  const per=d=>bossAt(d)?0:Math.min(N,doorCountFor(d));
+  let cur=hashStr(seedStr+'#doorrot')%N;for(let d=1;d<depth;d++)cur+=per(d);
+  const n=per(depth),kinds=[];for(let i=0;i<n;i++)kinds.push(order[(cur+i)%N]);
   return{kinds,count:n}};
 const doorLookOf=D=>DOOR_LOOKS[D.look]?D.look:DOOR_LOOKS[(DOOR_KINDS[D.kind]||{}).look]?DOOR_KINDS[D.kind].look:'wood';
 // the looks a trap door may wear: every look owned by a non-disguise kind
@@ -2201,7 +2283,7 @@ const UPG=[
 ];
 const up=Object.assign({heart:0,lamp:0,lungs:0,band:0,boots:0,powder:0,purse:0,wind:0},store.get('up',null)||{});
 let wallet=Math.max(0,+store.get('wallet',0)||0);
-const maxHp=()=>3+(up.heart|0);
+const maxHp=()=>3+(up.heart|0)+(R.hpBonus|0)+(ps('titan')?1:0);
 const plLevel=()=>1+UPG.reduce((a,u)=>a+(up[u.k]|0),0);
 const ROMAN=['','I','II','III','IV'];
 let nearNpc=null,talk=null,padHold=0;
@@ -2210,6 +2292,8 @@ const NPC={
   map:{name:'Ilse the Mapmaker',col:[0.16,0.34,0.4],eye:[0.7,1.0,0.95],h:0.94},
   delver:{name:'Brakk, a wounded delver',col:[0.4,0.36,0.3],eye:[1.0,0.95,0.8],h:0.72},
   pat:{name:'Pat Sajak',col:[0.11,0.13,0.27],eye:[0.4,0.55,0.8],h:0.6},
+  smith:{name:'Gorrum the Blacksmith',col:[0.3,0.18,0.09],eye:[1.0,0.6,0.3],h:1},
+  brewer:{name:'Old Fennick, the Brewer',col:[0.2,0.14,0.32],eye:[0.5,1.0,0.6],h:0.95},
 };
 const KEEPER_LINES=['Sit. The fire keeps them out. Gems feed the fire, and the fire remembers you.','Still breathing? Good. Warm your hands and show me what you found.','Every hall below is hungrier than the last. Spend well.','The dark forgets its dead. I do not. What will you carry down?'];
 const PAT_LINES=['Welcome to the Wheel of Misfortune! Ten gems a spin, and everybody down here lives with the result.','Big money, big money... well. Big something.','Step right up! I have hosted a lot of wheels, and this is by far the meanest.','No vowels to buy down here. Just ten gems and a dream.'];
@@ -2227,10 +2311,11 @@ function openTalk(n){
 function closeTalk(){
   if(state!=='talk')return;
   const re=talk&&talk.relock;talk=null;state='play';padHold=performance.now()+350;P.jumpQ=0;
-  $('talk').classList.add('hidden');
+  $('talk').classList.add('hidden');if(INV.el)INV.el.classList.add('hidden');POT.hudK='';
   if(re&&!touch.on)lock();
 }
 function buildTalk(){
+  if(talk.inv){invBuild();return}
   const n=talk.npc,T=NPC[n.type],o=[];
   let text='';
   if(n.type==='keeper'){
@@ -2262,6 +2347,10 @@ function buildTalk(){
     const busy=!WOF.done;
     text=talk.line||(busy?'Round and round she goes, and where she stops... well, you will all find out together.':PAT_LINES[(R.depth+Math.floor(R.time/20))%PAT_LINES.length]);
     o.push({label:'Spin the Wheel of Misfortune',sub:busy?'The wheel is still turning':'Twelve fates. Whatever it lands on happens.',cost:'10 gems',off:busy||wallet<10,fn:()=>{closeTalk();wofSpinStart()}});
+  }else if(n.type==='brewer'){
+    text=potTalk(o);
+  }else if(n.type==='smith'){
+    text=smithTalk(o);
   }else{
     text=n.used?DELVER_TIPS[n.tip%DELVER_TIPS.length]:'Took a claw to the leg. I am done going down. Take this, it is no use to me now.';
     if(!n.used)o.push({label:'Take the gift',sub:['A flash bomb','A flask of oil','A pouch of 8 gems'][n.gift],cost:'free',fn:()=>{
@@ -2285,7 +2374,10 @@ function pickTalk(){
   q.fn();if(talk)buildTalk();
 }
 function moveTalk(d){if(!talk)return;const n=talk.opts.length;talk.sel=(talk.sel+d+n)%n;buildTalk()}
-function act(){if(loading||FX.frozen)return;if(P.down){mpCycle();return}if(state==='play'&&nearNpc)openTalk(nearNpc);else if(state==='play'&&nearDoor)sdoorOpen(nearDoor,true);else useFlash()}
+function act(flash=true){if(loading||FX.frozen)return;if(P.down){mpCycle();return}if(state==='play'&&nearNpc)openTalk(nearNpc);else if(state==='play'&&nearDoor)sdoorOpen(nearDoor,true);else if(flash)useFlash()}
+// mouse: left click attacks with a weapon in hand (or talks / opens when you have none), right click flashes
+function clickL(){if(state!=='play')return;if(P.down){mpCycle();return}if(wHeld()&&!nearNpc&&!nearDoor)wAttack();else if(F&&F.boss&&!nearNpc&&!nearDoor)wPunch();else act(false)}
+function clickR(){if(state!=='play')return;if(P.down){mpCycle();return}if(!loading&&!FX.frozen)useFlash()}
 
 /* ---------- the Wheel of Misfortune ---------- */
 // Pat Sajak stands beside the wheel in every sanctuary. A spin costs 10 gems. The result is drawn when the spin starts and the disc is planned to
@@ -2300,9 +2392,9 @@ const WOF_DESC=['Go stand in line.','And now, a word from our sponsor.','Everyon
   'Take a number.','Please read and accept the updated terms.','Everyone\'s controls are reversed for a minute.','Everyone\'s head is three times bigger for two minutes.',
   'Every torch on the floor goes out. The shades heard that.','He has a few minutes of your time. Everyone\'s time.',
   'The spinner is a hedgehog for two minutes. Z (LB): curl up and nothing can hurt you. X (R3): roll at super speed.',
-  'The spinner starts over. From the very beginning.','Everyone pull up a chair.','Take cover. Or don\'t. It won\'t help.'];
+  'The spinner starts over. From the very beginning.','Everyone pull up a chair.','Take cover. Or don\'t. It won\'t help.','It loves crunchy baked goods. You look crunchy.'];
 const WOF_SCALE=0.66;   // the model is built a little large; this fits the banner under the 1.25 m ceiling
-const WOF={plan:null,t:0,angle:0,flap:0,flapV:0,peg:0,result:-1,coin:0,mine:false,here:false,done:true,win:0,by:'',grp:null,chat:0};
+const WOF={recent:[],party:0,plan:null,t:0,angle:0,flap:0,flapV:0,peg:0,result:-1,coin:0,mine:false,here:false,done:true,win:0,by:'',grp:null,chat:0};
 const FX={flyT:0,flyB:0,spin:0,hedge:0,curl:0,moon:0,bob:0,pitch:0,pitchDone:false,pitchLine:-1,pug:0,rat:0,last:null,plague:0,fat:0,loud:0,tin:0,dying:false,dyT:0,pox:0,poxNear:0,poxC:4,stag:0,tickled:0,frozen:null};
 const FX_TIMERS=['hedge','moon','bob','pug','rat','plague','fat','loud','tin','pox','tickled','stag'];
 const FX_DUR={hedge:120,moon:60,bob:120,form:120,fat:120,loud:30,tin:60,plague:120,pox:300,tickled:3};
@@ -2323,21 +2415,82 @@ function wofQueue(r){WOQ.push(r);if(WOQ.length>WOQ_MAX)WOQ.shift();WOQ_T=Math.ma
 function wofSpinStart(){
   if(!F||!F.safe||!F.safe.wheel||!WOF.done||wallet<10)return;
   wallet-=10;store.set('wallet',wallet);sfx('gem');
-  const i=(Math.random()*WOF_N)|0,plan=planSpin(i,WOF.angle);
-  const m={k:'wof',d:R.depth,i,c:Math.random()<0.5?1:0,a0:plan.from,a1:plan.to,dur:plan.dur,n:myName()};
+  const i=pickSlice(WOF.recent,WOF_N),plan=planSpin(i,WOF.angle);
+  const m={k:'wof',d:R.depth,i,c:Math.random()<0.5?1:0,a0:plan.from,a1:plan.to,dur:plan.dur,e:plan.e,n:myName()};
   mpSend(m);wofBegin(m,true);
 }
 function wofBegin(m,mine){
-  WOF.plan={from:m.a0,to:m.a1,dur:m.dur};WOF.t=0;WOF.coin=m.c?1:0;WOF.mine=mine;WOF.by=mine?myName():String(m.n||'Someone').slice(0,16);
+  WOF.plan={from:m.a0,to:m.a1,dur:m.dur,e:Number.isFinite(m.e)&&m.e>=1.5&&m.e<=6?m.e:3.2};WOF.t=0;WOF.coin=m.c?1:0;WOF.mine=mine;WOF.by=mine?myName():String(m.n||'Someone').slice(0,16);
   WOF.here=!!(F&&F.safe&&F.safe.wheel&&m.d===R.depth);WOF.done=false;WOF.chat=0;WOF.angle=m.a0;WOF.peg=Math.floor(m.a0/WOF_W);
   if(mine)say('Pat: "Big money! Big money!"',3);
   else if(WOF.here)say(WOF.by+' spins the Wheel of Misfortune!',3);
   else mpSys(WOF.by+' is spinning the Wheel of Misfortune...');
 }
+// Pat's celebration: 1.3 s shout, then about 5 s of shuffling to his own beat
+const PAT_PARTY={shout:1.3,end:6.6};
+function patParty(dt){
+  const t0=WOF.party;WOF.party+=dt;const t=WOF.party,w=F&&F.safe&&F.safe.wheel;
+  const d=w?Math.hypot(w.x-P.x,w.z-P.z):99,k=Math.max(0,1-d/16);
+  if(t0<0.05&&t>=0.05&&k>0){
+    if(d<10)say('Pat: "WOOOOO-HOOOOO! WHAT A SPIN!"',2.8);
+    if(ac){tone(330,0.55,'sawtooth',0.14*k,0,520);tone(495,0.55,'square',0.05*k,0,780);tone(880,0.5,'sawtooth',0.12*k,0.6,-260);noise(0.9,0.05*k,1500,0.8)}
+  }
+  if(t>=PAT_PARTY.shout&&t<PAT_PARTY.end&&k>0&&ac){   // a little shuffle beat: kick, hat, kick, hat
+    const b0=Math.floor((t0-PAT_PARTY.shout)*4),b1=Math.floor((t-PAT_PARTY.shout)*4);
+    if(b1>b0&&b1>=0){if(b1%2===0)tone(70,0.12,'sine',0.3*k,0,-30);else noise(0.05,0.12*k,7000,2);if(b1%4===3)tone(392+(b1%8===7?131:0),0.1,'square',0.04*k)}
+  }
+  if(t>=PAT_PARTY.end)WOF.party=0;
+}
+// ...and now and then, for no reason at all, Pat lets out an enormous yell. The times come from the floor's seed and the shared
+// clock, so everyone on the floor hears the same yell at the same moment.
+function patYellTick(dt){
+  WOF.yell=Math.max(0,(WOF.yell||0)-dt);
+  if(!F||!F.safe||!F.safe.wheel)return;
+  const pat=F.npcs.find(n=>n.type==='pat');if(!pat||pat.fall)return;
+  const key=R.seed+'#'+R.depth;
+  if(WOF.yKey!==key){WOF.yKey=key;WOF.yRng=mulberry32(hashStr(R.seed+'#yell#'+R.depth));WOF.yAt=25+WOF.yRng()*50}
+  while(R.time>=WOF.yAt){
+    const late=R.time-WOF.yAt;WOF.yAt+=45+WOF.yRng()*75;
+    if(late<1.5)patYell(pat);
+  }
+}
+const PAT_YELL='Hey! Hey! Spin my wheel! Spin it!';
+// Pat's voice: the browser's speech synthesizer, as deep and as loud as it goes, with a man's voice when the system has one
+let patVoice;
+function patSpeak(k){
+  const S=window.speechSynthesis;if(!S||typeof SpeechSynthesisUtterance==='undefined')return false;
+  if(patVoice===undefined){const L=S.getVoices().filter(v=>/^en/i.test(v.lang));if(L.length)patVoice=L.find(v=>/\b(male|david|daniel|fred|alex|george|mark|guy|ryan|james|tom)\b/i.test(v.name)&&!/female/i.test(v.name))||L[0]||null}
+  const u=new SpeechSynthesisUtterance(PAT_YELL);
+  if(patVoice)u.voice=patVoice;u.lang='en-US';u.pitch=0.55;u.rate=1.15;u.volume=clamp(k*(getVolumes().sfx??1),0,1);
+  try{S.cancel();S.speak(u);return true}catch(e){return false}
+}
+function patYell(pat){
+  WOF.yell=3;
+  const d=Math.hypot(pat.x-P.x,pat.z-P.z),k=Math.max(0.5,1-d/40);
+  if(d<12)say('Pat: "'+PAT_YELL.toUpperCase()+'"',3);
+  rumble(400,0.6,0.5);
+  if(muted)return;
+  if(patSpeak(k))return;
+  if(!ac||!sfxBus)return;   // no speech on this browser: the wordless yell instead
+  // a big chesty man's yell: a buzzing voice at about 130 Hz, shaped into "AAH" by two vowel filters, with a rasp of breath
+  const t=ac.currentTime,dur=1.7,out=ac.createGain();
+  out.gain.setValueAtTime(0.0001,t);out.gain.exponentialRampToValueAtTime(1.6*k,t+0.06);out.gain.setValueAtTime(1.6*k,t+dur-0.45);out.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  const comp=ac.createDynamicsCompressor();comp.threshold.value=-10;comp.ratio.value=4;out.connect(comp);comp.connect(sfxBus);
+  const vox=ac.createOscillator(),vox2=ac.createOscillator(),vib=ac.createOscillator(),vg=ac.createGain();
+  vox.type='sawtooth';vox2.type='square';
+  for(const o of[vox,vox2]){o.frequency.setValueAtTime(118,t);o.frequency.exponentialRampToValueAtTime(172,t+0.25);o.frequency.setValueAtTime(172,t+1.1);o.frequency.exponentialRampToValueAtTime(110,t+dur)}
+  vox2.detune.value=-1200;vib.frequency.value=6.5;vg.gain.value=5;vib.connect(vg);vg.connect(vox.frequency);vg.connect(vox2.frequency);
+  const mix=ac.createGain();mix.gain.value=1;vox.connect(mix);const m2=ac.createGain();m2.gain.value=0.35;vox2.connect(m2);m2.connect(mix);
+  for(const [f,q,g] of[[760,6,1.4],[1180,7,0.9],[2600,9,0.35]]){const bp=ac.createBiquadFilter();bp.type='bandpass';bp.frequency.value=f;bp.Q.value=q;const gg=ac.createGain();gg.gain.value=g;mix.connect(bp);bp.connect(gg);gg.connect(out)}
+  const ns=ac.createBufferSource();ns.buffer=noiseBuf;ns.loop=true;const nf=ac.createBiquadFilter();nf.type='bandpass';nf.frequency.value=1400;nf.Q.value=0.8;const ng=ac.createGain();ng.gain.value=0.25;
+  ns.connect(nf);nf.connect(ng);ng.connect(out);
+  for(const o of[vox,vox2,vib])o.start(t);ns.start(t);for(const o of[vox,vox2,vib])o.stop(t+dur+0.05);ns.stop(t+dur+0.05);
+}
 const PAT_CHAT=['Pat: "Round and round she goes!"','Pat: "Ooh, she is slowing down..."','Pat: "Here it comes..."'];
 function wofTickSpin(dt){
   if(WOF.done){
     WOF.win=Math.max(0,WOF.win-dt);
+    if(WOF.party>0)patParty(dt);
     if(Math.abs(WOF.flap)>1e-4||Math.abs(WOF.flapV)>1e-4){WOF.flapV+=(-140*WOF.flap-7*WOF.flapV)*dt;WOF.flap+=WOF.flapV*dt}
     return;
   }
@@ -2359,6 +2512,9 @@ function wofTickSpin(dt){
 }
 function wofResolve(){
   const i=sliceAt(WOF.plan.to),sl=WOF_SLICES[i];WOF.result=i;
+  WOF.recent.push(i);if(WOF.recent.length>6)WOF.recent.shift();   // every player saw the same spin, so everyone keeps the same history
+  // every so often Pat is overjoyed with the result: a shout of jubilee, then a shuffle dance (the same spins on every screen)
+  WOF.party=Math.floor(WOF.plan.to*997)%5===0&&WOF.here?0.001:0;
   mpSys(WOF.by+' landed on '+sl.name);
   if(!wofLive())return;
   const r={i,coin:WOF.coin,mine:WOF.mine,by:WOF.by};
@@ -2374,6 +2530,7 @@ function wofWorld(r){
     case 17:FX.pitch=0;FX.pitchDone=false;FX.pitchLine=-1;if(!MP.guest)tsSpawn();break;
     case 20:if(!MP.guest)setTimeout(()=>{if(wofLive()&&!RR)rrStart()},1500);break;
     case 21:bombDrop();break;
+    case 22:if(!MP.guest)cgSpawn();break;
   }
 }
 // what the wheel does to you
@@ -2436,7 +2593,7 @@ function wofScene(kind){
   else brk().start(kind,end);
 }
 function wofClear(){
-  for(const k of FX_TIMERS)FX[k]=0;FX.flyT=0;BOMB=null;FX.dying=false;FX.poxNear=0;FX.frozen=null;TK=null;TS=null;RR=null;FX.pitchDone=false;FX.pitch=0;WOQ.length=0;WOQ_T=0;WOQ.busy=0;rrMissed=false;closeTerms();
+  for(const k of FX_TIMERS)FX[k]=0;FX.flyT=0;BOMB=null;CG=null;FX.dying=false;FX.poxNear=0;FX.frozen=null;TK=null;TS=null;RR=null;FX.pitchDone=false;FX.pitch=0;WOQ.length=0;WOQ_T=0;WOQ.busy=0;rrMissed=false;closeTerms();
   if(BRK)BRK.stop(true);statusStrip([]);tints({});wofAudio();
 }
 /* sounds: the hearing aids sit after the master volume; the ringing goes through it */
@@ -2645,6 +2802,47 @@ function bombDraw(t){
   }
 }
 
+/* ---------- the Crunch Gremlin ---------- */
+// A short, stout cave gremlin that loves crunchy baked goods, and players look crunchy. For one minute it chases whoever it has not
+// bitten lately, crunching and munching. A bite costs a heart, then it chews for a few seconds and goes after the next player.
+// Run by the host and streamed, like the Tickle Monster.
+let CG=null;
+const CG_LINES=['"Crunch, crunch, crunch!"','"Munch munch munch!"','"You look CRUNCHY."','"Crunchy crunchy delver!"','"Come here, little biscuit!"'];
+const cgNew=(x,z)=>({x,z,tx:x,tz:z,yaw:0,tyaw:0,t:60,tg:null,last:{},walk:0,mv:0,chew:0,net:0,age:0,sayT:1,
+  n:{type:'crunch',x,z,ph:3.1,used:true,lock:true,yaw:0,hy:0,hp:0}});
+function cgSpawn(){if(!F)return;const w=F.safe&&F.safe.wheel;CG=cgNew(w?w.x+w.nx*0.9:P.x+0.8,w?w.z+w.nz*0.9:P.z);CG.chew=1.5}
+function crunchSound(x,z,big){if(!ac)return;const d=Math.hypot(x-P.x,z-P.z);if(d>15)return;const k=Math.max(0.15,1-d/15)*(big?1.6:1);
+  for(let i=0;i<(big?5:3);i++){const s=ac.createBufferSource(),f=ac.createBiquadFilter(),g=ac.createGain(),t=ac.currentTime+i*0.13+Math.random()*0.03;
+    s.buffer=noiseBuf;f.type='bandpass';f.frequency.value=1800+Math.random()*1500;f.Q.value=0.9;g.gain.setValueAtTime(0.3*k,t);g.gain.exponentialRampToValueAtTime(0.0001,t+0.07);
+    s.connect(f);f.connect(g);g.connect(sfxBus);s.start(t,Math.random()*0.5);s.stop(t+0.08)}
+  tone(95,0.25,'sawtooth',0.07*k,0,-30)}
+function cgTick(dt){
+  const T0=CG;if(!T0)return;
+  if(MP.guest){T0.age+=dt;if(T0.age>3){CG=null;return}followNet(T0,dt)}
+  else{
+    T0.t-=dt;
+    if(T0.t<=0){CG=null;mpSend({k:'cg',d:R.depth,end:1});say('The Crunch Gremlin waddles off with its pretzels.',3);return}
+    if(T0.chew>0){T0.chew-=dt;T0.mv=Math.max(0,T0.mv-dt*4)}
+    else{
+      const L=tkTargets();let tg=L.find(q=>q.id===T0.tg);
+      if(!tg&&L.length){L.sort((a,b)=>((T0.last[a.id]||-99)-(T0.last[b.id]||-99))||(Math.hypot(a.x-T0.x,a.z-T0.z)-Math.hypot(b.x-T0.x,b.z-T0.z)));tg=L[0];T0.tg=tg.id}
+      if(!tg)T0.mv=Math.max(0,T0.mv-dt*4);
+      else if(Math.hypot(tg.x-T0.x,tg.z-T0.z)<0.45){T0.last[tg.id]=R.time;T0.tg=null;T0.chew=3;if(tg.id==='me')cgBitten();else mpSend({k:'cgb'},tg.id)}
+      else mazeStep(T0,tg.x,tg.z,dt,2.15);
+    }
+    T0.net-=dt;if(T0.net<=0&&MP.on){T0.net=0.1;mpSend({k:'cg',d:R.depth,x:r3(T0.x),z:r3(T0.z),y:r3(T0.yaw),m:r3(T0.mv),c:T0.chew>0?1:0,t:Math.round(T0.t)})}
+  }
+  T0.walk+=dt*T0.mv*10;
+  T0.sayT-=dt;if(T0.sayT<=0){T0.sayT=2.2+Math.random()*1.5;crunchSound(T0.x,T0.z,T0.chew>0);
+    if(Math.hypot(T0.x-P.x,T0.z-P.z)<7)say('Crunch Gremlin: '+CG_LINES[(Math.random()*CG_LINES.length)|0],2)}
+}
+function cgBitten(){
+  if(P.down||!wofLive()||FX.frozen)return;
+  crunchSound(P.x,P.z,true);
+  if(FX.curl===1){say('CRUNCH! The gremlin bites down on spines and spits you out.',3);return}   // a curled hedgehog is not on the menu
+  say('CRUNCH! The gremlin takes a bite out of you. It drops some pretzel crumbs.',3);hurt(null);if(F&&state!=='dead')potLoot(P.x,P.z,'ingr',2,13);
+}
+
 /* ---------- Lights Out ---------- */
 function wofLightsOut(){
   P.fuel=0;lowFuelSaid=true;sfx('powerdown');noise(0.5,0.25,900,1.5);
@@ -2780,12 +2978,12 @@ function tkTick(dt){
 
 /* ---------- every frame ---------- */
 function wofTick(dt){
-  wofTickSpin(dt);
-  if(!wofLive()){wofWasAway=false;if(FX.tin||FX.loud||TK||TS||FX.moon||FX.bob||FX.frozen||FX.pug||FX.rat||FX.plague||FX.fat||FX.pox||FX.dying)wofClear();return}
+  wofTickSpin(dt);patYellTick(dt);
+  if(!wofLive()){wofWasAway=false;if(FX.tin||FX.loud||TK||TS||CG||FX.moon||FX.bob||FX.frozen||FX.pug||FX.rat||FX.plague||FX.fat||FX.pox||FX.dying)wofClear();return}
   const away=wofAway();
   if(away!==wofWasAway){wofWasAway=away;if(away){tints({});statusStrip([]);document.body.classList.remove('hedgehog');wofAudio()}else WOQ_T=Math.max(WOQ_T,1.5)}
   if(!away)for(const k of FX_TIMERS)if(FX[k]>0)FX[k]=Math.max(0,FX[k]-dt);   // the clocks wait outside the door
-  tkTick(dt);tsTick(dt);rrTick(dt);bombTick(dt);
+  tkTick(dt);tsTick(dt);rrTick(dt);bombTick(dt);cgTick(dt);
   if(!away)wofReplayTick(dt);
   // the hedgehog: hold Z (pad LB, touch CURL) to curl into a ball of spines, X (pad R3, touch ROLL) to roll
   FX.curl=!away&&FX.hedge>0&&!P.down&&!FX.frozen?((keys.KeyZ||pad.curl||touch.curl)?1:(keys.KeyX||pad.roll||touch.roll)?2:0):0;
@@ -2838,18 +3036,28 @@ function wofTick(dt){
   if(R.mirror)L.push(['Mirror on the back of your head',null]);
   if(FX.tickled>0)L.push(['Tickled',null]);
   if(TS)L.push(['Timeshare salesman about',null]);
+  if(CG)L.push(['Crunch Gremlin loose',CG.t]);
   if(TK)L.push(['Tickle Monster loose',TK.t]);
+  potStatus(L);
   if(away)L.length=0;
   statusStrip(L);
   if(!away)tints({plague:FX.dying?0.9:FX.plague>0?0.45:0,tickle:FX.tickled>0?0.8:0,pox:FX.pox>0?0.55:0,fat:FX.fat>0?0.6:0});
   wofAudio();
 }
+// build the wheel with the floor (so its shaders compile behind the loading screen, not the first time you walk into a sanctuary)
+function wofModel(floor=F){
+  const w=floor&&floor.safe&&floor.safe.wheel;if(!w)return;
+  if(!WOF.grp){WOF.grp=wheelModel();scene.add(WOF.grp)}
+  WOF.grp.visible=true;WOF.grp.position.set(w.x,0,w.z);WOF.grp.rotation.y=w.yaw;WOF.grp.scale.setScalar(WOF_SCALE);
+}
 function wofDraw(t,ex,ey,ez,dtR){
   const w=F&&F.safe&&F.safe.wheel,show=!!w&&state!=='title';
-  if(!WOF.grp){if(!show)return;WOF.grp=wheelModel();scene.add(WOF.grp)}
+  if(!WOF.grp){if(!show)return;wofModel()}
   WOF.grp.visible=show;
   if(show){WOF.grp.position.set(w.x,0,w.z);WOF.grp.rotation.y=w.yaw;WOF.grp.scale.setScalar(WOF_SCALE);WOF.grp.userData.pose(WOF.here||WOF.done?WOF.angle:WOF.angle,WOF.flap,t,!WOF.done&&WOF.here?'spin':WOF.win>0?'win':'idle')}
   bombDraw(t);
+  if(CG){const n=CG.n;n.x=CG.x;n.z=CG.z;n.yaw=CG.yaw;n.walk=CG.walk;n.mv=CG.mv;n.chew=CG.chew>0;buildNpc(n,t,ex,ey,ez,dtR);
+    if(CG.mv>0.3&&Math.random()<0.3)spr(CG.x-Math.cos(CG.yaw)*0.15,0.03,CG.z-Math.sin(CG.yaw)*0.15,0.05,0.05,7,0.8,0.55,0.25,0.8,0)}   // crumbs
   if(TS){const n=TS.n;n.x=TS.x;n.z=TS.z;n.yaw=TS.yaw;n.walk=TS.walk;n.mv=TS.mv;n.pitch=TS.pitching;buildNpc(n,t,ex,ey,ez,dtR)}
   if(TK){const n=TK.n;n.x=TK.x;n.z=TK.z;n.yaw=TK.yaw;n.walk=TK.walk;n.mv=TK.mv;n.gig=TK.gig;n.reach=TK.pause>0?1:0.7;buildNpc(n,t,ex,ey,ez,dtR)}
   // sickly green around everything that is dying
@@ -2939,6 +3147,2538 @@ function buildCritter(p,t,form,self){
   seg(Hk,ta,tb,0.008,0.01,wood);
   return {torch:fpt(Hk,[tb[0],tb[1]+0.02,tb[2]])};
 }
+/* ---------- the Brewer: ingredients, brewing, and 100 potions to drink or throw (data and recipes in src/potions.js) ---------- */
+// Ingredients lie about every maze (placed from their own dice, so the rest of the floor never moves). The Brewer stands by the Keeper in
+// every sanctuary and turns two of anything into a potion: two ingredients make tier 1, two tier-1 potions make tier 2, and so on to tier 4.
+// Potions ride on a six-slot belt: drink one (H, pad Back, touch DRINK) or throw it (B, middle click, pad B, touch THROW).
+// A thrown potion shatters where it lands. Everything the splash reaches gets the effect: players get the drink effect, monsters their own.
+// Networking: the user sends {k:'pt'} and every client applies what lands on itself; the host (or a solo player) applies what lands on
+// monsters, and streams the visible result (pv) with the creature positions.
+const BELT_MAX=6,SPLASH=1.8,ING_N=INGREDIENTS.length;
+// ingredients are kept from run to run (saved); potions on the belt are lost with the run
+const POT={bag:(b=>Array.from({length:ING_N},(_,i)=>Math.max(0,Math.floor(+(Array.isArray(b)?b[i]:0)||0))))(store.get('brewBag',null)),belt:[],sel:0,ps:{},holdK:'',proj:[],zones:[],fx:[],hist:[],histT:0,book:new Set(store.get('brewBook',[]).filter(i=>potInfo(i))),k:1,m:1,pm:{},thick:0,aegis:0,hex:0,rotT:0,
+  pnd:0,apo:null,stop:0,hicT:3,snzT:6,regT:15,fireT:0,stormT:0,plT:0,slv:null,hudK:'',dom:null,tapT:0};
+const ps=k=>(POT.ps[k]||0)>0;
+// psSet stretches a timed effect by the tier (POT.k) and remembers how strong it is (POT.m), so a tier-3 Quickstep is faster as well as longer
+const psSet=(k,t)=>{t*=POT.k;POT.pm[k]=Math.max((POT.ps[k]||0)>0?POT.pm[k]||1:1,POT.m);POT.ps[k]=Math.max(POT.ps[k]||0,t)};
+const pmag=k=>(POT.ps[k]||0)>0?POT.pm[k]||1:1;
+const potMe=()=>MP.on?MP.id:'me';
+const potSaveBag=()=>store.set('brewBag',POT.bag);
+function potReset(run){
+  if(run){POT.belt=[];POT.sel=0}
+  POT.pm={};POT.thick=0;POT.aegis=0;POT.hex=0;POT.blurK='';
+  POT.ps={};POT.holdK='';POT.proj=[];POT.zones=[];POT.fx=[];POT.hist=[];POT.apo=null;POT.stop=0;POT.pnd=0;POT.slv=null;
+  canvas.style.filter='';
+}
+// ---- player status
+const BAD=DEBUFF;   // what the Panacea keeps off you: every debuff
+function potHold(k,t){
+  if(k==='ice'&&ps('warm'))return;
+  if(ps('berserk')&&k!=='sleep'&&k!=='dream')return;
+  POT.holdK=k;psSet('hold',t);
+}
+const potHeld=()=>ps('hold');
+const potSpeed=()=>(ps('quick')?1+0.3*pmag('quick'):1)*(ps('wind')?1+0.4*pmag('wind'):1)*(ps('qsilver')?1+0.5*pmag('qsilver'):1)*(ps('molasses')?1/(1+pmag('molasses')):1)*(ps('stoneskin')?0.8:1)*
+  (ps('lead')?1/(1+0.43*pmag('lead')):1)*(ps('huge')||ps('wyrm')||ps('titan')?0.9:1)*(ps('tslow')?1/(1+pmag('tslow')):1)*(ps('godspeed')?1.3:1);
+const potJump=()=>ps('lead')?0:ps('moon')?1.25:ps('wind')||ps('feather')||ps('pixie')?1.2:1;
+const potGrav=()=>ps('moon')?0.22:ps('feather')||ps('pixie')?0.42:1;
+const potEye=()=>ps('tiny')||ps('pixie')?0.45:ps('huge')||ps('wyrm')||ps('drake')||ps('titan')?1.25:1;
+const potTorch=()=>(ps('glow')?1+0.7*pmag('glow'):1)*(ps('daybreak')?1.4:1)*(ps('lantern')?1.3:1)*(ps('cat')?1+0.5*pmag('cat'):1)*(ps('night')?0.3:1);
+function potFlags(){
+  const f=(k,b)=>ps(k)?b:0;
+  return f('invis',1)|f('shadow',2)|f('loud',4)|f('hush',8)|f('wbane',16)|f('wlure',32)|f('repel',64)|f('banish',128)|f('mirror',256)|f('storm',512)|
+    f('stare',1024)|f('medusa',2048)|f('decoy',4096)|(ps('huge')||ps('wyrm')||ps('drake')?16384:0)|(ps('fire')||ps('wyrm')?32768:0)|f('drake',65536)|f('ignored',131072);
+}
+// how far a monster notices this target, as a factor: 0 invisible, 0.5 in shadow ink, 2 loud...
+const potSk=T=>{const f=T.pf|0;if(f&(1|131072))return 0;return (f&2?0.5:1)*(f&8?0.7:1)*(f&4?2:1)*(f&4096?3:1)};
+function potHurt(s){   // true when a potion took the blow instead of you
+  if(ps('phantom')&&Math.random()<0.5){if(s){s.stun=Math.max(s.stun,1);s.state=0}P.inv=0.8;say('It passes right through you',1.2);return true}
+  if(POT.aegis>0&&ps('aegis')){POT.aegis--;P.inv=1.6;if(s){s.stun=Math.max(s.stun,2.5);s.state=0}sfx('seal');say('Aegis holds ('+POT.aegis+' left)',1.5);return true}
+  if(POT.thick>0){POT.thick--;P.inv=1.6;P.chill=Math.max(P.chill,2);if(s){s.stun=Math.max(s.stun,2);s.state=0}sfx('drain');say('Your thick hide takes it: only a chill',1.6);return true}
+  if(ps('invuln')||ps('hold')&&POT.holdK==='stone'){if(s){s.stun=Math.max(s.stun,2);s.state=0}sfx('seal');return true}
+  if(s&&ps('mirror')){s.stun=6;s.state=0;s.calm=6;sfx('seal');say('Your mirror skin throws it back',1.6);P.inv=1;return true}
+  if(s&&ps('banish')&&s.type===0){banish(s,false);say('Banished at a touch',1.6);return true}
+  if(ps('stoneskin')){POT.ps.stoneskin=0;P.inv=1.6;if(s){s.stun=2.5;s.state=0;s.calm=6}sfx('seal');say('Your stone skin cracks, but holds',2);return true}
+  return false;
+}
+function potDying(){   // P.hp just hit 0: a second life or the elixir keeps you up
+  if(ps('undying')){P.hp=1;P.inv=1.5;return true}
+  if(ps('life')){POT.ps.life=0;P.hp=maxHp();P.inv=3;say('Second Life: you come back, whole',3);sfx('shard');return true}
+  return false;
+}
+function potCure(){
+  for(const k of['hold','molasses','lead','slick','loud','fury','hic','sneeze','decoy','wlure','tslow','blur','weak','sap','night','rot','doom'])POT.ps[k]=0;POT.hex=0;
+  for(const k of['pug','rat','plague','fat','loud','tin','pox','moon','bob','tickled','stag'])FX[k]=0;
+  FX.dying=false;P.chill=0;P.woozy=0;P.fizz=0;
+}
+
+// ---- belt and bag
+const beltCount=()=>POT.belt.reduce((a,b)=>a+b.n,0);
+function beltAdd(id,n=1){
+  const q=POT.belt.find(b=>b.id===id);if(q){q.n+=n;return true}
+  POT.belt.push({id,n});return true;   // past the six hot-bar slots, potions wait in your bag (see the inventory)
+}
+function beltTake(i){
+  const q=POT.belt[i];if(!q)return 0;const id=q.id;
+  if(--q.n<=0){POT.belt.splice(i,1);if(i<POT.sel)POT.sel--;if(POT.sel>=Math.min(BELT_MAX,POT.belt.length))POT.sel=Math.max(0,Math.min(BELT_MAX,POT.belt.length)-1)}
+  return id;
+}
+const canUse=()=>state==='play'&&!P.down&&!P.away&&!loading&&!FX.frozen&&!P.grab;
+function potDrink(i){
+  if(i!==undefined&&i<BELT_MAX)POT.sel=i;const k=i!==undefined?i:POT.sel;
+  if(!canUse())return;
+  if(!POT.belt.length){say(nearPotHint(),2);return}
+  if(potHeld()&&POT.holdK!=='sneeze'){say('You can\'t move to drink',1.2);return}
+  const id=beltTake(k);if(!id)return;
+  const p=potInfo(id);
+  tone(300,0.12,'sine',0.1,0,-80);tone(260,0.12,'sine',0.1,0.15,-80);tone(220,0.16,'sine',0.1,0.3,-60);
+  say('You drink the '+p.name+'. '+p.you,3.2);
+  const m={k:'pt',d:R.depth,id,x:r3(P.x),z:r3(P.z),w:'d',by:potMe(),yaw:r3(P.yaw)};
+  if(potParts(id).some(q=>PFX[q]&&PFX[q].A))mpSend(m);
+  potLand(m,true);
+}
+const nearPotHint=()=>'No potions. The Brewer by the Keeper makes them from what you find in the maze.';
+function potThrow(i){
+  if(i!==undefined&&i<BELT_MAX)POT.sel=i;const k=i!==undefined?i:POT.sel;
+  if(!canUse())return;
+  if(!POT.belt.length){say(nearPotHint(),2);return}
+  if(potHeld()){say('You can\'t move to throw',1.2);return}
+  if(!POT.belt[k])return;const id=ps('arch')?POT.belt[k].id:beltTake(k);if(!id)return;
+  const cp=Math.cos(P.pitch),sp=6.2,eyeY=Math.min(CAM_TOP,EYE*wofEye()*potEye()+P.y);
+  const q={id,x:P.x+Math.cos(P.yaw)*0.25,y:eyeY-0.1,z:P.z+Math.sin(P.yaw)*0.25,vx:Math.cos(P.yaw)*cp*sp+P.vx*0.5,vy:Math.sin(P.pitch)*sp+1.4,vz:Math.sin(P.yaw)*cp*sp+P.vz*0.5,t:0,mine:true,rot:0};
+  if(solidAt(q.x,q.z)){q.x=P.x;q.z=P.z}
+  POT.proj.push(q);noise(0.15,0.08,900,1);
+  mpSend({k:'pth',d:R.depth,id,a:[r3(q.x),r3(q.y),r3(q.z),r3(q.vx),r3(q.vy),r3(q.vz)]});
+}
+function potProjTick(dt){
+  for(let i=POT.proj.length-1;i>=0;i--){
+    const q=POT.proj[i];q.t+=dt;q.rot+=dt*14;
+    const n=3;let land=null;
+    for(let k=0;k<n&&!land;k++){
+      const h=dt/n,ox=q.x,oz=q.z;
+      q.vy-=9*h;q.x+=q.vx*h;q.y+=q.vy*h;q.z+=q.vz*h;
+      if(q.y>WALL_H-0.05){q.y=WALL_H-0.05;q.vy=-Math.abs(q.vy)*0.3}
+      if(solidAt(q.x,q.z)){land=[ox,oz];break}
+      if(q.y<=0.03){land=[q.x,q.z];break}
+      if(q.mine&&q.t>0.08){
+        for(const s of F.shades)if(s.x>0&&!s.dead&&q.y<1.0&&(s.x-q.x)**2+(s.z-q.z)**2<0.35*0.35){land=[q.x,q.z];break}
+        if(!land&&MP.on)for(const p of MP.peers.values())if(p.d===R.depth&&mpDrawn(p)&&q.y<1.1&&(p.x-q.x)**2+(p.z-q.z)**2<0.3*0.3){land=[q.x,q.z];break}
+      }
+    }
+    if(!land&&q.t>4)land=[q.x,q.z];
+    if(land){
+      POT.proj.splice(i,1);
+      if(q.mine){
+        potBurst(land[0],Math.max(0.05,Math.min(q.y,1)),land[1],hex3(potInfo(q.id).col));
+        const m={k:'pt',d:R.depth,id:q.id,x:r3(land[0]),z:r3(land[1]),w:'t',by:potMe(),yaw:r3(P.yaw)};
+        // the Swap Draught needs everyone to agree which creature it was
+        if(potParts(q.id).includes(70)){let bi=-1,bd=SPLASH;F.shades.forEach((s,j)=>{if(s.x>0&&!s.dead&&s.type!==3){const d=Math.hypot(s.x-m.x,s.z-m.z);if(d<bd){bd=d;bi=j}}});m.si=bi;m.ux=r3(P.x);m.uz=r3(P.z)}
+        mpSend(m);potLand(m,true);
+      }
+    }
+  }
+}
+function potBurst(x,y,z,c,n=26,big=1){
+  noise(0.35,0.16,2600,1.2);tone(1900+Math.random()*300,0.18,'triangle',0.05,0,-600);
+  for(let i=0;i<n;i++){const a=Math.random()*6.283,u=Math.random()*2.2*big;
+    POT.fx.push({x,y,z,vx:Math.cos(a)*u,vy:0.8+Math.random()*2.4*big,vz:Math.sin(a)*u,t:0,life:0.6+Math.random()*0.6,c,s:0.05+Math.random()*0.06})}
+  POT.fx.push({x,y:0.06,z,ring:SPLASH*big,t:0,life:0.6,c});
+}
+
+// ---- landing: who gets what
+const potMons=(x,z,r,sight)=>MP.guest||!F?[]:F.shades.filter(s=>s.x>0&&!s.dead&&s.type!==3&&!(s.type===6&&s.role!=='add')&&Math.hypot(s.x-x,s.z-z)<r&&(!sight||los(x,z,s.x,s.z)));
+const meIn=(c,r,sight=true)=>!P.down&&!P.away&&!!F&&Math.hypot(P.x-c.x,P.z-c.z)<r&&(!sight||los(c.x,c.z,P.x,P.z));
+const notUser=c=>!(c.drink&&c.mine);
+const pe=(s,k,t)=>{t*=POT.k;s.pe=s.pe||{};const g=s.pmag||(s.pmag={});g[k]=Math.max(s.pe[k]>0?g[k]||1:1,POT.m);s.pe[k]=Math.max(s.pe[k]||0,t)};
+const smag=(s,k)=>s.pe&&s.pe[k]>0&&s.pmag?s.pmag[k]||1:1;
+const pk=s=>s.pk||(s.pk={});
+const potParts=id=>{const p=potInfo(id);return !p?[]:p.mix?p.parts:[id]};
+// a blend lands as each of its effects in turn, boosted (POT.k stretches every duration it sets)
+function potLand(m,mine){
+  const p=potInfo(m.id);if(!p||!F)return;
+  if(!p.mix){POT.k=p.k;POT.m=p.m;try{potLand1(m,mine,false)}finally{POT.k=1;POT.m=1}return}
+  if(!mine&&m.w!=='d')potBurst(m.x,0.1,m.z,hex3(p.col));
+  for(const q of p.parts){POT.k=p.k;POT.m=p.m;try{potLand1(Object.assign({},m,{id:q}),mine,true)}finally{POT.k=1;POT.m=1}}
+}
+function potLand1(m,mine,quiet){
+  const fx=PFX[m.id];if(!fx||!F)return;
+  const c={id:m.id,x:m.x,z:m.z,by:m.by,mine,host:!MP.guest,drink:m.w==='d',yaw:m.yaw||0,m};
+  if(m.rv||m.id===14&&!c.drink&&P.down&&MP.on){   // Smelling Salts get a fallen friend back on their feet, beside whoever used them
+    if(P.down&&!mine){P.down=false;P.hp=1;P.inv=2.5;P.x=c.x;P.z=c.z;onTileChange();say('Smelling salts! You are back on your feet.',3);sfx('shard')}
+    if(m.rv)return;
+  }
+  if(!mine&&!c.drink&&!quiet)potBurst(c.x,0.1,c.z,hex3(potInfo(m.id).col));
+  if(c.drink&&!mine&&!fx.A)return;
+  const you=()=>{if(BAD.has(m.id)&&ps('immune')){say('The Panacea keeps it off you',1.6);return}fx.u&&fx.u(c)};
+  if(fx.A){if(c.drink&&mine&&!fx.Aonly)you();fx.A(c,you);if(c.drink&&mine)return;}
+  else if(c.drink){if(mine)you();return}
+  else{
+    if(meIn(c,SPLASH))you();
+    if(c.host)for(const s of potMons(c.x,c.z,SPLASH,true))fx.m&&fx.m(s,c);
+    if(c.host&&F.boss)bossPotion(c);
+  }
+  if(mine&&fx.gems&&!c.drink)for(const s of F.shades)if(s.x>0&&!s.dead&&s.type!==3&&Math.hypot(s.x-c.x,s.z-c.z)<(fx.gr||SPLASH))potLoot(s.x,s.z,'gem',fx.gems);
+}
+// loot that only the user sees and picks up (never sent: its index is local)
+function potLoot(x,z,type,n,ing){
+  for(let i=0;i<n;i++){
+    let tx=Math.floor(x),tz=Math.floor(z);
+    for(let k=0;k<12;k++){const a=Math.random()*6.283,r=0.2+Math.random()*0.9,nx=Math.floor(x+Math.cos(a)*r),nz=Math.floor(z+Math.sin(a)*r);
+      if(nx>0&&nz>0&&nx<F.W-1&&nz<F.H-1&&F.g[nz*F.W+nx]===0){tx=nx;tz=nz;break}}
+    const ox=(Math.random()-0.5)*0.5,oz=(Math.random()-0.5)*0.5;
+    F.items.push({type,ing,tx,ty:tz,x:tx+0.5+ox,z:tz+0.5+oz,got:false,ph:Math.random()*6.28,loc:true});
+  }
+}
+// put a monster on the nearest open floor to (x,z)
+function potPlace(s,x,z){
+  const W=F.W;let bx=-1,bz=-1,bd=1e9;
+  const cx=Math.floor(x),cz=Math.floor(z);
+  for(let r=0;r<6&&bx<0;r++)for(let dz=-r;dz<=r;dz++)for(let dx=-r;dx<=r;dx++){
+    const nx=cx+dx,nz=cz+dz;if(nx<1||nz<1||nx>=W-1||nz>=F.H-1)continue;const i=nz*W+nx;
+    if(F.g[i]||F.safeMask[i]||F.pocketMask[i])continue;const d=Math.hypot(nx+0.5-x,nz+0.5-z);if(d<bd){bd=d;bx=nx;bz=nz}}
+  if(bx<0)return;
+  const ins=bd<0.71;s.x=ins?Math.min(bx+0.95,Math.max(bx+0.05,x)):bx+0.5;s.z=ins?Math.min(bz+0.95,Math.max(bz+0.05,z)):bz+0.5;s.gx=bx;s.gy=bz;s.px=-1;s.ag=null;
+}
+function potFar(s,minD){   // somewhere well away from everyone
+  const MD=mpDist(mpTargets());
+  for(let tries=0;tries<80;tries++){
+    const rx=1+(Math.random()*(F.W-2)|0),ry=1+(Math.random()*(F.H-2)|0),i=ry*F.W+rx;
+    if(F.g[i]===0&&!F.safeMask[i]&&!F.pocketMask[i]&&(MD[i]>minD||tries>60&&MD[i]>4)){potPlace(s,rx+0.5,ry+0.5);return}
+  }
+}
+function potKill(s,quiet){s.dead=true;banish(s,quiet);s.pe=null}
+function potBanish(s){if(s.pe&&s.pe.nob>0){s.stun=Math.max(s.stun,3);return}if(s.type===0||s.type===3)banish(s,false);else{s.stun=Math.max(s.stun,8);potFar(s,12)}}
+// a player in the radius is pushed away from the middle (shockwaves, the black hole)
+function potShove(c,r,k,up){
+  if(!meIn(c,r,false)||!notUser(c))return;
+  const dx=P.x-c.x,dz=P.z-c.z,d=Math.hypot(dx,dz)||1;
+  P.vx+=dx/d*k;P.vz+=dz/d*k;if(up){P.vy=up;P.y=Math.max(P.y,0.001)}
+  POT.slv={vx:dx/d*k,vz:dz/d*k,t:0.5};
+}
+// ---- what each potion does. u: to a player it lands on (or who drinks it). m: to a monster in the splash (run by the host).
+// A: an area potion (replaces the plain splash; c.drink when it was drunk, notUser(c) leaves the drinker out). gems: the user's loot per monster.
+const mHold=(s,k,t)=>{if(k==='ice'&&s.pe&&s.pe.warm)return;pe(s,k,t);s.state=0};
+const potZone=(k,c,r,t,o)=>{t*=POT.k;POT.zones.push(Object.assign({k,x:c.x,z:c.z,r,t,T:t,by:c.by,id:c.id},o||{}))};
+const youHold=(k,t,msg)=>{potHold(k,t);if(msg)say(msg,2)};
+function potRandom(c,list){   // Chaos Draught: a random tier 1-2 effect on everything in reach
+  const pool=[];for(let i=1;i<=70;i++)if(i!==40&&i!==60&&i!==70&&i!==38&&PFX[i]&&!PFX[i].A)pool.push(i);
+  if(meIn(c,8))({...PFX[pool[(Math.random()*pool.length)|0]]}).u?.(c);
+  for(const s of list)PFX[pool[(Math.random()*pool.length)|0]].m?.(s,c);
+}
+function potRewind(){
+  const h=POT.hist.find(q=>R.time-q.t>=9.5)||POT.hist[POT.hist.length-1];
+  if(!h){say('Nothing to rewind to',1.5);return}
+  P.x=h.x;P.z=h.z;P.hp=Math.max(P.hp,h.hp);P.fuel=Math.max(P.fuel,h.fuel);P.vx=P.vz=0;onTileChange();
+  sfx('noclip');say('Ten seconds back',2);
+}
+function potToSanctuary(){
+  const s=F.safe;if(s){P.x=s.x+0.55;P.z=s.z-0.05}else{P.x=F.start.tx+0.5;P.z=F.start.ty+0.5}
+  P.vx=P.vz=0;P.y=0;onTileChange();sfx('noclip');
+}
+function potBlink(d){
+  const fx=Math.cos(P.yaw),fz=Math.sin(P.yaw);let k=0;
+  for(let s=0.1;s<=d;s+=0.1){if(blocked(P.x+fx*s,P.z+fz*s))break;k=s}
+  P.x+=fx*k;P.z+=fz*k;onTileChange();sfx('noclip');
+}
+const PFX={
+  1:{u:()=>{P.hp=Math.min(maxHp(),P.hp+Math.max(1,Math.round(POT.m)));sfx('pick')},m:s=>{s.stun=0}},
+  2:{u:()=>{P.fuel=100;lowFuelSaid=false;sfx('oil')},m:(s)=>{if(s.type===2){potFar(s,10);s.stun=2;pe(s,'calm',20)}else pe(s,'glow',40)}},
+  3:{u:()=>psSet('quick',45),m:s=>pe(s,'fast',30)},
+  4:{u:()=>psSet('molasses',20),m:s=>pe(s,'slow',20)},
+  5:{u:()=>youHold('ice',3,'Frozen solid!'),m:s=>mHold(s,'ice',6)},
+  6:{u:()=>{if(P.ward){P.ward=0;say('The flames eat your ward stone',2)}else{P.inv=0;hurt(null)}},m:s=>{pe(s,'burn',4)}},
+  7:{u:()=>psSet('glow',60),m:s=>pe(s,'glow',60)},
+  8:{u:()=>psSet('shadow',45),m:s=>pe(s,'invis',30)},
+  9:{u:()=>psSet('feather',45),m:s=>pe(s,'drift',25)},
+  10:{u:()=>psSet('lead',25),m:s=>{if(s.type===2)mHold(s,'stuck',10);else pe(s,'heavy',30)}},
+  11:{u:()=>youHold('web',3,'Webbed!'),m:s=>mHold(s,'web',8)},
+  12:{u:()=>psSet('slick',25),m:s=>{pe(s,'fast',15);pe(s,'lost',15)}},
+  13:{u:()=>youHold('sleep',4,'So... sleepy...'),m:s=>mHold(s,'sleep',12)},
+  14:{u:c=>{POT.ps.hold=0;POT.ps.molasses=0;P.chill=0;if(c.drink&&MP.on)mpSend({k:'pt',d:R.depth,id:14,x:r3(P.x),z:r3(P.z),w:'t',by:potMe(),rv:1})},
+      m:(s,c)=>{for(const k of['sleep','dream','ice','web','stuck'])if(s.pe)delete s.pe[k];s.stun=0;s.calm=0;s.state=1;pe(s,'fast',10)}},
+  15:{u:()=>psSet('calm',60),m:s=>pe(s,'calm',15)},
+  16:{u:()=>psSet('fury',20),m:s=>{pe(s,'frenzy',20);s.state=1;s.calm=0}},
+  17:{u:()=>psSet('tiny',60),m:s=>pe(s,'tiny',30)},
+  18:{u:()=>psSet('huge',60),m:s=>pe(s,'huge',30)},
+  19:{u:()=>{FX.pug=60;FX.last='pug'},m:s=>pe(s,'pug',60)},
+  20:{u:()=>{FX.rat=60;FX.last='rat'},m:s=>{pe(s,'rat',60)}},
+  21:{u:()=>psSet('invis',20),m:s=>pe(s,'invis',30)},
+  22:{u:()=>psSet('xray',30),m:s=>pe(s,'reveal',60)},
+  23:{u:()=>psSet('hush',60),m:s=>pe(s,'hush',60)},
+  24:{u:()=>psSet('loud',30),m:s=>pe(s,'loud',30)},
+  25:{u:()=>psSet('stoneskin',90),m:s=>mHold(s,'stone',10)},
+  26:{u:()=>psSet('stare',30),m:s=>pe(s,'stare',30)},
+  27:{u:()=>psSet('wbane',60),m:s=>{if(s.type===2)potKill(s,false);else pe(s,'harm',30)}},
+  28:{u:()=>psSet('wlure',30),m:s=>pe(s,'wlure',30)},
+  29:{u:()=>psSet('decoy',30),m:s=>pe(s,'decoy',20)},
+  30:{u:()=>psSet('repel',30),m:s=>pe(s,'repel',30)},
+  31:{u:()=>psSet('hic',25),m:s=>pe(s,'hic',20)},
+  32:{u:()=>psSet('sneeze',30),m:s=>pe(s,'sneeze',30)},
+  33:{u:()=>psSet('bouncy',60),m:s=>{pe(s,'fast',15);pe(s,'lost',15)}},
+  34:{u:()=>psSet('magnet',30),A:(c)=>{
+      if(c.drink)return;
+      if(meIn(c,SPLASH))psSet('magnet',30);
+      for(const s of potMons(c.x,c.z,6,false)){pe(s,'clump',3);Object.assign(pk(s),{cx:c.x,cz:c.z})}}},
+  35:{u:()=>psSet('gems',120),m:s=>{s.stun=Math.max(s.stun,4)},gems:3},
+  36:{u:()=>psSet('warm',120),m:s=>{pe(s,'warm',120);if(s.pe.ice)delete s.pe.ice}},
+  37:{u:()=>{for(let y=-8;y<=8;y++)for(let x=-8;x<=8;x++){const tx=P.tx+x,ty=P.ty+y;if(tx>=0&&ty>=0&&tx<F.W&&ty<F.H&&x*x+y*y<=64)F.seen[ty*F.W+tx]=1}psSet('xray',6);tone(1400,0.4,'sine',0.08);tone(1400,0.4,'sine',0.04,0.4)},m:s=>pe(s,'lost',20)},
+  38:{u:()=>potBlink(4*POT.m),m:(s,c)=>{const dx=s.x-c.x,dz=s.z-c.z,d=Math.hypot(dx,dz)||1,k=4*POT.m;potPlace(s,s.x+dx/d*k,s.z+dz/d*k)}},
+  39:{u:()=>{if(P.ward){P.ward=0;say('Your ward stone crumbles to sand',2)}},m:s=>pe(s,'weak',60)},
+  40:{u:()=>{say('It tastes of nothing much.',1.5)},m:s=>pe(s,'sludge',15)},
+  // ---- tier 2
+  41:{u:()=>psSet('wind',45),m:s=>{pe(s,'zip',15);pe(s,'lost',15)}},
+  42:{u:()=>{youHold('ice',6,'Frozen to the bone!');psSet('molasses',14)},m:s=>{mHold(s,'ice',15);pe(s,'dfz',15)}},
+  43:{u:()=>psSet('fire',20),m:s=>{pe(s,'burn',6);pe(s,'fireaura',6)}},
+  44:{u:()=>{psSet('daybreak',45);psSet('repel',45)},m:s=>{pe(s,'glow',30);s.stun=Math.max(s.stun,3);for(const o of potMons(s.x,s.z,3,true))if(o.type===0)o.stun=Math.max(o.stun,5)}},
+  45:{u:()=>psSet('invis',30),m:s=>{pe(s,'invis',30);pe(s,'lost',30)}},
+  46:{u:()=>{youHold('sleep',6,'A deep, dreamless sleep...');POT.wake='heal'},m:s=>mHold(s,'sleep',30)},
+  47:{u:()=>{psSet('berserk',30);POT.ps.hold=0},m:s=>{pe(s,'berserk',20);s.calm=0}},
+  48:{u:()=>{psSet('regen',120);POT.regT=15},m:s=>pe(s,'rec',60)},
+  49:{u:()=>youHold('stone',10,'Gargoyle skin: nothing can hurt you, and you cannot move'),m:s=>mHold(s,'stone',30)},
+  50:{u:()=>psSet('medusa',30),m:s=>{for(const o of potMons(s.x,s.z,4,true))mHold(o,'stone',10)}},
+  51:{u:()=>psSet('huge',60),m:s=>{pe(s,'huge',20);mHold(s,'stuck',20)}},
+  52:{u:()=>{psSet('pixie',60);psSet('tiny',60)},m:s=>{pe(s,'tiny',30);pe(s,'drift',30)}},
+  53:{u:()=>{FX.pug=60;FX.last='pug';psSet('ignored',60)},m:(s,c)=>{pe(s,'pug',60);pe(s,'pet',60);pk(s).own=c.by}},
+  54:{u:()=>{FX.plague=60;FX.dying=false},m:s=>{pe(s,'plague',45)}},
+  55:{u:()=>{psSet('invis',30);psSet('hush',30)},m:s=>pe(s,'ghost',30)},
+  56:{A:(c)=>{
+      potBurst(c.x,0.5,c.z,[1,1,0.4],40,2);tone(60,0.9,'sawtooth',0.3,0,-30);noise(0.8,0.5,200,0.6);pkShake=Math.max(pkShake,0.6);
+      potShove(c,4,6,2);
+      for(const s of potMons(c.x,c.z,4,false)){const dx=s.x-c.x,dz=s.z-c.z,d=Math.hypot(dx,dz)||1;potPlace(s,s.x+dx/d*2,s.z+dz/d*2);s.stun=Math.max(s.stun,3);s.state=0}}},
+  57:{A:(c)=>{potZone('web',c,2,10)}},
+  58:{u:()=>psSet('banish',30),m:s=>potBanish(s)},
+  59:{A:(c)=>{
+      if(c.drink){for(const s of potMons(c.x,c.z,12,false)){pe(s,'pet',20);pk(s).own=c.by}return}
+      const L=potMons(c.x,c.z,SPLASH,true);if(meIn(c,SPLASH))psSet('decoy',20);
+      if(!L.length)return;const ld=L[0];pe(ld,'lead',20);pe(ld,'harm',20);
+      for(const s of potMons(ld.x,ld.z,10,false))if(s!==ld){pe(s,'follow',20);pk(s).ldr=F.shades.indexOf(ld)}}},
+  60:{u:()=>{potToSanctuary();say('Back in the sanctuary',2)},m:s=>potFar(s,15)},
+  61:{u:()=>{F.seen.fill(1);psSet('xray',40);psSet('allmon',40)},m:s=>pe(s,'reveal',120)},
+  62:{u:()=>{psSet('midas',60);psSet('magnet',60)},m:s=>mHold(s,'gold',15),gems:4},
+  63:{u:()=>{if(P.ward){P.ward=0;say('Your ward stone dissolves',2)}POT.ps.stoneskin=0},m:s=>pe(s,'weak3',60)},
+  64:{u:()=>psSet('lantern',120),m:(s,c)=>{if(s.type===2){pe(s,'pet',120);pe(s,'calm',120);pk(s).own=c.by}else pe(s,'glow',30)}},
+  65:{u:()=>{FX.hedge=60;setTimeout(()=>say(touch.on?'A hedgehog! CURL: nothing can hurt you. ROLL: super speed.':'A hedgehog! Hold Z to curl up, X to roll.',4),1500)},m:s=>pe(s,'spines',30)},
+  66:{u:()=>psSet('moon',30),m:s=>mHold(s,'float',10)},
+  67:{A:(c)=>{
+      if(c.drink){for(const s of potMons(c.x,c.z,6,false))pe(s,'tslow',20);if(c.mine)psSet('syrup',20);return}
+      if(meIn(c,SPLASH))psSet('tslow',15);
+      for(const s of potMons(c.x,c.z,SPLASH,true))pe(s,'tslow',30)}},
+  68:{u:()=>psSet('mirror',30),m:s=>pe(s,'mirror',30)},
+  69:{u:()=>psSet('hearth',120),m:s=>pe(s,'harm',60)},
+  70:{A:(c)=>{
+      const m=c.m;
+      if(c.drink){   // swap with the nearest creature
+        let best=null,bd=10;for(const s of F.shades)if(s.x>0&&!s.dead&&s.type!==3){const d=Math.hypot(s.x-P.x,s.z-P.z);if(d<bd&&los(P.x,P.z,s.x,s.z)){bd=d;best=s}}
+        if(!c.mine)return;
+        if(!best){say('Nothing near enough to swap with',2);return}
+        const i=F.shades.indexOf(best),bx=best.x,bz=best.z;
+        mpSend({k:'pt',d:R.depth,id:70,x:r3(bx),z:r3(bz),w:'t',by:potMe(),si:i,ux:r3(P.x),uz:r3(P.z),sw:1});
+        if(!MP.guest)potPlace(best,P.x,P.z);
+        P.x=bx;P.z=bz;onTileChange();sfx('noclip');return;
+      }
+      const s=F.shades[m.si];
+      if(c.mine&&s&&s.x>0&&m.ux!=null&&!m.sw){P.x=s.x;P.z=s.z;onTileChange();sfx('noclip')}
+      if(c.host&&s&&s.x>0&&m.ux!=null)potPlace(s,+m.ux,+m.uz);}},
+  // ---- tier 3
+  71:{A:(c)=>{
+      if(c.drink){if(c.mine)psSet('storm',30);return}
+      tone(120,0.5,'sawtooth',0.2,0,800);noise(0.5,0.4,4000,1);
+      const L=potMons(c.x,c.z,8,true);for(const s of L){s.stun=Math.max(s.stun,6);s.state=0;POT.fx.push({bolt:[c.x,c.z,s.x,s.z],t:0,life:0.5})}
+      if(meIn(c,3))youHold('ice',1,'Zap!')}},
+  72:{A:(c)=>{
+      potBurst(c.x,0.4,c.z,[0.75,0.95,1],50,3.3);tone(2400,1.2,'sine',0.12,0,-2000);
+      if(meIn(c,6,false)&&notUser(c))youHold('ice',ps('warm')?0:20,ps('warm')?'':'Absolute zero!');
+      for(const s of potMons(c.x,c.z,6,false))mHold(s,'ice',20)}},
+  73:{A:(c)=>{
+      flashT=1;potBurst(c.x,0.6,c.z,[1,0.97,0.75],60,4);sfx('flash');
+      for(const s of F.shades){if(s.x<0||s.dead||Math.hypot(s.x-c.x,s.z-c.z)>14||!los(c.x,c.z,s.x,s.z))continue;
+        if(s.type===3)banish(s,true);else if(c.host){if(s.type===0)potBanish(s);else{s.stun=Math.max(s.stun,6);s.state=0}}}}},
+  74:{u:()=>{psSet('phase',10);say('You can walk through walls. Mind where you are when it ends.',3)},m:s=>potKill(s,false)},
+  75:{u:()=>{psSet('wyrm',45);say('You are a drake! Fire pours from your jaws.',3)},m:s=>pe(s,'dragon',30)},
+  76:{A:(c)=>{for(const s of potMons(c.x,c.z,14,true))mHold(s,'stone',45);potBurst(c.x,0.5,c.z,[0.6,0.6,0.55],40,3)}},
+  77:{A:(c)=>{const L=potMons(c.x,c.z,14,false).sort((a,b)=>Math.hypot(a.x-c.x,a.z-c.z)-Math.hypot(b.x-c.x,b.z-c.z)).slice(0,3);
+      for(const s of L){pe(s,'pet',120);pk(s).own=c.by;s.stun=0}}},
+  78:{A:(c)=>{potZone('plague',c,2.5,20)}},
+  79:{u:()=>potRewind(),m:s=>{const h=s.hist&&s.hist[0];if(h)potPlace(s,h[0],h[1])}},
+  80:{u:()=>{youHold('dream',8,'You dream of the whole floor...');psSet('invuln',8);F.seen.fill(1);psSet('allmon',20)},m:s=>mHold(s,'dream',60)},
+  81:{A:(c)=>{potZone('fort',c,1.7,30)}},
+  82:{A:(c)=>{potZone('hole',c,6,4)}},
+  83:{A:(c)=>{const k=c.drink?1.4:0;potZone('hedge',{x:c.x+Math.cos(c.yaw)*k,z:c.z+Math.sin(c.yaw)*k,by:c.by,id:83},1.2,30)}},
+  84:{A:(c)=>{
+      if(c.drink&&c.mine){psSet('repel',60);psSet('lantern',120)}
+      for(const s of potMons(c.x,c.z,1e4,false))if(s.type===2){pe(s,'pet',120);pe(s,'calm',120);pk(s).own=c.by}}},
+  85:{u:()=>{},A:(c)=>{const k=c.drink?1.2:0;potZone('portal',{x:c.x+Math.cos(c.yaw)*k,z:c.z+Math.sin(c.yaw)*k,by:c.by,id:85},0.55,20)},Aonly:true},
+  86:{A:(c)=>{
+      potBurst(c.x,0.3,c.z,[0.85,0.85,1],40,3);tone(80,1,'sine',0.3,0,-40);
+      if(meIn(c,6,false)&&notUser(c)){P.vy=5.5;P.y=Math.max(P.y,0.001);POT.slam=1}
+      for(const s of potMons(c.x,c.z,6,false)){mHold(s,'float',1.2);s.stun=Math.max(s.stun,5)}}},
+  87:{u:()=>{psSet('gold3',90);psSet('hearth',90);psSet('magnet',90);P.fuel=100},m:s=>mHold(s,'gold',20),gems:5},
+  88:{u:()=>{F.seen.fill(1);F.reveal=true;psSet('allmon',9999);psSet('xray',60)},m:s=>pe(s,'reveal',9999)},
+  89:{u:()=>{psSet('life',9999);say('Second Life: if you fall on this floor, you come back',3)},m:s=>pe(s,'nob',60)},
+  90:{A:(c)=>{potBurst(c.x,0.5,c.z,[1,0.3,1],50,4);potRandom(c,potMons(c.x,c.z,8,false))},Aonly:true},
+  // ---- tier 4
+  91:{A:(c)=>{
+      flashT=0.7;potBurst(c.x,0.5,c.z,[1,0.85,0.3],60,4);sfx('shard');
+      const L=F.shades.filter(s=>s.x>0&&!s.dead&&s.type!==3&&Math.hypot(s.x-c.x,s.z-c.z)<14&&los(c.x,c.z,s.x,s.z));
+      if(c.mine)for(const s of L)potLoot(s.x,s.z,'gem',3);
+      if(c.host)for(const s of L){mHold(s,'gold',1.5);pk(s).gone=1}},Aonly:true},
+  92:{u:()=>{R.hpBonus=(R.hpBonus|0)+1;P.hp=maxHp();psSet('undying',60);psSet('invuln',3);sfx('shard');say('Elixir of Life: +1 heart for this run, and you cannot die for a minute',3.5)},m:s=>{s.pe=null;pe(s,'nob',120)}},
+  93:{A:(c)=>{
+      flashT=1;potBurst(c.x,0.5,c.z,[1,0.1,0.05],70,5);tone(40,3,'sawtooth',0.4,0,-15);noise(2.5,0.6,150,0.5);pkShake=1;
+      say('Apocalypse. The floor is burning.',4);
+      if(!P.down&&!P.away)setTimeout(()=>{if(state==='play'&&!P.down){P.inv=0;hurt(null)}},600);
+      if(c.host)POT.apo={t:0,n:0,T:20}},Aonly:true},
+  94:{u:()=>psSet('arch',60),m:s=>{s.stun=Math.max(s.stun,20);s.state=0}},
+  95:{A:(c)=>{POT.stop=10;say('Time stops.',2.5);tone(900,1.5,'sine',0.12,0,-850)},Aonly:true},
+  96:{u:()=>{psSet('drake',60);psSet('wyrm',60);say('Dragon Ascension! Your fire burns shades away.',3)},m:s=>potKill(s,false)},
+  97:{A:(c)=>{if(c.mine&&state==='play'){mpSend({k:'down',d:R.depth+1});descend(1,'The World Key turns')}},Aonly:true},
+  98:{A:(c)=>{if(c.mine){POT.pnd=3;say('Pandemonium! The wheel spins itself. Three times.',3.5)}},Aonly:true},
+  99:{u:()=>{potCure();psSet('immune',180);POT.ps.hold=0;sfx('shard')},m:s=>{s.pe=null;s.stun=0}},
+  100:{A:(c)=>{say('The Lord of the Deep: every monster on the floor answers to '+(c.mine?'you':'them'),3);
+      for(const s of potMons(c.x,c.z,1e4,false)){pe(s,'pet',120);pk(s).own=c.by;s.stun=0}},Aonly:true},
+  // ---- more buffs
+  101:{u:()=>psSet('lungs',45),m:s=>pe(s,'fast',20)},
+  102:{u:()=>psSet('cat',60),m:s=>pe(s,'keen',30)},
+  103:{u:()=>psSet('lucky',90),m:s=>pe(s,'dodge',20)},
+  104:{u:()=>{POT.thick=Math.max(POT.thick,Math.round(2*POT.m));say('Thick Hide: the next '+POT.thick+' wounds will only chill you',2.5)},m:s=>pe(s,'tough',30)},
+  105:{u:()=>psSet('qsilver',40),m:s=>pe(s,'zip',20)},
+  106:{u:()=>{P.hp=Math.min(maxHp(),P.hp+Math.round(2*POT.m));psSet('bwine',60);POT.regT=10;sfx('pick')},m:s=>{s.hp=s.hpMax||s.hp;s.bleed=s.burnD=null}},
+  107:{u:()=>{psSet('hawk',60);psSet('xray',60)},m:s=>pe(s,'keen',30)},
+  108:{u:()=>{psSet('titan',60);P.hp=Math.min(maxHp(),P.hp+1);say('Titan\'s Draught: +1 heart while it lasts',2.5)},m:s=>{pe(s,'huge',60);if(s.hpMax>0){s.hpMax*=2;s.hp*=2}else{s.hpMax=wMaxHp(s)*2;s.hp=s.hpMax}}},
+  109:{u:()=>{psSet('aegis',120);POT.aegis=Math.max(POT.aegis,Math.round(3*POT.m/TIER_M[3]))},m:s=>pe(s,'steady',30)},
+  110:{u:()=>psSet('phantom',60),m:s=>pe(s,'dodge',30)},
+  111:{u:()=>{P.hp=maxHp();for(const [k,t] of[['qsilver',180],['glow',180],['bwine',180],['ambro',180]])psSet(k,t);POT.aegis=Math.max(POT.aegis,2);psSet('aegis',180);P.fuel=100;sfx('shard')},
+      m:s=>{pe(s,'zip',30);pe(s,'tough',30);if(s.hpMax>0)s.hp=s.hpMax}},
+  112:{A:(c)=>{
+      if(c.drink){if(c.mine)psSet('godspeed',30);for(const s of potMons(c.x,c.z,1e4,false))pe(s,'tslow',30);say('Godspeed: the whole floor slows to a crawl',2.5)}
+      else{for(const s of potMons(c.x,c.z,SPLASH,true))pe(s,'zip',30);if(meIn(c,SPLASH))psSet('godspeed',30)}}},
+  // ---- more debuffs (drink them and suffer; throw them and the monster suffers)
+  113:{u:()=>psSet('blur',20),m:s=>{pe(s,'lost',20);pe(s,'slow',20)}},
+  114:{u:()=>{const o=POT.belt.map((b,i)=>i).filter(i=>i!==POT.sel);if(o.length){const i=o[(Math.random()*o.length)|0],nm=potInfo(POT.belt[i].id).name;beltTake(i);say('Butterfingers! You drop your '+nm,2.5);sfx('spike')}else say('Butterfingers! Luckily you had nothing else to drop',2)},
+      m:(s,c)=>{s.stun=Math.max(s.stun,3);if(c.mine)potLoot(s.x,s.z,'gem',1)}},
+  115:{u:()=>psSet('weak',30),m:s=>{pe(s,'vuln',20);pk(s).vm=Math.max(pk(s).vm||0,2)}},
+  116:{u:()=>psSet('sap',25),m:s=>pe(s,'exhaust',25)},
+  117:{u:()=>{POT.hex=Math.max(POT.hex,1);say('Hexed! Your next wound will cost two hearts',2.5)},m:s=>{pe(s,'vuln',20);pk(s).vm=Math.max(pk(s).vm||0,2.5)}},
+  118:{u:()=>{youHold('web',4,'Vines wrap your legs!');psSet('molasses',10)},m:s=>{mHold(s,'web',10);pe(s,'slow',20)}},
+  119:{u:()=>psSet('night',15),m:s=>pe(s,'fear',15)},
+  120:{u:()=>{psSet('rot',30);POT.rotT=10},m:s=>{s.bleed={dps:1*POT.m,t:15*POT.k}}},
+  121:{u:()=>{youHold('ice',5,'A grave chill freezes you');psSet('molasses',15)},m:s=>{mHold(s,'ice',20);pe(s,'vuln',20);pk(s).vm=Math.max(pk(s).vm||0,4)}},
+  122:{u:()=>{FX.moon=Math.max(FX.moon,30*POT.k);P.woozy=Math.max(P.woozy||0,30*POT.k)},m:s=>{pe(s,'berserk',30);s.calm=0}},
+  123:{A:(c)=>{
+      if(c.drink){if(c.mine){F.seen.fill(0);psSet('night',20);say('Oblivion: you forget everything you have seen',3)}return}
+      potBurst(c.x,0.5,c.z,[0.1,0.1,0.15],50,3);tone(50,1.5,'sine',0.25,0,-20);
+      for(const s of potMons(c.x,c.z,8,false))potKill(s,false);
+      for(const s of F.shades)if(s.type===3&&s.x>0&&Math.hypot(s.x-c.x,s.z-c.z)<8)banish(s,true);
+      if(meIn(c,SPLASH))psSet('night',20)}},
+  124:{A:(c)=>{
+      if(c.drink){if(c.mine){psSet('doom',30);psSet('decoy',30);say('Doomed! Everything on the floor is coming for you',3)}return}
+      potBurst(c.x,0.4,c.z,[0.4,0,0.05],50,3.5);tone(70,1.2,'sawtooth',0.2,0,-30);
+      for(const s of potMons(c.x,c.z,10,false)){s.bleed={dps:3*POT.m/TIER_M[4],t:10*POT.k/TIER_K[4]};pe(s,'slow',10/TIER_K[4])}
+      if(meIn(c,SPLASH))psSet('doom',30)}},
+};
+// ---- monsters under a potion (host only). Returns true when the potion moved this creature this frame (the usual hunt is skipped).
+const PM_HOLD=['ice','web','sleep','dream','stone','gold','stuck','float'];
+const potHarmless=s=>{const e=s.pe;return !!e&&!!(e.pug||e.rat||e.plague||e.ghost||e.pet||e.harm||e.lead||e.drift&&e.tiny)};
+const potOwner=id=>{if(id===potMe())return P.down||P.away?null:P;const p=MP.peers.get(id);return p&&p.d===R.depth&&mpDrawn(p)?p:null};
+function potAway(s,dt,sp,fx,fz){
+  if(!s.ag||Math.hypot(s.ag[0]-s.x,s.ag[1]-s.z)<0.05){
+    const cx=Math.floor(s.x),cz=Math.floor(s.z);let best=null,bd=-1;
+    for(const k of DIRS){const nx=cx+k[0],nz=cz+k[1];if(nx<0||nz<0||nx>=F.W||nz>=F.H)continue;const i=nz*F.W+nx;if(F.g[i]||F.safeMask[i]||F.pocketMask[i])continue;
+      const d=Math.hypot(nx+0.5-fx,nz+0.5-fz)+Math.random()*0.4;if(d>bd){bd=d;best=[nx+0.5,nz+0.5]}}
+    s.ag=best||[cx+0.5,cz+0.5];
+  }
+  const dx=s.ag[0]-s.x,dz=s.ag[1]-s.z,l=Math.hypot(dx,dz)||1,st=Math.min(l,sp*dt);
+  s.x+=dx/l*st;s.z+=dz/l*st;s.face=Math.atan2(dz,dx);
+}
+function potGo(s,x,z,dt,sp){mazeStep(s,x,z,dt,sp);s.face=s.yaw;s.ag=null}
+function potMon(s,dt,TG,MD){
+  if(s.pst===undefined)s.pst=0;
+  // keep ten seconds of where it has been, for the Hourglass
+  s.htT=(s.htT||0)-dt;if(s.htT<=0){s.htT=1;(s.hist||(s.hist=[])).push([s.x,s.z]);if(s.hist.length>11)s.hist.shift()}
+  const e=s.pe;
+  if(POT.stop>0){s.pv=e?potPv(s):0;s.pst=s.stun;return true}
+  if(!e){s.pmul=s.stared||1;s.stared=0;s.pv=0;s.pst=Math.max(0,s.stun-dt);return false}
+  for(const k in e){e[k]-=dt;if(e[k]<=0){delete e[k];
+    if(k==='burn')s.stun=Math.max(s.stun,3);
+    if(k==='sick'){potKill(s,Math.hypot(s.x-P.x,s.z-P.z)>10);return true}
+    if(k==='gold'&&s.pk&&s.pk.gone){s.pk.gone=0;potBanish(s);s.pe=null;return true}}}
+  const pkk=s.pk||{};
+  // a stun that just landed lasts longer on a corroded creature and shorter on a regenerating one
+  if(s.stun>s.pst+0.05){const k=(e.weak3?3:e.weak?2:1)*(e.rec?0.5:1);if(k!==1)s.stun=s.pst+(s.stun-s.pst)*k}
+  s.pst=Math.max(0,s.stun-dt);
+  s.pmul=(e.slow?1/(1+smag(s,'slow')):1)*(e.heavy?1/(1+0.67*smag(s,'heavy')):1)*(e.tslow?1/(1+1.5*smag(s,'tslow')):1)*(e.tiny?0.5:1)*(e.huge?0.7:1)*(e.fast?1+0.3*smag(s,'fast'):1)*(e.frenzy?1+0.4*smag(s,'frenzy'):1)*(e.zip?1+0.5*smag(s,'zip'):1)*(e.sludge?0.85:1)*(e.drift?0.7:1)*
+    (e.exhaust?(Math.sin(R.time*2.5+s.ph)>0?1:0.1):1)*(e.hic?(Math.sin(R.time*5+s.ph)>0.2?1.6:0.15):1)*(s.stared||1);s.stared=0;
+  s.pv=potPv(s);
+  if(e.lost||e.calm||e.lead||e.drift&&e.tiny)s.calm=Math.max(s.calm||0,0.4);
+  if(e.frenzy){s.state=1;s.calm=0}
+  if(e.sick===undefined&&e.plague)for(const o of F.shades)if(o!==s&&o.x>0&&!o.dead&&o.type!==3&&!(o.pe&&o.pe.sick)&&Math.hypot(o.x-s.x,o.z-s.z)<1.4)pe(o,'sick',8);
+  if(e.fireaura)for(const o of F.shades)if(o!==s&&o.x>0&&!o.dead&&o.type!==3&&Math.hypot(o.x-s.x,o.z-s.z)<0.8)o.stun=Math.max(o.stun,3);
+  if(e.dfz&&e.burn){potKill(s,false);return true}   // fire shatters a deep freeze for good
+  for(const k of PM_HOLD)if(e[k]){s.state=0;return true}
+  if(e.sneeze>0){s.snz=(s.snz||3)-dt;if(s.snz<=0){s.snz=3+Math.random()*4;s.snzH=0.7;if(Math.hypot(s.x-P.x,s.z-P.z)<12)noise(0.25,0.15,1800,1.5)}if(s.snzH>0){s.snzH-=dt;return true}}
+  if(e.stare&&mpWatched(TG,s))return true;
+  if(e.steady)s.stun=0;
+  if(e.keen){s.state=1;s.calm=0}
+  if(s.stun>0)return false;
+  if(e.fear){const T=mpNearest(TG,s.x,s.z);if(T&&Math.hypot(T.x-s.x,T.z-s.z)<14){potAway(s,dt,3,T.x,T.z);return true}}
+  const ph=(r)=>{const T=mpNearest(TG,s.x,s.z);return T&&Math.hypot(T.x-s.x,T.z-s.z)<r?T:null};
+  if(e.burn){const T=ph(30);potAway(s,dt,3.2,T?T.x:s.x+1,T?T.z:s.z);return true}
+  if(e.rat){const T=ph(10);if(T){potAway(s,dt,3,T.x,T.z);return true}}
+  if(e.pet){
+    const o=potOwner(pkk.own);if(!o){delete e.pet;return false}
+    const d=Math.hypot(o.x-s.x,o.z-s.z);if(d>1.1)potGo(s,o.x,o.z,dt,d>4?3.6:2.8);
+    s.state=0;return true;
+  }
+  if(e.follow){const L=F.shades[pkk.ldr];if(L&&L.x>0&&!L.dead&&L.pe&&L.pe.lead){if(Math.hypot(L.x-s.x,L.z-s.z)>1)potGo(s,L.x,L.z,dt,2.4);return true}delete e.follow}
+  if(e.clump&&pkk.cx!=null){if(Math.hypot(pkk.cx-s.x,pkk.cz-s.z)>0.4)potGo(s,pkk.cx,pkk.cz,dt,4);return true}
+  if(e.berserk||e.dragon){   // goes for the other monsters instead
+    let best=null,bd=15;for(const o of F.shades)if(o!==s&&o.x>0&&!o.dead&&o.type!==3){const d=Math.hypot(o.x-s.x,o.z-s.z);if(d<bd){bd=d;best=o}}
+    if(best){if(bd<0.55){if(e.dragon)pe(best,'burn',4);else best.stun=Math.max(best.stun,4);s.stun=0.6}else potGo(s,best.x,best.z,dt,3.4);return true}
+  }
+  // drawn to: a wisp lure (wisps), a decoy (everything)
+  for(const o of F.shades){
+    if(o===s||o.x<0||o.dead||!o.pe)continue;
+    const d=Math.hypot(o.x-s.x,o.z-s.z);
+    if(o.pe.decoy&&d<14){if(d<0.55){o.stun=Math.max(o.stun,2);s.calm=3;s.stun=1}else potGo(s,o.x,o.z,dt,3);return true}
+    if(o.pe.wlure&&s.type===2&&d<20){if(d>0.6)potGo(s,o.x,o.z,dt,2.8);return true}
+    if((o.pe.repel||o.pe.spines)&&d<3){potAway(s,dt,2.6,o.x,o.z);if(o.pe.spines&&d<0.6){s.stun=2;sfx('spike')}return true}
+  }
+  if(TG)for(const T of TG){
+    const f=T.pf|0,d=Math.hypot(T.x-s.x,T.z-s.z);
+    if(f&32&&s.type===2&&d<20&&d>0.6){potGo(s,T.x,T.z,dt,2.8);return true}
+    if(f&64&&s.type!==1&&d<3){potAway(s,dt,2.8,T.x,T.z);return true}
+  }
+  return false;
+}
+// what a guest needs to draw: a look code (low 5 bits) and some flags
+function potPv(s){
+  const e=s.pe;if(!e)return 0;
+  const c=e.ice?1:e.web?2:e.sleep||e.dream?3:e.stone?4:e.gold?5:e.pug?6:e.rat?7:e.plague?8:e.invis?9:e.ghost?10:e.burn?11:e.float?12:0;
+  return c|(e.glow?32:0)|(e.tiny?64:e.huge?128:0)|(e.reveal||e.loud?256:0)|(e.spines?512:0)|(e.pet?1024:0)|(e.dragon?2048:0);
+}
+// a monster touching a player: true when a potion means it does no harm
+function potTouch(s,T){
+  const f=T.pf|0,e=s.pe;
+  if(e&&e.tiny&&!e.drift){s.stun=2;s.state=0;if(T.loc){P.chill=Math.max(P.chill,2.5);sfx('drain')}else mpHit(T,'chill');return true}
+  if(potHarmless(s)){s.stun=Math.max(s.stun,1);s.state=0;return true}
+  if(e&&e.mirror){s.stun=4;s.state=0;sfx('seal');for(const o of potMons(s.x,s.z,3,true))if(o!==s&&o.type===s.type)o.stun=Math.max(o.stun,4);return true}
+  if(s.type===2&&f&16){potKill(s,false);return true}
+  if(f&128&&s.type===0){potBanish(s);return true}
+  if(f&(256|512)){s.stun=6;s.state=0;s.calm=6;sfx(f&512?'spike':'seal');return true}
+  return false;
+}
+// the players' own potion powers that act on monsters (host): stares, shoves, storms, dragon fire
+function potPowers(dt,TG){
+  if(!TG)return;
+  for(const T of TG){
+    const f=T.pf|0;if(!(f&(1024|2048|16384|32768|65536|512)))continue;
+    const fx=Math.cos(T.yaw||0),fz=Math.sin(T.yaw||0);
+    for(const s of F.shades){
+      if(s.x<0||s.dead||s.type===3)continue;
+      const dx=s.x-T.x,dz=s.z-T.z,d=Math.hypot(dx,dz);if(d>10)continue;
+      const facing=(dx*fx+dz*fz)/Math.max(d,0.01);
+      if(f&(1024|2048)&&facing>0.75&&los(T.x,T.z,s.x,s.z)){if(f&2048)mHold(s,'stone',0.4);else s.stared=0.35}
+      if(f&16384&&d<0.75){potPlace(s,s.x+dx/(d||1)*1.4,s.z+dz/(d||1)*1.4);s.stun=Math.max(s.stun,1.5);s.state=0}
+      if(f&512&&d<1.1&&s.stun<=0){s.stun=4;s.state=0;sfx('spike')}
+      if(f&(32768|65536)&&d<2.8&&facing>0.8&&los(T.x,T.z,s.x,s.z)){if(f&65536&&(s.type===0)){potBanish(s)}else pe(s,'burn',3)}
+    }
+  }
+}
+// ---- zones that sit on the floor for a while: webs, fortresses, hedges, black holes, portals, plague clouds
+const potSafeAt=(x,z)=>POT.zones.some(q=>q.k==='fort'&&Math.hypot(x-q.x,z-q.z)<q.r);
+function potZones(dt){
+  for(let i=POT.zones.length-1;i>=0;i--){
+    const q=POT.zones[i];q.t-=dt;const age=q.T-q.t;
+    const inMe=!P.down&&!P.away&&Math.hypot(P.x-q.x,P.z-q.z)<q.r;
+    if(q.k==='web'){if(inMe&&!(POT.ps.hold>0.3))potHold('web',Math.min(0.6,q.t));if(!MP.guest)for(const s of potMons(q.x,q.z,q.r,false))mHold(s,'web',Math.min(1,q.t))}
+    else if(q.k==='fort'||q.k==='hedge'){
+      if(!MP.guest)for(const s of potMons(q.x,q.z,q.r+0.3,false)){const dx=s.x-q.x,dz=s.z-q.z,d=Math.hypot(dx,dz)||1;potPlace(s,q.x+dx/d*(q.r+0.45),q.z+dz/d*(q.r+0.45));s.state=0;s.calm=2;if(q.k==='hedge'){s.stun=Math.max(s.stun,1.5);sfx('spike')}}
+    }else if(q.k==='hole'){
+      const pull=age<2.6;
+      if(inMe&&q.by!==potMe()||!P.down&&q.by!==potMe()&&Math.hypot(P.x-q.x,P.z-q.z)<q.r){
+        const dx=q.x-P.x,dz=q.z-P.z,d=Math.hypot(dx,dz)||1;
+        if(pull){const k=Math.min(d,2.4*dt);if(!blocked(P.x+dx/d*k,P.z))P.x+=dx/d*k;if(!blocked(P.x,P.z+dz/d*k))P.z+=dz/d*k}
+        else if(!q.flung){potShove({x:q.x,z:q.z,drink:false},q.r,7,4)}
+      }
+      if(!MP.guest)for(const s of potMons(q.x,q.z,q.r,false)){
+        if(pull){const dx=q.x-s.x,dz=q.z-s.z,d=Math.hypot(dx,dz)||1;if(d>0.3)potPlace(s,s.x+dx/d*Math.min(d,3*dt),s.z+dz/d*Math.min(d,3*dt));s.stun=Math.max(s.stun,0.3)}
+        else if(!q.flung){const a=Math.random()*6.283;potPlace(s,q.x+Math.cos(a)*4,q.z+Math.sin(a)*4);s.stun=Math.max(s.stun,4)}
+      }
+      if(!pull&&!q.flung){q.flung=true;potBurst(q.x,0.5,q.z,[0.5,0.2,0.6],50,3);tone(50,0.8,'sawtooth',0.3,0,60)}
+    }else if(q.k==='portal'){
+      if(inMe&&Math.hypot(P.x-q.x,P.z-q.z)<0.45){potToSanctuary();say('The portal spits you out in the sanctuary',2.5)}
+      if(!MP.guest)for(const s of potMons(q.x,q.z,0.45,false))potFar(s,15);
+    }else if(q.k==='plague'){
+      if(inMe){q.hT=(q.hT||1)-dt;if(q.hT<=0){q.hT=3;cough();P.inv=0;hurt(null);if(state==='dead')return}}
+      if(!MP.guest)for(const s of potMons(q.x,q.z,q.r,false))if(!(s.pe&&s.pe.sick))pe(s,'sick',5);
+    }
+    if(q.t<=0)POT.zones.splice(i,1);
+  }
+}
+// ---- the user's own side, every frame
+function potTick(dt){
+  if(!F)return;
+  if(state!=='play'&&state!=='talk'&&state!=='pause'&&state!=='room')return;
+  for(const k in POT.ps)if(POT.ps[k]>0){POT.ps[k]-=dt;if(POT.ps[k]<=0){POT.ps[k]=0;potEnded(k)}}
+  if(POT.stop>0){POT.stop=Math.max(0,POT.stop-dt);canvas.style.filter=POT.stop>0?'grayscale(.85) contrast(1.1)':''}
+  potProjTick(dt);potZones(dt);
+  for(let i=POT.fx.length-1;i>=0;i--){const q=POT.fx[i];q.t+=dt;if(q.vx!==undefined){q.vy-=6*dt;q.x+=q.vx*dt;q.y+=q.vy*dt;q.z+=q.vz*dt;if(q.y<0.02){q.y=0.02;q.vy*=-0.3;q.vx*=0.6;q.vz*=0.6}}if(q.t>=q.life)POT.fx.splice(i,1)}
+  if(POT.fx.length>500)POT.fx.splice(0,POT.fx.length-500);
+  POT.histT-=dt;if(POT.histT<=0){POT.histT=0.5;POT.hist.push({x:P.x,z:P.z,hp:P.hp,fuel:P.fuel,t:R.time});if(POT.hist.length>24)POT.hist.shift()}
+  if(!P.down){
+    if(ps('hearth')||ps('gold3'))P.fuel=100;
+    if(ps('warm'))P.chill=0;
+    if(ps('fury')||ps('berserk')||ps('lungs')||ps('qsilver')||ps('ambro')){P.stam=100;P.winded=false}
+    if(ps('sap')){P.stam=Math.max(0,P.stam-30*dt);if(P.stam<5)P.winded=true}
+    if(ps('hawk')){POT.hawkT=(POT.hawkT||0)-dt;if(POT.hawkT<=0){POT.hawkT=0.5;const r=Math.round(6*pmag('hawk'));for(let y=-r;y<=r;y++)for(let x=-r;x<=r;x++){const tx=P.tx+x,ty=P.ty+y;if(tx>=0&&ty>=0&&tx<F.W&&ty<F.H&&x*x+y*y<=r*r)F.seen[ty*F.W+tx]=1}}}
+    if(ps('rot')){POT.rotT-=dt;if(POT.rotT<=0){POT.rotT=10;if(P.hp>1){P.hp--;P.inv=0.3;sfx('hurt');say('The rotgut gnaws at you',1.2)}}}
+    {const b=ps('blur')?'blur(3px)':'';if(POT.blurK!==b){POT.blurK=b;if(!POT.stop)canvas.style.filter=b}}
+    if(ps('regen')||ps('bwine')){POT.regT-=dt;if(POT.regT<=0){POT.regT=15/Math.max(pmag('regen'),pmag('bwine'));if(P.hp<maxHp()){P.hp++;sfx('pick')}}}
+    if(ps('hic')){POT.hicT-=dt;if(POT.hicT<=0){POT.hicT=1.5+Math.random()*2.5;if(P.y<=0){P.vy=2.3;P.y=0.001;tone(700,0.08,'sine',0.1,0,300)}}}
+    if(ps('sneeze')){POT.snzT-=dt;if(POT.snzT<=0){POT.snzT=5+Math.random()*4;potHold('sneeze',0.7);noise(0.3,0.25,1700,1.3);tone(500,0.2,'sawtooth',0.08,0,-200);say('Achoo!',0.8)}}
+    if(ps('magnet'))for(const it of F.items){if(it.got||it.type==='shard'||it.type==='key'||it.type==='chest')continue;const dx=P.x-it.x,dz=P.z-it.z,d=Math.hypot(dx,dz);if(d<4.5*pmag('magnet')&&d>0.05){const k=Math.min(d,3*dt);it.x+=dx/d*k;it.z+=dz/d*k}}
+    if(ps('fire')||ps('wyrm')){POT.fireT-=dt;if(POT.fireT<=0){POT.fireT=0.03;const a=P.yaw+(Math.random()-0.5)*0.5,u=3+Math.random()*2,y=Math.min(CAM_TOP,EYE*potEye())-0.15;
+      POT.fx.push({x:P.x+Math.cos(P.yaw)*0.25,y,z:P.z+Math.sin(P.yaw)*0.25,vx:Math.cos(a)*u,vy:0.3+Math.random()*0.6,vz:Math.sin(a)*u,t:0,life:0.45,c:ps('drake')?[1,0.25,0.05]:[1,0.42,0.08],s:0.08,fire:1})}}
+    if(ps('storm')){POT.stormT-=dt;if(POT.stormT<=0){POT.stormT=0.15;const a=Math.random()*6.283;POT.fx.push({x:P.x+Math.cos(a)*0.3,y:0.3+Math.random()*0.6,z:P.z+Math.sin(a)*0.3,vx:0,vy:0,vz:0,t:0,life:0.15,c:[0.7,0.8,1],s:0.12})}}
+    if(POT.slam&&P.y<=0&&P.vy<=0){POT.slam=0;potHold('ice',1.2);pkShake=0.6;tone(70,0.4,'sine',0.3);say('Slammed down!',1.2)}
+    if(potHeld()&&POT.holdK==='sleep'&&P.hp<=0)POT.ps.hold=0;
+  }
+  // Apocalypse (host): one monster after another burns away
+  if(POT.apo&&!MP.guest){POT.apo.t+=dt;const L=F.shades.filter(s=>s.x>0&&!s.dead&&s.type!==3);
+    if(POT.apo.t>=POT.apo.T||!L.length){for(const s of L)potKill(s,true);POT.apo=null}
+    else{const due=Math.floor(POT.apo.t/POT.apo.T*(POT.apo.n+L.length))-POT.apo.n;for(let i=0;i<due&&i<L.length;i++){const s=L[i];potBurst(s.x,0.5,s.z,[1,0.3,0.1],20);potKill(s,false);POT.apo.n++}}}
+  // Pandemonium: three free spins in a row
+  if(POT.pnd>0&&WOF.done&&WOF.win<=2&&state==='play'){POT.pnd--;const i=pickSlice(WOF.recent,WOF_N),plan=planSpin(i,WOF.angle);
+    const m={k:'wof',d:R.depth,i,c:Math.random()<0.5?1:0,a0:plan.from,a1:plan.to,dur:Math.min(plan.dur,6),e:plan.e,n:myName()};
+    m.a1=plan.to;mpSend(m);wofBegin(m,true)}
+  potHud();
+}
+function potEnded(k){
+  if(k==='titan')P.hp=Math.min(P.hp,maxHp());
+  if(k==='hold'){if(POT.wake==='heal'){POT.wake='';P.hp=maxHp();say('You wake up whole',2);sfx('pick')}POT.holdK=''}
+  if(k==='phase'&&solidAt(P.x,P.z)){   // shoved out of the wall to the nearest floor
+    let bx=Math.floor(P.x),bz=Math.floor(P.z),bd=1e9;
+    for(let r=1;r<8&&bd===1e9;r++)for(let dz=-r;dz<=r;dz++)for(let dx=-r;dx<=r;dx++){const x=Math.floor(P.x)+dx,z=Math.floor(P.z)+dz;if(x<0||z<0||x>=F.W||z>=F.H||F.g[z*F.W+x])continue;const d=dx*dx+dz*dz;if(d<bd){bd=d;bx=x;bz=z}}
+    P.x=bx+0.5;P.z=bz+0.5;onTileChange();say('The wall pushes you out',2);
+  }
+  const p=POT_NAMES[k];if(p&&state==='play')say(p+' wears off',1.6);
+}
+const POT_NAMES={quick:'Quickstep',wind:'Windrunner',invis:'Invisibility',fire:'Dragonfire',wyrm:'Wyrm Form',drake:'Dragon Ascension',phase:'Void Cloak',
+  mirror:'Mirror Skin',storm:'Storm Flask',berserk:'Berserk',medusa:'Medusa Gaze',undying:'The Elixir\'s protection',immune:'The Panacea',arch:'The Archmage\'s Draught',moon:'Moon Gravity',tiny:'Shrinking',huge:'Growth'};
+const PS_LABEL=[['hold',()=>({ice:'Frozen',web:'Webbed',sleep:'Asleep',dream:'Dreaming',stone:'Gargoyle skin',sneeze:'Sneezing'}[POT.holdK]||'Held')],
+  ['quick','Quickstep'],['wind','Windrunner'],['molasses','Slowed'],['lead','Lead belly'],['feather','Featherfall'],['moon','Moon gravity'],['pixie','Pixie'],['slick','Slick'],
+  ['glow','Glowing'],['shadow','Shadow ink'],['invis','Invisible'],['hush','Silent'],['loud','Loudmouth'],['fury','Fury'],['berserk','Berserk'],['calm','Calm'],['tiny','Tiny'],['huge','Huge'],
+  ['xray','Sight through walls'],['gems','Gem sense'],['midas','Midas touch'],['gold3','Golden hour'],['magnet','Magnetic'],['warm','Warm'],['wbane','Wisp bane'],['wlure','Wisps love you'],
+  ['decoy','Smells like dinner'],['repel','Repellent'],['hic','Hiccups'],['sneeze','Sneezing powder'],['bouncy','Bouncy'],['stare','Statue stare'],['medusa','Medusa gaze'],['regen','Regenerating'],
+  ['stoneskin','Stone skin'],['mirror','Mirror skin'],['hearth','Warm hearth'],['banish','Banishing touch'],['ignored','Puppy love'],['storm','Storm'],['phase','Void cloak'],['fire','Fire breath'],
+  ['wyrm','Wyrm form'],['drake','Dragon ascension'],['life','Second life'],['undying','Undying'],['invuln','Invulnerable'],['arch','Archmage'],['immune','Panacea'],['lantern','Wisp lantern'],
+  ['daybreak','Daybreak'],['syrup','Time syrup'],['tslow','Slow motion'],['allmon','Ghost light'],
+  ['lungs','Iron lungs'],['cat','Catseye'],['lucky','Lucky'],['qsilver','Quicksilver'],['bwine','Bloodwine'],['hawk','Hawk\'s eye'],['titan','Titan'],['aegis','Aegis'],['phantom','Phantom step'],
+  ['ambro','Ambrosia'],['godspeed','Godspeed'],['blur','Blurred'],['weak','Weakened'],['sap','Sapped'],['night','Nightmare'],['rot','Poisoned'],['doom','Doomed']];
+function potStatus(L){
+  if(POT.thick>0)L.push(['Thick hide ('+POT.thick+')',null]);if(POT.hex>0)L.push(['Hexed',null]);
+  for(const [k,n] of PS_LABEL)if(ps(k))L.push([typeof n==='function'?n():n,POT.ps[k]>900?null:POT.ps[k]]);
+  if(POT.stop>0)L.push(['Time stopped',POT.stop]);
+}
+// ---- ingredients in the maze. Called from genFloor with its own dice, after everything else is placed.
+const ING_W=(()=>{   // weights by biome index (0 Old Stonework ... 8 Dark Forest)
+  const base={glowcap:3,moss:2,water:2,bat:1,silk:0.8,bone:0.6,rust:0.6,ember:0.5,frost:0.5,glimmer:0.5};
+  const boost=[{ember:0.6,frost:0.6,rust:0.4,glimmer:0.4,bone:0.4},{moss:4,water:1.5},{frost:5},{ember:5},{pretzel:2.5,water:1,rust:1},{bone:5},{rust:5,water:1},{glimmer:5},{glowcap:3,moss:2,bat:2}];
+  return boost.map(b=>INGREDIENTS.map(g=>(base[g.id]||0)+(b[g.id]||0)));
+})();
+function potSeedIngredients(seedStr,depth,g,W,H,safeMask,pocketMask,items,skip,d0,bi,nCells){
+  const r=mulberry32(hashStr(seedStr+'#brew#'+depth)),idx=(x,y)=>y*W+x;
+  const taken=new Set(items.map(it=>idx(it.tx,it.ty)));for(const q of skip)taken.add(idx(q[0],q[1]));
+  const spots=[];
+  for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=idx(x,y);if(g[i]!==0||safeMask[i]||pocketMask[i]||taken.has(i)||d0[i]<3)continue;
+    let walls=0,wd=null;for(const d of DIRS)if(g[idx(x+d[0],y+d[1])]===1){walls++;wd=wd||d}
+    spots.push([x,y,walls,wd])}
+  const n=Math.min(spots.length,Math.min(18,5+Math.round(nCells/18)+Math.floor(depth/3)));
+  const wt=ING_W[clamp(bi|0,0,8)];
+  for(let k=0;k<n;k++){
+    const j=k+((r()*(spots.length-k))|0),c=spots[j];spots[j]=spots[k];spots[k]=c;
+    const w=wt.map((v,i)=>INGREDIENTS[i].id==='silk'&&c[2]>=3?v+5:v);
+    let tot=w.reduce((a,b)=>a+b,0),pick=r()*tot,ing=0;for(;ing<w.length-1;ing++){pick-=w[ing];if(pick<=0)break}
+    const off=c[3]?0.22:0,ph=r()*6.28;
+    items.push({type:'ingr',ing,tx:c[0],ty:c[1],x:c[0]+0.5+(c[3]?c[3][0]*off:Math.cos(ph)*0.15),z:c[1]+0.5+(c[3]?c[3][1]*off:Math.sin(ph)*0.15),got:false,ph});
+  }
+}
+// the Brewer and his cauldron stand in the sanctuary corner beside the Keeper that the wheel did not take
+function potPlaceBrewer(safe,npcs){
+  if(!safe)return;
+  const wc=safe.wheel?[Math.sign(safe.wheel.x-safe.x),Math.sign(safe.wheel.z-safe.z)]:[-1,-1];
+  const c=[[1,-1],[-1,1]].find(q=>!(q[0]===wc[0]&&q[1]===wc[1]))||[1,-1];
+  const bx=safe.x+c[0]*1.0,bz=safe.z+c[1]*0.6,cx=safe.x+c[0]*1.0,cz=safe.z+c[1]*1.05;
+  safe.brew={x:bx,z:bz,cx,cz,disc:[cx,cz,0.19]};
+  npcs.push({type:'brewer',x:bx,z:bz,ph:(safe.tx*3.17+safe.ty*5.3)%6.28,used:true,lock:true,yaw:Math.atan2(safe.z-bz,safe.x-bx)});
+}
+function potCollide(){
+  const b=F.safe&&F.safe.brew;if(!b)return;const q=b.disc,dx=P.x-q[0],dz=P.z-q[1],d=Math.hypot(dx,dz),m=q[2]+PR;
+  if(d<m&&d>1e-4){const nx=q[0]+dx/d*m,nz=q[1]+dz/d*m;if(!blocked(nx,nz)){P.x=nx;P.z=nz}}
+}
+const BREWER_LINES=['Two of anything makes something. Usually something.','Bring me what the maze drops. Mushrooms, salts, wings, the dust off a shade. Two at a time.',
+  'Potions brew into potions. The deeper the brew, the stranger the drink.','Mind which way you throw. A bottle does not care who it lands on.','I have brewed a hundred things in this pot. Most of them were not soup.'];
+
+// the Brewer: a stooped old alchemist in a patched robe and a pointed hat, goggles up on his brow, stirring his cauldron
+function potBuildBrewer(n,B,t,ph,breath,blink,talking,out){
+  const robe=[0.1,0.24,0.15,2],robeD=[0.06,0.16,0.1,2],patch=[0.42,0.3,0.12,2],apron=[0.4,0.26,0.14,3],skin=[0.86,0.66,0.52,1],white=[0.92,0.92,0.9,5],
+        hat=[0.16,0.08,0.3,2],band=[0.75,0.55,0.18,4],brass=[0.78,0.58,0.22,4],wood=[0.35,0.22,0.12,6],iron=[0.07,0.07,0.08,4];
+  const b=F.safe&&F.safe.brew,stir=t*1.6+ph;
+  // where the cauldron is in his own frame
+  let cl=[0.25,0,0.35];if(b){const dx=b.cx-B.p[0],dz=b.cz-B.p[2],c=Math.cos(n.yaw),s=Math.sin(n.yaw);cl=[c*dx+s*dz,0,-s*dx+c*dz]}
+  seg(B,[0,0,0],[0,0.47,0],0.16,0.1,robe);
+  for(let i=0;i<8;i++){const a=i/8*6.283;seg(B,[Math.cos(a)*0.15,0.03,Math.sin(a)*0.15],[Math.cos(a)*0.1,0.4,Math.sin(a)*0.1],0.028,0.012,i%2?robe:robeD)}
+  slab(B,[0.13,0.2,0.05],[0.012,0.05,0.04],patch,rZ(0.12));
+  slab(B,[0.11,0.28,0],[0.02,0.17,0.075],apron,rZ(0.18));
+  const a=-0.32,toB=v=>{const c=Math.cos(a),s=Math.sin(a);return [c*v[0]-s*v[1],0.45+s*v[0]+c*v[1],v[2]]};   // the hunched upper body, as points in the body frame
+  const U=subF(B,[0,0.45,0],rZ(a));
+  seg(U,[0,-0.02,0],[0,0.04,0],0.1,0.097,[0.3,0.18,0.08,3]);
+  for(let i=0;i<5;i++)ball(U,[0.06*Math.cos(i*0.6-1.2),0.01,0.095*Math.sin(i*0.6-1.2)],0.014,[[1.4,0.3,0.2,7],[0.3,1.4,0.5,7],[0.4,0.6,1.6,7],[1.5,1.2,0.3,7],[1.1,0.3,1.4,7]][i],true);
+  ball(U,[0,0.14+breath,0],[0.085,0.14,0.112],robe);
+  ball(U,[-0.03,0.25+breath,0],[0.08,0.045,0.12],robeD);
+  // the stirring arm reaches the ladle into the pot
+  const pot=[cl[0],0.27,cl[2]],tip=[pot[0]+Math.cos(stir)*0.05,0.27,pot[2]+Math.sin(stir)*0.05],sh=toB([0,0.22+breath,Math.sign(cl[2]||1)*0.115]);
+  const dx=tip[0]-sh[0],dz=tip[2]-sh[2],dl=Math.hypot(dx,dz)||1,hand=[sh[0]+dx/dl*Math.min(0.24,dl*0.6),0.36,sh[2]+dz/dl*Math.min(0.24,dl*0.6)];
+  const el=[(sh[0]+hand[0])/2+0.02,(sh[1]+hand[1])/2-0.06,(sh[2]+hand[2])/2];
+  limb(B,sh,el,hand,0.04,0.036,0.026,robe,robe,skin,0.026);
+  seg(B,[hand[0],hand[1]+0.05,hand[2]],tip,0.008,0.007,wood);ball(B,tip,0.02,wood,true);
+  // the other hand holds up a little flask, and shakes it while he talks
+  const sh2=toB([0,0.22+breath,-Math.sign(cl[2]||1)*0.115]),wv=talking?Math.sin(t*7)*0.03:0,h2=[sh2[0]+0.17,0.42+wv+(talking?0.05:0),sh2[2]*0.7];
+  limb(B,sh2,[sh2[0]+0.06,0.36,sh2[2]*1.1],h2,0.04,0.036,0.026,robe,robe,skin,0.026);
+  const fc=POT.lastCol||[0.4,1.6,0.6];
+  ball(B,[h2[0]+0.01,h2[1]+0.045,h2[2]],0.03,[fc[0]*1.6,fc[1]*1.6,fc[2]*1.6,7]);seg(B,[h2[0]+0.01,h2[1]+0.07,h2[2]],[h2[0]+0.01,h2[1]+0.1,h2[2]],0.01,0.009,[0.7,0.85,0.9,8]);
+  seg(U,[0,0.25+breath,0],[0.02,0.3+breath,0],0.03,0.028,skin);
+  const H=subF(U,[0.02,0.295+breath,0],m3(m3(rYaw(n.hy||0),rZ((n.hp||0)+0.32+(talking?Math.sin(t*5.5)*0.05:0))),rX(Math.sin(t*0.5+ph)*0.04)));
+  face(H,{skin,blink,iris:[0.3,0.55,0.25],brow:white,browH:0.014,browTilt:0.3,browOut:0.006,eyeS:0.9,nose:[0.03,0.028,0.022],ears:true,talk:talking?Math.max(0,Math.sin(t*9))*0.008:0});
+  ball(H,[-0.02,0.08,0.07],[0.04,0.05,0.03],white,true);ball(H,[-0.02,0.08,-0.07],[0.04,0.05,0.03],white,true);
+  ball(H,[0.06,0.03,0],[0.04,0.03,0.06],white);seg(H,[0.06,0.0-(talking?0.006:0),0],[0.07,-0.2,0.0],0.055,0.012,white);   // beard
+  ball(H,[0.075,0.04,0.025],[0.02,0.008,0.03],white,true);ball(H,[0.075,0.04,-0.025],[0.02,0.008,0.03],white,true);       // moustache
+  for(const z of[-0.034,0.034]){seg(H,[0.07,0.145,z],[0.088,0.145,z],0.02,0.02,brass);ball(H,[0.089,0.145,z],[0.004,0.015,0.015],[0.4,1.3,0.6,7],true)}
+  seg(H,[-0.08,0.14,0],[0.07,0.145,0],0.088,0.088,[0.25,0.15,0.08,3]);
+  seg(H,[0,0.16,0],[0,0.172,0],0.17,0.165,hat);seg(H,[0,0.172,0],[0,0.2,0],0.1,0.098,band);
+  seg(H,[0,0.2,0],[-0.03,0.34,0],0.098,0.05,hat);seg(H,[-0.03,0.34,0],[-0.12,0.42,0.02],0.05,0.004,hat);
+  ball(H,[0.04,0.24,0.07],0.012,[1.6,1.4,0.5,7],true);ball(H,[-0.02,0.3,-0.05],0.009,[1.6,1.4,0.5,7],true);
+  out.top=0.95;
+  // the cauldron
+  if(b){
+    const C={p:[b.cx,0,b.cz],R:rYaw(0)};
+    for(let i=0;i<3;i++){const q=i/3*6.283+0.4;seg(C,[Math.cos(q)*0.14,0.12,Math.sin(q)*0.14],[Math.cos(q)*0.17,0,Math.sin(q)*0.17],0.016,0.012,iron)}
+    for(let i=0;i<5;i++){const q=i/5*6.283;seg(C,[Math.cos(q)*0.08,0.01,Math.sin(q)*0.08],[Math.cos(q+0.4)*0.02,0.08,Math.sin(q+0.4)*0.02],0.018,0.01,wood)}
+    ball(C,[0,0.2,0],[0.17,0.12,0.17],iron);
+    seg(C,[0,0.26,0],[0,0.29,0],0.15,0.16,iron);
+    const lc=POT.lastCol||[0.35,1.4,0.5];
+    ball(C,[0,0.285,0],[0.14,0.008,0.14],[lc[0]*1.8,lc[1]*1.8,lc[2]*1.8,7],true);
+    out.cauldron=[b.cx,0.29,b.cz,lc];
+  }
+}
+function potCauldronFx(q,t){
+  const [x,y,z,c]=q;
+  spr(x,y+0.02,z,0.42,0.18,7,c[0],c[1],c[2],0.55,1);
+  spr(x,0.05,z,0.18,0.16,11,1,0.55,0.15,0.9,1);spr(x,0.06,z,0.5,0.4,7,1,0.45,0.1,0.3,1);
+  for(let i=0;i<5;i++){const k=(t*0.6+i*0.21)%1,a=i*2.3;spr(x+Math.cos(a)*0.07,y+0.02+k*0.35,z+Math.sin(a)*0.07,0.03*(1-k*0.5),0.03*(1-k*0.5),7,c[0],c[1],c[2],(1-k)*0.8,1)}
+}
+
+// ---- the Brewer's menu
+function potThings(skip){
+  const L=[];
+  POT.bag.forEach((n,i)=>{const m=n-(skip&&skip.ing===i?1:0);if(m>0)L.push({ing:i,label:INGREDIENTS[i].name,sub:m+' carried · '+INGREDIENTS[i].where})});
+  POT.belt.forEach(b=>{const m=b.n-(skip&&skip.pot===b.id?1:0);if(m>0){const p=potInfo(b.id);L.push({pot:b.id,label:p.name,sub:'Tier '+p.tier+' '+(p.debuff?'debuff':'buff')+' · '+m+' carried'+(p.mix?' · a blend of '+p.of:'')})}});
+  return L;
+}
+const thingName=x=>x.ing!=null?INGREDIENTS[x.ing].name:potInfo(x.pot).name;
+function potBrew(a,b){
+  const id=brewAny(a,b),take=x=>{if(x.ing!=null)POT.bag[x.ing]--;else{const i=POT.belt.findIndex(q=>q.id===x.pot);beltTake(i)}};
+  const back=x=>{if(x.ing!=null)POT.bag[x.ing]++;else beltAdd(x.pot)};
+  take(a);take(b);
+  if(!beltAdd(id)){back(a);back(b);sfx('seal');return 'Your belt is full. Drink or throw something first.'}
+  potSaveBag();
+  const p=potInfo(id),fresh=!POT.book.has(id);
+  POT.book.add(id);store.set('brewBook',[...POT.book]);POT.lastCol=hex3(p.col);
+  if(F.safe&&F.safe.brew)potBurst(F.safe.brew.cx,0.3,F.safe.brew.cz,POT.lastCol,18,0.6);
+  if(id===SLUDGE){tone(110,0.5,'sawtooth',0.1,0,-40);return (a.ing!=null)!==(b.ing!=null)?'An ingredient and a potion do not mix. Murky Sludge.':'Murky Sludge. Well, it is something.'}
+  [523,659,784].forEach((f,i)=>tone(f*(1+p.tier*0.12),0.3,'triangle',0.1,i*0.1));
+  return (fresh?(p.mix?'A new blend! ':'A new recipe! '):'')+p.name+' ('+(p.debuff?'a debuff, for throwing; ':'a buff; ')+'tier '+p.tier+'). '+(p.debuff?p.mon:p.you);
+}
+function potHintFor(){
+  const known=POT.book,hint=new Set(store.get('brewHints',[]));
+  for(let tier=1;tier<=4;tier++)for(const p of POTIONS){if(!p||p.tier!==tier||!p.recipe||known.has(p.id)||hint.has(p.id))continue;
+    if(tier===1||p.recipe.every(r=>known.has(r)||hint.has(r))){hint.add(p.id);store.set('brewHints',[...hint]);return p}}
+  return null;
+}
+const potNamed=()=>[...POT.book].filter(i=>i<=MAX_ID).length;
+// what the tier does, and which kind of potion it is, for the menus
+const potKind=p=>p.debuff?'<span style="color:#ff8a7a">Debuff: throw it at monsters</span>':'<span style="color:#8aff9a">Buff: drink it</span>';
+const potKindT=p=>p.debuff?'Debuff (throw it)':'Buff (drink it)';
+const potTierT=p=>'Tier '+p.tier+(p.k>1?': lasts '+(Math.round(p.k*10)/10)+'x, '+(Math.round(p.m*10)/10)+'x as strong':'');
+function potTalk(o){
+  const b=talk.bm||'main';let text;
+  if(b==='main'){
+    text=talk.line||BREWER_LINES[(R.depth+(talk.npc.ph*10|0))%BREWER_LINES.length];
+    const things=potThings(),nIng=POT.bag.reduce((a,c)=>a+c,0);
+    o.push({head:'The cauldron',label:'Brew a potion',sub:things.length&&(things.length>1||(things[0].ing!=null?POT.bag[things[0].ing]:1)>1)?'Mix two things you carry ('+nIng+' ingredient'+(nIng===1?'':'s')+', '+beltCount()+' potion'+(beltCount()===1?'':'s')+')':'You need two things to mix. Ingredients lie about the maze.',cost:'',
+      off:things.reduce((a,x)=>a+(x.ing!=null?POT.bag[x.ing]:POT.belt.find(q=>q.id===x.pot).n),0)<2,fn:()=>{talk.bm='pick1';talk.sel=0;talk.line=null}});
+    o.push({label:'Recipe book',sub:potNamed()+' of '+MAX_ID+' potions brewed'+(POT.book.size>potNamed()?', and '+(POT.book.size-potNamed())+' blends':''),cost:'',fn:()=>{talk.bm='book';talk.sel=0}});
+    o.push({label:'Buy a hint',sub:'He tells you a recipe you do not know yet',cost:'3 gems',off:wallet<3,fn:()=>{const p=potHintFor();if(!p){talk.line='You know everything I know.';return}
+      wallet-=3;store.set('wallet',wallet);sfx('gem');talk.line='Try this: '+recipeText(p)+'. That makes '+p.name+'.'}});
+  }else if(b==='pick1'||b==='pick2'){
+    const first=b==='pick2'?talk.a:null;
+    text=first?'And with the '+thingName(first)+'?':'What goes in first?';
+    o.push({label:'Back',sub:'',cost:'',fn:()=>{talk.bm=first?'pick1':'main';talk.sel=0}});
+    for(const x of potThings(first))o.push({label:x.label,sub:x.sub,cost:x.pot?'T'+potInfo(x.pot).tier:'',fn:()=>{
+      if(!first){talk.a=x;talk.bm='pick2';talk.sel=1;return}
+      talk.line=potBrew(first,x);talk.bm='main';talk.sel=0;talk.a=null}});
+  }else{
+    text=POT.book.size?'Everything you have brewed, and how.':'Nothing brewed yet. Bring me two things.';
+    o.push({label:'Back',sub:'',cost:'',fn:()=>{talk.bm='main';talk.sel=0}});
+    const hint=new Set(store.get('brewHints',[]));
+    for(const p of POTIONS){if(!p)continue;const k=POT.book.has(p.id);if(!k&&!hint.has(p.id))continue;
+      o.push({label:p.name+(k?'':' (not brewed yet)'),sub:potKindT(p)+' · '+recipeText(p)+' · Drink: '+p.you+' · Thrown: '+p.mon,cost:'T'+p.tier,info:true})}
+    const bl=[...POT.book].filter(i=>i>100).map(potInfo).filter(Boolean).sort((a,b)=>a.tier-b.tier||a.name.localeCompare(b.name));
+    bl.forEach((p,i)=>o.push({head:i?undefined:'Blends',label:p.name,sub:potKindT(p)+' · Drink: '+p.you+' · Thrown: '+p.mon,cost:'T'+p.tier,info:true}));
+  }
+  return text;
+}
+// ---- drawing
+// little 3D ingredients on the floor, one look per kind
+function potIngModel(it,t){
+  const g=INGREDIENTS[it.ing],B={p:[it.x,0,it.z],R:rYaw(it.ph).map(q=>q*1.6)};
+  switch(g.id){
+    case 'glowcap':for(let i=0;i<3;i++){const x=[0,0.04,-0.03][i],z=[0,0.025,0.035][i],h=[0.06,0.04,0.035][i];seg(B,[x,0,z],[x,h,z],0.007,0.006,[0.85,0.85,0.75,5]);ball(B,[x,h,z],[0.028*h/0.06+0.006,0.012,0.028*h/0.06+0.006],[0.5,2.2,1.1,7],true)}break;
+    case 'moss':for(let i=0;i<5;i++)ball(B,[Math.cos(i*1.3)*0.04,0.01,Math.sin(i*1.3)*0.04],[0.035,0.018,0.03],[0.22,0.5+0.05*i,0.16,5],true);break;
+    case 'ember':for(let i=0;i<4;i++)slab(B,[Math.cos(i*1.7)*0.03,0.012,Math.sin(i*1.7)*0.03],[0.014,0.012,0.012],[2.4,0.8,0.2,7],rZ(i*0.7));break;
+    case 'frost':for(let i=0;i<4;i++){ball(B,[Math.cos(i*1.6)*0.035,0.006,Math.sin(i*1.6)*0.035],[0.03,0.006,0.026],[0.75,0.95,1.25,9],true);seg(B,[Math.cos(i*1.6)*0.035,0.005,Math.sin(i*1.6)*0.035],[Math.cos(i*1.6)*0.04,0.04,Math.sin(i*1.6)*0.04],0.005,0.001,[1.1,1.4,1.8,7])}break;
+    case 'bone':seg(B,[-0.05,0.012,0],[0.05,0.012,0],0.009,0.009,[0.92,0.88,0.78,9]);for(const x of[-0.055,0.055])for(const z of[-0.01,0.01])ball(B,[x,0.013,z],0.012,[0.92,0.88,0.78,9],true);ball(B,[0.01,0.008,0.04],[0.03,0.01,0.025],[0.95,0.93,0.85,9],true);break;
+    case 'rust':for(let i=0;i<5;i++)slab(B,[Math.cos(i*1.25)*0.04,0.004,Math.sin(i*1.25)*0.04],[0.02,0.003,0.015],[0.62,0.3,0.12,4],rX(i*0.3));break;
+    case 'glimmer':for(let i=0;i<3;i++){const a=i*2.1;slab(B,[Math.cos(a)*0.02,0.035,Math.sin(a)*0.02],[0.011,0.035,0.011],[1.2,0.7,2.2,7],m3(rZ(Math.cos(a)*0.35),rX(Math.sin(a)*0.35)))}break;
+    case 'silk':ball(B,[0,0.02,0],[0.035,0.022,0.03],[0.95,0.95,0.95,5],true);for(let i=0;i<3;i++)seg(B,[0,0.03,0],[Math.cos(i*2)*0.1,0.002,Math.sin(i*2)*0.1],0.002,0.001,[0.95,0.95,0.95,5]);break;
+    case 'water':seg(B,[0,0,0],[0,0.06,0],0.018,0.018,[0.4,0.7,1.3,8]);seg(B,[0,0.06,0],[0,0.075,0],0.008,0.008,[0.6,0.8,1,8]);ball(B,[0,0.08,0],0.008,[0.5,0.35,0.2,6],true);break;
+    case 'bat':for(const z of[-1,1])slab(B,[0,0.008,z*0.035],[0.03,0.003,0.035],[0.25,0.17,0.2,5],rX(z*0.3));ball(B,[0,0.01,0],[0.015,0.012,0.012],[0.2,0.15,0.15,5],true);break;
+    case 'shade':ball(B,[0,0.01,0],[0.045,0.014,0.04],[0.9,0.5,1.4,7],true);break;
+    case 'wisp':seg(B,[0,0,0],[0,0.05,0],0.016,0.016,[0.6,1.2,2.6,7]);ball(B,[0,0.057,0],0.008,[0.5,0.35,0.2,6],true);break;
+    case 'statue':slab(B,[0,0.015,0],[0.03,0.015,0.022],[0.66,0.64,0.58,9],rZ(0.5));slab(B,[0.04,0.008,0.02],[0.014,0.008,0.012],[0.6,0.58,0.53,9],rX(0.6));break;
+    case 'pretzel':for(let i=0;i<5;i++)seg(B,[Math.cos(i*1.4)*0.035,0.006,Math.sin(i*1.4)*0.035],[Math.cos(i*1.4+0.5)*0.05,0.006,Math.sin(i*1.4+0.5)*0.05],0.006,0.006,[0.62,0.36,0.12,6]);break;
+  }
+}
+function potDraw3D(t,ex,ez,fwx,fwz){
+  for(const it of F.items){
+    if(it.got||it.type!=='ingr')continue;
+    const d2=(it.x-ex)**2+(it.z-ez)**2;if(d2>14*14||(it.x-ex)*fwx+(it.z-ez)*fwz<-1)continue;
+    potIngModel(it,t);
+  }
+  for(const q of POT.proj){
+    const c=hex3(potInfo(q.id).col),B={p:[q.x,q.y,q.z],R:m3(rYaw(q.rot*0.3),rZ(q.rot))};
+    ball(B,[0,0,0],0.034,[c[0]*1.4,c[1]*1.4,c[2]*1.4,7]);seg(B,[0,0.025,0],[0,0.06,0],0.012,0.01,[0.75,0.88,0.95,8]);ball(B,[0,0.065,0],0.011,[0.5,0.35,0.2,6],true);
+  }
+  for(const q of POT.zones){
+    if((q.x-ex)**2+(q.z-ez)**2>18*18)continue;
+    const Z={p:[q.x,0,q.z],R:rYaw(0)},k=Math.min(1,(q.T-q.t)*3,q.t*2);
+    if(q.k==='fort')for(let i=0;i<14;i++){const a=i/14*6.283;slab(Z,[Math.cos(a)*q.r,0.22*k,Math.sin(a)*q.r],[0.12,0.22*k+0.001,0.2],[0.5,0.48,0.43,9],rYaw(-a))}
+    if(q.k==='hedge')for(let i=0;i<20;i++){const a=i/20*6.283;seg(Z,[Math.cos(a)*q.r,0,Math.sin(a)*q.r],[Math.cos(a)*(q.r+0.05),0.45*k,Math.sin(a)*(q.r+0.05)],0.03,0.002,[0.45,0.3,0.15,6]);
+      seg(Z,[Math.cos(a)*q.r,0.2*k,Math.sin(a)*q.r],[Math.cos(a)*(q.r+0.25),0.25*k,Math.sin(a)*(q.r+0.25)],0.015,0.001,[0.55,0.38,0.2,6])}
+  }
+}
+function potDrawSpr(t,ex,ez){
+  for(const it of F.items){
+    if(it.got||it.type!=='ingr')continue;
+    const d2=(it.x-ex)**2+(it.z-ez)**2;if(d2>18*18)continue;
+    const c=INGREDIENTS[it.ing].col,pl=0.6+0.4*Math.sin(t*2.5+it.ph);
+    spr(it.x,0.1,it.z,0.5,0.5,7,c[0],c[1],c[2],0.45*pl,1);
+    if(((t*0.9+it.ph)%1.6)<0.2)spr(it.x,0.16,it.z,0.08,0.08,7,1,1,1,0.95,1);   // a glint now and then   // a glint now and then
+  }
+  for(const q of POT.proj){const c=hex3(potInfo(q.id).col);spr(q.x,q.y,q.z,0.2,0.2,7,c[0],c[1],c[2],0.6,1)}
+  for(const q of POT.fx){
+    const k=1-q.t/q.life;
+    if(q.ring){const rr=q.ring*(0.3+0.7*q.t/q.life);for(let i=0;i<16;i++){const a=i/16*6.283;spr(q.x+Math.cos(a)*rr,0.06,q.z+Math.sin(a)*rr,0.22,0.22,7,q.c[0],q.c[1],q.c[2],0.6*k,1)}continue}
+    if(q.bolt){const [x0,z0,x1,z1]=q.bolt;for(let i=0;i<=8;i++){const f=i/8,j=(Math.random()-0.5)*0.25;spr(x0+(x1-x0)*f+j,0.6+(Math.random()-0.5)*0.3,z0+(z1-z0)*f-j,0.12,0.12,7,0.7,0.8,1,k,1)}continue}
+    const fs=q.s*(q.fire?1+q.t*2.5:1);spr(q.x,q.y,q.z,fs,fs*(q.fire?1.3:1),q.fire?11:7,q.c[0],q.c[1],q.c[2],q.fire?k*0.55:k,1);
+  }
+  for(const q of POT.zones){
+    if((q.x-ex)**2+(q.z-ez)**2>20*20)continue;
+    const k=Math.min(1,q.t*2);
+    if(q.k==='web')for(let i=0;i<10;i++){const a=i/10*6.283+0.3,r=q.r*((i*7)%5+1)/5.5;spr(q.x+Math.cos(a)*r,0.15+((i*3)%4)*0.25,q.z+Math.sin(a)*r,0.6,0.6,7,0.95,0.95,0.95,0.22*k,1)}
+    else if(q.k==='plague')for(let i=0;i<12;i++){const a=i/12*6.283+t*0.2,r=q.r*(0.3+0.6*((i*5)%7)/7);spr(q.x+Math.cos(a)*r,0.3+0.3*Math.sin(t+i),q.z+Math.sin(a)*r,0.9,0.9,7,0.35,0.6,0.15,0.25*k,1)}
+    else if(q.k==='hole'){spr(q.x,0.6,q.z,1.2,1.2,7,0.05,0,0.08,0.9*k,0);for(let i=0;i<10;i++){const a=t*4+i*0.63,r=0.3+((t*1.3+i*0.1)%1)*1.6;spr(q.x+Math.cos(a)*r,0.6,q.z+Math.sin(a)*r,0.1,0.1,7,0.6,0.3,0.9,0.8*k,1)}}
+    else if(q.k==='portal'){for(let i=0;i<14;i++){const a=t*2+i/14*6.283;spr(q.x+Math.cos(a)*0.4,0.5+Math.sin(a)*0.4,q.z,0.12,0.12,7,0.4,1,1,0.9*k,1)}spr(q.x,0.5,q.z,0.8,0.8,7,0.3,0.9,1,0.5*k,1)}
+    else if(q.k==='fort')spr(q.x,0.3,q.z,q.r*2.4,0.8,7,0.9,0.75,0.4,0.15*k,1);
+  }
+}
+// a creature under a potion. pre: true when it was drawn here instead (a pug, a rat, unseen). post: recolour/resize what was just drawn.
+function potMonPre(s,t){
+  const pv=s.pv|0,c=pv&31;
+  if(pv&1024)spr(s.x,(s.type===2?0.85:1.05)+Math.sin(t*3+s.ph)*0.03,s.z,0.1,0.1,7,1,0.4,0.6,0.9,1);   // a pet: a little pink heart-glow
+  if(c===9){if(Math.sin(t*7+s.ph)>0.6)spr(s.x,0.5,s.z,0.5,0.9,7,0.7,0.7,0.9,0.08,1);return true}
+  if(c>=6&&c<=8){s.wk=(s.wk||0)+0.1;buildCritter({rx:s.x,rz:s.z,ry:0,ryaw:s.face||0,walk:s.wk,spd:2},t,c-5,false);return true}
+  return false;
+}
+const PV_COL={1:[0.7,0.9,1.25],4:[0.62,0.6,0.56],5:[1.6,1.15,0.3],10:[0.75,0.85,1.1],11:[1.3,0.55,0.25]};
+function potMonPost(s,n0,k0,t){
+  const pv=s.pv|0,c=pv&31,W=CH.w||13,b=CH.buf,sz=pv&64?0.5:pv&128?1.5:1,fy=c===12?0.45:0;
+  const tint=PV_COL[c]||(pv&2048?[1.3,0.45,0.3]:null);
+  if(tint||sz!==1||fy){
+    for(let i=n0;i<CH.n;i++){const o=i*W;
+      if(sz!==1){b[o]=s.x+(b[o]-s.x)*sz;b[o+1]*=sz;b[o+2]=s.z+(b[o+2]-s.z)*sz}
+      b[o+1]+=fy;
+      if(tint){const l=(b[o+6]+b[o+7]+b[o+8])/3+0.12;b[o+6]=tint[0]*l;b[o+7]=tint[1]*l;b[o+8]=tint[2]*l;if(c===5)b[o+12]=4;if(c===4||c===1)b[o+12]=9}}
+    for(let i=k0;i<sprList.length;i++){const q=sprList[i];if(sz!==1){q.x=s.x+(q.x-s.x)*sz;q.y*=sz;q.z=s.z+(q.z-s.z)*sz}q.y+=fy;if(c===4||c===5||c===1)q.a=0}
+  }
+  if(c===2)for(let i=0;i<5;i++)spr(s.x+Math.cos(i*1.3)*0.15,0.2+i*0.15,s.z+Math.sin(i*1.3)*0.15,0.4,0.4,7,0.95,0.95,0.95,0.25,1);
+  if(c===3)for(let i=0;i<3;i++){const k=(t*0.5+i/3)%1;spr(s.x+k*0.2,0.9*sz+k*0.4,s.z,0.07*(1-k*0.4),0.07*(1-k*0.4),7,0.8,0.8,1,1-k,1)}
+  if(c===11||pv&2048)for(let i=0;i<4;i++){const k=(t*1.5+i/4)%1;spr(s.x+Math.sin(i*2+t*3)*0.12,0.2+k*0.8,s.z+Math.cos(i*2+t*3)*0.12,0.14,0.2,11,1,0.55,0.15,1-k,1)}
+  if(pv&32)spr(s.x,0.55*sz,s.z,1.4,1.4,7,1,0.95,0.6,0.35,1);
+  if(pv&512)for(let i=0;i<8;i++){const a=i/8*6.283;spr(s.x+Math.cos(a)*0.22,0.4+Math.sin(i*2.1)*0.15,s.z+Math.sin(a)*0.22,0.05,0.05,7,0.6,0.45,0.25,1,0)}
+}
+const potSeen=s=>!!((s.pv|0)&(32|256))||ps('allmon')||ps('xray')&&Math.hypot(s.x-P.x,s.z-P.z)<12;
+const potRevealed=s=>!!((s.pv|0)&256);
+
+// ---- the belt on screen
+function potHud(){
+  if(!POT.dom){
+    const st=document.createElement('style');
+    st.textContent='#belt{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:4px;pointer-events:none;text-shadow:0 1px 3px #000;font-size:11px;color:#ddd;z-index:5}'+
+      '#belt .hbar{display:flex;gap:10px;align-items:flex-end}#belt .wl{display:flex;gap:4px}#belt .wl:empty,#belt .wl:empty+.sep{display:none}#belt .sep{width:1px;align-self:stretch;background:rgba(255,255,255,.25)}'+
+      '#belt .w{position:relative;width:44px;height:48px;border-radius:8px;background:rgba(40,28,18,.6);border:1px solid rgba(255,210,150,.25);pointer-events:auto;cursor:pointer;overflow:hidden}'+
+      '#belt .w.on{border-color:#ffb36b;box-shadow:0 0 10px rgba(255,160,80,.55)}#belt .w svg{position:absolute;left:6px;top:4px}#belt .w i{position:absolute;left:3px;bottom:1px;font-style:normal;font-size:8px;opacity:.7}'+
+      '#belt .w .cd{position:absolute;left:0;right:0;bottom:0;height:0;background:rgba(0,0,0,.55)}'+
+      '#belt .w .lv{position:absolute;right:3px;top:1px;font-size:10px;color:#ffd9a0;font-weight:bold;text-shadow:0 1px 2px #000}#belt .w .lv.ch{color:#7dff9a}'+
+      '#belt .w .xp{position:absolute;left:0;bottom:0;height:3px;background:linear-gradient(90deg,#ffb36b,#ffe08a);z-index:1}'+
+      '#xhair{position:fixed;left:50%;top:50%;width:0;height:0;pointer-events:none;z-index:4;display:none}#xhair b{position:absolute;background:rgba(255,240,220,.85);box-shadow:0 0 2px #000}'+
+      '#xhair .d{left:-1.5px;top:-1.5px;width:3px;height:3px;border-radius:50%}'+
+      '#belt .sl{display:flex;gap:6px}#belt .s{position:relative;width:40px;height:48px;border-radius:8px;background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.18);pointer-events:auto;cursor:pointer}'+
+      '#belt .s.on{border-color:#ffd88a;box-shadow:0 0 10px rgba(255,200,120,.5)}#belt .s.e{opacity:.4;border-style:dashed;cursor:default}#belt .s svg{position:absolute;left:8px;top:5px}#belt .s b{position:absolute;right:3px;bottom:1px;font-size:11px;color:#fff}'+
+      '#belt .s i{position:absolute;left:3px;top:1px;font-style:normal;font-size:9px;opacity:.6}#belt .nm{font-size:12px;color:#ffe8c0}body.inroom #belt,body.rwatch #belt{display:none}'+
+      '#potov{position:fixed;inset:0;pointer-events:none;opacity:0;transition:opacity .25s;z-index:2}'+
+      '#tDrink,#tThrow{bottom:calc(212px + env(safe-area-inset-bottom));width:58px;height:58px;font-size:11px}#tDrink{left:calc(24px + env(safe-area-inset-left))}#tThrow{left:calc(92px + env(safe-area-inset-left))}body:not(.hasbelt) #tDrink,body:not(.hasbelt) #tThrow{display:none}';
+    document.head.appendChild(st);
+    const d=document.createElement('div');d.id='belt';d.innerHTML='<div class="nm"></div><div class="hbar"><div class="wl"></div><div class="sep"></div><div class="sl"></div></div><div class="hi"></div>';document.body.appendChild(d);
+    const xh=document.createElement('div');xh.id='xhair';xh.innerHTML='<b class="d"></b><b class="t"></b><b class="bt"></b><b class="l"></b><b class="r"></b>';document.body.appendChild(xh);
+    const ov=document.createElement('div');ov.id='potov';document.body.appendChild(ov);
+    d.addEventListener('pointerdown',e=>{const w=e.target.closest('.w');if(w){e.preventDefault();e.stopPropagation();SMITH.eq=SMITH.eq===w.dataset.w&&touch.on?'':w.dataset.w;smithSave();sfx('key');POT.hudK='';return}
+      const s=e.target.closest('.s');if(!s||s.classList.contains('e'))return;e.preventDefault();e.stopPropagation();const i=+s.dataset.i;if(touch.on&&POT.sel===i&&performance.now()-POT.tapT<400)potDrink(i);POT.sel=i;POT.tapT=performance.now();POT.hudK=''});
+    if($('touch'))for(const [id,label,fn] of[['tDrink','DRINK',()=>potDrink()],['tThrow','THROW',()=>potThrow()]]){
+      const b=document.createElement('div');b.id=id;b.className='tbtn';b.textContent=label;
+      b.addEventListener('touchstart',e=>{e.preventDefault();e.stopPropagation();fn()},{passive:false});$('touch').appendChild(b)}
+    POT.dom={d,ov,xh,nm:d.querySelector('.nm'),sl:d.querySelector('.sl'),wl:d.querySelector('.wl'),hi:d.querySelector('.hi')};
+  }
+  const D=POT.dom,show=(state==='play'||state==='talk'&&!(talk&&talk.inv))&&!P.down;
+  const nIng=POT.bag.reduce((a,b)=>a+b,0);
+  document.body.classList.toggle('hasbelt',show&&POT.belt.length>0&&touch.on);
+  const own=WEAPONS.filter(w=>SMITH.own[w.id]).map(w=>w.id);
+  const key=[show,state,POT.sel,POT.belt.length,nIng,touch.on,!!pad.id,SMITH.eq,own.join('+'),...POT.belt.map(b=>b.id+'x'+b.n)].join();
+  if(key!==POT.hudK){
+    POT.hudK=key;D.d.style.display=show?'flex':'none';
+    if(POT.sel>=POT.belt.length)POT.sel=Math.max(0,POT.belt.length-1);
+    const cur=POT.belt[POT.sel];
+    D.nm.textContent=cur?potInfo(cur.id).name+(potInfo(cur.id).debuff?' (debuff: throw it) — '+potInfo(cur.id).mon:' — '+potInfo(cur.id).you):'';
+    D.sl.innerHTML=Array.from({length:BELT_MAX},(_,i)=>POT.belt[i]||null).map((b,i)=>{if(!b)return '<div class="s e" data-i="'+i+'"><i>'+(touch.on||pad.id?'':i+1)+'</i></div>';const c=potInfo(b.id).col;return '<div class="s'+(i===POT.sel?' on':'')+'" data-i="'+i+'"><i>'+(touch.on||pad.id?'':i+1)+'</i>'+
+      '<svg width="24" height="36" viewBox="0 0 24 36"><rect x="9" y="1" width="6" height="5" rx="1" fill="#8a5a30"/><rect x="9.5" y="5" width="5" height="7" fill="rgba(220,240,255,.5)"/>'+
+      '<circle cx="12" cy="23" r="10" fill="'+c+'" stroke="rgba(255,255,255,.6)" stroke-width="1.2"/><ellipse cx="8.5" cy="19.5" rx="2.5" ry="3.5" fill="rgba(255,255,255,.45)"/></svg>'+(b.n>1?'<b>'+b.n+'</b>':'')+'</div>'}).join('');
+    D.wl.innerHTML=own.map((id,i)=>{const q=wLevelOf(SMITH.xp[id]),ch=wChoice(id);return '<div class="w'+(SMITH.eq===id?' on':'')+'" data-w="'+id+'" title="'+WEAPON[id].name+' · level '+q.L+(q.need?' · '+Math.floor(q.into)+'/'+q.need+' XP':'')+(ch?' · a choice waits at the Blacksmith':'')+'">'+WICON[id]+
+      '<i>'+(SMITH.eq===id?'IN HAND':'')+'</i><b class="lv'+(ch?' ch':'')+'">'+q.L+(ch?'!':'')+'</b><div class="xp" style="width:'+(q.need?(q.into/q.need*100).toFixed(0):100)+'%"></div><div class="cd"></div></div>'}).join('');
+    const extra=POT.belt.slice(BELT_MAX).reduce((a,b)=>a+b.n,0);
+    D.hi.textContent=(extra?'+'+extra+' more in your bag · ':'')+(nIng?'⚗ '+nIng+' ingredient'+(nIng===1?'':'s')+' · ':'')+(POT.belt.length?(touch.on?'tap a bottle · DRINK · THROW · BAG':pad.id?'D-pad ← → choose · Back drink · B throw · R3 inventory':'1-6 choose · H drink · B throw · I inventory'):(touch.on?'BAG: inventory':pad.id?'R3: inventory':'I: inventory'))+(own.length>1?(touch.on?' · tap a weapon to hold it':' · Y switch weapon'):'');
+  }
+  // the weapon's cooldown on its slot, and the crosshair while one is in hand
+  const held=wHeld(),cdEl=held&&D.wl.querySelector('.w.on .cd');
+  if(cdEl){const f=W.cd>0?Math.min(1,W.cd/Math.max(0.05,wStats(held).cd)):0,h=(f*100).toFixed(0)+'%';if(cdEl.style.height!==h)cdEl.style.height=h}
+  const xOn=!!held&&state==='play'&&!P.down&&!P.hug&&!FX.frozen,xh=D.xh;
+  if(xh.style.display!==(xOn?'block':'none'))xh.style.display=xOn?'block':'none';
+  if(xOn){const sh=WEAPON[held].kind==='shot',g=(sh?5:7)+12*W.swing+(W.cd>0?2:0),L=sh?7:5,key2=held+'|'+g.toFixed(1);
+    if(xh.dataset.k!==key2){xh.dataset.k=key2;const q=(c,css)=>xh.querySelector(c).style.cssText=css;
+      q('.t','left:-1px;top:'+(-g-L)+'px;width:2px;height:'+L+'px');q('.bt','left:-1px;top:'+g+'px;width:2px;height:'+L+'px');
+      q('.l','top:-1px;left:'+(-g-L)+'px;height:2px;width:'+L+'px');q('.r','top:-1px;left:'+g+'px;height:2px;width:'+L+'px');xh.querySelector('.d').style.display=sh?'block':'none'}}
+  const k=ps('hold')?POT.holdK:'',bg=k==='ice'?'radial-gradient(ellipse at center,rgba(170,220,255,.08) 40%,rgba(170,220,255,.55))':k==='web'?'radial-gradient(ellipse at center,rgba(255,255,255,0) 40%,rgba(240,240,240,.5))':
+    k==='sleep'||k==='dream'?'rgba(10,0,30,.82)':k==='stone'?'radial-gradient(ellipse at center,rgba(120,115,105,.1) 40%,rgba(120,115,105,.6))':
+    ps('invis')?'radial-gradient(ellipse at center,rgba(180,190,255,0) 55%,rgba(180,190,255,.25))':ps('phase')?'radial-gradient(ellipse at center,rgba(60,20,90,0) 50%,rgba(60,20,90,.45))':'';
+  if(D.ov.dataset.k!==bg){D.ov.dataset.k=bg;D.ov.style.background=bg;D.ov.style.opacity=bg?1:0}
+}
+function potHide(){if(POT.dom){POT.dom.d.style.display='none';POT.dom.xh.style.display='none';POT.dom.ov.style.opacity=0;POT.dom.ov.dataset.k='';POT.hudK=''}document.body.classList.remove('hasbelt');canvas.style.filter=''}
+
+/* ---------- the inventory: everything you carry on one screen (I, pad R3, touch BAG) ---------- */
+// It borrows the talk state, so you stand still while it is open (and in a shared game the world keeps going, as it does when you talk).
+// Focus runs over a grid: the six belt slots on top, then the fourteen ingredients in two rows of seven.
+const INV={el:null,focus:0};
+const invPC=()=>Math.max(BELT_MAX,Math.ceil(POT.belt.length/BELT_MAX)*BELT_MAX),invPR=()=>invPC()/BELT_MAX;   // potion cells: the hot bar row, then rows of extras
+const invRC=i=>{const pc=invPC();return i<pc?[(i/BELT_MAX)|0,i%BELT_MAX]:[invPR()+(((i-pc)/7)|0),(i-pc)%7]};
+const invIx=(r,c)=>{const pr=invPR();return r<pr?r*BELT_MAX+Math.min(c,BELT_MAX-1):invPC()+(r-pr)*7+Math.min(c,6)};
+function invOpen(){
+  if(state!=='play'||P.down||P.away||loading||FX.frozen)return;
+  state='talk';talk={inv:true,sel:0,opts:[]};
+  if(document.pointerLockElement){talk.relock=true;document.exitPointerLock()}
+  clearPrompt();touch.mx=touch.my=0;touch.stickId=null;touch.lookId=null;touch.jump=false;$('stickBase').style.display=$('stickKnob').style.display='none';
+  INV.focus=Math.min(POT.sel,BELT_MAX-1);sfx('pick');invBuild();potHud();
+}
+function invNav(dx,dy){
+  let [r,c]=invRC(INV.focus);r=clamp(r+dy,0,invPR()+1);c=clamp(c+dx,0,r<invPR()?BELT_MAX-1:6);
+  INV.focus=invIx(r,c);invBuild();
+}
+function invMove(d){   // move the focused potion along the belt
+  const i=INV.focus,j=i+d;if(i>=invPC()||!POT.belt[i]||j<0||j>=POT.belt.length)return;
+  const b=POT.belt;[b[i],b[j]]=[b[j],b[i]];if(POT.sel===i)POT.sel=j;else if(POT.sel===j)POT.sel=i;
+  INV.focus=j;POT.hudK='';sfx('pick');invBuild();
+}
+function invUse(throwIt){
+  const i=INV.focus;if(i>=invPC()||!POT.belt[i]){sfx('seal');return}
+  closeTalk();if(throwIt)potThrow(i);else potDrink(i);
+}
+const invCss=()=>{const st=document.createElement('style');st.textContent=
+  '#inv{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(860px,96vw);max-height:92vh;overflow:auto;box-sizing:border-box;z-index:20;'+
+  'background:rgba(14,10,8,.93);border:1px solid rgba(255,200,140,.28);border-radius:14px;padding:16px 18px;color:#e8dccb;font-size:13px;box-shadow:0 10px 40px rgba(0,0,0,.6)}'+
+  '#inv.hidden{display:none}#inv h3{margin:0;font:600 20px Georgia,serif;letter-spacing:.08em;color:#ffd9a0}#inv .ih{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}'+
+  '#inv .ih span{opacity:.75}#inv .cols{display:grid;grid-template-columns:1fr 250px;gap:16px}@media(max-width:720px){#inv .cols{grid-template-columns:1fr}}'+
+  '#inv h4{margin:12px 0 6px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#c9a97a;font-weight:600}#inv h4:first-child{margin-top:0}'+
+  '#inv .row{display:grid;gap:6px}#inv .belt{grid-template-columns:repeat(6,1fr)}#inv .ings{grid-template-columns:repeat(7,1fr)}'+
+  '#inv .c{position:relative;border:1px solid rgba(255,255,255,.14);border-radius:9px;background:rgba(255,255,255,.04);min-height:64px;padding:4px 3px 3px;text-align:center;cursor:pointer;box-sizing:border-box}'+
+  '#inv .c.f{border-color:#ffd88a;box-shadow:0 0 0 1px #ffd88a,0 0 12px rgba(255,200,120,.35);background:rgba(255,210,140,.08)}#inv .c.act:after{content:"ACTIVE";position:absolute;left:0;right:0;bottom:-1px;font-size:8px;letter-spacing:.1em;color:#ffd88a}'+
+  '#inv .c.e{opacity:.45}#inv .c i{position:absolute;left:4px;top:2px;font-style:normal;font-size:9px;opacity:.55}#inv .c b{position:absolute;right:4px;top:2px;font-size:11px;color:#fff}'+
+  '#inv .c small{display:block;font-size:9.5px;line-height:1.15;opacity:.85;margin-top:2px}#inv .dot{width:22px;height:22px;border-radius:50%;margin:6px auto 0;box-shadow:inset -3px -3px 6px rgba(0,0,0,.45),0 0 8px currentColor}'+
+  '#inv .det{margin-top:8px;min-height:74px;border-radius:9px;background:rgba(0,0,0,.3);padding:8px 10px;line-height:1.45}#inv .det .nm{font-size:15px;color:#ffe6c0}#inv .det .t{color:#ffd88a;font-size:11px;margin-left:6px}'+
+  '#inv .btns{margin-top:6px;display:flex;gap:6px;flex-wrap:wrap}#inv button{font:inherit;font-size:12px;color:#ffe6c0;background:rgba(255,200,140,.12);border:1px solid rgba(255,200,140,.35);border-radius:7px;padding:4px 10px;cursor:pointer}'+
+  '#inv button:disabled{opacity:.35;cursor:default}#inv .sup div{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.06)}#inv .sup div span:last-child{color:#fff}'+
+  '#inv .ifx{font-size:12px;line-height:1.6}#inv .hint{margin-top:10px;font-size:11px;opacity:.6;text-align:center}#tInv{left:calc(24px + env(safe-area-inset-left));top:calc(150px + env(safe-area-inset-top));width:54px;height:54px;font-size:11px}';
+  document.head.appendChild(st)};
+function invBuild(){
+  if(!INV.el){invCss();INV.el=document.createElement('div');INV.el.id='inv';INV.el.className='hidden';document.body.appendChild(INV.el);
+    INV.el.addEventListener('click',e=>{e.stopPropagation();const c=e.target.closest('[data-f]'),bt=e.target.closest('button[data-a]');
+      if(bt){const a=bt.dataset.a;if(a==='drink')invUse(false);else if(a==='throw')invUse(true);else if(a==='l')invMove(-1);else if(a==='r')invMove(1);else if(a==='set'){POT.sel=INV.focus;POT.hudK='';sfx('pick');invBuild()}else if(a==='close')closeTalk();return}
+      if(c){INV.focus=+c.dataset.f;invBuild()}});}
+  INV.focus=Math.min(INV.focus,invPC()+ING_N-1);
+  const el=INV.el,f=INV.focus,hex=a=>'rgb('+a.map(v=>Math.round(Math.min(1,v)*255)).join(',')+')';
+  // the belt
+  const PC=invPC();let belt='';for(let i=0;i<PC;i++){const b=POT.belt[i],p=b&&potInfo(b.id);
+    belt+='<div class="c'+(i===f?' f':'')+(b?'':' e')+(b&&i===POT.sel?' act':'')+'" data-f="'+i+'"><i>'+(i<BELT_MAX?i+1:'bag')+'</i>'+(b&&b.n>1?'<b>×'+b.n+'</b>':'')+
+      (p?'<div class="dot" style="background:'+p.col+';color:'+p.col+'"></div><small>'+p.name+'</small>':'<div class="dot" style="background:none;border:1px dashed rgba(255,255,255,.3);box-shadow:none"></div><small>empty</small>')+'</div>'}
+  let ings='';INGREDIENTS.forEach((g,k)=>{const i=PC+k,n=POT.bag[k];
+    ings+='<div class="c'+(i===f?' f':'')+(n?'':' e')+'" data-f="'+i+'">'+(n?'<b>×'+n+'</b>':'')+'<div class="dot" style="background:'+hex(g.col)+';color:'+hex(g.col)+'"></div><small>'+g.name+'</small></div>'});
+  // details of what has focus
+  let det='';
+  if(f<PC){const b=POT.belt[f],p=b&&potInfo(b.id);
+    det=p?'<div><span class="nm">'+p.name+'</span> '+potKind(p)+'<span class="t">'+potTierT(p)+(b.n>1?' · '+b.n+' carried':'')+(f>=BELT_MAX?' · in your bag (move it into slots 1-6 to use it from the hot bar)':'')+'</span></div>'+(p.mix?'<div><b>A blend of</b> '+p.of+'</div>':'')+'<div><b>Drink:</b> '+p.you+'</div><div><b>Thrown at a monster:</b> '+p.mon+'</div>'+
+      '<div class="btns"><button data-a="drink">Drink (H)</button><button data-a="throw">Throw (B)</button><button data-a="set"'+(f===POT.sel||f>=BELT_MAX?' disabled':'')+'>Make active (Enter)</button><button data-a="l"'+(f>0?'':' disabled')+'>◀ Move</button><button data-a="r"'+(f<POT.belt.length-1?'':' disabled')+'>Move ▶</button></div>'
+      :'<div class="nm">Empty slot</div><div>The Brewer, beside the Keeper in every sanctuary, brews two things you carry into a potion. It goes here.</div>';
+  }else{const k=f-PC,g=INGREDIENTS[k],id=g.id,uses=[];let hidden=0;
+    for(const p of POTIONS){if(!p||p.tier!==1||!p.recipe||!p.recipe.includes(id))continue;if(POT.book.has(p.id)){const o=p.recipe[0]===id?p.recipe[1]:p.recipe[0];uses.push(p.name+' (with '+(o===id?'another':INGREDIENTS.find(q=>q.id===o).name)+')')}else hidden++}
+    det='<div><span class="nm">'+g.name+'</span><span class="t">'+POT.bag[k]+' carried</span></div><div><b>Found:</b> '+g.where+'</div><div><b>Brews:</b> '+(uses.length?uses.join(', '):'nothing you know of yet')+(hidden?' · and '+hidden+' recipe'+(hidden>1?'s':'')+' still to find':'')+'. Any other pair makes a blend.</div>';
+  }
+  // supplies and what is on you
+  const row=(a,b)=>'<div><span>'+a+'</span><span>'+b+'</span></div>';
+  const sup=row('Hearts','♥ '+P.hp+' / '+maxHp())+row('Torch',Math.round(P.fuel)+'%')+row('Flash bombs',P.flash)+row('Ward stone',P.ward?'yes':'—')+row('Gate keys',P.keys||'—')+
+    row('Weapon',wHeld()?WEAPON[wHeld()].name+' · level '+wLevelOf(SMITH.xp[wHeld()]).L+(wLevelOf(SMITH.xp[wHeld()]).need?' ('+Math.floor(wLevelOf(SMITH.xp[wHeld()]).into)+'/'+wLevelOf(SMITH.xp[wHeld()]).need+' XP)':'')+(wChoice(wHeld())?' · choice waiting':''):'—')+
+    row('Pickaxe',P.pick>0?P.pick+' swings':'—')+row('Spike traps',P.spikeTraps||'—')+row('Shards',P.shards+' / 3')+row('Gems this run',R.gems|0)+row('Ingredients',POT.bag.reduce((a,b)=>a+b,0))+row('Recipes known',potNamed()+' / '+MAX_ID+(POT.book.size>potNamed()?' + '+(POT.book.size-potNamed())+' blends':''));
+  const L=[];potStatus(L);
+  const fl=[['Pug',FX.pug],['Rat',FX.rat],['Plague rat',FX.plague],['Hedgehog',FX.hedge],['+200 lbs',FX.fat],['Moonwalk',FX.moon],['Bobblehead',FX.bob],['Smallpox',FX.pox],['Tinnitus',FX.tin]];
+  for(const [n,v] of fl)if(v>0)L.push([n,v]);
+  const fx=L.length?L.map(([n,t])=>n+(t?' <span style="opacity:.6">'+Math.ceil(t)+'s</span>':'')).join('<br>'):'<span style="opacity:.6">Nothing right now</span>';
+  el.innerHTML='<div class="ih"><h3>INVENTORY</h3><span>● '+wallet+' gems · Level '+plLevel()+'</span></div><div class="cols"><div>'+
+    '<h4>Potion belt · your hot bar'+(PC>BELT_MAX?' (first row) · the rest is in your bag':'')+'</h4><div class="row belt">'+belt+'</div>'+(f<PC?'<div class="det">'+det+'</div>':'')+
+    '<h4>Ingredients</h4><div class="row ings">'+ings+'</div>'+(f>=PC?'<div class="det">'+det+'</div>':'')+
+    '</div><div><h4>Supplies</h4><div class="sup">'+sup+'</div><h4>On you</h4><div class="ifx">'+fx+'</div></div></div>'+
+    '<div class="hint">'+(touch.on?'Tap to choose · <button data-a="close">Close</button>':pad.id?'Stick or D-pad choose · A make active · Back drink · Y throw · LB / RB move · B close':'Arrows choose · Enter make active · H drink · B throw · Shift+← → move · I or Esc close')+'</div>';
+  el.classList.remove('hidden');
+  talk.opts=Array.from({length:PC+ING_N},(_,i)=>({fn:i<BELT_MAX?()=>{if(POT.belt[i]){POT.sel=i;POT.hudK='';sfx('pick')}}:()=>{}}));talk.sel=f;
+}
+function invKey(e){
+  const c=e.code;
+  if(c==='Escape'||c==='KeyI'||c==='KeyQ'||c==='Tab'){e.preventDefault();closeTalk();return}
+  if(e.shiftKey&&(c==='ArrowLeft'||c==='KeyA')){invMove(-1);return}
+  if(e.shiftKey&&(c==='ArrowRight'||c==='KeyD')){invMove(1);return}
+  if(c==='ArrowLeft'||c==='KeyA')invNav(-1,0);else if(c==='ArrowRight'||c==='KeyD')invNav(1,0);
+  else if(c==='ArrowUp'||c==='KeyW')invNav(0,-1);else if(c==='ArrowDown'||c==='KeyS')invNav(0,1);
+  else if(c==='Enter'||c==='KeyE'||c==='Space'){talk.sel=INV.focus;pickTalk()}
+  else if(c==='KeyH')invUse(false);else if(c==='KeyB')invUse(true);
+  else if(/^Digit[1-6]$/.test(c)){INV.focus=+c.slice(5)-1;invBuild()}
+}
+function invPad(hit,gp){
+  const sx=(gp.axes[0]||0)>0.6?1:(gp.axes[0]||0)<-0.6?-1:0,sy=(gp.axes[1]||0)>0.6?1:(gp.axes[1]||0)<-0.6?-1:0;
+  if(hit(12)||sy<0&&pad.psy!==-1)invNav(0,-1);else if(hit(13)||sy>0&&pad.psy!==1)invNav(0,1);
+  if(hit(14)||sx<0&&pad.psx!==-1)invNav(-1,0);else if(hit(15)||sx>0&&pad.psx!==1)invNav(1,0);
+  pad.psy=sy;pad.psx=sx;
+  if(hit(4))invMove(-1);if(hit(5))invMove(1);
+  if(hit(0)||hit(2)){talk.sel=INV.focus;pickTalk()}else if(hit(8))invUse(false);else if(hit(3))invUse(true);else if(hit(1)||hit(9)||hit(11))closeTalk();
+}
+// little hot-bar pictures of each weapon
+const WICON={
+  sword:'<svg width="32" height="40" viewBox="0 0 32 40"><path d="M25 3 L14 22 L17 24 L28 5 Z" fill="#d8d8de" stroke="#fff" stroke-width=".6"/><rect x="9" y="22" width="11" height="3" rx="1" transform="rotate(30 14 24)" fill="#c9a24a"/><rect x="9" y="25" width="3" height="9" rx="1" transform="rotate(30 10 29)" fill="#6a4423"/></svg>',
+  hammer:'<svg width="32" height="40" viewBox="0 0 32 40"><rect x="14" y="10" width="3.5" height="27" rx="1" fill="#7a4e28" transform="rotate(20 16 24)"/><rect x="8" y="4" width="18" height="10" rx="2" fill="#8a8f99" stroke="#cfd3da" stroke-width=".8" transform="rotate(20 16 9)"/></svg>',
+  crossbow:'<svg width="32" height="40" viewBox="0 0 32 40"><rect x="14.5" y="8" width="3" height="28" rx="1" fill="#a0703a"/><path d="M3 15 Q16 4 29 15" stroke="#555" stroke-width="2.4" fill="none"/><path d="M3 15 L16 20 L29 15" stroke="#eee" stroke-width=".8" fill="none"/><path d="M16 3 L14 9 L18 9 Z" fill="#ccc"/></svg>',
+  spear:'<svg width="32" height="40" viewBox="0 0 32 40"><rect x="15" y="9" width="2.4" height="30" rx="1" fill="#7a5a34" transform="rotate(25 16 24)"/><path d="M23 1 L19 11 L24 12 Z" fill="#d8d8de" stroke="#fff" stroke-width=".5"/></svg>',
+  censer:'<svg width="32" height="40" viewBox="0 0 32 40"><path d="M16 2 Q14 10 16 18" stroke="#d0a050" stroke-width="1.4" stroke-dasharray="2 1.5" fill="none"/><circle cx="16" cy="25" r="8" fill="#b9822e" stroke="#ffd080" stroke-width="1"/><circle cx="16" cy="25" r="3.5" fill="#ffb040"/><circle cx="16" cy="25" r="6" fill="rgba(255,170,60,.35)"/></svg>'};
+function potSel(d){if(!POT.belt.length)return;POT.sel=(POT.sel+d+POT.belt.length)%POT.belt.length;POT.hudK='';sfx('pick')}
+
+
+/* ---------- the Blacksmith and his weapons (data in src/weapons.js) ---------- */
+// He works an anvil in the last free corner of every sanctuary. Weapons, path levels and augments are bought with gems and kept forever.
+// Left click (pad RT, touch ATTACK) attacks with the weapon in hand; Y switches weapons. Monsters now have health: weapons wound them in
+// their own ways (bleeding, burning, pinning, knocking into walls...) and a monster that dies comes back somewhere else a while later.
+// Networking: the attacker works out what it hit and sends {k:'wh'} to the host, who owns monster health; the host streams health back.
+const SMITH=(()=>{const s=store.get('smith',null)||{},o={own:{},xp:{},p1:{},p2:{},eq:''};
+  for(const w of WEAPONS){const id=w.id;o.own[id]=!!(s.own&&s.own[id]);o.xp[id]=Math.max(0,+((s.xp||{})[id])||0);
+    o.p1[id]=clamp(Number.isInteger((s.p1||{})[id])?s.p1[id]:-1,-1,4);o.p2[id]=clamp(Number.isInteger((s.p2||{})[id])?s.p2[id]:-1,-1,5);if(o.p2[id]===o.p1[id])o.p2[id]=-1;
+    // from the old system (levels and augments bought with gems): every gem spent becomes 6 XP on that weapon
+    if(!s.v2&&s.lv&&s.lv[id]){let g=0;(s.lv[id]||[]).forEach(l=>{for(let k=0;k<clamp(l|0,0,5);k++)g+=[4,7,11,16,22][k]});(s.aug&&s.aug[id]||[]).forEach(a=>{if(a)g+=25});o.xp[id]+=g*6}}
+  o.eq=o.own[s.eq]?s.eq:'';o.v2=1;return o})();
+const smithSave=()=>store.set('smith',SMITH);
+const W={cd:0,swing:0,swingT:0.3,n:0,parryT:0,safeT:0,auraT:1,pulseT:6,shots:[],hint:false};
+// ---- weapon levels: every weapon earns XP from fighting (damage dealt, more for a kill). Levels 1-3 sharpen it; at level 4 you choose
+// one of its five paths at the Blacksmith, and it ranks up with each level to 8; at level 10 you choose a second path from the other
+// four, or a mutation of the first (its augment, borrowed from another weapon, and two more ranks). Every level adds 5% damage.
+const WMAX=15,W_PATH_AT=4,W_SECOND_AT=10;
+const wNeed=L=>30+25*(L-1);   // XP from level L to the next
+function wLevelOf(xp){let L=1;xp=Math.max(0,xp||0);while(L<WMAX&&xp>=wNeed(L)){xp-=wNeed(L);L++}return {L,into:xp,need:L<WMAX?wNeed(L):0}}
+function wRanks(id){
+  const L=wLevelOf(SMITH.xp[id]).L,p1=SMITH.p1[id],p2=SMITH.p2[id],R=[0,0,0,0,0],A=[false,false,false,false,false];
+  if(p1>=0){R[p1]=clamp(L-(W_PATH_AT-1),0,5);if(p2===5&&L>=W_SECOND_AT){A[p1]=true;R[p1]+=clamp(L-W_SECOND_AT,0,2)}}
+  if(p2>=0&&p2<5&&L>=W_SECOND_AT)R[p2]=clamp(L-(W_SECOND_AT-1),0,5);
+  return {L,R,A};
+}
+const wStats=id=>{const q=wRanks(id),st=WEAPON[id].stats(q.R,q.A);st.dmg*=1+0.05*(q.L-1);if(st.jav)st.jav.every=Math.max(1,st.jav.every);return st};
+// 1: a path to choose (level 4), 2: a second path or a mutation (level 10), 0: nothing waiting
+const wChoice=id=>{const L=wLevelOf(SMITH.xp[id]).L;return L>=W_PATH_AT&&!(SMITH.p1[id]>=0)?1:L>=W_SECOND_AT&&!(SMITH.p2[id]>=0)?2:0};
+function wGainXp(id,a){
+  if(!id||!SMITH.own[id]||!(a>0)||archiveRun)return;
+  const L0=wLevelOf(SMITH.xp[id]).L;SMITH.xp[id]+=a;const L1=wLevelOf(SMITH.xp[id]).L;
+  if(!W.saveT)W.saveT=setTimeout(()=>{W.saveT=0;smithSave()},1500);POT.hudK='';
+  if(L1>L0){smithSave();[659,880,1175].forEach((f,i)=>tone(f,0.25,'triangle',0.1,i*0.09));
+    say(WEAPON[id].name+' reached level '+L1+'!'+(L1===W_PATH_AT?' Visit the Blacksmith to choose its path.':L1===W_SECOND_AT?' Visit the Blacksmith: a second path, or a mutation.':''),3.2)}
+}
+const W_KILL_XP={0:12,1:20,2:8,4:18,5:16};
+const wXpFor=L=>{let x=0;for(let k=1;k<L;k++)x+=wNeed(k);return x};   // total XP to reach level L
+const wHeld=()=>SMITH.eq&&SMITH.own[SMITH.eq]?SMITH.eq:'';
+const wMaxHp=s=>s.type===6?s.hpMax||10:(s.type===1?10:s.type===2?3:s.type===4?8:s.type===5?7:6)*(1+0.06*Math.max(0,R.depth-1));
+function wCycle(){
+  const L=WEAPONS.filter(w=>SMITH.own[w.id]).map(w=>w.id);if(!L.length){say('No weapons yet. The Blacksmith in the sanctuary forges them.',2.5);return}
+  const i=L.indexOf(SMITH.eq);SMITH.eq=L[(i+1)%L.length];smithSave();sfx('key');say(WEAPON[SMITH.eq].name+' in hand',1.5);
+}
+// ---- attacking
+function wAttack(){
+  const id=wHeld();if(!id||!canUse()||potHeld()||W.cd>0||FX.curl===1)return;
+  const w=WEAPON[id],st=wStats(id);
+  W.cd=st.cd;W.n++;W.swing=1;W.swingT=Math.min(0.35,st.cd*0.8);W.kind=id;
+  const dbl=st.every&&W.n%st.every===0?2:1;
+  if(w.kind==='shot'){
+    wShoot(st,0);if(st.shot.extraEvery&&W.n%st.shot.extraEvery===0)wShoot(st,0.06);
+    tone(220,0.12,'triangle',0.12,0,-120);noise(0.12,0.12,2400,2);return;
+  }
+  noise(0.16,0.13,id==='hammer'?500:1400,0.8);
+  const spin=Math.random()<(st.spin||0),arc=(spin?360:st.arc)*Math.PI/360,fx=Math.cos(P.yaw),fz=Math.sin(P.yaw);
+  if(st.lunge){potBlinkSafe(st.lunge);if(st.lungeSafe)W.safeT=0.4}
+  if(st.step)potBlinkSafe(st.step);
+  const T=[];
+  for(const s of F.shades){
+    if(s.x<0||s.dead)continue;
+    const dx=s.x-P.x,dz=s.z-P.z,d=Math.hypot(dx,dz),sr=s.rad||0;if(d>st.range+0.25+sr||d<0.01)continue;
+    const a=Math.acos(clamp((dx*fx+dz*fz)/d,-1,1));if(a>arc+(sr?Math.atan2(sr,d):0)&&d>0.45+sr)continue;
+    if(!los(P.x,P.z,s.x,s.z))continue;T.push([d,s]);
+  }
+  T.sort((a,b)=>a[0]-b[0]);
+  const hits=[];
+  for(const [,s] of st.multi||spin?T:T.slice(0,1)){
+    if(s.type===3){banish(s,false);continue}   // watchers are your own; a blow sends one away
+    hits.push(wHit(st,s,dbl));wSpark(s.x,0.55,s.z,w.col);
+  }
+  if(spin){wRing(P.x,P.z,st.range,st.spinStun?'#fff4c0':w.col);if(st.spinStun)for(const [,s] of T)if(s.type===0)hits.push({i:F.shades.indexOf(s),d:0,st:1.5})}
+  if(st.jav&&W.n%st.jav.every===0)wShoot({dmg:st.jav.dmg,stun:0.3,kb:0.2,shot:{speed:15,pierce:1,blast:st.jav.blast,blastFrac:0.6}},0,true);
+  if(hits.length){wSend(hits);tone(id==='hammer'?70:140,0.12,'square',0.12,0,-40);if(id==='hammer')pkShake=Math.max(pkShake,0.35)}
+  if(st.parry)W.parryT=st.parry;
+  if(st.fuel&&hits.length){P.fuel=Math.min(100,P.fuel+st.fuel*hits.length);lowFuelSaid=false}
+}
+function potBlinkSafe(d){const fx=Math.cos(P.yaw),fz=Math.sin(P.yaw);let k=0;for(let s=0.05;s<=d;s+=0.05){if(blocked(P.x+fx*s,P.z+fz*s))break;k=s}P.x+=fx*k;P.z+=fz*k;onTileChange()}
+// one blow against one monster, worked out on the attacker's side (it can see stuns, frost and marks), applied by the host
+function wHit(st,s,dbl=1){
+  const c=(s.pv|0)&31,stone=s.type===1||c===1||c===4||c===5,dazed=s.stun>0||stone,lit=s.type===0||s.type===2;
+  let d=st.dmg*dbl*(dazed?st.shatter||1:1)*(lit?st.light||1:1)*(ps('weak')?0.5:1);
+  const dx=s.x-P.x,dz=s.z-P.z,l=Math.hypot(dx,dz)||1;
+  const h={i:F.shades.indexOf(s),d:Math.round(d*100)/100,st:st.stun||0,kb:st.kb||0,dx:r3(dx/l),dz:r3(dz/l)};
+  if(st.bleed)h.bl=st.bleed;if(st.burn)h.bu=st.burn;
+  const mk=(st.mark||0)||(st.markOnBleed&&st.bleed?4:0)||(st.markShade&&s.type===0?5:0);if(mk){h.mk=mk;h.mb=st.markBonus||0.15}
+  if(st.root&&Math.random()<st.root){h.rt=st.rootT;if(st.rootQuake)h.rq=1}
+  if(st.smoke){h.sm=st.smoke;if(st.slowSmoke)h.sl=st.smoke}
+  if(st.quakeR){h.qr=st.quakeR;h.qt=st.quakeT;if(st.quakeSmoke)h.qs=1}
+  if(st.killShards)h.ks=st.killShards;if(st.killBlast)h.kx=st.killBlast;if(st.wallStun)h.ws=st.wallStun;if(st.wallPin)h.wp=st.wallPin;
+  return h;
+}
+function wSend(hits){
+  if(!hits.some(h=>h.ddr))wGainXp(wHeld(),hits.reduce((a,h)=>a+(+h.d||0),0));
+  if(MP.guest)mpSend({k:'wh',d:R.depth,h:hits},MP.hostId);
+  else for(const h of hits)wApply(h,potMe());
+}
+// ---- the host: health, knockback, wounds and death
+function wApply(h,by){
+  const s=F.shades[h.i];if(!s||s.x<0||s.dead||s.type===3||s.down>0)return;
+  if(!(s.hpMax>0)){s.hpMax=wMaxHp(s);s.hp=s.hpMax}
+  if(s.type===6){if(s.immune&&!h.ddr){if(by===potMe()&&(BS.said.imm||0)<R.time-4){BS.said.imm=R.time;say('It does not even flinch. He only respects the dance.',2.2)}return}if(!bossStruck(s))return}
+  const e=s.pe||{};if(e.dodge&&Math.random()<0.5){s.hpShow=1;return}   // Lucky Clover / Phantom Step on a monster: half the blows miss
+  const dmg=+h.d*(s.markT>0?1+(s.markB||0):1)*(e.tough?0.5:1)*(e.vuln?(s.pk&&s.pk.vm||2):1)*bossVuln(s);
+  const big=s.type===6&&s.role!=='add';   // a boss shrugs off most of a stun and cannot be shoved or pinned
+  s.hp-=dmg;s.hitT=0.25;s.hpShow=4;
+  if(h.st)s.stun=Math.max(s.stun,big?Math.min(+h.st,0.25):+h.st);if(s.type!==1&&s.type!==6&&h.st)s.state=0;
+  if(h.kb>0&&(h.dx||h.dz)&&!big){   // knockback, and a slam if a wall gets in the way
+    let k=0;for(let q=0.05;q<=h.kb;q+=0.05){const x=s.x+h.dx*q,z=s.z+h.dz*q,tx=Math.floor(x),tz=Math.floor(z);if(tx<0||tz<0||tx>=F.W||tz>=F.H||F.g[tz*F.W+tx]||F.safeMask[tz*F.W+tx])break;k=q}
+    if(k>0)potPlace(s,s.x+h.dx*k,s.z+h.dz*k);
+    if(k<h.kb-0.06){if(h.ws)s.stun=Math.max(s.stun,(+h.st||0)+ +h.ws);if(h.wp)mHold(s,'web',+h.wp)}
+  }
+  if(h.bl)s.bleed={dps:+h.bl,t:4};if(h.bu)s.burnD={dps:+h.bu,t:3};
+  if(h.mk){pe(s,'reveal',+h.mk);s.markT=+h.mk;s.markB=+h.mb||0.15}
+  if(h.rt&&!big){mHold(s,'web',+h.rt);if(h.rq)for(const o of potMons(s.x,s.z,1.3,false))if(o!==s)o.stun=Math.max(o.stun,1.5)}
+  if(h.sm){pe(s,'lost',+h.sm);if(h.sl)pe(s,'slow',+h.sm)}
+  if(h.qr)for(const o of potMons(s.x,s.z,+h.qr,false)){o.stun=Math.max(o.stun,+h.qt||1);if(h.qs)pe(o,'lost',3)}
+  s.killer=by;s.ks=+h.ks||0;s.kx=+h.kx||0;
+  if(s.hp<=0)wKill(s);
+}
+function wKill(s){
+  if(s.type===6){bossKill(s);return}
+  const burning=!!s.burnD,x=s.x,z=s.z,by=s.killer,near=Math.hypot(x-P.x,z-P.z)<14;
+  if(near){potBurst(x,0.5,z,s.type===2?[0.4,0.6,1]:s.type===1?[0.7,0.68,0.62]:[0.45,0.25,0.6],30,1);tone(110,0.5,'sawtooth',0.12,0,-80);noise(0.4,0.15,700,0.8)}
+  s.x=s.z=-99;s.state=0;s.pe=null;s.bleed=s.burnD=null;s.markT=0;s.down=40+Math.random()*30;s.hp=0;
+  if(s.ks)for(const o of potMons(x,z,1.6,false))wApply({i:F.shades.indexOf(o),d:s.ks,st:0.5,kb:0.3,dx:r3((o.x-x)/(Math.hypot(o.x-x,o.z-z)||1)),dz:r3((o.z-z)/(Math.hypot(o.x-x,o.z-z)||1))},by);
+  if(s.kx&&burning)for(const o of potMons(x,z,1.4,false))wApply({i:F.shades.indexOf(o),d:s.kx,st:0.8},by);
+  if(by===potMe())wReward(s.type);else if(by)mpSend({k:'wk',d:R.depth,t:s.type},by);
+}
+function wReward(type){
+  wGainXp(wHeld(),W_KILL_XP[type]||10);
+  const g=type===1?3:type===2?1:type===4?4:type===5?3:2;wallet+=g;R.gems+=g;R.score+=25*R.depth;store.set('wallet',wallet);sfx('gem');
+  say('Slain! +'+g+' gem'+(g>1?'s':''),1.4);
+}
+// the host's per-frame wound ticks, and monsters coming back
+function wMonTick(dt){
+  for(const s of F.shades){
+    if(s.down>0){s.down-=dt;s.x=s.z=-99;if(s.down<=0){s.down=0;s.hp=s.hpMax=wMaxHp(s);potFar(s,14);s.stun=0;s.state=0}continue}
+    if(s.x<0||s.dead)continue;
+    if(s.hitT>0)s.hitT-=dt;if(s.hpShow>0)s.hpShow-=dt;if(s.markT>0)s.markT-=dt;
+    let dps=0;
+    if(s.bleed){dps+=s.bleed.dps;s.bleed.t-=dt;if(s.bleed.t<=0)s.bleed=null}
+    if(s.burnD){dps+=s.burnD.dps;s.burnD.t-=dt;if(s.burnD.t<=0)s.burnD=null}
+    if(dps>0&&s.hpMax>0){s.hp-=dps*dt;s.hpShow=Math.max(s.hpShow,1);if(s.hp<=0)wKill(s)}
+  }
+}
+// ---- the player's own side each frame: cooldowns, the aura, bolts in flight, and what blocks a blow
+function wTick(dt){
+  W.cd=Math.max(0,W.cd-dt);W.swing=Math.max(0,W.swing-dt/W.swingT);W.parryT=Math.max(0,W.parryT-dt);W.safeT=Math.max(0,W.safeT-dt);
+  const id=wHeld();
+  if(id&&state==='play'&&!P.down){
+    const st=wStats(id);
+    if((W.hold&&document.pointerLockElement===canvas||touch.atk)&&W.cd<=0&&!nearNpc&&!nearDoor)wAttack();   // hold to keep swinging
+    if(st.aura){W.auraT-=dt;if(W.auraT<=0){W.auraT=1;const hs=[];for(const s of F.shades)if(s.x>0&&!s.dead&&s.type!==3&&Math.hypot(s.x-P.x,s.z-P.z)<1.1)hs.push({i:F.shades.indexOf(s),d:st.aura});if(hs.length)wSend(hs)}}
+    if(st.auraPulse){W.pulseT-=dt;if(W.pulseT<=0){W.pulseT=st.auraPulse;const hs=[];for(const s of F.shades)if(s.x>0&&!s.dead&&s.type!==3&&Math.hypot(s.x-P.x,s.z-P.z)<1.8)hs.push({i:F.shades.indexOf(s),d:0,st:1.5});wRing(P.x,P.z,1.8,'#ffc070');if(hs.length)wSend(hs)}}
+  }
+  for(let i=W.shots.length-1;i>=0;i--){
+    const q=W.shots[i];let end=false;
+    for(let k=0;k<3&&!end;k++){
+      const h=dt/3;q.x+=q.vx*h;q.z+=q.vz*h;q.t+=h;
+      if(solidAt(q.x,q.z)||q.t>q.life){end=true;break}
+      for(const s of F.shades){
+        if(s.x<0||s.dead||q.hit.has(s)||Math.hypot(s.x-q.x,s.z-q.z)>0.35+(s.rad||0))continue;
+        q.hit.add(s);if(s.type===3){banish(s,false);continue}
+        const st=q.st,last=q.left<=0;const hh=wHit(st,s);hh.dx=r3(q.vx/q.sp);hh.dz=r3(q.vz/q.sp);
+        if(last&&st.shot.pinLast){hh.rt=1.5}
+        const hits=[hh];wSpark(s.x,0.55,s.z,'#ffe0a0');
+        if(st.shot.blast)wBlast(q,st,hits,s);
+        wSend(hits);tone(180,0.08,'square',0.08);
+        if(q.left--<=0){end=true;break}
+      }
+    }
+    if(end){if(q.st.shot.blast&&!q.blasted)wBlast(q,q.st,null,null);W.shots.splice(i,1)}
+  }
+}
+function wBlast(q,st,hits,skip){
+  q.blasted=true;const r=st.shot.blast,out=hits||[];wRing(q.x,q.z,r,'#ff9040');noise(0.25,0.18,600,0.8);
+  for(const s of F.shades)if(s!==skip&&s.x>0&&!s.dead&&s.type!==3&&Math.hypot(s.x-q.x,s.z-q.z)<r){const h={i:F.shades.indexOf(s),d:r3(st.dmg*st.shot.blastFrac),st:0.4};if(st.burn)h.bu=st.burn;out.push(h)}
+  if(!hits&&out.length)wSend(out);
+}
+function wShoot(st,off,jav){
+  const a=P.yaw+off,sp=st.shot.speed,y=Math.min(CAM_TOP,EYE*wofEye()*potEye()+P.y)-0.12;
+  W.shots.push({x:P.x+Math.cos(a)*0.2,y,z:P.z+Math.sin(a)*0.2,vx:Math.cos(a)*sp,vz:Math.sin(a)*sp,sp,t:0,life:(st.range||14)/sp,left:st.shot.pierce|0,hit:new Set(),st,jav:!!jav});
+}
+// true when the weapon (a parry, a lunge, the maul's bulwark) takes a blow instead of you
+function wHurt(s){
+  const id=wHeld();if(!id)return false;const st=wStats(id);
+  if(W.parryT>0||W.safeT>0){
+    if(s){s.stun=Math.max(s.stun,2.5);s.state=0;s.calm=6}
+    if(W.parryT>0&&st.parryQuake){wRing(P.x,P.z,1.6,'#fff');const hs=[];for(const o of F.shades)if(o.x>0&&!o.dead&&o.type!==3&&Math.hypot(o.x-P.x,o.z-P.z)<1.6){const dx=o.x-P.x,dz=o.z-P.z,l=Math.hypot(dx,dz)||1;hs.push({i:F.shades.indexOf(o),d:0,st:2,kb:0.8,dx:r3(dx/l),dz:r3(dz/l)})}if(hs.length)wSend(hs)}
+    tone(1800,0.2,'triangle',0.12);tone(1200,0.3,'triangle',0.08,0.05);say(W.parryT>0?'Parried!':'Untouchable!',1.2);P.inv=1;return true;
+  }
+  if(st.block&&Math.random()<st.block){
+    if(s){s.stun=Math.max(s.stun,1.5);if(st.blockBurn)wSend([{i:F.shades.indexOf(s),d:0,bu:1}])}
+    tone(300,0.2,'square',0.1);say('You shrug it off',1.2);P.inv=1;return true;
+  }
+  return false;
+}
+// ---- little effects
+function wSpark(x,y,z,col){const c=hex3(col);for(let i=0;i<10;i++){const a=Math.random()*6.283,u=1+Math.random()*2;POT.fx.push({x,y,z,vx:Math.cos(a)*u,vy:1+Math.random()*2,vz:Math.sin(a)*u,t:0,life:0.35,c,s:0.05})}}
+function wRing(x,z,r,col){POT.fx.push({x,y:0.08,z,ring:r,t:0,life:0.45,c:hex3(col)})}
+// the weapon in your left hand, drawn with the torch hand (squeezed toward the eye, so it never pokes through a wall)
+function wDrawHand(t,ex,ey,ez,yaw,pitch){
+  const id=wHeld();if(!id)return;
+  const sw=Math.sin(P.bob)*0.006,up=Math.abs(Math.cos(P.bob))*0.007-Math.min(0.03,Math.max(-0.03,P.vy*0.006));
+  const f={p:[ex,ey,ez],R:m3(rYaw(yaw),rZ(pitch*0.85)),lo:[0.2,0.4,0.6]};
+  const skin=[0.74,0.54,0.42,1],lea=[0.3,0.2,0.12,3],steel=[0.75,0.76,0.8,4],dark=[0.2,0.18,0.17,4],wood=[0.4,0.26,0.13,6],brass=[0.8,0.6,0.25,4];
+  const p=W.swing,e=p*p*(3-2*p);   // 1 at the start of a swing, easing to 0
+  const h=[0.2,-0.16+up,-0.16+sw];
+  seg(f,[0.02,-0.33+up,-0.29+sw],[h[0]-0.03,h[1]-0.02,h[2]-0.01],0.034,0.024,lea);ball(f,h,[0.024,0.022,0.024],skin);
+  const dir=(a,b,c)=>{const l=Math.hypot(a,b,c);return [a/l,b/l,c/l]},at=(d,k)=>[h[0]+d[0]*k,h[1]+d[1]*k,h[2]+d[2]*k];
+  if(id==='sword'){
+    const d=dir(0.55+0.4*e,1-1.6*e,0.25+0.5*e);
+    seg(f,at(d,-0.025),at(d,0.025),0.009,0.009,lea);slab(f,at(d,0.03),[0.005,0.005,0.024],brass);seg(f,at(d,0.034),at(d,0.15),0.008,0.002,[0.62,0.63,0.68,4]);
+  }else if(id==='hammer'){
+    const d=dir(0.5+0.8*e,1-1.4*e,0.2);
+    seg(f,at(d,-0.02),at(d,0.11),0.007,0.007,wood);const hd=at(d,0.12);slab(f,hd,[0.022,0.017,0.034],dark);
+  }else if(id==='crossbow'){
+    const k=0.02*e,c=[0.24-k,-0.15+up+e*0.01,-0.08+sw];
+    seg(f,[c[0]-0.12,c[1]-0.02,c[2]],[c[0]+0.06,c[1],c[2]],0.013,0.011,wood);
+    seg(f,[c[0]+0.05,c[1],c[2]-0.07],[c[0]+0.03,c[1],c[2]+0.07],0.006,0.006,dark);
+    seg(f,[c[0]+0.03,c[1]+0.004,c[2]-0.07],[c[0]-0.02,c[1]+0.006,c[2]],0.0015,0.0015,[0.9,0.9,0.85,5]);seg(f,[c[0]+0.03,c[1]+0.004,c[2]+0.07],[c[0]-0.02,c[1]+0.006,c[2]],0.0015,0.0015,[0.9,0.9,0.85,5]);
+    if(W.cd<0.1)seg(f,[c[0]-0.02,c[1]+0.012,c[2]],[c[0]+0.09,c[1]+0.012,c[2]],0.003,0.003,steel);
+  }else if(id==='spear'){
+    const th=0.16*e,a=[0.12+th,-0.2+up,-0.12+sw],b=[0.5+th,-0.1+up,-0.06+sw];
+    seg(f,a,b,0.007,0.007,wood);seg(f,b,[b[0]+0.07,b[1]+0.017,b[2]+0.009],0.014,0.001,steel);
+  }else if(id==='censer'){
+    const sa=Math.sin(t*2.2)*0.25+(1-2*e)*0.9*(p>0?1:0),L=0.06,c=[h[0]+Math.sin(sa)*0.05,h[1]-L*Math.cos(sa*0.5),h[2]+Math.sin(sa)*0.06];
+    for(let i=1;i<6;i++){const k=i/6;ball(f,[h[0]+(c[0]-h[0])*k,h[1]+(c[1]-h[1])*k,h[2]+(c[2]-h[2])*k],0.004,brass,true)}
+    ball(f,c,0.02,brass);ball(f,[c[0],c[1]+0.008,c[2]],[0.014,0.005,0.014],[2.4,1.1,0.3,7],true);
+    return fpt(f,c);
+  }
+  return null;
+}
+// bolts in flight, health bars and the hit flash (spr and CH primitives, drawn with the creatures)
+function wDraw(t,ex,ez,rx,rz){
+  for(const q of W.shots){const B={p:[q.x,q.y,q.z],R:rYaw(Math.atan2(q.vz,q.vx))};
+    if(q.jav){seg(B,[-0.35,0,0],[0.1,0,0],0.012,0.012,[0.5,0.9,1.4,7]);seg(B,[0.1,0,0],[0.2,0,0],0.02,0.001,[0.8,1.4,2,7]);spr(q.x,q.y,q.z,0.3,0.3,7,0.5,0.8,1,0.5,1)}
+    else{seg(B,[-0.2,0,0],[0.1,0,0],0.006,0.006,[0.4,0.26,0.13,6]);seg(B,[0.1,0,0],[0.15,0,0],0.012,0.001,[0.75,0.76,0.8,4])}}
+  for(const s of F.shades){
+    if(s.x<0||s.dead||!(s.hpShow>0)||(s.x-ex)**2+(s.z-ez)**2>12*12||s.type===6&&s.role!=='add')continue;
+    const pc=clamp(MP.guest?(s.hpPct|0)/100:s.hp/(s.hpMax||1),0,1),y=s.type===2?0.88:s.type===1?1.08:s.type===3?1.15:1.19,w=0.44,a=Math.min(1,s.hpShow);
+    // a small bar facing the camera, made of two glowing slabs (sprites are too soft for a crisp bar)
+    // just under the 1.25 m ceiling, nudged toward you so a hood does not hide it
+    const B={p:[s.x-rz*0.25,y,s.z+rx*0.25],R:rYaw(Math.atan2(-rx,rz))},o=(1-pc)*w/2,k=a;
+    slab(B,[0.012,0,0],[0.008,0.03,w/2+0.015],[0.02,0.02,0.02,8]);
+    if(pc>0)slab(B,[-0.004,0,-o],[0.008,0.02,w/2*pc],[(pc>0.5?0.5:2)*k,(pc>0.5?2:pc>0.25?1.2:0.3)*k,0.2*k,7]);
+  }
+}
+// ---- the Blacksmith: a burly, bald smith in a leather apron, striking a glowing bar on his anvil
+function smithPlace(safe,npcs){
+  if(!safe)return;
+  const used=[[1,1]];if(safe.wheel)used.push([Math.sign(safe.wheel.x-safe.x),Math.sign(safe.wheel.z-safe.z)]);if(safe.brew)used.push([Math.sign(safe.brew.cx-safe.x),Math.sign(safe.brew.cz-safe.z)]);
+  const c=[[-1,-1],[1,-1],[-1,1]].find(q=>!used.some(u=>u[0]===q[0]&&u[1]===q[1]));if(!c)return;
+  const bx=safe.x+c[0]*0.58,bz=safe.z+c[1]*1.0,ax=safe.x+c[0]*1.03,az=safe.z+c[1]*1.0;
+  safe.smith={x:bx,z:bz,ax,az,disc:[ax,az,0.18]};
+  npcs.push({type:'smith',x:bx,z:bz,ph:(safe.tx*5.13+safe.ty*2.9)%6.28,used:true,lock:true,yaw:Math.atan2(safe.z-bz,safe.x-bx)});
+}
+function smithCollide(){
+  const b=F.safe&&F.safe.smith;if(!b)return;const q=b.disc,dx=P.x-q[0],dz=P.z-q[1],d=Math.hypot(dx,dz),m=q[2]+PR;
+  if(d<m&&d>1e-4){const nx=q[0]+dx/d*m,nz=q[1]+dz/d*m;if(!blocked(nx,nz)){P.x=nx;P.z=nz}}
+}
+function smithBuild(n,B,t,ph,breath,blink,talking,out){
+  const skin=[0.7,0.48,0.34,1],apron=[0.3,0.18,0.09,3],shirt=[0.3,0.26,0.22,2],pants=[0.18,0.16,0.15,2],boot=[0.14,0.1,0.07,3],hair=[0.08,0.07,0.06,5],
+        iron=[0.12,0.12,0.13,4],wood=[0.38,0.24,0.12,6];
+  const b=F.safe&&F.safe.smith;let al=[0.45,0,0];
+  if(b){const dx=b.ax-B.p[0],dz=b.az-B.p[2],c=Math.cos(n.yaw),s=Math.sin(n.yaw);al=[c*dx+s*dz,0,-s*dx+c*dz]}
+  // strikes the bar every 1.6 s (unless he is talking to you)
+  const cyc=talking?0.2:((t*0.62+ph)%1),raise=cyc<0.75?Math.sin(cyc/0.75*Math.PI*0.5):1-(cyc-0.75)/0.25,hitNow=!talking&&cyc>0.97;
+  for(const z of[-1,1]){
+    seg(B,[0,0.46,z*0.07],[0.01,0.24,z*0.08],0.062,0.052,pants);ball(B,[0.01,0.24,z*0.08],0.052,pants,true);seg(B,[0.01,0.24,z*0.08],[0,0.06,z*0.085],0.052,0.045,pants);
+    ball(B,[0.04,0.035,z*0.085],[0.08,0.04,0.05],boot,true);
+  }
+  const U=subF(B,[0,0.46,0],rZ(-0.08));
+  seg(U,[0,-0.04,0],[0,0.06,0],0.13,0.12,[0.22,0.14,0.07,3]);
+  ball(U,[0,0.17+breath,0],[0.1,0.15,0.15],shirt);
+  slab(U,[0.1,0.1,0],[0.02,0.2,0.11],apron,rZ(0.05));
+  for(const z of[-1,1])ball(U,[0,0.28+breath,z*0.15],[0.07,0.06,0.07],shirt,true);
+  // where the anvil's face is, in his frame; the hammer arm comes down on it
+  const top=[al[0]-0.02,0.3,al[2]],side=Math.sign(al[2]||1);
+  const sh=fpt({p:[0,0.46,0],R:rZ(-0.08)},[0,0.28+breath,side*0.15]),hand=[sh[0]+0.16+0.05*raise,0.42+0.3*raise,sh[2]+(top[2]-sh[2])*0.6];
+  limb(B,sh,[sh[0]+0.08,sh[1]-0.08+0.12*raise,sh[2]+(hand[2]-sh[2])*0.5],hand,0.05,0.045,0.035,skin,skin,skin,0.035);
+  const hd=[hand[0]+0.06+0.05*(1-raise),hand[1]+0.02-0.12*(1-raise),hand[2]];
+  seg(B,hand,hd,0.01,0.01,wood);slab(B,hd,[0.03,0.025,0.025],iron);
+  // tongs holding the bar
+  const sh2=fpt({p:[0,0.46,0],R:rZ(-0.08)},[0,0.28+breath,-side*0.15]),h2=[sh2[0]+0.18,0.36,sh2[2]+(top[2]-sh2[2])*0.45];
+  limb(B,sh2,[sh2[0]+0.1,0.32,sh2[2]],h2,0.05,0.045,0.035,skin,skin,skin,0.035);
+  seg(B,h2,top,0.006,0.005,iron);
+  seg(U,[0,0.3+breath,0],[0.01,0.35+breath,0],0.05,0.048,skin);
+  const H=subF(U,[0.01,0.345+breath,0],m3(m3(rYaw(n.hy||0),rZ((n.hp||0)+0.05)),rX(Math.sin(t*0.5+ph)*0.03)));
+  const HS={p:H.p,R:H.R.map(q=>q*1.08)};
+  face(HS,{skin,blink,iris:[0.3,0.22,0.15],brow:hair,browH:0.014,browTilt:-0.15,browOut:0.006,eyeS:0.9,nose:[0.024,0.024,0.02],ears:true,talk:talking?Math.max(0,Math.sin(t*9))*0.008:0});
+  ball(HS,[0.06,0.0,0],[0.05,0.07,0.075],hair);ball(HS,[0.075,0.04,0],[0.02,0.01,0.04],hair,true);   // a thick black beard and moustache
+  for(const z of[-1,1])ball(HS,[0.0,0.06,z*0.075],[0.03,0.04,0.012],hair,true);
+  ball(HS,[0.0,0.13,0],[0.082,0.05,0.084],[skin[0]*1.05,skin[1]*1.05,skin[2]*1.05,1]);                  // bald and shining
+  out.top=1.0;
+  if(b){
+    const A={p:[b.ax,0,b.az],R:rYaw(n.yaw)};
+    seg(A,[0,0,0],[0,0.18,0],0.09,0.06,iron);slab(A,[0,0.22,0],[0.1,0.04,0.065],iron);
+    seg(A,[0.1,0.22,0],[0.2,0.23,0],0.04,0.004,iron);slab(A,[-0.11,0.23,0],[0.03,0.03,0.05],iron);
+    const glow=0.8+0.2*Math.sin(t*3);
+    slab(A,[0,0.27,0],[0.06,0.008,0.012],[2.6*glow,0.9*glow,0.25,7]);
+    out.anvil=[b.ax,0.28,b.az,hitNow];
+  }
+}
+function smithFx(q,t){
+  const [x,y,z,hit]=q;spr(x,y,z,0.35,0.2,7,1,0.45,0.1,0.5,1);
+  if(hit&&(W.clangT||0)<t-0.4){W.clangT=t;const d=Math.hypot(x-P.x,z-P.z);if(d<10){const k=1-d/10;tone(1650,0.35,'triangle',0.09*k);tone(2470,0.25,'sine',0.05*k);noise(0.08,0.12*k,5000,3)}
+    for(let i=0;i<14;i++){const a=Math.random()*6.283,u=0.6+Math.random()*1.6;POT.fx.push({x,y,z,vx:Math.cos(a)*u,vy:1.2+Math.random()*1.6,vz:Math.sin(a)*u,t:0,life:0.5,c:[1,0.6,0.2],s:0.025})}}
+}
+const SMITH_LINES=['Steel does not care what it cuts. Pick one and I will make it sing.','Bring me gems and I will bring you an edge.','A blade is only half the work. The rest is how you swing it.','Down there, they only respect what hurts them.'];
+function smithTalk(o){
+  const b=talk.bm||'main';let text;
+  const lvTxt=id=>{const q=wLevelOf(SMITH.xp[id]);return 'Level '+q.L+(q.need?' · '+Math.floor(q.into)+'/'+q.need+' XP':' (max)')};
+  const pathTxt=id=>{const w=WEAPON[id],r=wRanks(id),a=SMITH.p1[id],c=SMITH.p2[id],L=[];
+    if(a>=0)L.push(w.paths[a].name+' '+r.R[a]+(c===5?' + mutation':''));if(c>=0&&c<5)L.push(w.paths[c].name+' '+r.R[c]);return L.join(' · ')};
+  if(b==='main'){
+    text=talk.line||SMITH_LINES[(R.depth+(talk.npc.ph*10|0))%SMITH_LINES.length];
+    WEAPONS.forEach((w,i)=>{
+      const own=SMITH.own[w.id],eq=SMITH.eq===w.id,ch=own&&wChoice(w.id);
+      if(own)o.push({head:i?undefined:'Your weapons',label:w.name+(eq?' (in hand)':'')+(ch?' — a choice is waiting!':''),sub:lvTxt(w.id)+(pathTxt(w.id)?' · '+pathTxt(w.id):''),cost:'',fn:()=>{talk.bm='w:'+w.id;talk.sel=0;talk.line=null}});
+      else o.push({head:i?undefined:'Your weapons',label:'Forge the '+w.name,sub:w.blurb,cost:w.cost+' gems',off:wallet<w.cost,fn:()=>{
+        wallet-=w.cost;store.set('wallet',wallet);SMITH.own[w.id]=true;if(!SMITH.eq)SMITH.eq=w.id;smithSave();sfx('key');
+        talk.line='There. The '+w.name+'. It learns as you fight with it: bring it back at level '+W_PATH_AT+' and we will choose its path.';talk.bm='w:'+w.id;talk.sel=0}});
+    });
+  }else{
+    const id=b.slice(2),w=WEAPON[id],q=wLevelOf(SMITH.xp[id]),r=wRanks(id),ch=wChoice(id),p1=SMITH.p1[id],p2=SMITH.p2[id];
+    text=talk.line||(ch===1?'Level '+q.L+'. Time to decide what this '+w.name+' becomes. Choose its path.':ch===2?'Level '+q.L+'. It can learn a second path now, or I can push the one it has somewhere stranger.':w.blurb+(SMITH.eq===id?' It is in your hand.':''));
+    o.push({label:'Back',sub:'',cost:'',fn:()=>{talk.bm='main';talk.sel=0;talk.line=null}});
+    o.push({label:SMITH.eq===id?'Put it away':'Take it in hand',sub:SMITH.eq===id?'Fight bare-handed':'Left click attacks with it',cost:'',fn:()=>{SMITH.eq=SMITH.eq===id?'':id;smithSave();sfx('pick');talk.line=null}});
+    o.push({head:'Progress',label:lvTxt(id),sub:q.need?(q.L<W_PATH_AT?'Path choice at level '+W_PATH_AT:q.L<W_SECOND_AT?'Second choice at level '+W_SECOND_AT:'+5% damage with every level')+'. Earn XP by fighting with it.':'Fully forged.',cost:'',off:true,fn:()=>{}});
+    if(p1>=0){const P1=w.paths[p1];o.push({head:'Paths',label:P1.name+' — rank '+r.R[p1]+'/'+(p2===5?7:5),sub:'Each rank: '+P1.per+(r.A[p1]?' · Mutation: '+P1.aug.text:''),cost:'',off:true,fn:()=>{}})}
+    if(p2>=0&&p2<5){const P2=w.paths[p2];o.push({label:P2.name+' — rank '+r.R[p2]+'/5',sub:'Each rank: '+P2.per,cost:'',off:true,fn:()=>{}})}
+    if(ch===1)w.paths.forEach((P,k)=>o.push({head:k?undefined:'Choose a path (level '+W_PATH_AT+')',label:P.name,sub:'Ranks up with every level from '+W_PATH_AT+' to 8. Each rank: '+P.per,cost:'',fn:()=>{
+      SMITH.p1[id]=k;smithSave();sfx('shard');talk.line=P.name+'. A good choice. It grows with every level now.'}}));
+    if(ch===2){let first=true;w.paths.forEach((P,k)=>{if(k===p1)return;o.push({head:first?'Level '+W_SECOND_AT+': a second path, or a mutation':undefined,label:'Second path: '+P.name,sub:'Ranks up with every level from '+W_SECOND_AT+' to 14. Each rank: '+P.per,cost:'',fn:()=>{
+        SMITH.p2[id]=k;smithSave();sfx('shard');talk.line=P.name+' as well. It will take some getting used to.'}});first=false});
+      const P1=w.paths[p1],A=P1.aug;o.push({label:'Mutation: '+A.name+' (from the '+WEAPON[A.from].name+')',sub:A.text+' And '+P1.name+' keeps growing: two more ranks, at levels 11 and 12.',cost:'',fn:()=>{
+        SMITH.p2[id]=5;smithSave();sfx('shard');talk.line='Hold still... there. '+A.name+'. I have never seen steel do that.'}});}
+    if(p1>=0)o.push({head:'Rework',label:'Reforge its paths',sub:'Clear its path choices (it keeps its level and XP) and choose again.',cost:'40 gems',off:wallet<40,fn:()=>{
+      wallet-=40;store.set('wallet',wallet);SMITH.p1[id]=-1;SMITH.p2[id]=-1;smithSave();sfx('key');talk.sel=0;talk.line='Melted down and hammered flat. Choose again.'}});
+  }
+  return text;
+}
+
+
+/* ---------- the Fizzler: a walking two-litre bottle of cola that sprays you until you fizz away (creature type 4) ---------- */
+// About one floor in ten has one (its own dice, so nothing else on the floor moves). It waddles after you, and when it is close it shakes
+// itself up and blasts a cone of foam: standing in the foam fills your fizz meter, and a full meter costs a heart. It can be stunned,
+// beaten, potioned and killed like the rest. The host runs it; the state (0 roam, 1 hunt, 2 spray, 3 shake) streams with the others,
+// so guests see the shaking and the spray, and the host sends each sprayed guest its share of fizz ({k:'fz'}).
+const FIZZ={range:2.6,cone:0.55,shake:0.8,spray:1.7,rest:3,rate:0.55};
+function fizzPlace(seedStr,depth,g,W,H,safeMask,pocketMask,d0,shades,kind){
+  if(kind==='back'||kind==='arena')return;
+  const r=mulberry32(hashStr(seedStr+'#fizz#'+depth));if(r()>=0.1)return;
+  const spots=[];for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=y*W+x;if(!g[i]&&!safeMask[i]&&!pocketMask[i]&&d0[i]>12)spots.push([x,y])}
+  if(!spots.length)return;const c=spots[(r()*spots.length)|0];
+  shades.push({type:4,x:c[0]+0.5,z:c[1]+0.5,gx:c[0],gy:c[1],px:-1,py:-1,state:0,stun:0,think:0,vis:false,frozen:false,ph:r()*6.28,d:99,snd:0,ft:0,fs:0});
+}
+// the host's turn for a Fizzler (after potions and stuns have had their say)
+function fizzTick(s,dt,TG,MD){
+  const T=mpNearest(TG,s.x,s.z),cx=Math.floor(s.x),cz=Math.floor(s.z),d=MD?MD[cz*F.W+cx]:-1;
+  const eu=T?Math.hypot(T.x-s.x,T.z-s.z):99,sk=T?potSk(T):1;
+  s.ft=(s.ft||0)-dt;s.fs=(s.fs||0)-dt;
+  if(s.state===3){   // shaking itself up
+    s.face=T?Math.atan2(T.z-s.z,T.x-s.x):s.face;
+    if(s.ft<=0){s.state=2;s.ft=FIZZ.spray;if(Math.hypot(s.x-P.x,s.z-P.z)<14){noise(0.25,0.4,3000,0.6);tone(900,0.3,'sine',0.1,0,-500)}}
+    return;
+  }
+  if(s.state===2){   // spraying: everyone in the cone gets fizzed
+    if(T){const want=Math.atan2(T.z-s.z,T.x-s.x);let df=want-(s.face||0);while(df>Math.PI)df-=Math.PI*2;while(df<-Math.PI)df+=Math.PI*2;s.face=(s.face||0)+Math.sign(df)*Math.min(Math.abs(df),1.2*dt)}
+    for(const t of TG){
+      if(t.inSafe)continue;const dx=t.x-s.x,dz=t.z-s.z,dd=Math.hypot(dx,dz);
+      if(dd>FIZZ.range||dd<0.01)continue;
+      const fx=Math.cos(s.face),fz=Math.sin(s.face);if((dx*fx+dz*fz)/dd<Math.cos(FIZZ.cone)||!los(s.x,s.z,t.x,t.z))continue;
+      const amt=FIZZ.rate*dt*(1.2-dd/FIZZ.range*0.6);
+      if(t.loc)fizzMe(amt);else{t.p.fzAcc=(t.p.fzAcc||0)+amt;if(t.p.fzAcc>0.08){mpSend({k:'fz',a:r3(t.p.fzAcc)},t.p.id);t.p.fzAcc=0}}
+    }
+    if(s.ft<=0){s.state=1;s.ft=FIZZ.rest}
+    return;
+  }
+  // roaming and hunting: it waddles, slower than you
+  const hunt=!!T&&!T.inSafe&&d>=0&&d<=11*Math.max(sk,0.15)&&(s.calm||0)<=0;
+  s.state=hunt?1:0;
+  if(hunt){
+    if(eu<FIZZ.range*0.85&&s.ft<=0&&los(s.x,s.z,T.x,T.z)){s.state=3;s.ft=FIZZ.shake;s.face=Math.atan2(T.z-s.z,T.x-s.x);if(Math.hypot(s.x-P.x,s.z-P.z)<14)fizzRattle();return}
+    if(eu>0.9){mazeStep(s,T.x,T.z,dt,2.1*(s.pmul||1));s.face=s.yaw}
+  }else{
+    if(!s.wg||Math.hypot(s.wg[0]-s.x,s.wg[1]-s.z)<0.3||s.fs<=0){
+      s.fs=6;for(let k=0;k<20;k++){const x=cx+((Math.random()*9)|0)-4,z=cz+((Math.random()*9)|0)-4;if(x>0&&z>0&&x<F.W-1&&z<F.H-1&&!F.g[z*F.W+x]&&!F.safeMask[z*F.W+x]&&!F.pocketMask[z*F.W+x]){s.wg=[x+0.5,z+0.5];break}}
+    }
+    if(s.wg){mazeStep(s,s.wg[0],s.wg[1],dt,1.1*(s.pmul||1));s.face=s.yaw}
+  }
+  if(s.calm>0)s.calm-=dt;
+  s.gx=Math.floor(s.x);s.gy=Math.floor(s.z);s.px=-1;
+  s.snd-=dt;if(s.snd<=0){s.snd=1.4+Math.random();if(Math.hypot(s.x-P.x,s.z-P.z)<9)noise(0.5,0.05,5200,1.5)}   // a constant faint fizz
+}
+// you, getting fizzed
+function fizzMe(a){
+  if(P.down||P.away||state!=='play')return;
+  if(P.inv>0&&P.fizz>=1)return;
+  P.fizz=Math.min(1,(P.fizz||0)+a);P.fizzT=0.4;
+  if(Math.random()<0.25)noise(0.12,0.08,4200+Math.random()*2000,2);
+  if(P.fizz>=1){P.fizz=0.35;P.inv=0;say('You fizz over!',1.6);hurt(null)}
+}
+function fizzRattle(){if(!ac)return;for(let i=0;i<8;i++)noise(0.05,0.12,1200+i*120,3);tone(140,0.7,'square',0.04,0,60)}
+function fizzPlayerTick(dt){
+  if(P.fizzT>0)P.fizzT-=dt;else if(P.fizz>0)P.fizz=Math.max(0,P.fizz-0.12*dt);
+  if(!FIZZ.el){   // foam creeping up from the bottom of the screen: lots of small soft bubbles over a brown wash
+    FIZZ.el=document.createElement('div');let bg='';const r=mulberry32(7);
+    for(let i=0;i<46;i++){const x=(r()*100).toFixed(1),y=(72+r()*30).toFixed(1),sz=(1.2+r()*3.2).toFixed(1),a=(0.35+r()*0.4).toFixed(2);
+      bg+=`radial-gradient(circle at ${x}% ${y}%,rgba(255,250,238,${a}) 0,rgba(255,248,235,${(a*0.5).toFixed(2)}) ${sz*0.6}%,transparent ${sz}%),`}
+    FIZZ.el.style.cssText='position:fixed;inset:0;pointer-events:none;z-index:3;opacity:0;transition:opacity .2s;background:'+bg+'linear-gradient(to top,rgba(120,60,22,.6),rgba(120,60,22,.15) 30%,rgba(120,60,22,0) 50%)';
+    document.body.appendChild(FIZZ.el)}
+  const o=state==='play'&&!P.down?Math.min(1,(P.fizz||0)*1.2):0;if(Math.abs((+FIZZ.el.style.opacity||0)-o)>0.02)FIZZ.el.style.opacity=o.toFixed(2);
+}
+// the bottle: a two-litre of cola with stubby arms and legs, a plain orange label with an angry face on it, and a cap that pops off to spray
+function buildFizz(s,t,ex,ez){
+  const st=s.state|0,shake=st===3?Math.sin(t*60)*0.05:0,spray=st===2,walk=(s.wk=(s.wk||0)+(st<2?0.12:0));
+  const fa=s.face||0,B={p:[s.x+shake*Math.cos(t*47),0.06+Math.abs(Math.sin(walk*3))*0.02,s.z+shake*Math.sin(t*53)],R:m3(rYaw(fa),rZ(st===2?0.25:st===3?Math.sin(t*41)*0.12:-0.05)).map(q=>q*1.5),lo:[s.ph,0,0]};   // a big bottle: about 1.1 m
+  const cola=[0.22,0.08,0.03,8],plastic=[0.5,0.35,0.25,8],label=[0.72,0.38,0.08,7],white=[0.78,0.76,0.7,7],cap=[0.85,0.85,0.82,4],skin=[0.3,0.14,0.06,8],black=[0.03,0.02,0.02,8];
+  // legs and petal feet
+  for(const z of[-1,1]){const sw=Math.sin(walk*3+(z>0?0:Math.PI))*0.05;seg(B,[0,0.12,z*0.06],[sw,0.0,z*0.075],0.025,0.02,skin);ball(B,[sw+0.02,0.005,z*0.075],[0.04,0.015,0.03],skin,true)}
+  for(let i=0;i<5;i++){const a=i/5*6.283;ball(B,[Math.cos(a)*0.06,0.11,Math.sin(a)*0.06],[0.045,0.04,0.045],plastic,true)}
+  // the bottle, in bands of one radius: the label is part of the wall, not a skin wrapped round it (a skin just off the surface reads
+  // as a crevice to the ambient-occlusion pass at high quality, which darkened the whole label)
+  seg(B,[0,0.12,0],[0,0.27,0],0.115,0.115,cola);seg(B,[0,0.27,0],[0,0.37,0],0.115,0.115,label);seg(B,[0,0.37,0],[0,0.385,0],0.115,0.115,white);
+  seg(B,[0,0.385,0],[0,0.41,0],0.115,0.115,label);seg(B,[0,0.41,0],[0,0.5,0],0.115,0.115,cola);
+  seg(B,[0,0.5,0],[0,0.62,0],0.115,0.04,cola);seg(B,[0,0.62,0],[0,0.68,0],0.04,0.038,plastic);
+  if(!spray)seg(B,[0,0.68,0],[0,0.715,0],0.045,0.045,cap);           // the cap pops off when it sprays
+  // an angry face on the label
+  const fx=0.116;for(const z of[-1,1]){ball(B,[fx,0.345,z*0.035],[0.008,0.018,0.014],white,true);ball(B,[fx+0.004,0.343,z*0.033],[0.006,0.01,0.008],black,true);
+    slab(B,[fx+0.002,0.37,z*0.035],[0.004,0.004,0.02],black,rX(z*0.5))}
+  slab(B,[fx+0.002,0.305,0],[0.004,spray?0.016:0.006,0.03],black);
+  // stubby arms, waving when it shakes
+  for(const z of[-1,1]){const up=st===3?0.12+Math.sin(t*30+z)*0.05:0.02;seg(B,[0,0.42,z*0.11],[0.06,0.33+up,z*0.17],0.02,0.018,skin);ball(B,[0.06,0.33+up,z*0.17],0.022,skin,true)}
+  // bubbles rising inside, and foam when it sprays
+  for(let i=0;i<6;i++){const k=(t*0.8+i/6+s.ph)%1;const p=fpt(B,[Math.cos(i*2.1)*0.07,0.14+k*0.45,Math.sin(i*2.1)*0.07]);spr(p[0],p[1],p[2],0.035,0.035,7,1,0.8,0.5,0.6*(1-k),1)}
+  if(spray){const tip=fpt(B,[0,0.72,0]),dir=[Math.cos(fa),Math.sin(fa)];
+    for(let i=0;i<14;i++){const k=((t*3+i/14)%1),r=k*FIZZ.range,j=(Math.sin(i*7.3+t*9))*0.25*k;
+      spr(tip[0]+dir[0]*r-dir[1]*j,tip[1]-k*0.35+Math.sin(i*3+t*11)*0.05,tip[2]+dir[1]*r+dir[0]*j,0.1+k*0.25,0.1+k*0.25,7,1,0.96,0.88,0.75*(1-k*0.6),0)}}
+  return fpt(B,[0.12,0.345,0]);
+}
+
+
+/* ---------- Granny (creature type 5): "Come give granny some sugar!" ---------- */
+// About one floor in twenty (her own dice, nothing else moves). She shuffles after you with her arms wide, calling out for sugar, and
+// when she is close she gives you a puff of her perfume: you go woozy (the view swims, you drift and slow down). If she then reaches
+// you, she plants a big kiss on you, and that costs a heart. The host runs her (state 0 roam, 1 hunt, 2 puff) and sends each guest who
+// breathes the perfume a {k:'gw'}; her voice is each player's own speech synthesizer, louder the closer she is.
+const GRAN={puff:0.9,rest:4,cloud:1.9,wooze:6,hug:4.5,press:0.075,leak:0.12,line:'Come give granny some sugar!'};
+function grannyPlace(seedStr,depth,g,W,H,safeMask,pocketMask,d0,shades,kind){
+  if(kind==='back'||kind==='arena')return;
+  const r=mulberry32(hashStr(seedStr+'#granny#'+depth));if(r()>=0.05)return;
+  const spots=[];for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=y*W+x;if(!g[i]&&!safeMask[i]&&!pocketMask[i]&&d0[i]>12)spots.push([x,y])}
+  if(!spots.length)return;const c=spots[(r()*spots.length)|0];
+  shades.push({type:5,x:c[0]+0.5,z:c[1]+0.5,gx:c[0],gy:c[1],px:-1,py:-1,state:0,stun:0,think:0,vis:false,frozen:false,ph:r()*6.28,d:99,snd:0,ft:0,fs:0});
+}
+function grannyTick(s,dt,TG,MD){
+  const T=mpNearest(TG,s.x,s.z),cx=Math.floor(s.x),cz=Math.floor(s.z),d=MD?MD[cz*F.W+cx]:-1;
+  const eu=T?Math.hypot(T.x-s.x,T.z-s.z):99,sk=T?potSk(T):1;
+  s.ft=(s.ft||0)-dt;s.fs=(s.fs||0)-dt;
+  if(s.state===3){   // hugging someone: she holds on until they break free (or are smothered)
+    if(s.ft<=0){s.state=0;s.stun=Math.max(s.stun,2);s.calm=4}
+    return;
+  }
+  if(s.state===2){   // a puff of perfume: everyone in the cloud goes woozy
+    if(T)s.face=Math.atan2(T.z-s.z,T.x-s.x);
+    if(!s.puffed&&s.ft<GRAN.puff*0.5){s.puffed=true;
+      for(const t of TG){if(t.inSafe||Math.hypot(t.x-s.x,t.z-s.z)>GRAN.cloud||!los(s.x,s.z,t.x,t.z))continue;if(t.loc)grannyWoozy();else mpSend({k:'gw'},t.p.id)}}
+    if(s.ft<=0){s.state=1;s.ft=GRAN.rest;s.puffed=false}
+    return;
+  }
+  const hunt=!!T&&!T.inSafe&&d>=0&&d<=12*Math.max(sk,0.15)&&(s.calm||0)<=0;
+  s.state=hunt?1:0;
+  if(hunt){
+    if(eu<1.5&&s.ft<=0&&los(s.x,s.z,T.x,T.z)){s.state=2;s.ft=GRAN.puff;s.puffed=false;return}
+    if(eu>0.35)mazeStep(s,T.x,T.z,dt,1.75*(s.pmul||1));s.face=s.yaw;
+    if(eu<0.5&&T.inv<=0&&!(T.loc?P.hug:T.p.hug)){   // she got you: a big hug, and you must struggle free
+      const dx=s.x-T.x,dz=s.z-T.z,l=Math.hypot(dx,dz)||1;potPlace(s,T.x+dx/l*0.42,T.z+dz/l*0.42);s.face=Math.atan2(-dz,-dx);
+      s.state=3;s.ft=GRAN.hug+1.5;
+      if(T.loc)grannyGrab(s);else{T.p.hug=true;setTimeout(()=>{if(T.p)T.p.hug=false},(GRAN.hug+1.5)*1000);mpSend({k:'gg',i:F.shades.indexOf(s)},T.p.id)}
+    }
+  }else{
+    if(!s.wg||Math.hypot(s.wg[0]-s.x,s.wg[1]-s.z)<0.3||s.fs<=0){
+      s.fs=7;for(let k=0;k<20;k++){const x=cx+((Math.random()*9)|0)-4,z=cz+((Math.random()*9)|0)-4;if(x>0&&z>0&&x<F.W-1&&z<F.H-1&&!F.g[z*F.W+x]&&!F.safeMask[z*F.W+x]&&!F.pocketMask[z*F.W+x]){s.wg=[x+0.5,z+0.5];break}}
+    }
+    if(s.wg){mazeStep(s,s.wg[0],s.wg[1],dt,0.9*(s.pmul||1));s.face=s.yaw}
+  }
+  if(s.calm>0)s.calm-=dt;
+  s.gx=Math.floor(s.x);s.gy=Math.floor(s.z);s.px=-1;
+}
+// every client: she calls out now and then, if you are near enough to hear her
+let granVoice;
+function grannyVoiceTick(dt){
+  if(!F||state!=='play'||P.down)return;
+  for(const s of F.shades){
+    if(s.type!==5||s.x<0||s.dead||s.down>0)continue;
+    s.say=(s.say===undefined?2+Math.random()*4:s.say)-dt;
+    if(s.say>0)continue;s.say=6+Math.random()*6;
+    const d=Math.hypot(s.x-P.x,s.z-P.z);if(d>18)continue;
+    const k=Math.max(0.15,1-d/18);
+    if(d<10)say('Granny: "'+GRAN.line+'"',2.6);
+    s.talkT=2.2;
+    if(muted)continue;
+    const S=window.speechSynthesis;
+    if(S&&typeof SpeechSynthesisUtterance!=='undefined'){
+      if(S.speaking)continue;
+      if(granVoice===undefined){const L=S.getVoices().filter(v=>/^en/i.test(v.lang));if(L.length)granVoice=L.find(v=>/female|zira|samantha|victoria|karen|susan|hazel|moira|tessa|fiona|kate|serena/i.test(v.name))||L[0]||null}
+      const u=new SpeechSynthesisUtterance(GRAN.line);if(granVoice)u.voice=granVoice;u.lang='en-US';u.pitch=1.45;u.rate=0.82;u.volume=clamp(k*(getVolumes().sfx??1),0,1);
+      try{S.speak(u)}catch(e){}
+    }else if(ac)for(let i=0;i<5;i++)tone(330+Math.random()*60,0.18,'triangle',0.08*k,i*0.2,40);
+  }
+}
+// the hug: click (Space, E, pad A, tap) as fast as you can to fill the bar before time runs out, or be smothered in grandma rolls
+function grannyGrab(s){
+  if(P.hug||P.down||state!=='play')return;
+  P.hug={i:F.shades.indexOf(s),t:GRAN.hug,prog:0.15,last:0};P.vx=P.vz=0;
+  grannyKiss();say('Granny has you in a big hug! CLICK as fast as you can to break free!',3);
+  if(ac){tone(220,0.6,'sine',0.12,0,-60);noise(0.5,0.2,400,0.7)}
+}
+function grannyMash(){
+  const h=P.hug;if(!h)return false;
+  h.prog=Math.min(1,h.prog+GRAN.press);h.last=0.12;
+  if(ac)tone(300+h.prog*500,0.06,'square',0.05);
+  if(h.prog>=1)grannyFree(true);
+  return true;
+}
+function grannyHugTick(dt){
+  const h=P.hug;if(!h)return;
+  if(P.down||state==='dead'){P.hug=null;return}
+  h.t-=dt;h.last=Math.max(0,h.last-dt);h.prog=Math.max(0,h.prog-GRAN.leak*dt);P.vx=P.vz=0;
+  const s=F.shades[h.i];if(s&&s.x>0){P.yaw=Math.atan2(s.z-P.z,s.x-P.x);P.pitch=Math.max(-0.2,Math.min(0.1,P.pitch))}
+  if(h.t<=0)grannyFree(false);
+}
+function grannyFree(ok){
+  const h=P.hug;if(!h)return;P.hug=null;
+  const s=F.shades[h.i];
+  if(ok){say('You wriggle free!',1.8);P.inv=1.5;if(ac){tone(660,0.15,'triangle',0.1);tone(880,0.2,'triangle',0.1,0.1)}}
+  else{say('Smothered in grandma rolls...',3);if(ac)tone(90,1.2,'sine',0.2,0,-40);P.ward=0;P.inv=0;P.hp=Math.min(P.hp,1);hurt(null)}
+  if(MP.guest)mpSend({k:'gf',d:R.depth,i:h.i},MP.hostId);else if(s)grannyLet(s,P.x,P.z);
+}
+function grannyLet(s,x,z){   // she lets go and staggers back
+  if(!s||s.type!==5)return;s.state=0;s.ft=GRAN.rest;s.stun=Math.max(s.stun,3);s.calm=5;
+  const dx=s.x-x,dz=s.z-z,l=Math.hypot(dx,dz)||1;potPlace(s,s.x+dx/l*0.8,s.z+dz/l*0.8);
+}
+function grannyHugHud(){
+  if(!GRAN.hugEl){const e=document.createElement('div');e.style.cssText='position:fixed;inset:0;pointer-events:none;z-index:6;display:none';
+    e.innerHTML='<div class="gv" style="position:absolute;inset:0"></div><div style="position:absolute;left:50%;top:62%;transform:translateX(-50%);text-align:center;color:#fff;text-shadow:0 2px 6px #000;font:700 28px Georgia,serif">'+
+      '<div class="gt">BREAK FREE!</div><div class="gs" style="font:600 14px system-ui;opacity:.85;margin:4px 0 8px"></div>'+
+      '<div style="width:min(420px,80vw);height:18px;border:2px solid #fff;border-radius:10px;overflow:hidden;background:rgba(0,0,0,.5)"><div class="gb" style="height:100%;width:0;background:linear-gradient(90deg,#ff7ab8,#ffe08a)"></div></div></div>';
+    document.body.appendChild(e);GRAN.hugEl=e}
+  const e=GRAN.hugEl,h=P.hug;
+  if(!h||state!=='play'){if(e.style.display!=='none')e.style.display='none';return}
+  e.style.display='block';
+  const left=Math.max(0,h.t/GRAN.hug),squeeze=1-left;
+  e.querySelector('.gb').style.width=(h.prog*100).toFixed(0)+'%';
+  e.querySelector('.gt').style.transform='scale('+(1+(h.last>0?0.12:0))+')';
+  e.querySelector('.gs').textContent=(touch.on?'Tap the screen':pad.id?'Mash A':'Click (or Space)')+' as fast as you can · '+h.t.toFixed(1)+' s';
+  e.querySelector('.gv').style.background='radial-gradient(ellipse at center,rgba(240,170,150,0) '+(55-45*squeeze).toFixed(0)+'%,rgba(235,160,140,.85) '+(85-35*squeeze).toFixed(0)+'%,rgba(120,60,50,.95) 100%)';
+}
+// woozy: the view swims, you drift off line and slow down
+function grannyWoozy(){
+  if(P.down||state!=='play')return;
+  if(ps('immune')){say('The Panacea clears the perfume right away',1.6);return}
+  const was=P.woozy>0;P.woozy=GRAN.wooze;
+  if(!was)say('Oof, that perfume... everything is swimming',2.4);
+  if(ac){noise(0.6,0.15,6000,0.7);tone(600,0.8,'sine',0.06,0,-250)}
+}
+function grannyKiss(){
+  say('Granny plants a big wet kiss on you!',2.4);
+  if(ac){noise(0.12,0.3,2500,4);tone(900,0.12,'sine',0.1,0.05,-500)}
+  P.kissT=2.5;
+}
+function grannyPlayerTick(dt){
+  grannyHugTick(dt);grannyHugHud();
+  if(P.woozy>0){P.woozy=Math.max(0,P.woozy-dt);if(!P.down&&state==='play'&&!potHeld())P.yaw+=Math.sin(R.time*1.1)*0.55*dt*Math.min(1,P.woozy)}
+  if(P.kissT>0)P.kissT=Math.max(0,P.kissT-dt);
+  if(!GRAN.el){GRAN.el=document.createElement('div');GRAN.el.style.cssText='position:fixed;inset:0;pointer-events:none;z-index:3;opacity:0;transition:opacity .3s;background:radial-gradient(ellipse at center,rgba(255,170,220,0) 40%,rgba(255,150,210,.45) 100%)';document.body.appendChild(GRAN.el);
+    GRAN.kiss=document.createElement('div');GRAN.kiss.textContent='💋';GRAN.kiss.style.cssText='position:fixed;left:58%;top:38%;font-size:140px;pointer-events:none;z-index:4;opacity:0;transition:opacity .4s;transform:rotate(-14deg)';document.body.appendChild(GRAN.kiss)}
+  const live=state==='play'&&!P.down,o=live?Math.min(1,(P.woozy||0)/2):0;if(Math.abs((+GRAN.el.style.opacity||0)-o)>0.02)GRAN.el.style.opacity=o.toFixed(2);
+  const ko=live&&P.kissT>0?Math.min(1,P.kissT):0;if(Math.abs((+GRAN.kiss.style.opacity||0)-ko)>0.02)GRAN.kiss.style.opacity=ko.toFixed(2);
+}
+// Granny: a small, stooped old lady in a lavender floral dress and a pink cardigan, white hair in a bun, big glasses, pearls,
+// a handbag on one arm and a perfume atomizer in the other hand. Arms wide when she is coming for you; the atomizer up when she puffs.
+function buildGranny(s,t,ex,ez){
+  const st=s.state|0,walk=(s.wk=(s.wk||0)+(st===1?0.09:st===0?0.05:0)),puff=st===2,hug=st===1;
+  const tp=Math.atan2(ez-s.z,ex-s.x),fa=hug||puff?tp:st===3?(s.face||0):(s.face||0);
+  const B={p:[s.x,Math.abs(Math.sin(walk*3))*0.008,s.z],R:rYaw(fa),lo:[s.ph,0,0]},S=0.85,v=(x,y,z)=>[x*S,y*S,z*S];
+  const dress=[0.62,0.52,0.78,2],dot=[0.95,0.85,0.95,2],card=[0.95,0.62,0.72,2],skin=[0.93,0.76,0.66,1],hair=[0.95,0.95,0.97,5],shoe=[0.2,0.14,0.1,3],
+        pearl=[1,1,0.95,8],bag=[0.45,0.18,0.12,3],gold=[0.85,0.65,0.25,4],glass=[0.7,0.85,1.0,8],lip=[0.85,0.1,0.2,1],perf=[1.4,0.6,1.1,7];
+  for(const z of[-1,1]){const sw=Math.sin(walk*3+(z>0?0:Math.PI))*0.04;
+    seg(B,v(0,0.3,z*0.05),v(sw,0.05,z*0.055),0.03*S,0.025*S,[0.85,0.72,0.62,2]);ball(B,v(sw+0.025,0.025,z*0.055),[0.05*S,0.022*S,0.032*S],shoe,true)}
+  seg(B,v(0,0.12,0),v(0,0.52,0),0.17*S,0.11*S,dress);                                                 // the skirt
+  for(let i=0;i<10;i++){const a=i*0.63,h=0.16+((i*7)%5)*0.07,r=(0.165-((i*7)%5)*0.012)*S;ball(B,[Math.cos(a)*r,h*S,Math.sin(a)*r],0.012*S,dot,true)}
+  const U=subF(B,v(0,0.5,0),rZ(-0.28));                                                                 // stooped
+  ball(U,v(0,0.12,0),[0.09*S,0.13*S,0.12*S],card);
+  for(let i=0;i<5;i++)ball(U,v(0.085,0.2-i*0.012,(i-2)*0.018),0.008*S,pearl,true);
+  for(const z of[-1,1])ball(U,v(0,0.21,z*0.1),[0.05*S,0.04*S,0.05*S],card,true);
+  // arms: wide open when she comes for you; the atomizer raised when she puffs; the bag on the other arm
+  const wrap=st===3;
+  const R1=wrap?v(0.26,0.2+Math.sin(t*9)*0.01,0.05):hug?v(0.2,0.25+Math.sin(t*5)*0.02,0.24):puff?v(0.22,0.33,0.06):v(0.1,0.06,0.13);
+  limb(U,v(0,0.21,0.1),wrap?v(0.14,0.2,0.2):hug?v(0.08,0.19,0.2):v(0.06,0.1,0.14),R1,0.03*S,0.026*S,0.02*S,card,card,skin,0.024*S);
+  ball(U,[R1[0]+0.02*S,R1[1]+0.03*S,R1[2]],[0.022*S,0.04*S,0.022*S],perf,true);ball(U,[R1[0]-0.03*S,R1[1]+0.01*S,R1[2]],[0.02*S,0.02*S,0.02*S],[0.9,0.3,0.5,2],true);
+  const L1=wrap?v(0.26,0.2+Math.cos(t*9)*0.01,-0.05):hug?v(0.2,0.25+Math.cos(t*5)*0.02,-0.24):v(0.08,0.07,-0.14);
+  limb(U,v(0,0.21,-0.1),wrap?v(0.14,0.2,-0.2):hug?v(0.08,0.19,-0.2):v(0.05,0.12,-0.15),L1,0.03*S,0.026*S,0.02*S,card,card,skin,0.024*S);
+  if(!hug&&!wrap){slab(U,[L1[0],L1[1]-0.07*S,L1[2]],[0.04*S,0.04*S,0.018*S],bag);seg(U,[L1[0]-0.02*S,L1[1]-0.03*S,L1[2]],[L1[0]+0.02*S,L1[1]-0.03*S,L1[2]],0.004,0.004,gold)}
+  seg(U,v(0,0.24,0),v(0.01,0.29,0),0.03*S,0.028*S,skin);
+  const H=subF(U,v(0.01,0.285,0),m3(rYaw(0),rZ(0.25+(st===1?Math.sin(t*3)*0.05:0))));
+  const HS={p:H.p,R:H.R.map(q=>q*S)},talking=(s.talkT||0)>0;if(talking)s.talkT-=1/60;
+  face(HS,{skin,blink:((t*0.3+s.ph)%1)<0.04?0.1:1,iris:[0.4,0.55,0.75],brow:hair,browH:0.006,browTilt:0.25,eyeS:0.85,nose:[0.016,0.018,0.014],ears:true,mouth:lip,mouthW:hug?0.014:0.026,talk:talking?Math.max(0,Math.sin(t*10))*0.008:0});
+  ball(HS,[0.087,0.034,0],[0.008,hug?0.012:0.007,hug?0.014:0.026],lip,true);                           // puckered for a kiss
+  for(const z of[-1,1]){seg(HS,[0.09,0.085,z*0.034],[0.092,0.085,z*0.034],0.022,0.022,gold);ball(HS,[0.093,0.085,z*0.034],[0.002,0.018,0.018],glass,true)}
+  ball(HS,[-0.01,0.12,0],[0.088,0.06,0.09],hair);ball(HS,[-0.07,0.13,0],[0.04,0.045,0.045],hair);            // white hair, in a bun
+  for(const z of[-1,1])ball(HS,[0.05,0.045,z*0.06],[0.02,0.015,0.015],[1,0.6,0.62,1],true);                 // rosy cheeks
+  // the perfume cloud
+  if(puff||(s.cloudT||0)>0){
+    if(puff)s.cloudT=1.6;else s.cloudT-=1/60;
+    const a=Math.min(1,s.cloudT);for(let i=0;i<10;i++){const q=(t*0.4+i/10)%1,ang=i*0.63+t*0.3,r=0.3+q*GRAN.cloud*0.8;
+      spr(s.x+Math.cos(ang)*r,0.4+Math.sin(i*2+t)*0.25,s.z+Math.sin(ang)*r,0.5+q*0.5,0.5+q*0.5,7,1,0.6,0.85,0.22*a*(1-q*0.5),1)}
+  }
+  return null;
+}
+
+/* ---------- the bosses (creature type 6): every fifth floor is an open arena with a boss in it (src/bosses.js says which) ---------- */
+// The boss and its helpers are ordinary creatures in F.shades (so weapons, flashes, potions, health bars and the network all reach them),
+// with role 'main' (the boss), 'part' (a piece that has to die too: the Gloop's children) or 'add' / 'decoy' (minions). Every slot exists
+// from the start (made by genFloor, so host and guests agree on the list) and waits off the map, dead, until it is needed.
+// The host runs the fights. What a boss throws at you (bolts, shockwaves, puddles, walls only a mime can see...) is a hazard: the host
+// makes it and sends it ({k:'bz'}), and every player simulates the same hazard and checks it against themselves. The fight starts when
+// someone comes close ({k:'bst'}) and ends when every 'main' and 'part' is dead ({k:'bd'}): the seal breaks, gems, ingredients and a trophy.
+const BS={hz:[],nid:0,started:false,won:false,wake:0,el:null,card:null,cardT:0,dance:null,beat:0,mus:0,dust:0,reveal:0,frz:null,said:{},goo:0,cool:0,lastHit:0};
+const BADD={rat:{hp:2.5,rad:0.2,sp:2.5},candle:{hp:3,rad:0.18,sp:1.5},ember:{hp:2,rad:0.18,sp:2.1}};
+// decorative columns, fixed per boss (the arena is 17 x 17 tiles: walls on the edge, open inside)
+function bossPillars(i,W,H){
+  const c=(W-1)/2,L=[];
+  if(i===0||i===2||i===4)for(const [x,y] of[[4,4],[W-5,4],[4,H-5],[W-5,H-5]])L.push([x,y]);
+  if(i===5)for(const [x,y] of[[3,c],[W-4,c]])L.push([x,y]);
+  if(i===8||i===9)for(const [x,y] of[[3,3],[W-4,3],[3,H-4],[W-4,H-4]])L.push([x,y]);
+  return L;
+}
+function bossSpawn(BA,W,H,shades){
+  const D=BOSSES[BA.i],hp=bossHp(BA.i,BA.cyc),mk=(role,o)=>({type:6,boss:BA.i,role,x:-99,z:-99,gx:0,gy:0,px:-1,py:-1,state:0,stun:0,think:0,vis:false,frozen:false,
+    ph:shades.length*1.7,d:99,snd:0,face:Math.PI/2,t:0,c1:2,c2:3,c3:5,dead:true,...o});
+  const cx=W/2,cz=H/2-1;
+  shades.push(mk('main',{x:cx,z:cz,dead:false,hp,hpMax:hp,rad:D.rad,size:1,immune:D.id==='boogie'}));
+  const k=1+0.6*BA.cyc;
+  if(D.id==='gloop'){for(let i=0;i<2;i++)shades.push(mk('part',{size:0.6,rad:0.45,hp:Math.round(20*k),hpMax:Math.round(20*k)}));
+    for(let i=0;i<4;i++)shades.push(mk('part',{size:0.35,rad:0.27,hp:Math.round(8*k),hpMax:Math.round(8*k)}))}
+  const adds=D.id==='rat'?['rat',6]:D.id==='tallow'?['candle',4]:D.id==='heart'?['ember',6]:null;
+  if(adds)for(let i=0;i<adds[1];i++){const a=BADD[adds[0]];shades.push(mk('add',{kind:adds[0],rad:a.rad,hp:a.hp*k,hpMax:a.hp*k,size:1}))}
+  if(D.id==='mimic')for(let i=0;i<3;i++)shades.push(mk('decoy',{rad:0.45,hp:1,hpMax:1,size:1}));
+}
+const bMain=()=>F&&F.boss?F.shades.find(q=>q.type===6&&q.role==='main'):null;
+const bDef=()=>BOSSES[F.boss.i];
+const bSpd=s=>bossSpeed(F.boss.cyc)*(s.pe&&s.pe.slow>0?0.55:1)*(s.pe&&s.pe.zip>0?1.3:1)*(POT.stop>0?0:1);
+const angD=(a,b)=>{let d=b-a;while(d>Math.PI)d-=2*Math.PI;while(d<-Math.PI)d+=2*Math.PI;return d};
+const turnTo=(a,b,k)=>{a=a||0;const d=angD(a,b);return a+Math.sign(d)*Math.min(Math.abs(d),k)};
+const bMe=()=>MP.on?MP.id:'me';
+const bWho=t=>t.loc?bMe():t.p.id;
+function bSet(s,st,t){s.state=st;s.t=t||0}
+// move a boss through the open arena: walls on the edge and the columns stop it; true when it ran into something
+function bMove(s,vx,vz,dt){
+  const r=s.rad||0.3;let nx=s.x+vx*dt,nz=s.z+vz*dt,hit=0;
+  const lo=1+r,hx=F.W-1-r,hz=F.H-1-r;
+  if(nx<lo){nx=lo;hit|=1}if(nx>hx){nx=hx;hit|=1}if(nz<lo){nz=lo;hit|=2}if(nz>hz){nz=hz;hit|=2}
+  for(const q of F.pillars){const dx=nx-q[0],dz=nz-q[1],d=Math.hypot(dx,dz),m=r+0.24;if(d<m&&d>1e-4){nx=q[0]+dx/d*m;nz=q[1]+dz/d*m;hit|=4}}
+  s.x=nx;s.z=nz;s.gx=Math.floor(nx);s.gy=Math.floor(nz);s.px=-1;return hit;
+}
+function bToward(s,T,sp,dt,stop=0){
+  const dx=T.x-s.x,dz=T.z-s.z,d=Math.hypot(dx,dz)||1e-4;s.face=turnTo(s.face,Math.atan2(dz,dx),5*dt);
+  if(d>stop)bMove(s,dx/d*sp,dz/d*sp,dt);return d;
+}
+const bDist=(s,t)=>Math.hypot(t.x-s.x,t.z-s.z);
+const bAim=(s,t)=>Math.atan2(t.z-s.z,t.x-s.x);
+// a blow from a boss: the local player takes it here, a guest is told
+function bHit(t){
+  if(!t||t.inSafe||t.inv>0)return false;
+  if(t.loc){if(P.inv>0||P.down||P.away||state!=='play')return false;hurt(null)}else mpHit(t,'hurt');
+  return true;
+}
+function bFuel(t,a,why){if(t.loc)bFuelMe(a,why);else mpSend({k:'bfx',w:'fuel',a,why},t.p.id)}
+function bFuelMe(a,why){P.fuel=Math.max(0,P.fuel-a);sfx('drain');if(why)say(why,1.8)}
+// a hazard: made by the host, simulated by everyone
+function bzAdd(h){if(MP.guest||!F||!F.boss)return;h.id=++BS.nid;h.t=0;if(MP.on)mpSend({k:'bz',d:R.depth,h});BS.hz.push(h)}
+function bShot(s,a,o){const sp=o.sp||4.5;bzAdd({k:'shot',x:r3(s.x+Math.cos(a)*(s.rad+0.1)),z:r3(s.z+Math.sin(a)*(s.rad+0.1)),y:o.y||0.5,vx:r3(Math.cos(a)*sp),vz:r3(Math.sin(a)*sp),r:o.r||0.12,life:o.life||4,c:o.c||[1,0.6,0.2],fx:o.fx||'',sz:o.sz||1,pool:o.pool||null})}
+function bAdds(kind,n,near){
+  let k=0;
+  for(const s of F.shades){if(k>=n)break;if(s.type!==6||s.role!=='add'||s.kind!==kind||!s.dead)continue;
+    let x=near?near.x:0,z=near?near.z:0;
+    if(!near){const e=(Math.random()*4)|0,u=2+Math.random()*(F.W-4);x=e<2?(e?F.W-1.6:1.6):u;z=e<2?u:(e===2?1.6:F.H-1.6)}
+    else{const a=Math.random()*6.283;x+=Math.cos(a)*0.8;z+=Math.sin(a)*0.8}
+    s.x=clamp(x,1.4,F.W-1.4);s.z=clamp(z,1.4,F.H-1.4);s.dead=false;s.hp=s.hpMax;s.state=1;s.stun=0.6;s.t=0;s.pe=null;s.bleed=s.burnD=null;k++}
+  return k;
+}
+function bShake(k,x,z){if(Math.hypot(x-P.x,z-P.z)<9)pkShake=Math.max(pkShake,k)}
+// a boss part or a minion has died (the host, from wKill)
+function bossKill(s){
+  const x=s.x,z=s.z,D=BOSSES[s.boss],near=Math.hypot(x-P.x,z-P.z)<14,col=hex3(D.col);
+  if(near){potBurst(x,0.4,z,s.role==='decoy'?[0.75,0.7,0.6]:col,s.role==='main'?60:24,s.role==='main'?2:1);tone(s.role==='main'?70:160,0.5,'sawtooth',0.12,0,-60);noise(0.4,0.15,700,0.8)}
+  s.x=s.z=-99;s.dead=true;s.hp=0;s.state=0;s.pe=null;s.bleed=s.burnD=null;s.markT=0;s.down=0;s.hpShow=0;
+  if(s.role==='add'){if(s.killer===potMe()&&Math.random()<0.5){wallet++;R.gems++;store.set('wallet',wallet)}return}
+  if(s.role==='decoy')return;
+  if(D.id==='gloop'&&s.size>0.3){   // the Gloop splits into two smaller ones
+    const kids=F.shades.filter(q=>q.type===6&&q.role==='part'&&q.dead&&!q.born&&Math.abs(q.size-(s.size>0.9?0.6:0.35))<0.01).slice(0,2);
+    kids.forEach((q,j)=>{const a=(s.face||0)+(j?1.6:-1.6);q.x=clamp(x+Math.cos(a)*0.6,1.5,F.W-1.5);q.z=clamp(z+Math.sin(a)*0.6,1.5,F.H-1.5);q.dead=false;q.born=true;q.hp=q.hpMax;q.state=3;q.t=0.6;q.stun=0;q.c1=2+j});
+    if(near)say(s.size>0.9?'The Gloop splits in two!':'It splits again!',1.6);
+  }
+  if(!F.shades.some(q=>q.type===6&&!q.dead&&(q.role==='main'||q.role==='part'))){mpSend({k:'bd',d:R.depth});bossWin()}
+}
+// a thrown potion: a boss shrugs off its magic, but the glass and the brew still burn (stronger brews hurt more)
+function bossPotion(c){
+  for(const s of F.shades){if(s.type!==6||s.role==='add'||s.dead||s.x<0||Math.hypot(s.x-c.x,s.z-c.z)>SPLASH+(s.rad||0))continue;
+    if(s.immune)continue;wApply({i:F.shades.indexOf(s),d:Math.round((2+2*(POT.m||1))*10)/10,st:0.2},c.by||potMe())}
+}
+// how much more a boss takes when it is open to it (dazed on a wall, overheated, caught out...)
+const bossVuln=s=>s.type===6?s.vulnK||1:1;
+// the fight has started: the title card
+function bossStart(quiet){
+  if(BS.started||!F||!F.boss)return;BS.started=true;
+  const m=bMain();if(m&&!MP.guest&&m.state===0)bSet(m,1,0.5);
+  if(m&&!MP.guest&&BOSSES[m.boss].id==='boogie'){const n=Math.max(1,mpTargets().length),k=1+0.75*(n-1);m.hpMax=Math.round(m.hpMax*k);m.hp=m.hpMax}   // +75% for each extra dancer
+  if(!MP.guest&&!quiet)mpSend({k:'bst',d:R.depth});
+  const D=bDef();bossCard(D.name,D.title+(F.boss.cyc?'  ·  round '+(F.boss.cyc+1):''));
+  tone(55,1.6,'sawtooth',0.18,0,-20);tone(82,1.6,'sawtooth',0.12,0.05,-25);noise(1.2,0.12,300,0.5);rumble(400,0.6,0.6);
+  if(D.id!=='mime')setTimeout(()=>{if(F&&F.boss&&!BS.won)say(D.taunt,2.2)},1600);
+}
+function bossWin(){
+  if(BS.won||!F||!F.boss)return;BS.won=true;BS.hz.length=0;BS.dance=null;BS.frz=null;danceHide();
+  const B=F.boss,D=BOSSES[B.i],g=bossGems(B.i,B.cyc);
+  for(const q of F.shades)if(q.type===6&&q.role!=='main'){q.dead=true;q.x=q.z=-99}
+  P.shards=3;wallet+=g;R.gems+=g;R.score+=1000*(B.i+1)*(1+B.cyc);store.set('wallet',wallet);
+  const rare=[9,10,11,12],got=[];for(let k=0;k<3;k++){const i=rare[(Math.random()*rare.length)|0];POT.bag[i]++;got.push(INGREDIENTS[i].name)}potSaveBag();POT.hudK='';
+  if(!archiveRun){const T=bossTrophies(),e=T[D.id]||{n:0,best:0};e.n++;e.best=Math.max(e.best,R.depth);T[D.id]=e;store.set('trophies',T);hub.setTrophies?.(T)}
+  [523,659,784,1046].forEach((f,i)=>{tone(f,0.5,'triangle',0.12,i*0.14);tone(f/2,0.6,'sine',0.08,i*0.14)});
+  wGainXp(wHeld(),80+25*B.i);
+  bossCard(D.name+' is defeated!','+'+g+' gems  ·  '+got.join(', ')+'  ·  a trophy for the lobby');
+  say('The seal is broken. The way down is open.',5);
+}
+const bossTrophies=()=>{const t=store.get('trophies',{});return t&&typeof t==='object'&&!Array.isArray(t)?t:{}};
+// a new floor: forget the last fight
+function bossReset(){BS.dcam=null;BS.groove=100;BS.hz.length=0;BS.started=false;BS.won=false;BS.wake=0;BS.dance=null;BS.frz=null;BS.dust=0;BS.reveal=0;BS.goo=0;BS.cool=0;BS.said={};danceHide();if(BS.el)BS.el.style.display='none'}
+
+// ---- the host's turn for a boss creature (instead of the usual chase; after the shade loop's dead check)
+function bossTick(s,dt,TG){
+  if(s.pe)for(const k in s.pe){s.pe[k]-=dt;if(s.pe[k]<=0)delete s.pe[k]}
+  if(s.role==='main'||s.role==='part')s.hpShow=5;
+  if(s.vt>0){s.vt-=dt;if(s.vt<=0)s.vulnK=1}
+  const T0=TG.filter(t=>!t.inSafe&&t.x>0);
+  if(!BS.started){
+    BS.wake+=dt;
+    if(T0.some(t=>bDist(s,t)<6.5)||BS.wake>9&&T0.length)bossStart();
+    return;
+  }
+  if(BS.won)return;
+  if(s.stun>0){s.stun-=dt;return}
+  if(!T0.length)return;
+  const T=mpNearest(T0,s.x,s.z);
+  if(s.role==='add'){addTick(s,dt,T0,T);return}
+  if(s.role==='decoy')return;   // the Mimic moves its decoys itself
+  s.t-=dt;s.c1-=dt;s.c2-=dt;s.c3-=dt;
+  BTICK[s.boss](s,dt,T0,T);
+}
+// minions: rats nip you, candlelings snuff your torch, embers burst on you
+function addTick(s,dt,T0,T){
+  const a=BADD[s.kind],sp=a.sp*bSpd(s);
+  bToward(s,T,sp,dt,0);
+  for(const t of T0)if(bDist(s,t)<s.rad+0.28){
+    if(s.kind==='candle')bFuel(t,25,'A candleling snuffs at your torch');else bHit(t);
+    s.killer=null;bossKill(s);return;
+  }
+}
+// what each boss does (the host): T0 everyone it can hunt, T the nearest
+const BTICK=[
+  // 0 King Ratbag: chases, rears up and charges in a straight line (a wall dazes him), bites, and squeals for his subjects
+  (s,dt,T0,T)=>{
+    const sp=bSpd(s);
+    switch(s.state){
+      case 1:{
+        const d=bToward(s,T,1.9*sp,dt,s.rad+0.15);
+        if(!s.sum1&&s.hp<s.hpMax*0.7||s.sum1&&!s.sum2&&s.hp<s.hpMax*0.4){if(s.sum1)s.sum2=1;else s.sum1=1;bSet(s,6,1.1);return}
+        if(d<s.rad+0.75&&s.c2<=0){bSet(s,5,0.42);return}
+        if(d>2&&s.c1<=0&&los(s.x,s.z,T.x,T.z)){bSet(s,2,0.85/Math.min(sp,1.3));return}
+        break}
+      case 2:s.face=turnTo(s.face,bAim(s,T),2.6*dt);if(s.t<=0){bSet(s,3,2.6);s.hitSet={}}break;
+      case 3:{const v=7.2*sp,hit=bMove(s,Math.cos(s.face)*v,Math.sin(s.face)*v,dt);
+        for(const t of T0){const w=bWho(t);if(!s.hitSet[w]&&bDist(s,t)<s.rad+0.32){s.hitSet[w]=1;bHit(t)}}
+        if(hit){bSet(s,4,2.3);s.vulnK=1.6;s.vt=2.3;s.c1=3.5+Math.random()*2;bzAdd({k:'ring',x:r3(s.x),z:r3(s.z),v:3.5,max:2.2,w:0.16,hh:0.22,c:[0.6,0.5,0.4]})}
+        else if(s.t<=0){bSet(s,1);s.c1=2.5}
+        break}
+      case 4:if(s.t<=0)bSet(s,1);break;
+      case 5:if(s.t<=0){for(const t of T0)if(bDist(s,t)<s.rad+0.7&&Math.abs(angD(s.face,bAim(s,t)))<1)bHit(t);s.c2=1.5;bSet(s,1)}break;
+      case 6:if(s.t<=0){bAdds('rat',3);bSet(s,1)}break;
+    }
+  },
+  // 1 The Boogie Man: weapons do nothing; dance-offs (src/bosses.js charts), round after round, until he drops
+  (s,dt,T0,T)=>{
+    s.face=turnTo(s.face,bAim(s,T),2*dt);
+    const cx=F.W/2,cz=F.H/2-1;if(Math.hypot(s.x-cx,s.z-cz)>0.3)bMove(s,(cx-s.x)*0.8,(cz-s.z)*0.8,dt);
+    // each round: your dance (every arrow you hit hurts him), then his (every arrow is an attack: hit it to dodge). States 1 a breather,
+    // 2 your dance, 3 "my turn", 4 his dance.
+    const go=part=>{const seed=(Math.random()*1e9)|0,ch=danceChart(seed,s.round+(part==='him'?1:0));bzAdd({k:'ddr',seed,round:s.round,part,delay:2.4,life:2.4+ch.len+1});return 2.4+ch.len+1.2};
+    if(s.state===1&&s.t<=0){s.round=(s.round|0)+1;bSet(s,2,go('you'))}
+    else if(s.state===2&&s.t<=0)bSet(s,3,1.6);
+    else if(s.state===3&&s.t<=0)bSet(s,4,go('him'));
+    else if(s.state===4&&s.t<=0)bSet(s,1,2.2);
+  },
+  // 2 The Gloop (and every piece of it): hops after you, splats a shockwave and a puddle; the big one leaps onto you
+  (s,dt,T0,T)=>{
+    const sp=bSpd(s),big=s.size>0.9;
+    switch(s.state){
+      case 1:if(s.t<=0){const d=bDist(s,T),a=bAim(s,T),hop=Math.min(Math.max(d-s.rad*0.5,0.4),1.6+1.4*s.size);s.face=a;s.vx=Math.cos(a)*hop/0.6;s.vz=Math.sin(a)*hop/0.6;bSet(s,2,0.6)}break;
+      case 2:bMove(s,s.vx*sp,s.vz*sp,dt);if(s.t<=0){
+        for(const t of T0)if(bDist(s,t)<s.rad+0.25)bHit(t);
+        if(s.size>0.5)bzAdd({k:'ring',x:r3(s.x),z:r3(s.z),v:3,max:0.8+1.4*s.size,w:0.14,hh:0.2,c:[0.4,1,0.3]});
+        bzAdd({k:'pool',x:r3(s.x),z:r3(s.z),r:0.3+0.45*s.size,life:7,c:[0.25,0.75,0.15],fx:'goo'});bSet(s,3,0.35)}break;
+      case 3:if(s.t<=0){
+        if(big&&s.c1<=0){s.c1=6.5;s.lx=T.x;s.lz=T.z;bzAdd({k:'mark',x:r3(T.x),z:r3(T.z),r:1.25,delay:1.4,c:[0.4,1,0.3],ring:3.2});bSet(s,4,0.5)}
+        else bSet(s,1,(0.55-0.25*(1-s.size))/Math.min(sp,1.4))}break;
+      case 4:if(s.t<=0){s.vx=(s.lx-s.x)/0.9;s.vz=(s.lz-s.z)/0.9;s.face=Math.atan2(s.vz,s.vx);bSet(s,5,0.9)}break;
+      case 5:bMove(s,s.vx,s.vz,dt);if(s.t<=0){bzAdd({k:'pool',x:r3(s.x),z:r3(s.z),r:1.1,life:8,c:[0.25,0.75,0.15],fx:'goo'});bShake(0.6,s.x,s.z);bSet(s,3,0.9)}break;
+      default:bSet(s,1,0.4);
+    }
+  },
+  // 3 The Big Dill: a freezing aura (everyone works that out themselves), seed spit, and a roll that bounces off the walls. Pickled at half health.
+  (s,dt,T0,T)=>{
+    const sp=bSpd(s),pk=s.hp<s.hpMax*0.5;s.frozen=pk;
+    if(pk&&!s.pkd){s.pkd=1;bSet(s,6,1.4);return}
+    switch(s.state){
+      case 1:{bToward(s,T,1.35*sp*(pk?1.2:1),dt,1.2);
+        if(s.c1<=0){bSet(s,2,0.6);s.c1=3.2}
+        else if(s.c2<=0&&bDist(s,T)>1.5){bSet(s,3,0.7);s.c2=7}
+        break}
+      case 2:s.face=turnTo(s.face,bAim(s,T),3*dt);if(s.t<=0){const n=pk?7:5;for(let i=0;i<n;i++)bShot(s,s.face+(i-(n-1)/2)*0.22,{sp:4.6,r:0.1,c:[0.85,0.95,0.6],fx:'chill',y:0.7,pool:pk?{r:0.4,life:5,c:[0.6,0.7,0.2],fx:'goo'}:null});bSet(s,1)}break;
+      case 3:s.face=turnTo(s.face,bAim(s,T),3*dt);if(s.t<=0){const v=(pk?6.4:5.4)*sp;s.vx=Math.cos(s.face)*v;s.vz=Math.sin(s.face)*v;s.bn=0;s.hitSet={};s.pT=0;bSet(s,4,4.5)}break;
+      case 4:{const h=bMove(s,s.vx,s.vz,dt);
+        if(h){if(h&1)s.vx=-s.vx;if(h&2)s.vz=-s.vz;if(h&4){s.vx=-s.vx;s.vz=-s.vz}s.bn++;s.hitSet={};bShake(0.3,s.x,s.z);
+          if(s.bn===1||s.bn===3){const a=bAim(s,T),v=Math.hypot(s.vx,s.vz);s.vx=Math.cos(a)*v;s.vz=Math.sin(a)*v}}
+        s.face=Math.atan2(s.vz,s.vx);
+        for(const t of T0){const w=bWho(t);if(!s.hitSet[w]&&bDist(s,t)<0.62){s.hitSet[w]=1;bHit(t)}}
+        if(pk){s.pT-=dt;if(s.pT<=0){s.pT=0.35;bzAdd({k:'pool',x:r3(s.x),z:r3(s.z),r:0.45,life:6,c:[0.6,0.7,0.2],fx:'goo'})}}
+        if(s.bn>=3||s.t<=0){bSet(s,5,1);s.vulnK=1.6;s.vt=1}
+        break}
+      case 5:if(s.t<=0)bSet(s,1);break;
+      case 6:if(s.t<=0){bSet(s,1);s.c1=0.5}break;
+    }
+  },
+  // 4 Mother Tallow: blows your torch out, lobs hot wax, sends candlelings; she melts as she is hurt
+  (s,dt,T0,T)=>{
+    const sp=bSpd(s);
+    switch(s.state){
+      case 1:{bToward(s,T,1.05*sp,dt,1.4);
+        if(!s.sum1&&s.hp<s.hpMax*0.6||s.sum1&&!s.sum2&&s.hp<s.hpMax*0.3){if(s.sum1)s.sum2=1;else s.sum1=1;bSet(s,5,1.2);return}
+        if(s.c1<=0&&bDist(s,T)<6){bSet(s,2,0.9);s.c1=6.5}
+        else if(s.c2<=0){bSet(s,4,0.7);s.c2=4}
+        break}
+      case 2:s.face=turnTo(s.face,bAim(s,T),2.5*dt);if(s.t<=0){bzAdd({k:'cone',fx:'snuff',x:r3(s.x),z:r3(s.z),yaw:r3(s.face),cone:0.5,len:6,life:1.5});bSet(s,3,1.5)}break;
+      case 3:if(s.t<=0)bSet(s,1);break;
+      case 4:if(s.t<=0){for(const t of T0.slice(0,3))for(let k=0;k<(T0.length>1?1:3);k++){const a=Math.random()*6.283,r=k?0.7+Math.random()*1.3:0;
+          bzAdd({k:'mark',x:r3(clamp(t.x+Math.cos(a)*r,1.5,F.W-1.5)),z:r3(clamp(t.z+Math.sin(a)*r,1.5,F.H-1.5)),r:0.75,delay:1.25+k*0.2,c:[1,0.85,0.5],pool:{r:0.65,life:8,c:[0.95,0.88,0.65],fx:'goo'}})}
+        bSet(s,1)}break;
+      case 5:if(s.t<=0){bAdds('candle',2);bSet(s,1)}break;
+    }
+  },
+  // 5 The Grand Mimic: hops, lashes its tongue (and reels you in), spits coins, then shuts and shuffles with its decoys: find the real one
+  (s,dt,T0,T)=>{
+    const sp=bSpd(s),dec=F.shades.filter(q=>q.type===6&&q.role==='decoy');
+    switch(s.state){
+      case 1:{bToward(s,T,1.6*sp,dt,1.1);
+        if(s.c3<=0&&!(s.hp>s.hpMax*0.85)){bSet(s,5,3.6);s.c3=14;mimicShuffleStart(s,dec);return}
+        if(s.c1<=0&&bDist(s,T)<3.6){bSet(s,2,0.55);s.c1=3.4}
+        else if(s.c2<=0){bSet(s,4,0.5);s.c2=5}
+        break}
+      case 2:s.face=turnTo(s.face,bAim(s,T),4*dt);if(s.t<=0){bzAdd({k:'line',x:r3(s.x),z:r3(s.z),yaw:r3(s.face),len:3.8,w:0.22,life:0.45,pull:1,ow:s.rad+0.45});bSet(s,3,0.5)}break;
+      case 3:if(s.t<=0)bSet(s,1);break;
+      case 4:if(s.t<=0){for(let i=0;i<10;i++)bShot(s,s.face+(Math.random()-0.5)*1.6,{sp:3.5+Math.random()*2.5,r:0.09,c:[1,0.8,0.25],y:0.35,life:3});bSet(s,1)}break;
+      case 5:mimicShuffle(s,dec,dt);if(s.t<=0){bSet(s,6,9);for(const q of dec)q.state=6}break;
+      case 6:if(s.t<=0||s.found){mimicReveal(s,dec)}break;
+    }
+  },
+  // 6 Sir Suckalot: sucks you toward his nozzle (and spits you out), overheats after, blasts dust and debris
+  (s,dt,T0,T)=>{
+    const sp=bSpd(s);
+    switch(s.state){
+      case 1:{bToward(s,T,1.6*sp,dt,1.6);
+        if(s.c1<=0){bSet(s,2,0.8);s.c1=8}
+        else if(s.c2<=0){bSet(s,5,0.6);s.c2=5.5}
+        break}
+      case 2:s.face=turnTo(s.face,bAim(s,T),3*dt);if(s.t<=0){bzAdd({k:'cone',fx:'pull',x:r3(s.x),z:r3(s.z),yaw:r3(s.face),cone:0.6,len:8,life:3.4,ow:s.rad+0.35});bSet(s,3,3.4)}break;
+      case 3:s.face=turnTo(s.face,bAim(s,T),0.9*dt);if(s.t<=0){bSet(s,4,2.8);s.vulnK=1.7;s.vt=2.8}break;
+      case 4:if(s.t<=0)bSet(s,1);break;
+      case 5:if(s.t<=0){bzAdd({k:'dust',x:r3(s.x),z:r3(s.z),r:3.4,life:0.5});for(let i=0;i<8;i++)bShot(s,i/8*6.283+Math.random()*0.3,{sp:4,r:0.1,c:[0.7,0.6,0.5],y:0.3,life:2.5});bSet(s,1)}break;
+    }
+  },
+  // 7 The Mime: silent. Boxes you in with walls you cannot see, hauls you in on a rope that is not there, shoots an invisible bow, pushes a wall
+  (s,dt,T0,T)=>{
+    const sp=bSpd(s),d=bDist(s,T);
+    switch(s.state){
+      case 1:{bToward(s,T,1.7*sp,dt,1.6);
+        if(s.c1<=0){bSet(s,2,0.9);s.c1=9}
+        else if(s.c2<=0&&d>2.2){bSet(s,3,0.7);s.c2=6}
+        else if(s.c3<=0){bSet(s,Math.random()<0.5?5:7,0.8);s.c3=3.5}
+        else if(d<s.rad+0.6&&!(s.bt>0)){bHit(T);s.bt=1.5}
+        if(s.bt>0)s.bt-=dt;
+        break}
+      case 2:s.face=turnTo(s.face,bAim(s,T),4*dt);if(s.t<=0){const h=0.85,x=T.x,z=T.z,W=(a,b,c,e)=>bzAdd({k:'wall',x0:r3(a),z0:r3(b),x1:r3(c),z1:r3(e),life:5.5});
+        W(x-h,z-h,x+h,z-h);W(x+h,z-h,x+h,z+h);W(x+h,z+h,x-h,z+h);W(x-h,z+h,x-h,z-h);bSet(s,1)}break;
+      case 3:s.face=turnTo(s.face,bAim(s,T),4*dt);if(s.t<=0){bzAdd({k:'cone',fx:'tug',x:r3(s.x),z:r3(s.z),yaw:r3(s.face),cone:0.4,len:7,life:1.8,ow:s.rad+0.4});bSet(s,4,1.8)}break;
+      case 4:s.face=turnTo(s.face,bAim(s,T),2*dt);for(const t of T0)if(bDist(s,t)<s.rad+0.5&&bHit(t)){bSet(s,1);break}if(s.t<=0)bSet(s,1);break;
+      case 5:s.face=turnTo(s.face,bAim(s,T),5*dt);if(s.t<=0){bShot(s,s.face,{sp:8.5,r:0.08,c:[0.9,0.9,1],y:0.75,life:2,sz:0.4});bSet(s,6,0.4)}break;
+      case 6:if(s.t<=0)bSet(s,1);break;
+      case 7:if(s.t<=0){const a=s.face,nx=-Math.sin(a),nz=Math.cos(a),x=s.x+Math.cos(a)*0.7,z=s.z+Math.sin(a)*0.7;
+        bzAdd({k:'pwall',x0:r3(x-nx*1.6),z0:r3(z-nz*1.6),x1:r3(x+nx*1.6),z1:r3(z+nz*1.6),vx:r3(Math.cos(a)*1.7),vz:r3(Math.sin(a)*1.7),life:5});bSet(s,8,1.2)}break;
+      case 8:if(s.t<=0)bSet(s,1);break;
+    }
+  },
+  // 8 The Cuckoo Clock: a swinging pendulum, rolling gears, flung springs, and on the hour: freeze, or else
+  (s,dt,T0,T)=>{
+    const sp=bSpd(s);
+    const pa=s.face+Math.sin(R.time*2.4)*0.9;   // the swing follows the shared clock, so everyone sees it where it hits
+    for(const t of T0){const d=bDist(s,t);if(d<s.rad+1.25&&d>s.rad*0.5&&Math.abs(angD(pa,bAim(s,t)))<0.28&&!(s.pT>0)){if(bHit(t))s.pT=1}}
+    if(s.pT>0)s.pT-=dt;
+    switch(s.state){
+      case 1:{bToward(s,T,0.75*sp,dt,1.5);
+        if(s.c3<=0){bSet(s,4,1.3);s.c3=11+Math.random()*3;s.hour=(s.hour|0)%3+1}
+        else if(s.c1<=0){bSet(s,2,0.7);s.c1=4.5}
+        else if(s.c2<=0){bSet(s,3,0.6);s.c2=6}
+        break}
+      case 2:s.face=turnTo(s.face,bAim(s,T),3*dt);if(s.t<=0){for(const t of T0.length>1?T0:[T,T,T]){const a=bAim(s,t)+(Math.random()-0.5)*0.7;
+        bzAdd({k:'roll',x:r3(s.x+Math.cos(a)*0.6),z:r3(s.z+Math.sin(a)*0.6),vx:r3(Math.cos(a)*3.4*sp),vz:r3(Math.sin(a)*3.4*sp),r:0.27,life:6})}bSet(s,1)}break;
+      case 3:if(s.t<=0){for(const t of T0)for(let k=0;k<2;k++){const a=Math.random()*6.283,r=k*1.2;bzAdd({k:'mark',x:r3(clamp(t.x+Math.cos(a)*r,1.5,F.W-1.5)),z:r3(clamp(t.z+Math.sin(a)*r,1.5,F.H-1.5)),r:0.7,delay:1.2+k*0.25,c:[0.9,0.75,0.4]})}bSet(s,1)}break;
+      case 4:if(s.t<=0){const dur=0.9*s.hour+1.2;bzAdd({k:'freeze',life:dur,n:s.hour});bSet(s,5,dur);s.vulnK=2;s.vt=dur}break;
+      case 5:if(s.t<=0)bSet(s,1);break;
+    }
+  },
+  // 9 The Ember Heart: shockwaves on its beat (jump them), fireballs, eruptions under your feet, embers; at half health the floor itself erupts
+  (s,dt,T0,T)=>{
+    const sp=bSpd(s),p2=s.hp<s.hpMax*0.5;s.frozen=p2;
+    if(p2){s.tl=(s.tl||5)-dt;if(s.tl<=0){s.tl=5.5;for(let k=0;k<9;k++){const x=2+((Math.random()*(F.W-4))|0),z=2+((Math.random()*(F.H-4))|0);bzAdd({k:'mark',x:x+0.5,z:z+0.5,r:0.55,delay:1.5,c:[1,0.35,0.05],sq:1})}}}
+    switch(s.state){
+      case 1:{bToward(s,T,0.9*sp,dt,2);
+        if(!s.sum1&&s.hp<s.hpMax*0.66||s.sum1&&!s.sum2&&s.hp<s.hpMax*0.33){if(s.sum1)s.sum2=1;else s.sum1=1;bSet(s,5,1.2);return}
+        if(s.c1<=0){bSet(s,2,0.55);s.c1=p2?3.2:4.2}
+        else if(s.c2<=0){bSet(s,3,0.6);s.c2=p2?2.6:3.4}
+        else if(s.c3<=0){bSet(s,4,0.5);s.c3=7;s.er=p2?4:3;s.erT=0}
+        break}
+      case 2:if(s.t<=0){bzAdd({k:'ring',x:r3(s.x),z:r3(s.z),v:3.1*sp,max:9,w:0.17,hh:0.28,c:[1,0.4,0.08]});if(p2)s.ring2=0.75;bSet(s,1)}break;
+      case 3:s.face=turnTo(s.face,bAim(s,T),4*dt);if(s.t<=0){const n=p2?5:3;for(const t of T0){const a=bAim(s,t);for(let i=0;i<n;i++)bShot(s,a+(i-(n-1)/2)*0.18,{sp:5,r:0.14,c:[1,0.5,0.1],y:0.6,fx:'burn',sz:1.4})}bSet(s,1)}break;
+      case 4:if(s.t<=0)bSet(s,1);break;
+      case 5:if(s.t<=0){bAdds('ember',3,s);bSet(s,1)}break;
+    }
+    if(s.ring2>0){s.ring2-=dt;if(s.ring2<=0)bzAdd({k:'ring',x:r3(s.x),z:r3(s.z),v:3.1*sp,max:9,w:0.17,hh:0.28,c:[1,0.4,0.08]})}
+    if(s.er>0){s.erT-=dt;if(s.erT<=0){s.erT=0.45;s.er--;for(const t of T0)bzAdd({k:'mark',x:r3(t.x),z:r3(t.z),r:0.7,delay:1,c:[1,0.4,0.05],pillar:1})}}
+  },
+];
+// ---- the Mimic's shell game
+function mimicShuffleStart(s,dec){
+  const cx=F.W/2,cz=F.H/2-1,o=Math.random()*6.283,all=[s,...dec];
+  s.slots=all.map((q,i)=>[cx+Math.cos(o+i*Math.PI/2)*3,cz+Math.sin(o+i*Math.PI/2)*3]);
+  all.forEach((q,i)=>{q.slot=i;if(q!==s){q.x=s.x;q.z=s.z;q.dead=false;q.hp=1;q.state=5;q.stun=0}});
+  s.found=false;s.swapT=0.5;
+}
+function mimicShuffle(s,dec,dt){
+  const all=[s,...dec.filter(q=>!q.dead)];
+  s.swapT-=dt;if(s.swapT<=0&&s.t>0.8){s.swapT=0.55;const a=all[(Math.random()*all.length)|0],b=all[(Math.random()*all.length)|0];if(a!==b){const k=a.slot;a.slot=b.slot;b.slot=k}}
+  for(const q of all){const g=s.slots[q.slot],dx=g[0]-q.x,dz=g[1]-q.z,d=Math.hypot(dx,dz);if(d>0.02){const v=Math.min(d,5*dt);q.x+=dx/d*v;q.z+=dz/d*v;q.face=Math.atan2(dz,dx)}q.gx=Math.floor(q.x);q.gy=Math.floor(q.z)}
+  for(const q of all)if(q!==s)q.state=5;
+}
+function mimicReveal(s,dec){
+  for(const q of dec)if(!q.dead){q.killer=null;bossKill(q)}
+  s.vulnK=2;s.vt=0.6;bSet(s,1);s.c1=1.5;s.found=false;
+}
+// a blow lands on a boss creature (the host, from wApply): the Mimic's decoys and its hiding
+function bossStruck(s){
+  if(s.role==='decoy'){if(!s.dead){const D=F.shades.find(q=>q.type===6&&q.role==='main');s.killer=null;const x=s.x,z=s.z;bossKill(s);
+    if(D)for(let i=0;i<5;i++)bShot({x,z,rad:0.2},bAim({x,z},mpNearest(mpTargets(),x,z)||{x:x+1,z})+(i-2)*0.3,{sp:4,r:0.09,c:[1,0.8,0.25],y:0.35,life:2.5})}return false}
+  if(s.role==='main'&&BOSSES[s.boss].id==='mimic'&&s.state===6){s.found=true;s.vulnK=2;s.vt=0.6}
+  return true;
+}
+
+// ---- everyone, every frame: hazards, auras, the fight's music and its screens
+function bossClientTick(dt){
+  if(!F||!F.boss){if(BS.el&&BS.el.style.display!=='none')BS.el.style.display='none';return}
+  const me=bMe(),live=state==='play'&&!P.down&&!P.away;
+  for(const s of F.shades)if(s.type===6){
+    if(s.state!==s.lastSt){bossCue(s,s.lastSt,s.state);s.lastSt=s.state;s.sT=R.time}
+    if(s.x>0&&!s.seenOn)s.seenOn=true;
+  }
+  if(BS.goo>0)BS.goo-=dt;if(BS.cool>0)BS.cool-=dt;if(BS.dust>0)BS.dust-=dt;if(BS.reveal>0)BS.reveal-=dt;
+  const m=bMain(),D=bDef();
+  if(!BS.said.intro)BS.said.intro=R.time+4;else if(BS.said.intro>0&&R.time>BS.said.intro){BS.said.intro=-1;if(!BS.started&&state==='play')say(D.intro,3.5)}
+  // the Big Dill's cold: close to him you are slowed and the frost creeps in
+  if(live&&m&&m.x>0&&D.id==='dill'&&Math.hypot(m.x-P.x,m.z-P.z)<2.3)BS.cool=0.3;
+  for(let i=BS.hz.length-1;i>=0;i--){const h=BS.hz[i];h.t+=dt;if(bzStep(h,dt,live,me)===false||h.t>=(h.life||99))BS.hz.splice(i,1)}
+  danceTick(dt);
+  if(BS.frz){const f=BS.frz;f.t+=dt;
+    if(live&&!f.hit&&f.t>0.35&&(Math.hypot(P.vx,P.vz)>0.4||P.y>0.08)){f.hit=true;say('You moved!',1.4);if(P.inv<=0)hurt(null)}
+    if(f.t>=f.life){BS.frz=null;$('chill').style.boxShadow=''}}
+  bossMusic(dt);bossHud();
+}
+// one hazard's step; false when it is spent
+function bzStep(h,dt,live,me){
+  const dx=P.x-h.x,dz=P.z-h.z,d=Math.hypot(dx,dz);
+  const hitMe=fx=>{if(!live||P.inv>0)return;if(fx==='fuel'){bFuelMe(25);return}hurt(null);if(fx==='chill')P.chill=Math.max(P.chill,2.5);if(fx==='burn'){P.fuel=Math.max(0,P.fuel-8)}};
+  switch(h.k){
+    case 'shot':{h.x+=h.vx*dt;h.z+=h.vz*dt;
+      if(solidAt(h.x,h.z)||F.pillars.some(q=>Math.hypot(q[0]-h.x,q[1]-h.z)<0.25)){if(h.pool)BS.hz.push({...h.pool,k:'pool',x:h.x-h.vx*0.05,z:h.z-h.vz*0.05,t:0});return false}
+      if(live&&Math.hypot(P.x-h.x,P.z-h.z)<h.r+PR&&P.y<h.y+0.25&&P.y+1>h.y){hitMe(h.fx);if(h.pool)BS.hz.push({...h.pool,k:'pool',x:h.x,z:h.z,t:0});return false}
+      if(h.pool&&h.t>=h.life-0.02)BS.hz.push({...h.pool,k:'pool',x:h.x,z:h.z,t:0});
+      break}
+    case 'ring':{h.r=(h.r||0)+h.v*dt;if(h.r>h.max)return false;
+      if(live&&!h.done&&Math.abs(d-h.r)<h.w+PR*0.6&&P.y<h.hh){h.done=true;hitMe('')}
+      break}
+    case 'mark':if(h.t>=h.delay){
+        if(live&&(h.sq?Math.abs(dx)<h.r+PR*0.5&&Math.abs(dz)<h.r+PR*0.5:d<h.r+PR*0.5)&&P.y<0.45)hitMe(h.pillar||h.sq?'burn':'');
+        if(h.ring)BS.hz.push({k:'ring',x:h.x,z:h.z,v:4,max:h.ring,w:0.16,hh:0.22,c:h.c,t:0});
+        if(h.pool)BS.hz.push({...h.pool,k:'pool',x:h.x,z:h.z,t:0});
+        if(Math.hypot(h.x-P.x,h.z-P.z)<10){noise(0.3,0.16,h.pillar||h.sq?900:400,0.6);bShake(0.35,h.x,h.z)}
+        for(let i=0;i<14;i++){const a=Math.random()*6.283,u=0.5+Math.random()*1.5;POT.fx.push({x:h.x,y:0.05,z:h.z,vx:Math.cos(a)*u,vy:1.5+Math.random()*(h.pillar?4:2),vz:Math.sin(a)*u,t:0,life:0.6,c:h.c,s:0.06})}
+        return false}
+      break;
+    case 'pool':if(live&&d<h.r+PR*0.4&&P.y<0.1){if(h.fx==='goo')BS.goo=0.25;else if(h.fx==='burn'&&(h.bt=(h.bt||0)-dt)<=0){h.bt=1.2;hitMe('')}}break;
+    case 'cone':{
+      if(!live)break;const a=Math.atan2(dz,dx);if(d>h.len||d<0.05||Math.abs(angD(h.yaw,a))>h.cone||!los(h.x,h.z,P.x,P.z))break;
+      if(h.fx==='snuff'){P.fuel=Math.max(0,P.fuel-26*dt);bPush(Math.cos(h.yaw)*1.3*dt,Math.sin(h.yaw)*1.3*dt);if(!BS.said.snuff||R.time-BS.said.snuff>3){BS.said.snuff=R.time;say('She blows on your torch!',1.6)}}
+      else{const k=(h.fx==='tug'?2.4:2.1)*dt*(1-0.4*d/h.len);bPush(-dx/d*k,-dz/d*k);
+        if(d<(h.ow||0.8)&&P.inv<=0){hurt(null);if(h.fx==='pull'){say('SHLOOP! He spits you back out.',1.8);POT.slv={vx:dx/d*7,vz:dz/d*7,t:0.45}}return false}}
+      break}
+    case 'line':{if(!live||h.got)break;const ux=Math.cos(h.yaw),uz=Math.sin(h.yaw),ex=Math.min(h.len,h.len*h.t/0.2),along=dx*ux+dz*uz,off=Math.abs(-dx*uz+dz*ux);
+      if(along>0&&along<ex&&off<h.w+PR&&P.inv<=0){h.got=true;hurt(null);if(h.pull){const to=h.ow||0.9,k=Math.max(0,along-to);bPush(-ux*k,-uz*k);say('The tongue reels you in!',1.5)}}
+      break}
+    case 'wall':break;   // collision is in blocked(); see bossWallAt
+    case 'pwall':{const k=Math.min(1,h.t/0.3);h.x0+=h.vx*dt*k;h.z0+=h.vz*dt*k;h.x1+=h.vx*dt*k;h.z1+=h.vz*dt*k;
+      if(live&&segDist(P.x,P.z,h.x0,h.z0,h.x1,h.z1)<PR+0.06){const ox=P.x,oz=P.z;bPush(h.vx*dt*1.05,h.vz*dt*1.05);
+        if(Math.hypot(P.x-ox,P.z-oz)<Math.hypot(h.vx,h.vz)*dt*0.5&&P.inv<=0){hurt(null);say('Pinned by a wall that is not there!',1.6)}}
+      if(h.x0<0.5&&h.x1<0.5||h.x0>F.W-0.5&&h.x1>F.W-0.5||h.z0<0.5&&h.z1<0.5||h.z0>F.H-0.5&&h.z1>F.H-0.5)return false;
+      break}
+    case 'roll':{h.x+=h.vx*dt;h.z+=h.vz*dt;if(solidAt(h.x+Math.sign(h.vx)*h.r,h.z)||solidAt(h.x,h.z+Math.sign(h.vz)*h.r))return false;
+      if(live&&Math.hypot(P.x-h.x,P.z-h.z)<h.r+PR&&P.y<0.3){hitMe('');return false}
+      break}
+    case 'ddr':if(!h.on){h.on=1;if(live)danceStart(h)}break;
+    case 'freeze':if(!h.on){h.on=1;BS.frz={t:0,life:h.life,n:h.n,hit:false};$('chill').style.boxShadow='inset 0 0 160px rgba(255,40,30,.65)';
+      for(let i=0;i<h.n;i++){tone(880,0.18,'square',0.12,0.35+i*0.55);tone(698,0.3,'square',0.12,0.55+i*0.55)}say('CUCKOO! Freeze!',1.5)}break;
+    case 'dust':if(!h.on){h.on=1;if(live&&d<h.r){BS.dust=4;say('A cloud of dust! You can barely see.',1.6)}noise(0.6,0.2,500,0.5)}break;
+  }
+}
+function segDist(px,pz,ax,az,bx,bz){const vx=bx-ax,vz=bz-az,l=vx*vx+vz*vz||1e-6,t=clamp(((px-ax)*vx+(pz-az)*vz)/l,0,1);return Math.hypot(px-ax-vx*t,pz-az-vz*t)}
+function bPush(dx,dz){if(!blocked(P.x+dx,P.z))P.x+=dx;if(!blocked(P.x,P.z+dz))P.z+=dz;if(Math.floor(P.x)!==P.tx||Math.floor(P.z)!==P.ty)onTileChange()}
+// the Mime's walls stop you as surely as stone (only you: they are drawn in the air for you, and the boss walks through them)
+function bossWallAt(x,z){
+  if(!F||!F.boss||!BS.hz.length)return false;
+  for(const h of BS.hz)if(h.k==='wall'&&segDist(x,z,h.x0,h.z0,h.x1,h.z1)<0.06)return true;
+  return false;
+}
+const bossMoveMul=()=>(BS.goo>0?0.55:1)*(BS.cool>0?0.75:1);
+// sounds when a boss changes what it is doing (heard by everyone, because everyone sees the state change)
+function bossCue(s,from,to){
+  const d=Math.hypot(s.x-P.x,s.z-P.z);if(d>15||s.x<0)return;const k=1-d/15,id=BOSSES[s.boss].id;
+  if(s.role==='add'){if(to===1&&id==='rat')tone(1800,0.15,'square',0.04*k,0,600);return}
+  if(id==='mime')return;   // not a sound
+  if(id==='rat'){if(to===2){for(let i=0;i<4;i++)noise(0.08,0.1*k,2500,3);tone(1500,0.4,'sawtooth',0.08*k,0,900)}if(to===3)noise(0.9,0.12*k,300,0.4);if(to===4){tone(60,0.5,'sine',0.3*k);noise(0.4,0.25*k,200,0.5);say('Ratbag slams into the wall! He is dazed.',1.6)}
+    if(to===5)tone(220,0.15,'square',0.1*k,0,-120);if(to===6){tone(2200,1,'sawtooth',0.1*k,0,-800);say('Ratbag squeals for his subjects!',1.8)}}
+  if(id==='gloop'){if(to===2)tone(180,0.25,'sine',0.12*k,0,220);if(to===3&&from===2)noise(0.25,0.18*k*s.size,250,0.8);if(to===4){tone(90,0.6,'sine',0.15*k,0,140);if(d<9)say('The Gloop gathers itself to leap!',1.4)}if(to===3&&from===5){tone(50,0.6,'sine',0.35*k);noise(0.5,0.3*k,180,0.5)}}
+  if(id==='dill'){if(to===2)tone(400,0.2,'square',0.06*k,0,-200);if(to===3)tone(140,0.6,'sawtooth',0.08*k,0,-60);if(to===4)noise(1.5,0.1*k,400,0.6);if(to===6){say('The Big Dill is in a pickle now!',2);noise(0.8,0.14,1500,1)}}
+  if(id==='tallow'){if(to===2){noise(0.9,0.08*k,600,1);tone(300,0.9,'sine',0.04*k,0,-150)}if(to===3)noise(1.4,0.2*k,900,0.4);if(to===5)say('Mother Tallow lights her little ones.',1.8)}
+  if(id==='mimic'){if(to===2||to===4){tone(120,0.12,'square',0.12*k);tone(90,0.12,'square',0.12*k,0.13)}if(to===3)noise(0.25,0.15*k,1800,1.5);if(to===5){say('It shuts its lid... where did it go?',2);for(let i=0;i<6;i++)noise(0.12,0.1*k,700,1)}if(to===1&&from===6){tone(80,0.6,'sawtooth',0.18*k,0,-40);say('Found it!',1.2)}}
+  if(id==='vac'){if(to===2)tone(120,0.8,'sawtooth',0.07*k,0,500);if(to===3){tone(620,3.2,'sawtooth',0.05*k,0,60);noise(3.2,0.09*k,2200,0.7)}if(to===4){noise(2.4,0.06*k,300,1);say('He is overheating! Hit him now!',1.8)}if(to===5)tone(90,0.4,'square',0.1*k,0,-50)}
+  if(id==='cuckoo'){if(to===4){for(let i=0;i<4;i++)tone(1320,0.08,'triangle',0.08,i*0.3);say('The clock is about to strike...',1.4)}if(to===2)tone(200,0.4,'square',0.05*k,0,-80)}
+  if(id==='heart'){if(to===2){tone(45,0.3,'sine',0.4*k);tone(40,0.35,'sine',0.35*k,0.18)}if(to===3)noise(0.4,0.12*k,1200,0.8);if(to===5)say('Embers break loose from the Heart!',1.6)}
+  if(id==='boogie'&&to===1&&from===2)say(BS.said.round?'Again! Faster!':'Not bad. Again!',1.6),BS.said.round=1;
+}
+// a simple driving beat under the fight (the Boogie Man brings his own; the Mime has none at all)
+function bossMusic(dt){
+  if(state!=='play'||!ac)return;const id=bDef().id;
+  if(id==='boogie'){if(!BS.won)disco();return}   // the Disco Pit always has its song playing, from the moment you walk in
+  if(!BS.started||BS.won||id==='mime')return;
+  const bpm=id==='heart'?(bMain()?.frozen?120:96):id==='cuckoo'?120:112;BS.mus-=dt;
+  if(BS.mus<=0){BS.mus+=60/bpm;BS.beat=(BS.beat+1)%16;const b=BS.beat;
+    if(id==='heart'){if(b%2===0){tone(48,0.22,'sine',0.22);tone(42,0.25,'sine',0.18,0.16)}}
+    else if(id==='cuckoo'){tone(b%2?1760:1320,0.04,'triangle',0.05);if(b%4===0)tone(55,0.25,'sine',0.18)}
+    else{if(b%4===0||b%8===6)tone(52,0.22,'sine',0.22,0,-25);if(b%2===1)noise(0.05,0.035,7000,2);if(b%8===4)noise(0.12,0.07,1500,1);if(b%16===0)tone(110,1.8,'sawtooth',0.035,0,0)}}
+}
+// ---- the Disco Pit's song: four on the floor, offbeat hats, an octave-jumping bass, chord stabs and a little hook, in A minor.
+// Scheduled a moment ahead on the audio clock, in sixteenths; during a dance-off it locks to that round's tempo and its count-in.
+const DISCO={next:0,step:0,bpm:116,chords:[[220,261.6,329.6],[146.8,174.6,220],[196,246.9,293.7],[130.8,164.8,196]],hook:[880,0,784,880,0,1046,988,0,880,0,784,659,0,784,0,0]};
+function disco(){
+  const now=ac.currentTime,D=BS.dance;
+  if(D&&!D.locked){   // a round starts: line the sixteenths up with the chart (its count-in included)
+    D.locked=true;const sx=D.ch.beat/4,pn=performance.now()/1000,n=Math.ceil((pn-D.t0)/sx);
+    DISCO.sx=sx;DISCO.next=now+(D.t0+n*sx-pn);DISCO.step=((n%64)+64)%64;
+  }
+  if(!D)DISCO.sx=60/DISCO.bpm/4;
+  if(DISCO.next<now-0.2||DISCO.next>now+1)DISCO.next=now+0.05;
+  while(DISCO.next<now+0.12){discoStep(DISCO.step,Math.max(0,DISCO.next-now),DISCO.sx);DISCO.step=(DISCO.step+1)%64;DISCO.next+=DISCO.sx}
+}
+function discoStep(i,w,sx){
+  const b=i%16,bar=i>>4,ch=DISCO.chords[bar];
+  if(b%4===0)tone(58,0.2,'sine',0.3,w,-28);                                  // kick
+  if(b===4||b===12)noise(0.12,0.1,1700,0.9,w);                              // clap
+  if(b%4===2)noise(0.09,0.05,9000,1.5,w);                                   // open hat on the offbeat
+  else if(b%2===1)noise(0.03,0.025,11000,2,w);                              // closed hat
+  if(b%2===0)tone(ch[0]/(b%4===0?4:2),sx*1.7,'sawtooth',0.07,w);           // octave bass
+  if(b===3||b===6||b===11)for(const f of ch)tone(f,sx*1.2,'square',0.018,w); // chord stabs
+  if(b===0)for(const f of ch)tone(f*2,sx*15,'triangle',0.012,w);            // strings
+  const h=DISCO.hook[b];if(bar%2===1&&h)tone(h,sx*1.6,'triangle',0.035,w);   // the hook, every other bar
+}
+// the health bar and the title cards
+function bossHud(){
+  if(!BS.el){BS.el=document.createElement('div');BS.el.style.cssText='position:fixed;top:14px;left:50%;transform:translateX(-50%);width:min(560px,80vw);z-index:6;pointer-events:none;font-family:Georgia,serif;text-align:center;color:#f3e3c8;text-shadow:0 2px 6px #000;display:none';
+    BS.el.innerHTML='<div class="bn" style="font-size:20px;letter-spacing:2px"></div><div style="height:12px;margin-top:4px;background:rgba(0,0,0,.6);border:1px solid #c9a46a;border-radius:3px;overflow:hidden"><div class="bf" style="height:100%;width:100%;background:linear-gradient(#ff6b5a,#a3121e)"></div></div>';
+    document.body.appendChild(BS.el);
+    BS.card=document.createElement('div');BS.card.style.cssText='position:fixed;top:30%;left:0;right:0;text-align:center;z-index:7;pointer-events:none;font-family:Georgia,serif;color:#ffe1b0;text-shadow:0 3px 12px #000,0 0 30px #7a2a00;opacity:0;transition:opacity .6s';
+    document.body.appendChild(BS.card);
+    const du=document.createElement('div');du.id='bossDust';du.style.cssText='position:fixed;inset:0;pointer-events:none;z-index:3;opacity:0;transition:opacity .3s;background:radial-gradient(circle at 50% 50%,rgba(150,135,110,.55),rgba(95,85,70,.95))';document.body.appendChild(du)}
+  const show=state==='play'&&BS.started&&!BS.won;
+  if(show){
+    let hp=0,mx=0;for(const s of F.shades){if(s.type!==6||(s.role!=='main'&&s.role!=='part'))continue;mx+=s.hpMax;
+      const alive=MP.guest?s.x>0:!s.dead;hp+=alive?(MP.guest?(s.hpPct?s.hpPct/100*s.hpMax:s.hpMax):Math.max(0,s.hp)):(s.born||s.seenOn||s.role==='main'?0:s.hpMax)}
+    const nm=bDef().name+(F.boss.cyc?' ('+(F.boss.cyc+1)+')':'');
+    const b=BS.el.querySelector('.bn');if(b.textContent!==nm)b.textContent=nm;
+    BS.el.querySelector('.bf').style.width=(clamp(hp/(mx||1),0,1)*100).toFixed(1)+'%';
+  }
+  if((BS.el.style.display!=='none')!==show)BS.el.style.display=show?'block':'none';
+  if(BS.cardT>0&&R.time>BS.cardT){BS.cardT=0;BS.card.style.opacity=0}
+  const dl=$('bossDust');if(dl)dl.style.opacity=BS.dust>0?Math.min(1,BS.dust/1.5)*0.85:0;
+}
+function bossCard(a,b){bossHud();BS.card.innerHTML='<div style="font-size:46px;letter-spacing:4px">'+a+'</div><div style="font-size:19px;margin-top:6px;font-style:italic">'+b+'</div>';BS.card.style.opacity=1;BS.cardT=R.time+4}
+
+// ---- the Boogie Man's dance-off: arrows rise up four lanes; press the matching arrow (or W A S D) as each one meets the top.
+// You stand still while you dance. Every arrow you hit hurts him; miss too many and he zaps you.
+const LANE_KEYS={ArrowLeft:0,KeyA:0,ArrowDown:1,KeyS:1,ArrowUp:2,KeyW:2,ArrowRight:3,KeyD:3};
+const LANE_COL=['#ff5fd2','#5fd8ff','#7dff6a','#ffb24a'];
+function danceStart(h){
+  const ch=danceChart(h.seed,h.round),t0=performance.now()/1000+h.delay;
+  const him=h.part==='him';
+  BS.dance={ch,t0,notes:ch.notes.map(n=>({...n,j:null})),groove:BS.groove??100,fb:'',fbT:0,beatN:-8,round:h.round,cmb:0,him};
+  say(him?'My turn! Hit the arrows to dodge his moves.':'DANCE OFF! Round '+h.round+': your turn. Every arrow you hit hurts him.',2.6);
+  danceShow();
+}
+function danceKey(code){
+  const L=LANE_KEYS[code];const D=BS.dance;if(L===undefined||!D)return false;
+  const now=performance.now()/1000-D.t0;let best=null,bd=9;
+  for(const n of D.notes){if(n.j||n.lane!==L)continue;const e=Math.abs(now-n.t);if(e<bd){bd=e;best=n}if(n.t>now+0.5)break}
+  D.flash=D.flash||[0,0,0,0];D.flash[L]=0.12;
+  const j=best?judge(now-best.t):null;
+  if(!j)return true;   // a stray press costs nothing
+  best.j=j;D.cmb++;D.groove=Math.min(100,D.groove+(j==='perfect'?5:2));D.fb=D.him?'DODGE':j==='perfect'?'PERFECT':'GOOD';D.fbT=0.5;BS.groove=D.groove;
+  tone([523,587,659,784][L]*(j==='perfect'?2:1),0.08,'triangle',0.06);
+  const m=bMain();if(m&&!D.him)wSend([{i:F.shades.indexOf(m),d:j==='perfect'?3:2,ddr:1}]);
+  if(D.him){best.dodge=R.time;noise(0.08,0.06,5000,2)}
+  BS.move={lane:L,t:R.time};mpSend({k:'bdm',d:R.depth,l:L});
+  return true;
+}
+function danceTick(dt){
+  const D=BS.dance;if(!D)return;
+  if(P.down||!F||!F.boss||BS.won){BS.dance=null;danceHide();return}
+  if(state!=='play')return;
+  const now=performance.now()/1000-D.t0;
+  // the beat
+  for(const n of D.notes)if(!n.j&&now-n.t>0.15){n.j='miss';D.cmb=0;D.fbT=0.5;
+    if(D.him){   // his move lands on you: four of those and it costs a heart
+      D.groove-=25;D.fb='HIT!';n.hitT=R.time;tone(140,0.18,'sawtooth',0.1,0,-60);const h=$('hurt');h.style.transition='none';h.style.opacity=0.45;requestAnimationFrame(()=>{h.style.transition='opacity .5s';h.style.opacity=0});pkShake=Math.max(pkShake,0.25)}
+    else{D.groove-=16;D.fb='MISS'}
+    if(D.groove<=0){D.groove=60;if(P.inv<=0){hurt(null);say(D.him?'He got you! Keep dodging.':'Out of step! The Boogie Man zaps you.',1.6)}}
+    BS.groove=D.groove}
+  if(D.fbT>0)D.fbT-=dt;if(D.flash)for(let i=0;i<4;i++)D.flash[i]=Math.max(0,D.flash[i]-dt);
+  if(now>D.ch.len+0.6){BS.dance=null;danceHide();return}
+  danceDraw(now);
+}
+function danceShow(){
+  if(!BS.dc){const c=document.createElement('canvas');c.width=360;c.height=640;c.style.cssText='position:fixed;top:50%;right:3vw;transform:translateY(-50%);height:min(78vh,620px);z-index:6;pointer-events:none;display:none';   // to the side, so the dance floor shows
+    c.addEventListener('pointerdown',e=>{const r=c.getBoundingClientRect(),L=clamp(Math.floor((e.clientX-r.left)/r.width*4),0,3);danceKey(['ArrowLeft','ArrowDown','ArrowUp','ArrowRight'][L]);e.preventDefault()});
+    document.body.appendChild(c);BS.dc=c}
+  BS.dc.style.display='block';BS.dc.style.pointerEvents=touch.on?'auto':'none';
+}
+function danceHide(){if(BS.dc)BS.dc.style.display='none'}
+function danceArrow(x,y,L,s,col,fill){
+  x.save();x.beginPath();x.translate(s.x,y);x.rotate([-Math.PI/2,Math.PI,0,Math.PI/2][L]);   // drawn pointing up, turned to its lane: left, down, up, right
+  x.moveTo(0,-s.r);x.lineTo(s.r*0.95,s.r*0.05);x.lineTo(s.r*0.38,s.r*0.05);x.lineTo(s.r*0.38,s.r*0.85);x.lineTo(-s.r*0.38,s.r*0.85);x.lineTo(-s.r*0.38,s.r*0.05);x.lineTo(-s.r*0.95,s.r*0.05);x.closePath();
+  if(fill){x.fillStyle=col;x.fill()}x.lineWidth=4;x.strokeStyle=fill?'#fff':col;x.stroke();x.restore();
+}
+function danceDraw(now){
+  const c=BS.dc,x=c.getContext('2d'),D=BS.dance,W=c.width,H=c.height,top=70,spd=420;
+  x.clearRect(0,0,W,H);x.fillStyle='rgba(10,0,20,.45)';x.fillRect(0,0,W,H);
+  const lx=L=>W*(L+0.5)/4;
+  for(let L=0;L<4;L++){const f=D.flash&&D.flash[L]>0;danceArrow(x,top,L,{x:lx(L),r:32},f?'#fff':LANE_COL[L],false)}
+  for(const n of D.notes){if(n.j&&n.j!=='miss')continue;const y=top+(n.t-now)*spd;if(y>H+40||y<-40)continue;danceArrow(x,y,n.lane,{x:lx(n.lane),r:30},n.j==='miss'?'#555':LANE_COL[n.lane],true)}
+  x.fillStyle='rgba(0,0,0,.6)';x.fillRect(20,H-28,W-40,12);x.fillStyle=D.groove>40?'#7dff6a':'#ff5a4a';x.fillRect(20,H-28,(W-40)*clamp(D.groove/100,0,1),12);
+  x.font='bold 20px Georgia';x.textAlign='center';x.fillStyle='#ffe1b0';x.fillText('GROOVE',W/2,H-36);
+  if(now<0){x.font='bold 64px Georgia';x.fillText(String(Math.ceil(-now)),W/2,H/2)}
+  x.font='bold 18px Georgia';x.fillStyle=D.him?'#ff8ad8':'#9cf';x.fillText(D.him?'HIS TURN: DODGE':'YOUR TURN: ATTACK',W/2,top+48);
+  if(D.fbT>0){x.font='bold 34px Georgia';x.fillStyle=D.fb==='MISS'||D.fb==='HIT!'?'#ff6a5a':D.fb==='PERFECT'?'#fff27a':'#9cf';x.fillText(D.fb,W/2,top+90)}
+  if(D.cmb>4){x.font='bold 22px Georgia';x.fillStyle='#fff';x.fillText(D.cmb+' combo',W/2,top+124)}
+}
+
+// ---- the dance-off camera: during a round everyone's view pulls back to take in the whole dance floor (every player and the
+// Boogie Man), and you see yourself dance with the others
+function danceFight(){return !!(F&&F.boss&&BOSSES[F.boss.i].id==='boogie'&&BS.started&&!BS.won&&!P.down&&state==='play')}
+// shots, each held for two bars of the music: [angle from behind the dancers, distance, height, drift]
+const DANCE_SHOTS=[[0,1,1.08,0.18],[0.95,0.82,0.92,-0.3],[-0.95,0.82,0.92,0.3],[Math.PI,0.9,1.1,0.12],[0.45,0.62,0.62,0.35],[-0.5,1.05,1.15,-0.2],[Math.PI-0.7,0.7,0.75,-0.25],[1.6,0.95,1.0,0.22]];
+function danceCam(){
+  if(!danceFight())return null;
+  const m=bMain();if(!m||m.x<0)return null;
+  const pts=[[P.x,P.z]];if(MP.on)for(const p of MP.peers.values())if(mpDrawn(p)&&p.rx!==undefined)pts.push([p.rx,p.rz]);
+  let ax=0,az=0;for(const q of pts){ax+=q[0];az+=q[1]}ax/=pts.length;az/=pts.length;
+  let dx=ax-m.x,dz=az-m.z,l=Math.hypot(dx,dz);if(l<0.3){dx=0;dz=1;l=1}dx/=l;dz/=l;
+  const mx=(ax+m.x)/2,mz=(az+m.z)/2;let sp=1;for(const q of[...pts,[m.x,m.z]])sp=Math.max(sp,Math.hypot(q[0]-mx,q[1]-mz));
+  // which shot: cut on the bar line of whatever is playing (the round's chart, or the song between rounds)
+  const D=BS.dance,beat=D?D.ch.beat:60/DISCO.bpm,tt=D?performance.now()/1000-D.t0:R.time,n=Math.floor(tt/(beat*8)),ix=((n%DANCE_SHOTS.length)+DANCE_SHOTS.length)%DANCE_SHOTS.length;
+  const sh=D&&D.him&&n%3===1?[Math.PI,0.75,0.85,0.2]:DANCE_SHOTS[ix],ph=(tt/(beat*8))-n;   // his turn often cuts to behind him, looking at you
+  const base=Math.atan2(dz,dx)+sh[0]+sh[3]*(ph-0.5)*1.2,want=(sp/Math.tan(0.55)+0.55)*sh[1];
+  const x=clamp(mx+Math.cos(base)*want,1.35,F.W-1.35),z=clamp(mz+Math.sin(base)*want,1.35,F.H-1.35),y=Math.min(1.15,sh[2]),d=Math.hypot(mx-x,mz-z)||1;
+  const C=BS.dcam||(BS.dcam={x:P.x,z:P.z,y:EYE,yaw:P.yaw,pitch:0,ix});
+  const cut=C.ix!==ix&&D;C.ix=ix;const k=cut?0.35:0.06;   // a quick swing on the cut, then a slow drift
+  C.x+=(x-C.x)*k;C.z+=(z-C.z)*k;C.y+=(y-C.y)*k;
+  const yaw=Math.atan2(mz-C.z,mx-C.x),pitch=-Math.atan2(C.y-0.6,d);
+  C.yaw+=angD(C.yaw,yaw)*Math.min(1,k*2);C.pitch+=(pitch-C.pitch)*Math.min(1,k*2);
+  return {x:C.x,y:C.y,z:C.z,yaw:C.yaw,pitch:C.pitch};
+}
+function danceSelf(t){
+  const id=MP.on?MP.id:'me',m=bMain();
+  if(m)P.yaw=turnTo(P.yaw,Math.atan2(m.z-P.z,m.x-P.x),0.2);   // you face your partner
+  BS.self=BS.self||{};Object.assign(BS.self,{id,col:MP.on?MP_COLS[hashStr(MP.id||'')%MP_COLS.length]:[0.62,0.32,0.2],rx:P.x,rz:P.z,ry:P.y,ryaw:P.yaw,rpitch:0,spd:0,walk:0,
+    dz:BS.move||{lane:-1,t:R.time-1},fat:FX.fat>0,pox:FX.pox>0});
+  const q=buildPlayer(BS.self,t).torch;
+  if(P.fuel>0){spr(q[0],q[1]+0.02,q[2],0.07,0.12,11,1.0,0.6,0.2,1,1);spr(q[0],q[1],q[2],0.5,0.5,7,1.0,0.5,0.15,0.25,1)}
+}
+// ---- bare fists: on a boss floor with no weapon in hand you still have your fists
+function wPunch(){
+  if(!canUse()||potHeld()||W.cd>0)return;W.cd=0.5;W.swing=1;W.swingT=0.25;
+  const fx=Math.cos(P.yaw),fz=Math.sin(P.yaw);let best=null,bd=9;
+  for(const s of F.shades){if(s.x<0||s.dead||s.type===3)continue;const dx=s.x-P.x,dz=s.z-P.z,d=Math.hypot(dx,dz);if(d>1.05+(s.rad||0)||d<0.01)continue;if((dx*fx+dz*fz)/d<0.5&&d>0.45+(s.rad||0))continue;if(d<bd){bd=d;best=s}}
+  noise(0.1,0.1,900,0.8);
+  if(best){wSend([wHit({dmg:1,stun:0.15,kb:0.1},best)]);tone(150,0.1,'square',0.1,0,-40);wSpark(best.x,0.55,best.z,'#e8d0b0')}
+  if(!BS.said.fist){BS.said.fist=1;say('No weapon? Your fists will have to do. The Blacksmith can help next time.',3)}
+}
+
+// ---- drawing
+function bossDraw(s,t,ex,ez){
+  const D=BOSSES[s.boss],ag=R.time-(s.sT||0),hpF=MP.guest?(s.hpPct?s.hpPct/100:1):clamp(s.hp/(s.hpMax||1),0,1);
+  if(s.role==='add'){addDraw(s,t,ag);return}
+  BDRAW[s.boss](s,t,ag,hpF);
+}
+const fr=(s,y,R2,k)=>({p:[s.x,y,s.z],R:(R2?m3(rYaw(s.face||0),R2):rYaw(s.face||0)).map(q=>q*(k||1)),lo:[s.ph,0,0]});
+function addDraw(s,t,ag){
+  if(s.kind==='rat'){ratModel(s,t,0.3,false,ag);return}
+  if(s.kind==='candle'){const B=fr(s,Math.abs(Math.sin(t*9+s.ph))*0.03),wax=[0.92,0.86,0.66,8];seg(B,[0,0.04,0],[0,0.3,0],0.07,0.065,wax);ball(B,[0.07,0.24,0],[0.005,0.012,0.04],[0.05,0.03,0.02,8],true);
+    for(const z of[-1,1])seg(B,[0,0.06,z*0.04],[Math.sin(t*12+z)*0.05,0,z*0.05],0.02,0.018,wax);seg(B,[0,0.3,0],[0,0.34,0],0.006,0.006,[0.05,0.04,0.03,8]);
+    spr(s.x,0.38,s.z,0.06,0.1,11,1,0.6,0.2,1,1);spr(s.x,0.38,s.z,0.4,0.4,7,1,0.55,0.15,0.35,1);return}
+  if(s.kind==='ember'){const y=0.5+Math.sin(t*4+s.ph)*0.08;ball({p:[s.x,y,s.z],R:ID3},[0,0,0],0.09,[3,0.9,0.15,7],true);spr(s.x,y+0.05,s.z,0.22,0.3,11,1,0.5,0.1,1,1);spr(s.x,y,s.z,0.7,0.7,7,1,0.4,0.1,0.4,1);return}
+}
+// King Ratbag, and his subjects (the same rat at a third of the size, without the crown)
+function ratModel(s,t,k,king,ag){
+  const st=king?s.state|0:1,walk=(s.wk=(s.wk||0)+(st===3?0.45:st===1?0.2:0.05)),fur=king?[0.32,0.27,0.24,2]:[0.3,0.26,0.24,2],pink=[0.85,0.55,0.55,1],dark=[0.05,0.04,0.04,8];
+  let rz=0,lift=0;if(st===2){rz=0.28+Math.sin(t*30)*0.03;lift=0.08}if(st===3)rz=-0.08;if(st===4)rz=Math.sin(t*3)*0.1;
+  const B=fr(s,lift*k,m3(rZ(rz),st===4?rX(0.25):[1,0,0,0,1,0,0,0,1]),k);
+  ball(B,[0,0.48,0],[0.62,0.36,0.4],fur);ball(B,[-0.34,0.44,0],[0.42,0.38,0.42],fur);ball(B,[0.1,0.32,0],[0.5,0.2,0.3],[0.42,0.37,0.33,2]);
+  const bite=st===5?Math.sin(Math.min(1,ag/0.42)*Math.PI)*0.15:0;
+  const H=subF(B,[0.55+bite,0.55,0],rZ(st===3?-0.15:0.05));
+  ball(H,[0.12,0,0],[0.3,0.22,0.23],fur);ball(H,[0.38,-0.05,0],[0.15,0.11,0.12],fur);ball(H,[0.53,-0.04,0],0.04,pink,true);
+  for(const z of[-1,1]){ball(H,[0.25,0.07,z*0.12],0.04,[2.8,0.25,0.15,7],true);ball(H,[0.02,0.22,z*0.15],[0.05,0.11,0.1],fur,true);ball(H,[0.03,0.21,z*0.15],[0.03,0.08,0.07],pink,true);
+    slab(H,[0.47,-0.13,z*0.022],[0.01,0.045,0.016],[0.95,0.9,0.7,8]);
+    for(let w=0;w<3;w++)seg(H,[0.45,-0.04,z*0.07],[0.5,-0.04+(w-1)*0.05,z*0.3],0.004,0.002,[0.8,0.78,0.72,8])}
+  if(st===5)slab(H,[0.42,-0.15,0],[0.08,0.01,0.08],dark);
+  if(king){   // a little gold crown, slightly askew
+    const C=subF(H,[0.05,0.24,0],rX(0.15)),gold=[1.3,0.95,0.3,4];seg(C,[0,0,0],[0,0.07,0],0.13,0.13,gold);
+    for(let i=0;i<6;i++){const a=i/6*6.283;seg(C,[Math.cos(a)*0.12,0.07,Math.sin(a)*0.12],[Math.cos(a)*0.1,0.15,Math.sin(a)*0.1],0.025,0.002,gold)}
+    ball(C,[0.13,0.04,0],0.025,[2.5,0.2,0.3,7],true)}
+  for(const [x,z,p] of[[0.35,-0.22,0],[0.35,0.22,Math.PI],[-0.35,-0.25,Math.PI],[-0.35,0.25,0]]){
+    const sw=st===2&&x>0?Math.sin(t*30+p)*0.12:Math.sin(walk*2+p)*0.12;
+    seg(B,[x,0.32,z],[x+sw,0.04,z*1.05],0.08,0.05,fur);ball(B,[x+sw+0.04,0.03,z*1.05],[0.08,0.03,0.05],pink,true)}
+  let p=[-0.72,0.4,0];const a0=Math.sin(t*3+s.ph)*0.4;
+  for(let i=0;i<9;i++){const q=[p[0]-0.14,p[1]-0.03+(i>4?0.02:0),p[2]+Math.sin(a0+i*0.6)*0.06];seg(B,p,q,0.05*(1-i/10)+0.008,0.05*(1-(i+1)/10)+0.008,pink);p=q}
+  if(king&&st===4)for(let i=0;i<4;i++){const a=t*5+i*1.57,q=fpt(H,[0.1,0.35,0]);spr(q[0]+Math.cos(a)*0.25,q[1],q[2]+Math.sin(a)*0.25,0.07,0.07,7,1,0.95,0.4,1,1)}
+}
+const BDRAW=[
+  (s,t,ag)=>ratModel(s,t,1,true,ag),
+  // the Boogie Man: a long-limbed shadow in a white disco suit, sunglasses, an enormous afro, under a disco ball on a floor of lights
+  (s,t,ag)=>{
+    const cx=F.W/2,cz=F.H/2-1,bt=BS.dance?(performance.now()/1000-BS.dance.t0)/BS.dance.ch.beat:t*1.8;
+    for(let x=-3;x<=3;x++)for(let z=-3;z<=3;z++){const v=(Math.floor(bt)+x*3+z*5)%4,c=hex3(LANE_COL[(v+4)%4]),k=0.25+0.35*((x+z+Math.floor(bt))%2===0?1:0);slab({p:[cx+x,0.006,cz+z],R:ID3},[0,0,0],[0.46,0.004,0.46],[c[0]*k,c[1]*k,c[2]*k,7])}
+    {const db={p:[cx,1.05,cz],R:rYaw(t*0.8)};ball(db,[0,0,0],0.13,[0.9,0.9,1,4]);seg(db,[0,0.12,0],[0,0.2,0],0.005,0.005,[0.3,0.3,0.3,4]);
+      for(let i=0;i<8;i++){const a=t*0.8+i*0.785,e=0.4+0.3*Math.sin(t*3+i);spr(cx+Math.cos(a)*0.14,1.05+Math.sin(i*2.1)*0.08,cz+Math.sin(a)*0.14,0.05,0.05,7,e*2,e*2,e*2.2,1,1)}}
+    const his=s.state===4,dance=s.state===2||his,sw=Math.sin(bt*Math.PI)*(his?0.2:dance?0.1:0.05),pt=Math.floor(bt*(his?2:1))%2,suit=[0.95,0.93,0.88,2],sk=[0.1,0.04,0.16,8],gl=[0.03,0.02,0.04,4];
+    const B=fr(s,0,rZ(0),1.05),U=subF(B,[0,0.5,0],m3(rX(sw),rZ(-0.05)));
+    for(const z of[-1,1]){const k=z>0?sw:-sw;seg(B,[0,0.5,z*0.06],[0.02,0.25,z*(0.08+Math.max(0,k))],0.05,0.045,suit);seg(B,[0.02,0.25,z*(0.08+Math.max(0,k))],[0,0.06,z*0.1],0.045,0.1,suit);slab(B,[0.03,0.03,z*0.1],[0.07,0.03,0.045],[0.95,0.75,0.2,4])}
+    seg(U,[0,0,0],[0,0.3,0],0.09,0.12,suit);slab(U,[0.1,0.22,0],[0.01,0.1,0.06],sk);
+    for(const z of[-1,1])slab(U,[0.11,0.27,z*0.06],[0.01,0.04,0.05],suit,rX(z*0.5));
+    for(const z of[-1,1]){const up=dance?(pt===(z>0?1:0)):z>0,sh=[0,0.28,z*0.13];
+      if(s.state===3&&z>0)limb(U,sh,[0.2,0.3,z*0.16],[0.42,0.34,z*0.12],0.04,0.035,0.03,suit,suit,sk,0.035);   // "my turn": he points at you
+      else if(his&&up)limb(U,sh,[0.18,0.36,z*0.18],[0.36,0.42,z*0.12],0.04,0.035,0.03,suit,suit,sk,0.035);   // throwing a move at you
+      else if(up)limb(U,sh,[0.05,0.45,z*0.2],[0.08,0.66,z*0.24],0.04,0.035,0.03,suit,suit,sk,0.035);
+      else limb(U,sh,[0.1,0.16,z*0.22],[0.12,0.0,z*0.32],0.04,0.035,0.03,suit,suit,sk,0.035)}
+    seg(U,[0,0.3,0],[0,0.36,0],0.04,0.04,sk);
+    const Hd=subF(U,[0,0.44,0],rZ(Math.sin(bt*Math.PI*2)*0.08));
+    ball(Hd,[0,0,0],[0.085,0.1,0.085],sk);ball(Hd,[-0.02,0.08,0],[0.2,0.17,0.2],[0.06,0.03,0.07,5]);
+    slab(Hd,[0.085,0.015,0],[0.012,0.022,0.075],gl);for(const z of[-1,1])ball(Hd,[0.098,0.015,z*0.035],0.014,[2.6,0.5,2.2,7],true);
+    slab(Hd,[0.08,-0.05,0],[0.01,0.008,0.035],[2,2,2,7]);   // a grin
+    spr(s.x,1.0,s.z,1.6,1.6,7,0.6,0.1,0.5,0.15,1);
+    const D=BS.dance;
+    if(D&&D.him&&!P.down){   // every arrow of his turn is a glittering shot flying at you, arriving with its arrow
+      const now=performance.now()/1000-D.t0,fx=s.x+Math.cos(s.face||0)*0.3,fz=s.z+Math.sin(s.face||0)*0.3,FL=1.3;
+      for(const n of D.notes){
+        const c=hex3(LANE_COL[n.lane]),left=n.t-now;
+        if(!n.j&&left>0&&left<FL){const k=1-left/FL,side=(n.lane-1.5)*0.35*Math.sin(k*Math.PI);
+          const x=fx+(P.x-fx)*k+side*Math.sin(s.face||0),z=fz+(P.z-fz)*k-side*Math.cos(s.face||0),y=0.85+Math.sin(k*Math.PI)*0.25-0.2*k;
+          ball({p:[x,y,z],R:ID3},[0,0,0],0.05,[c[0]*2.5,c[1]*2.5,c[2]*2.5,7],true);spr(x,y,z,0.32,0.32,7,c[0],c[1],c[2],0.8,1);
+          for(let q=1;q<4;q++){const k2=Math.max(0,k-q*0.04);spr(fx+(P.x-fx)*k2,0.85+Math.sin(k2*Math.PI)*0.25-0.2*k2,fz+(P.z-fz)*k2,0.12,0.12,7,c[0],c[1],c[2],0.5-q*0.12,1)}}
+        else if(n.dodge&&R.time-n.dodge<0.4){const a=(R.time-n.dodge)/0.4;for(let q=0;q<6;q++){const an=q*1.05+n.lane;spr(P.x+Math.cos(an)*a*0.8,0.8+Math.sin(q*2)*a*0.4,P.z+Math.sin(an)*a*0.8,0.08,0.08,7,c[0],c[1],c[2],1-a,1)}}
+        else if(n.hitT&&R.time-n.hitT<0.3){const a=(R.time-n.hitT)/0.3;spr(P.x,0.8,P.z,0.3+a,0.3+a,7,1,0.3,0.6,0.8*(1-a),1)}
+      }
+    }
+  },
+  // the Gloop: a shining green blob with two bobbing eyes (squashes when it lands, stretches when it jumps)
+  (s,t,ag)=>{
+    const z=s.size,st=s.state|0;let y=0,sq=1;
+    if(st===2){const p=clamp(ag/0.6,0,1);y=Math.sin(p*Math.PI)*0.45*Math.sqrt(z);sq=1.15}
+    else if(st===5){const p=clamp(ag/0.9,0,1);y=Math.sin(p*Math.PI)*0.75;sq=1.2}
+    else if(st===1||st===4){sq=0.8+0.2*Math.cos(t*14)}
+    else if(st===3){const p=clamp(ag/0.3,0,1);sq=0.65+0.35*p}
+    const r=0.62*z,B={p:[s.x,y,s.z],R:rYaw(s.face||0),lo:[s.ph,0,0]},g=[0.18,0.62,0.12,8];
+    ball(B,[0,r*0.75*sq,0],[r/Math.sqrt(sq),r*0.75*sq,r/Math.sqrt(sq)],g);
+    ball(B,[0,r*0.75*sq,0],[r*0.55,r*0.5*sq,r*0.55],[0.3,1.1,0.2,7]);
+    for(const q of[-1,1]){const e=fpt(B,[r*0.6,r*1.05*sq,q*r*0.3]);ball({p:e,R:B.R},[0,0,0],0.11*z+0.02,[0.95,0.95,0.9,8],true);ball({p:e,R:B.R},[0.07*z+0.01,0,0],0.05*z+0.01,[0.02,0.02,0.02,8],true)}
+    for(let i=0;i<3;i++){const k=(t*0.5+i/3+s.ph)%1,q=fpt(B,[Math.cos(i*2)*r*0.4,r*(0.2+k*1.1)*sq,Math.sin(i*2)*r*0.4]);spr(q[0],q[1],q[2],0.05*z+0.02,0.05*z+0.02,7,0.6,1,0.5,0.7*(1-k),1)}
+    if(s.role==='main'&&st===4)spr(s.x,0.5,s.z,1.8,1.8,7,0.3,1,0.2,0.3,1);
+  },
+  // the Big Dill: a tall cucumber in sunglasses, with stubby vine arms; lying down to roll; darker and lumpier once pickled
+  (s,t,ag)=>{
+    const pk=!!s.frozen,st=s.state|0,g=pk?[0.2,0.28,0.06,8]:[0.12,0.38,0.1,8],gl=pk?[0.32,0.42,0.12,8]:[0.35,0.65,0.25,8],dk=[0.03,0.03,0.04,4];
+    let B;
+    if(st===4||st===5&&ag<0.5||st===3&&ag>0.4){const roll=st===4?(s.wk=(s.wk||0)+0.3):0;B={p:[s.x,0.24,s.z],R:m3(m3(rYaw(s.face||0),rX(Math.PI/2)),rYaw(roll)),lo:[s.ph,0,0]};
+      B.p=[s.x-Math.sin(s.face||0)*0.5,0.24,s.z+Math.cos(s.face||0)*0.5]}
+    else{const w=st===1?Math.sin(t*6)*0.06:st===2?-0.15:st===6?Math.sin(t*20)*0.1:0;B=fr(s,0,rZ(w))}
+    seg(B,[0,0.08,0],[0,0.95,0],0.2,0.19,g);ball(B,[0,0.95,0],[0.19,0.12,0.19],g);ball(B,[0,0.08,0],[0.2,0.08,0.2],g);
+    for(let i=0;i<6;i++){const a=i/6*6.283;seg(B,[Math.cos(a)*0.19,0.12,Math.sin(a)*0.19],[Math.cos(a)*0.18,0.92,Math.sin(a)*0.18],0.022,0.02,gl)}
+    for(let i=0;i<(pk?26:14);i++){const a=i*2.4,h=0.15+((i*0.37)%1)*0.75;ball(B,[Math.cos(a)*0.2,h,Math.sin(a)*0.2],pk?0.035:0.022,gl,true)}
+    slab(B,[0.19,0.78,0],[0.02,0.04,0.13],dk);for(const z of[-1,1])ball(B,[0.2,0.78,z*0.065],[0.012,0.035,0.05],[0.3,0.6,0.9,4],true);   // sunglasses
+    slab(B,[0.195,0.62,0],[0.01,st===2?0.035:0.01,0.06],dk);
+    if(st!==4)for(const z of[-1,1]){const up=st===2?0.1:Math.sin(t*4+z)*0.03;seg(B,[0,0.55,z*0.19],[0.12,0.35+up,z*0.32],0.025,0.02,gl);ball(B,[0.12,0.35+up,z*0.32],0.035,gl,true);
+      seg(B,[0,0.1,z*0.1],[Math.sin(t*6+(z>0?0:3))*0.06*(st===1?1:0),0,z*0.12],0.03,0.025,gl)}
+    for(let i=0;i<5;i++){const a=t*0.7+i*1.26,r=1.2+Math.sin(t+i)*0.4;spr(s.x+Math.cos(a)*r,0.15+((t*0.3+i*0.2)%1)*0.7,s.z+Math.sin(a)*r,0.06,0.06,7,0.6,0.85,1.2,0.6,1)}
+  },
+  // Mother Tallow: a great melting candle with a sorrowful face; she is shorter the more she is hurt, and her flame flares to blow
+  (s,t,ag,hpF)=>{
+    const h=0.45+0.5*hpF,st=s.state|0,wax=[0.93,0.86,0.66,8],ws=[0.85,0.76,0.55,8],dk=[0.12,0.06,0.04,8];
+    const B=fr(s,0,rZ(st===2?-0.12:st===3?0.12:Math.sin(t*1.5)*0.03));
+    ball(B,[0,0.02,0],[0.5,0.04,0.5],ws);seg(B,[0,0.02,0],[0,h,0],0.3,0.27,wax);ball(B,[0,h,0],[0.27,0.05,0.27],wax);
+    for(let i=0;i<9;i++){const a=i*0.7+0.3,l=0.12+((i*0.41)%1)*0.3;seg(B,[Math.cos(a)*0.28,h-0.02,Math.sin(a)*0.28],[Math.cos(a)*0.3,h-l,Math.sin(a)*0.3],0.035,0.03,wax);ball(B,[Math.cos(a)*0.3,h-l,Math.sin(a)*0.3],0.04,wax,true)}
+    const fy=h-0.15;for(const z of[-1,1]){ball(B,[0.27,fy,z*0.09],[0.02,0.04,0.035],dk,true);seg(B,[0.27,fy-0.04,z*0.09],[0.29,fy-0.12,z*0.1],0.008,0.004,[0.7,0.6,0.4,8])}
+    ball(B,[0.275,fy-0.12,0],[0.015,st===2?0.04:0.02,st===2?0.03:0.04],dk,true);
+    for(const z of[-1,1]){const up=st===4?0.25:0.05;seg(B,[0,h-0.25,z*0.27],[0.2,h-0.3+up,z*0.4],0.05,0.04,wax);ball(B,[0.2,h-0.3+up,z*0.4],0.05,wax,true)}
+    seg(B,[0,h+0.04,0],[0,h+0.1,0],0.01,0.01,dk);
+    const top=fpt(B,[0,h+0.16,0]),fl=st===3?0.4:st===2?0.6:1+Math.sin(t*11)*0.1;
+    spr(top[0],top[1]+0.03*fl,top[2],0.09*fl,0.18*fl,11,1,0.62,0.22,1,1);spr(top[0],top[1],top[2],0.6,0.6,7,1,0.55,0.15,0.25*fl,1);
+    if(st===3)for(let i=0;i<10;i++){const k=((t*2.5+i/10)%1),a=(s.face||0)+(Math.sin(i*5.3)*0.5);spr(s.x+Math.cos(a)*k*5.5,0.6+Math.sin(i*3)*0.2,s.z+Math.sin(a)*k*5.5,0.15+k*0.3,0.15+k*0.3,7,0.8,0.8,0.85,0.25*(1-k),0)}
+  },
+  // the Grand Mimic: a treasure chest with a mouth full of teeth and a very long tongue; shut, it looks like any other chest
+  (s,t,ag)=>mimicModel(s,t,ag),
+  // Sir Suckalot: an upright vacuum cleaner with headlamp eyes, a swelling bag and a trunk of a hose
+  (s,t,ag)=>{
+    const st=s.state|0,red=[0.55,0.06,0.05,4],gr=[0.35,0.35,0.37,4],bag=[0.75,0.68,0.55,2],dk=[0.03,0.03,0.03,8],hot=st===4;
+    const B=fr(s,Math.abs(Math.sin(t*(st===3?30:3)))*0.01,rZ(st===3?-0.1:0),1.2);
+    slab(B,[0.12,0.08,0],[0.2,0.07,0.24],hot?[1.6,0.2,0.05,7]:red);slab(B,[0.33,0.05,0],[0.02,0.03,0.22],dk);
+    for(const z of[-1,1]){ball(B,[0.3,0.11,z*0.14],0.035,[2.4,2.2,1.6,7],true);ball(B,[-0.04,0.05,z*0.22],[0.05,0.05,0.025],dk,true)}
+    seg(B,[-0.02,0.12,0],[-0.12,0.95,0],0.03,0.025,gr);seg(B,[-0.12,0.95,0],[-0.06,1.02,0],0.02,0.02,dk);
+    const inf=st===3?1.25+Math.sin(t*8)*0.05:st===5?1.3:1;ball(B,[-0.07,0.55,0],[0.13*inf,0.3,0.15*inf],bag);slab(B,[-0.07,0.3,0],[0.08,0.03,0.1],red);
+    // the hose: from the bag round to the front, reaching for you when it sucks
+    let p=[-0.02,0.35,0.12];const reach=st===3?1:st===2?0.6:0.2;
+    for(let i=0;i<7;i++){const k=(i+1)/7,q=[0.05+k*(0.2+0.45*reach),0.35+Math.sin(k*Math.PI)*0.25-k*0.2*reach+Math.sin(t*3+i)*0.02,0.12-k*0.12];seg(B,p,q,0.035,0.035,gr);p=q}
+    seg(B,p,[p[0]+0.06,p[1]-0.02,p[2]],0.035,0.06,dk);
+    if(st===3)for(let i=0;i<8;i++){const k=(t*2+i/8)%1,a=(s.face||0)+Math.sin(i*4.1)*0.5,r=(1-k)*6;spr(s.x+Math.cos(a)*r,0.3+Math.sin(i*2.7)*0.25,s.z+Math.sin(a)*r,0.05,0.05,7,0.8,0.8,0.8,0.6*k,0)}
+    if(hot)for(let i=0;i<5;i++){const k=(t*0.8+i/5)%1;spr(s.x+Math.sin(i*3)*0.15,0.9+k*0.4,s.z+Math.cos(i*3)*0.15,0.15+k*0.3,0.15+k*0.3,7,0.5,0.5,0.5,0.4*(1-k),0)}
+  },
+  // the Mime: white face, black beret, striped shirt; every move a pantomime
+  (s,t,ag)=>{
+    const st=s.state|0,wh=[0.95,0.95,0.93,8],bk=[0.04,0.04,0.05,2],gl=[0.98,0.98,0.98,2],red=[0.8,0.05,0.1,8];
+    const tip=st===1?Math.abs(Math.sin(t*5))*0.04:0,lean=st===4?-0.25:st===8?0.25:0;
+    const B=fr(s,tip,rZ(lean),1.05),U=subF(B,[0,0.46,0]);
+    for(const z of[-1,1]){const k=st===1?Math.sin(t*5+(z>0?0:Math.PI))*0.15:0;seg(B,[0,0.46,z*0.05],[k,0.03,z*0.06],0.035,0.03,bk);slab(B,[k+0.03,0.02,z*0.06],[0.06,0.02,0.03],bk)}
+    for(let i=0;i<6;i++)seg(U,[0,i*0.05,0],[0,i*0.05+0.05,0],0.085,0.085,i%2?wh:bk);
+    const A=(z,e,h)=>{limb(U,[0,0.27,z*0.1],e,h,0.028,0.025,0.022,z>0?wh:bk,z>0?bk:wh,gl,0.035)};
+    if(st===2){const k=Math.sin(t*6)*0.04;A(1,[0.12,0.25,0.16],[0.22,0.32+k,0.1]);A(-1,[0.12,0.25,-0.16],[0.22,0.32-k,-0.1])}
+    else if(st===3||st===4){const k=Math.sin(t*(st===4?8:3))*0.08;A(1,[0.12,0.22,0.1],[0.25,0.25+k,0.02]);A(-1,[0.1,0.2,-0.08],[0.2,0.18-k,-0.02])}
+    else if(st===5||st===6){A(-1,[0.15,0.3,-0.12],[0.32,0.32,-0.05]);A(1,[0.02,0.32,0.15],[st===6?0.2:-0.05,0.32,0.05])}
+    else if(st===7||st===8){A(1,[0.14,0.3,0.12],[0.3,0.35,0.12]);A(-1,[0.14,0.3,-0.12],[0.3,0.35,-0.12])}
+    else{const k=Math.sin(t*5)*0.1;A(1,[0.02+k,0.12,0.14],[0.05+k,0.0,0.15]);A(-1,[0.02-k,0.12,-0.14],[0.05-k,0.0,-0.15])}
+    seg(U,[0,0.3,0],[0,0.34,0],0.03,0.03,wh);
+    const Hd=subF(U,[0,0.42,0],rZ(Math.sin(t*1.3)*0.08));ball(Hd,[0,0,0],[0.08,0.095,0.075],wh);
+    for(const z of[-1,1]){slab(Hd,[0.075,0.02,z*0.03],[0.004,0.03,0.008],bk);ball(Hd,[0.077,0.015,z*0.03],0.009,bk,true)}
+    ball(Hd,[0.078,-0.045,0],[0.008,0.012,0.02],red,true);ball(Hd,[-0.01,0.08,0.01],[0.09,0.025,0.09],bk);ball(Hd,[-0.01,0.105,0.01],0.012,bk,true);
+  },
+  // the Cuckoo Clock: a carved wooden clock on little legs, a swinging pendulum blade, and the bird
+  (s,t,ag)=>{
+    const st=s.state|0,wd=[0.35,0.2,0.1,6],wl=[0.48,0.3,0.15,6],cr=[0.9,0.85,0.7,8],dk=[0.05,0.04,0.03,8],br=[1,0.75,0.3,4];
+    const B=fr(s,Math.abs(Math.sin(t*4))*0.02,rZ(st===4?Math.sin(t*25)*0.03:0),1.1);
+    for(const z of[-1,1]){const k=st===1?Math.sin(t*4+(z>0?0:3))*0.06:0;seg(B,[0,0.25,z*0.1],[k,0.02,z*0.12],0.03,0.025,wd);ball(B,[k+0.03,0.02,z*0.12],[0.05,0.02,0.035],wd,true)}
+    slab(B,[0,0.62,0],[0.17,0.38,0.26],wd);slab(B,[0.17,0.62,0],[0.01,0.34,0.22],wl);
+    for(const z of[-1,1])slab(B,[0,1.05,z*0.13],[0.21,0.015,0.17],wl,rX(z*-0.62));
+    seg(B,[0.17,0.68,0],[0.2,0.68,0],0.15,0.15,cr);
+    const hr=t*0.15,mn=t*1.8;slab(B,[0.205,0.68+Math.cos(hr)*0.05,Math.sin(hr)*0.05],[0.005,0.06,0.01],dk,rX(-hr));slab(B,[0.205,0.68+Math.cos(mn)*0.07,Math.sin(mn)*0.07],[0.005,0.09,0.006],dk,rX(-mn));
+    for(const z of[-1,1]){ball(B,[0.2,0.75,z*0.06],[0.01,0.025,0.02],dk,true);slab(B,[0.2,0.79,z*0.06],[0.005,0.006,0.03],dk,rX(z*0.5))}
+    const open=st===4?Math.min(1,ag/0.4):st===5?1:0;
+    slab(B,[0.18,0.93,0],[0.01,0.06,0.05],dk);
+    if(open>0){slab(B,[0.19,0.93,0.05+open*0.04],[0.005,0.06,0.025],wl);const out=st===5?0.12+Math.abs(Math.sin(t*6))*0.06:0.04*open;
+      const Bd=subF(B,[0.18+out,0.93,0]);ball(Bd,[0,0,0],[0.05,0.045,0.04],[1.4,1.1,0.2,7],true);seg(Bd,[0.04,0.005,0],[0.09,0,0],0.015,0.002,[1.6,0.6,0.1,7]);ball(Bd,[0.03,0.02,0.02],0.008,dk,true)}
+    else slab(B,[0.19,0.93,0],[0.005,0.06,0.05],wl);
+    // the pendulum blade sweeps in front (the host works out the same swing for the hits)
+    const pa=Math.sin(R.time*2.4)*0.9,P0=fpt(B,[0.2,0.4,0]);
+    const P1=[s.x+Math.cos((s.face||0)+pa)*1.25,0.35,s.z+Math.sin((s.face||0)+pa)*1.25];
+    seg({p:[0,0,0],R:ID3},P0,P1,0.012,0.012,br);ball({p:P1,R:rYaw(-((s.face||0)+pa))},[0,0,0],[0.03,0.12,0.12],[0.85,0.85,0.9,4]);
+    for(const z of[-1,1]){seg(B,[0.1,0.24,z*0.08],[0.1,0.05+Math.sin(t+z)*0.03,z*0.08],0.004,0.004,dk);ball(B,[0.1,0.04+Math.sin(t+z)*0.03,z*0.08],[0.03,0.06,0.03],wd,true)}
+  },
+  // the Ember Heart: a great beating heart of coal and embers, chained in the air, with one burning eye
+  (s,t,ag)=>{
+    const p2=!!s.frozen,bt=(t*(p2?2:1.6))%1,pulse=bt<0.12?bt/0.12:bt<0.3?1-(bt-0.12)/0.18*0.6:0.4*(1-(bt-0.3)/0.7),k=1+0.08*pulse+(s.state===2?0.06:0);
+    const y=0.62+Math.sin(t*0.9)*0.04,B={p:[s.x,y,s.z],R:rYaw(s.face||0).map(q=>q*k),lo:[s.ph,0,0]},coal=[0.12,0.05,0.04,8],hot=[1.6+1.2*pulse,0.45+0.3*pulse,0.06,7];
+    ball(B,[0,0,0],[0.42,0.38,0.42],coal);for(const z of[-1,1])ball(B,[0,0.18,z*0.2],[0.3,0.25,0.26],coal);seg(B,[0,-0.15,0],[0,-0.5,0],0.3,0.02,coal);
+    for(let i=0;i<14;i++){const a=i*2.39,h=(i*0.37)%1*0.7-0.35;slab(B,[Math.cos(a)*0.41*(1-Math.abs(h)*0.6),h,Math.sin(a)*0.41*(1-Math.abs(h)*0.6)],[0.012,0.08,0.012],hot,m3(rYaw(-a),rX(i)))}
+    ball(B,[0.38,0.05,0],[0.05,0.12,0.12],[1.4,1.1,0.5,7]);ball(B,[0.41,0.05,0],[0.02,0.08,0.03],[0.02,0.01,0,8],true);
+    for(const z of[-0.12,0.1])seg(B,[-0.05,0.3,z],[-0.05,0.62/k,z*1.5],0.06,0.05,[0.25,0.08,0.06,8]);
+    for(const [cx,cz] of[[1.6,0],[-1.6,0],[0,1.6],[0,-1.6]]){const a=[s.x+cx*0.9,0.05,s.z+cz*0.9];seg({p:[0,0,0],R:ID3},[s.x+cx*0.2,y-0.2,s.z+cz*0.2],a,0.015,0.015,[0.25,0.24,0.26,4])}
+    spr(s.x,y,s.z,1.6,1.6,7,1,0.35,0.08,0.04+0.06*pulse,1);
+    for(let i=0;i<5;i++){const q=(t*0.6+i/5)%1;spr(s.x+Math.sin(i*2.7+t)*0.3,y+q*0.6,s.z+Math.cos(i*1.9+t)*0.3,0.04,0.04,7,1,0.5,0.1,1-q,1)}
+  },
+];
+function mimicModel(s,t,ag){
+  const st=s.state|0,shut=s.role==='decoy'||st===5||st===6,wd=[0.42,0.24,0.1,6],gold=[1.1,0.8,0.25,4],dk=[0.05,0.02,0.02,8],tooth=[0.95,0.92,0.82,8];
+  const hop=!shut&&st===1?Math.abs(Math.sin(t*6+s.ph))*0.1:0;
+  const B=fr(s,hop,rZ(0),1.2);
+  slab(B,[0,0.16,0],[0.24,0.16,0.33],wd);for(const z of[-0.22,0,0.22])slab(B,[0,0.16,z],[0.245,0.165,0.02],gold);
+  const lid=shut?0:st===2||st===3?1.2:st===4?0.9:0.35+0.25*Math.abs(Math.sin(t*3));
+  const L=subF(B,[-0.24,0.32,0],rZ(lid));
+  slab(L,[0.24,0.05,0],[0.24,0.05,0.33],wd);seg(L,[0.24,0.1,-0.33],[0.24,0.1,0.33],0.24,0.24,wd);
+  for(const z of[-0.22,0,0.22])slab(L,[0.24,0.06,z],[0.25,0.06,0.02],gold);slab(L,[0.49,0.0,0],[0.02,0.04,0.04],gold);
+  if(!shut){for(let i=0;i<7;i++){const z=(i-3)*0.09;seg(B,[0.22,0.31,z],[0.22,0.37,z],0.02,0.002,tooth);seg(L,[0.46,0,z],[0.46,-0.06,z],0.02,0.002,tooth)}
+    slab(B,[0,0.3,0],[0.22,0.01,0.31],[0.35,0.02,0.04,8]);
+    for(const z of[-1,1])ball(B,[0.05,0.42,z*0.12],0.035,[2.6,1.8,0.2,7],true);
+    if(st===3){const ex2=clamp(ag/0.2,0,1)*3.8/1.2;let p=[0.1,0.3,0];for(let i=1;i<=8;i++){const q=[0.1+ex2*i/8,0.3+Math.sin(i+t*20)*0.02,Math.sin(i*1.3+t*15)*0.03];seg(B,p,q,0.05,0.045,[0.85,0.3,0.4,1]);p=q}ball(B,p,0.07,[0.85,0.3,0.4,1],true)}
+    else if(st!==4)seg(B,[0.1,0.3,0],[0.3,0.25,0.05],0.05,0.04,[0.85,0.3,0.4,1]);
+    for(let i=0;i<3;i++){const k=(t*0.7+i/3)%1;const q=fpt(B,[0.15,0.35+k*0.2,(i-1)*0.15]);spr(q[0],q[1],q[2],0.04,0.04,1,1,0.85,0.4,1-k,0)}}
+}
+// the hazards
+function bzDraw(t,ex,ez){
+  if(!F||!F.boss)return;const flat={p:[0,0,0],R:ID3,lo:ZERO3};
+  for(const h of BS.hz){
+    if((h.x-ex)**2+(h.z-ez)**2>18*18&&h.k!=='wall'&&h.k!=='pwall')continue;const c=h.c||[1,0.5,0.2];
+    switch(h.k){
+      case 'shot':ball(flat,[h.x,h.y,h.z],h.r,[c[0]*2,c[1]*2,c[2]*2,7],true);spr(h.x,h.y,h.z,0.35*(h.sz||1),0.35*(h.sz||1),7,c[0],c[1],c[2],h.sz<1?0.25:0.7,1);break;
+      case 'ring':{const n=Math.max(10,Math.round(h.r*14));for(let i=0;i<n;i++){const a=i/n*6.283;spr(h.x+Math.cos(a)*h.r,0.12,h.z+Math.sin(a)*h.r,0.22,0.24,11,c[0],c[1],c[2],0.9,1)}break}
+      case 'mark':{const k=clamp(h.t/h.delay,0,1),f=0.5+0.5*Math.sin(t*(8+16*k));
+        if(h.sq)slab(flat,[h.x,0.012,h.z],[h.r*k,0.004,h.r*k],[c[0]*(0.6+f),c[1]*(0.6+f)*0.5,c[2]*0.3,7]);
+        else{ball(flat,[h.x,0.012,h.z],[h.r*k,0.004,h.r*k],[c[0]*(0.5+f),c[1]*(0.5+f)*0.6,c[2]*0.5,7],true);const n=16;for(let i=0;i<n;i++){const a=i/n*6.283+t;spr(h.x+Math.cos(a)*h.r,0.05,h.z+Math.sin(a)*h.r,0.08,0.08,7,c[0],c[1],c[2],0.8,1)}}
+        break}
+      case 'pool':{const k=Math.min(1,h.t/0.3)*Math.min(1,(h.life-h.t)/1.5);ball(flat,[h.x,0.008,h.z],[h.r*k,0.006,h.r*k],[c[0],c[1],c[2],8],true);break}
+      case 'cone':if(h.fx==='snuff'||h.fx==='pull'){for(let i=0;i<10;i++){const q=(t*(h.fx==='pull'?-1.5:2)+i/10)%1,k=q<0?q+1:q,a=h.yaw+Math.sin(i*7.1)*h.cone*0.8;spr(h.x+Math.cos(a)*k*h.len,0.4+Math.sin(i*3.3)*0.25,h.z+Math.sin(a)*k*h.len,0.1+k*0.25,0.1+k*0.25,7,0.85,0.85,0.9,0.18*(1-k*0.5),0)}}break;
+      case 'line':break;   // the tongue is drawn with the Mimic
+      case 'wall':case 'pwall':{const L=Math.hypot(h.x1-h.x0,h.z1-h.z0),n=Math.ceil(L*5),rv=BS.reveal>0?1:0.18;
+        for(let i=0;i<=n;i++){const k=i/n,x=h.x0+(h.x1-h.x0)*k,z=h.z0+(h.z1-h.z0)*k;for(let j=0;j<3;j++){const y=0.2+j*0.35+Math.sin(t*3+i+j)*0.05;spr(x,y,z,0.12,0.12,7,0.8,0.9,1,rv*(0.4+0.4*Math.sin(t*5+i*1.7+j)),1)}}
+        if(BS.reveal>0)slab({p:[(h.x0+h.x1)/2,0.6,(h.z0+h.z1)/2],R:rYaw(-Math.atan2(h.z1-h.z0,h.x1-h.x0))},[0,0,0],[L/2,0.6,0.01],[0.5,0.6,0.8,7]);
+        break}
+      case 'roll':{const a=Math.atan2(h.vz,h.vx),G={p:[h.x,h.r,h.z],R:m3(rYaw(a),rZ(-h.t*12))},br=[0.75,0.55,0.25,4];
+        seg(G,[0,0,-0.05],[0,0,0.05],h.r*0.85,h.r*0.85,br);for(let i=0;i<10;i++){const q=i/10*6.283;slab(G,[Math.cos(q)*h.r*0.92,Math.sin(q)*h.r*0.92,0],[0.04,0.035,0.045],br,rZ(q))}
+        seg(G,[0,0,-0.07],[0,0,0.07],0.05,0.05,[0.3,0.3,0.3,4]);break}
+    }
+  }
+}
+// the boss's own glow, so it reads in the dark
+function bossLights(lights,ex,ez){
+  if(!F||!F.boss)return;
+  for(const s of F.shades){if(s.type!==6||s.x<0||(s.role!=='main'&&s.role!=='part'))continue;const d=(s.x-ex)**2+(s.z-ez)**2,c=hex3(BOSSES[s.boss].col),k=BOSSES[s.boss].id==='tallow'||BOSSES[s.boss].id==='heart'?0.5:0.9,l=Math.sqrt(d)||1,o=Math.min(l*0.6,(s.rad||0.4)+0.7);
+    lights.push([d-8,s.x+(ex-s.x)/l*o,0.75,s.z+(ez-s.z)/l*o,c,k,5])/* lit from your side, so its face shows */}
+  for(const h of BS.hz)if(h.k==='shot'&&h.sz>=1){const d=(h.x-ex)**2+(h.z-ez)**2;if(d<60)lights.push([d+2,h.x,h.y,h.z,h.c,0.7,2])}
+}
+
 /* ---------- loading transitions ---------- */
 let loading=null;
 function showLoading(title,stages){
@@ -2953,10 +5693,12 @@ function closeLoading(){
   $('loading').hidden=true;
 }
 function advanceLoading(now){
-  if(!loading||now<loading.at)return;
+  if(!loading||now<loading.at||loading.waiting)return;
   const transition=loading,{stages,index}=transition;
   if(index===stages.length){closeLoading();return}
-  try{stages[index][1]()}catch(error){
+  try{const r=stages[index][1]();
+    if(r&&typeof r.then==='function'){transition.waiting=true;const go=()=>{transition.waiting=false};r.then(go,go)}   // a stage that finishes later: wait for it
+  }catch(error){
     closeLoading();
     roomLeave();
     if(state==='trans')state='play';
@@ -3100,7 +5842,7 @@ function roomClose(){
 }
 /* ---------- burning eyes: after the mirror, for the rest of that floor, the creatures show through a wall or around a corner ---------- */
 const XR={list:[],t:0,pool:null};
-const xrayOn=()=>R.xray>0&&R.xray===R.depth&&!!F;
+const xrayOn=()=>(R.xray>0&&R.xray===R.depth||ps('xray'))&&!!F;
 // how many wall cells the straight line between two points passes through (a grid walk), not counting the cell you stand in or the one it stands in
 function wallsBetween(x0,z0,x1,z1){
   let tx=Math.floor(x0),ty=Math.floor(z0);const ex=Math.floor(x1),ey=Math.floor(z1),dx=x1-x0,dz=z1-z0,sx=dx>0?1:-1,sz=dz>0?1:-1,ax=dx===0?1e9:Math.abs(1/dx),az=dz===0?1e9:Math.abs(1/dz);
@@ -3111,11 +5853,12 @@ function wallsBetween(x0,z0,x1,z1){
 // every hostile thing within about 12 tiles that you cannot see straight on, but that has at most one wall in the way or is six steps away round a corner
 function xrayTick(dt){
   XR.t-=dt;if(XR.t>0)return;XR.t=0.1;XR.list.length=0;
-  if(!xrayOn()||state==='title'||P.down)return;
-  const c=[];for(const s of F.shades)if(s.x>0)c.push([s.x,s.z,s.type]);
+  const all=xrayOn();
+  if(state==='title'||P.down||!all&&!F.shades.some(potRevealed))return;
+  const c=[];for(const s of F.shades)if(s.x>0&&(all||potRevealed(s)))c.push([s.x,s.z,s.type,potRevealed(s)]);
   if(MP.on&&MIM.st!==0&&MIM.rx>0)c.push([MIM.rx,MIM.rz,9]);
   for(const m of c){
-    const d=Math.hypot(m[0]-P.x,m[1]-P.z);if(d>12||d<0.6||los(P.x,P.z,m[0],m[1]))continue;
+    const d=Math.hypot(m[0]-P.x,m[1]-P.z);if(d>(m[3]?30:12)||d<0.6||los(P.x,P.z,m[0],m[1]))continue;if(m[3]){XR.list.push({x:m[0],z:m[1],t:m[2],d});continue}
     const tx=Math.floor(m[0]),ty=Math.floor(m[1]),ds=F.dist&&tx>=0&&ty>=0&&tx<F.W&&ty<F.H?F.dist[ty*F.W+tx]:-1;
     if(wallsBetween(P.x,P.z,m[0],m[1])<=1||(ds>=0&&ds<=6))XR.list.push({x:m[0],z:m[1],t:m[2],d});
   }
@@ -3131,7 +5874,7 @@ function xrayDraw(t){
     const tex=new THREE.CanvasTexture(cv);XR.pool=[];
     for(let i=0;i<16;i++){const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true,depthTest:false,depthWrite:false,blending:THREE.AdditiveBlending,fog:false,toneMapped:false}));sp.renderOrder=999;sp.visible=false;sp.frustumCulled=false;scene.add(sp);XR.pool.push(sp)}
   }
-  const on=xrayOn()&&state!=='title';
+  const on=state!=='title';
   for(let i=0;i<XR.pool.length;i++){const sp=XR.pool[i],m=on&&XR.list[i];
     if(!m){sp.visible=false;continue}
     sp.visible=true;sp.position.set(m.x,0.95,m.z);sp.scale.set(m.t===1?1.0:0.9,m.t===1?2.3:1.9,1);sp.material.opacity=0.5+0.25*Math.sin(t*3.2+i*1.7)}
@@ -3174,6 +5917,14 @@ function roomEnd(res){
       say('You leave the village with the sun behind you.',3);
       sfx('door');
     }
+    return;
+  }
+  if(res.why==='bathroom'){
+    if(res.k==='dead'){mpSend({k:'sdr',r:'bathroom'});mpSys(myName()+' wiped too hard');P.hp=0;$('deadTitle').textContent='DEATH BY TOILET PAPER';die();return}
+    achieve('bathroom','Squeaky clean','Wiped until the paper came back white');
+    if(!res.reds)achieve('bathroomGentle','A gentle touch','Got clean in the bathroom without a single red wipe');
+    if(P.hp<maxHp())P.hp++;
+    say(P.hp<maxHp()?'You feel lighter. +1 heart.':'You feel lighter.',3);sfx('door');
     return;
   }
   if(res.why==='stillwood'){
@@ -3262,8 +6013,8 @@ $('gtx').addEventListener('change',e=>{lsSet('gtx',e.target.checked);lsSet('safe
 
 function solidAt(x,z){const tx=Math.floor(x),ty=Math.floor(z);return tx<0||ty<0||tx>=F.W||ty>=F.H||(F.g[ty*F.W+tx]&3)===1||F.g[ty*F.W+tx]===2}
 let panelLvl=1;
-function torchRadius(fu){if(fu===undefined)fu=state==='title'?100:P.fuel;return (1.6+6.0*Math.sqrt(Math.max(0,fu)/100))*(F.dark?0.5:1)*(F.back?0.45:1)}
-function blocked(x,z){return solidAt(x-PR,z-PR)||solidAt(x+PR,z-PR)||solidAt(x-PR,z+PR)||solidAt(x+PR,z+PR)}
+function torchRadius(fu){const mine=fu===undefined&&state!=='title';if(fu===undefined)fu=state==='title'?100:P.fuel;return (1.6+6.0*Math.sqrt(Math.max(0,fu)/100))*(F.dark?0.5:1)*(F.back?0.45:1)*(mine?potTorch():1)}
+function blocked(x,z){return solidAt(x-PR,z-PR)||solidAt(x+PR,z-PR)||solidAt(x-PR,z+PR)||solidAt(x+PR,z+PR)||BS.hz.length>0&&bossWallAt(x,z)}
 function mazeCell(x,z){
   if(!F||x<0||z<0||x>=F.W||z>=F.H)return 2;
   if(F.door&&F.door.tx===x&&F.door.ty===z)return 2;
@@ -3284,9 +6035,11 @@ function installFloor(depth,nextFloor,prepared=false){
   R.depth=depth;
   if(!archiveRun&&depth>deepest&&!(URL_DEPTH&&depth===R.startDepth)){deepest=depth;store.set('deepest',deepest)}
   if(F?.npcs)for(const npc of F.npcs)disposeGpuRig(npc);
-  R.xray=0;R.guide=0;GD.have=false;GD.key='';F=nextFloor;TK=null;WOF.here=false;panelLvl=1;P.grab=null;clearMooseLures();mimicReset();
-  if(!prepared){buildMesh(F);buildStatic(F);buildSdf(F)}
-  else landingOf.get(F)?.install();
+  R.xray=0;R.guide=0;GD.have=false;GD.key='';F=nextFloor;bossReset();
+  POT.zones=[];POT.proj=[];POT.fx=[];W.shots=[];P.fizz=0;P.woozy=0;P.hug=null;POT.hist=[];POT.apo=null;POT.stop=0;canvas.style.filter='';for(const k of['life','allmon','xray','gems','phase','hold'])POT.ps[k]=0;TK=null;WOF.here=false;panelLvl=1;P.grab=null;clearMooseLures();mimicReset();
+  if(prepared)landingOf.get(F)?.install();
+  else if(F.built!==2){buildMesh(F);buildStatic(F);buildSdf(F)}
+  wofModel();
   sweepWorld();if(F.npcs&&F.npcs.some(q=>q.type==='keeper'))keeperWarm();
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
   P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;P.inSafe=false;P.unseen=false;nearNpc=nearDoor=null;
@@ -3321,12 +6074,67 @@ function fillStartSel(){
   sel.value=want;$('depthLbl').hidden=deepest<2;
 }
 const floorTag=()=>F.name+(F.variant.ix?` (${F.variant.name})`:'');
+// The floor is built in steps behind the loading screen (one per frame, so the page stays responsive), then every shader the floor
+// needs is compiled in parallel and one frame is drawn off screen, so play starts without the first-frame stalls.
 function loadFloorWithProgress(title,seed,depth,enter){
   let nextFloor;
   showLoading(title,[
     ['Generating the maze',()=>{nextFloor=genFloor(seed,depth)}],
-    ['Building the floor',()=>enter(nextFloor)]
+    ['Building the walls',()=>{SURFS.defer(true);try{buildMesh(nextFloor)}finally{SURFS.defer(false)}nextFloor.built=1}],
+    ['Painting the walls',()=>paintSurfaces()],
+    ['Placing the details',()=>{buildStatic(nextFloor);buildSdf(nextFloor);nextFloor.built=2}],
+    ['Building the floor',()=>enter(nextFloor)],
+    ['Preparing shaders',()=>warmFloor()],
+    ['Almost there',()=>compilePasses()],
+    ['Ready',()=>{if(F&&state!=='title')try{render(performance.now()/1000)}catch(e){console.error(e)}}]
   ]);
+}
+// Post-processing (bloom, ambient occlusion, FXAA...) and the shadow shader compile on the first frame drawn through the composer.
+// First compile the passes' shaders in parallel, then draw one tiny frame through the composer (the lobby draws over it in the same
+// frame, so it is never seen), so stepping into the maze needs nothing new.
+function compilePasses(){
+  if(!composer)return Promise.resolve();
+  const sc=new THREE.Scene(),geo=new THREE.PlaneGeometry(2,2),seen=new Set();
+  const add=m=>{if(m&&m.isMaterial&&!seen.has(m)){seen.add(m);const q=new THREE.Mesh(geo,m);q.frustumCulled=false;sc.add(q)}};
+  for(const pass of composer.passes){if(pass.isOutputPass||pass.constructor.name==='OutputPass')continue;
+    for(const v of Object.values(pass)){if(Array.isArray(v))v.forEach(add);else add(v)}if(pass.fsQuad)add(pass.fsQuad.material)}
+  const prev=renderer.getRenderTarget();
+  try{renderer.setRenderTarget(composer.readBuffer);return renderer.compileAsync(sc,new THREE.OrthographicCamera(-1,1,1,-1,0,1)).catch(()=>{}).then(()=>geo.dispose())}
+  catch(e){return Promise.resolve()}finally{renderer.setRenderTarget(prev)}
+}
+function warmPost(){
+  if(!composer)return;
+  const hidden=[];scene.traverse(o=>{if(!o.visible&&o!==scene){hidden.push(o);o.visible=true}});
+  for(const l of shadLights)l.shadow.needsUpdate=true;
+  // drawn at the size it already is: resizing the composer (every render target) and the canvas and back forced a long GPU stall
+  try{composer.render(0)}catch(e){console.error(e)}
+  for(const o of hidden)o.visible=false;
+}
+// paint the queued wall textures a couple per frame (their shaders compiled in parallel first)
+function paintSurfaces(){
+  return SURFS.compileQueued().then(()=>new Promise(res=>{const step=()=>{if(SURFS.pump(2))requestAnimationFrame(step);else res()};step()}));
+}
+function warmFloor(){
+  if(!F||state==='title')return null;
+  wofModel();
+  return compileScene();
+}
+// Compile what the maze scene needs, for the target it is really drawn into: with post-processing that is the composer's buffer
+// (linear colour, no tone mapping), and a shader compiled for the screen would not be reused there.
+// Everything is compiled, hidden things too (in the lobby the maze's hands, sprites and characters are hidden, and they would
+// otherwise compile on the first step out of the lift), and the textures are uploaded now rather than on first use.
+function compileScene(){
+  const prev=renderer.getRenderTarget(),hidden=[];
+  scene.traverse(o=>{if(!o.visible){hidden.push(o);o.visible=true}});
+  try{
+    renderer.setRenderTarget(composer?composer.readBuffer:null);
+    const p=renderer.compileAsync(scene,camera).catch(()=>{});
+    const seen=new Set();
+    scene.traverse(o=>{for(const m of [].concat(o.material||[]))for(const k of['map','normalMap','emissiveMap','alphaMap','roughnessMap','aoMap']){const t=m&&m[k];
+      if(t&&t.isTexture&&!t.isRenderTargetTexture&&!seen.has(t)){seen.add(t);try{renderer.initTexture(t)}catch(e){}}}});
+    return p;
+  }catch(e){return Promise.resolve()}
+  finally{for(const o of hidden)o.visible=false;renderer.setRenderTarget(prev)}
 }
 function startRun(seed,depth,force,showProgress=false,onReady){
   if(MP.guest&&!force){mpJoinClick();return}
@@ -3347,11 +6155,12 @@ function enterRun(seed,sd,floor,landing,liftTrip){
   if(seed===autoSeed&&!$('seedIn').value.trim()){autoSeed=randSeed();reWarm=true}
   liftCacheClear();
   if(loading?.kind==='shaft')closeLoading(); // an unfinished title warm-up must not hold the doors shut or rebuild the world later
-  roomLeave();$('deadTitle').textContent='THE DARK TAKES YOU';wofClear();WOF.done=true;WOF.plan=null;WOF.flap=0;
+  roomLeave();$('deadTitle').textContent='THE DARK TAKES YOU';wofClear();WOF.done=true;WOF.plan=null;WOF.flap=0;WOF.party=0;
   showHub(false);
   if(!archiveRun)hub.reset();
   P.down=false;
   R.seed=seed;R.pk={};R.mirror=false;P.pick=0;P.spikeTraps=0;P.moose=P.mounted=false;P.moosePending=null;R.score=0;R.time=0;R.gems=0;R.startDepth=sd;
+  R.hpBonus=0;potReset(true);P.fizz=0;P.woozy=0;P.kissT=0;P.hug=null;W.shots=[];W.cd=0;W.parryT=0;
   P.hp=maxHp();P.fuel=100;P.stam=100;P.winded=false;P.flash=1+Math.floor((sd-1)/3)+(up.band|0);P.ward=0;R.wind=false;P.inv=0;P.chill=0;lowFuelSaid=false;
   installFloor(sd,floor,!!landing);
   if(landing){
@@ -3376,12 +6185,13 @@ function showTips(){
   t.forEach((msg,i)=>tipTimers.push(setTimeout(()=>{if(state==='play'&&R.depth===d)say(msg,4)},4200+i*4600)));
 }
 function toTitle(){
+  bossReset();
   if(archiveRun){finishArchive();return}
   if(loading)closeLoading();
   endWallClip();
   roomLeave();glFallEnd();GL.queued=null;
   if(MP.on)mpLeave(false);
-  state='title';
+  state='title';potHide();
   ['pause','dead','hud','map','talk'].forEach(id=>$(id).classList.add('hidden'));talk=null;clearPrompt();
   $('toast').style.opacity=0;
   showHub(true);
@@ -3389,6 +6199,7 @@ function toTitle(){
   if(document.pointerLockElement){usingLock=false;document.exitPointerLock()}
 }
 function showBest(){
+  hub.setTrophies?.(bossTrophies());
   fillStartSel();
   const b=store.get('best',null);
   $('bestLine').textContent=(b?`Best run: depth ${b.depth}, ${b.score} points · `:'')+`Level ${plLevel()} · ${wallet} gems banked`;
@@ -3443,9 +6254,9 @@ function die(){
   if(archiveRun){state='dead';queueMicrotask(finishArchive);return}
   if(loading)closeLoading();
   endWallClip();
-  roomLeave();GL.queued=null;R.xray=0;R.guide=0;
+  roomLeave();GL.queued=null;R.xray=0;R.guide=0;POT.ps={};BS.dance=null;danceHide();
   if(MP.on&&!MP.wiping){mpDown();return}
-  state='dead';clearPrompt();
+  state='dead';clearPrompt();potHide();
   mpDeadPanel();
   if(document.pointerLockElement)document.exitPointerLock();
   const b=store.get('best',null);
@@ -3482,6 +6293,8 @@ function useFlash(){
   let n=0;
   for(const s of F.shades)if(s.type===3&&s.x>0&&Math.hypot(s.x-P.x,s.z-P.z)<9&&los(P.x,P.z,s.x,s.z)){banish(s,true);n++}
   n+=flashStun(P.x,P.z,up.powder|0);
+  BS.reveal=2.5;   // a flash shows the Mime's walls
+  for(const s of F.shades)if(s.x>0&&!s.dead&&!s.dropped&&s.type!==3&&s.type!==6&&Math.hypot(s.x-P.x,s.z-P.z)<6.5+1.25*(up.powder|0)&&los(P.x,P.z,s.x,s.z)){s.dropped=true;potLoot(s.x,s.z,'ingr',1,s.type===0?10:s.type===2?11:12)}   // a flash knocks a little of it loose
   if(MP.guest)mpSend({k:'fl',d:R.depth,x:P.x,z:P.z,p:up.powder|0},MP.hostId);
   sfx('flash');rumble(120,0.2,0.7);
   if(n)say(n>1?`${n} creatures stunned`:'Stunned',1.5);
@@ -3490,7 +6303,7 @@ function flashStun(x,z,lv){
   lv=clamp(lv|0,0,2);let n=0;
   for(const s of F.shades){
     if(s.type===3)continue;
-    if(Math.hypot(s.x-x,s.z-z)<6.5+1.25*lv&&los(x,z,s.x,s.z)){s.stun=4.5+1.5*lv;if(s.type!==1)s.state=0;n++}
+    if(Math.hypot(s.x-x,s.z-z)<6.5+1.25*lv+(s.rad||0)&&los(x,z,s.x,s.z)){if(s.type===6&&s.role!=='add'){if(!s.immune)s.stun=Math.max(s.stun,1.2)}else{s.stun=4.5+1.5*lv;if(s.type!==1&&s.type!==6)s.state=0}n++}
   }
   n+=mimicFlash(x,z);
   return n;
@@ -3640,8 +6453,12 @@ function setBlk(v){
   }
 }
 function hurt(s){
+  if(wHurt(s))return;
+  if(potHurt(s))return;
   if(P.ward){P.ward=0;P.inv=1.6;if(s){s.stun=2.5;s.calm=9;s.state=0}sfx('seal');say('Your ward stone shatters',2);return}
   P.hp--;P.inv=1.6;if(s){s.stun=2.5;s.calm=9;s.state=0}
+  if(POT.hex>0||ps('doom')){if(POT.hex>0)POT.hex--;P.hp--;say(ps('doom')?'Doomed: the wound cuts twice as deep':'The hex bites: two hearts',1.8)}   // hexed: this wound costs two
+  if(P.hp<=0&&potDying())return;
   if(P.hp<=0&&up.wind&&!R.wind){R.wind=true;P.hp=1;P.inv=3;say('Second wind. You are still standing.',3)}
   try{if(touch.on&&navigator.vibrate)navigator.vibrate(90)}catch(e){}
   rumble(260,0.9,0.6);
@@ -3655,14 +6472,15 @@ function collect(it){
   switch(it.type){
     case 'shard':P.shards++;R.score+=50;sfx('shard');
       say(P.shards>=3?'The seal is broken. Find the way down.':`Shard ${P.shards} of 3`,2.5);break;
-    case 'gem':R.score+=10*R.depth;R.gems++;wallet++;if(Math.random()<0.15*(up.purse|0)){R.gems++;wallet++;say('Lucky find: 2 gems',1.2)}store.set('wallet',wallet);sfx('gem');break;
+    case 'gem':{const k=(ps('gold3')?3:ps('midas')?2:1)*(ps('lucky')&&Math.random()<0.5?2:1);if(k>1){R.gems+=k-1;wallet+=k-1}}R.score+=10*R.depth;R.gems++;wallet++;if(Math.random()<0.15*(up.purse|0)){R.gems++;wallet++;say('Lucky find: 2 gems',1.2)}store.set('wallet',wallet);sfx('gem');break;
     case 'oil':P.fuel=Math.min(100,P.fuel+35);lowFuelSaid=false;sfx('oil');break;
     case 'flash':P.flash++;sfx('pick');break;
     case 'chest':wallet+=8;R.gems+=8;R.score+=60*R.depth;store.set('wallet',wallet);sfx('shard');say('You slipped through the wall. A hidden cache: 8 gems',4);break;
     case 'key':P.keys++;sfx('key');say('You found the gate key',2.5);break;
     case 'heart':if(P.hp<maxHp())P.hp++;else R.score+=25;sfx('pick');break;
+    case 'ingr':POT.bag[it.ing]++;potSaveBag();POT.hudK='';tone(1046,0.1,'triangle',0.08);tone(1318,0.14,'triangle',0.07,0.07);say(INGREDIENTS[it.ing].name+(POT.bag[it.ing]>1?' ('+POT.bag[it.ing]+')':'')+'. The Brewer can use this.',2);break;
   }
-  mpSend({k:'got',d:R.depth,i:F.items.indexOf(it)});
+  if(!it.loc)mpSend({k:'got',d:R.depth,i:F.items.indexOf(it)});
 }
 
 /* ---------- multiplayer: one player hosts, friends join with ?room=CODE ----------
@@ -3878,7 +6696,7 @@ function mpRecv(m,from){
     case 'p':{
       const a=m.a;if(!Array.isArray(a))return;
       p.hub=null;
-      p.d=m.d;p.x=+a[0];p.z=+a[1];p.y=+a[2];p.yaw=+a[3];p.pitch=+a[4];p.fu=+a[5];p.down=!!(a[6]&1);p.safe=!!(a[6]&2);p.run=!!(a[6]&4);p.away=!!(a[6]&8);p.mounted=!!(a[6]&16);p.unseen=!!(a[6]&32);p.hp=a[7];p.form=a[6]>>6&3;p.fat=!!(a[6]&256);p.pox=!!(a[6]&512);p.frz=!!(a[6]&1024);p.bob=!!(a[6]&2048);p.hedge=!!(a[6]&4096);p.curl=a[6]&8192?1:a[6]&16384?2:0;p.mirror=!!(a[6]&32768);
+      p.d=m.d;p.x=+a[0];p.z=+a[1];p.y=+a[2];p.yaw=+a[3];p.pitch=+a[4];p.fu=+a[5];p.down=!!(a[6]&1);p.safe=!!(a[6]&2);p.run=!!(a[6]&4);p.away=!!(a[6]&8);p.mounted=!!(a[6]&16);p.unseen=!!(a[6]&32);p.hp=a[7];p.form=a[6]>>6&3;p.fat=!!(a[6]&256);p.pox=!!(a[6]&512);p.frz=!!(a[6]&1024);p.bob=!!(a[6]&2048);p.hedge=!!(a[6]&4096);p.curl=a[6]&8192?1:a[6]&16384?2:0;p.mirror=!!(a[6]&32768);p.pf=a[8]|0;
       if(p.rx===undefined||p.rd!==p.d||Math.hypot(p.x-p.rx,p.z-p.rz)>3){p.rx=p.x;p.rz=p.z;p.ry=p.y;p.ryaw=p.yaw;p.rpitch=p.pitch;p.rd=p.d}
       break;}
     case 'm':{
@@ -3890,7 +6708,7 @@ function mpRecv(m,from){
         if(s.type===3)continue;
         if(j+5>=a.length)break;
         s.mooseFollowing=following.has(j/6);
-        s.nx=a[j];s.nz=a[j+1];s.face=a[j+2];s.state=a[j+3];s.stun=a[j+4];s.frozen=!!a[j+5];j+=6;
+        s.nx=a[j];s.nz=a[j+1];s.face=a[j+2];s.state=a[j+3];s.stun=a[j+4];s.frozen=!!a[j+5];s.pv=Array.isArray(m.pv)?m.pv[j/6]|0:0;{const hp=Array.isArray(m.hp)?m.hp[j/6]|0:0;if(hp){if(s.hpPct&&hp<s.hpPct)s.hitT=0.25;s.hpPct=hp;s.hpShow=1.2}else s.hpPct=0}j+=6;
         s.gx=Math.floor(s.nx);s.gy=Math.floor(s.nz);s.px=-1;
         if(s.x<0||Math.hypot(s.nx-s.x,s.nz-s.z)>2.5){s.x=s.nx;s.z=s.nz}
       }
@@ -3917,6 +6735,19 @@ function mpRecv(m,from){
       P.moosePending=null;
       if(m.ok)finishMooseSacrifice();else say('Face an open hall and try again.',2);
       break;
+    case 'wh':{if(!MP.host||!inRun||!here||!Array.isArray(m.h))break;for(const h of m.h.slice(0,24))if(h&&Number.isInteger(h.i)&&Number.isFinite(+h.d)&&+h.d<50)wApply(h,from);break}
+    case 'gw':{if(fromHost&&inRun&&here)grannyWoozy();break}
+    case 'bz':{if(fromHost&&inRun&&here&&F.boss&&m.h&&typeof m.h==='object'){const h={...m.h,t:0};if(!BS.hz.some(q=>q.id===h.id))BS.hz.push(h)}break}
+    case 'bdm':{if(inRun&&here&&p){p.dz={lane:clamp(m.l|0,0,3),t:R.time}}break}
+    case 'bst':{if(fromHost&&inRun&&here)bossStart(true);break}
+    case 'bd':{if(fromHost&&inRun&&here)bossWin();break}
+    case 'bfx':{if(fromHost&&inRun&&here&&m.w==='fuel')bFuelMe(Math.min(60,+m.a||0),String(m.why||'').slice(0,80));break}
+    case 'gg':{if(fromHost&&inRun&&here&&F.shades[m.i])grannyGrab(F.shades[m.i]);break}
+    case 'gf':{if(MP.host&&inRun&&here&&F.shades[m.i]){p.hug=false;grannyLet(F.shades[m.i],p.x,p.z)}break}
+    case 'fz':{if(fromHost&&inRun&&here&&Number.isFinite(+m.a))fizzMe(Math.min(0.5,+m.a));break}
+    case 'wk':{if(fromHost&&inRun&&here)wReward(m.t|0);break}
+    case 'pt':{if(!inRun||!here||!potInfo(m.id)||![m.x,m.z].every(Number.isFinite))break;potLand(m,false);break}
+    case 'pth':{if(!inRun||!here||!potInfo(m.id)||!Array.isArray(m.a)||!m.a.every(Number.isFinite))break;const a=m.a;POT.proj.push({id:m.id,x:a[0],y:a[1],z:a[2],vx:a[3],vy:a[4],vz:a[5],t:0,mine:false,rot:0});break}
     case 'got':{
       if(!inRun||!here)return;
       const it=F.items[m.i];if(!it||it.got)return;
@@ -3932,7 +6763,7 @@ function mpRecv(m,from){
       say(p.name+' opened a strange door',2.5);mpSys(p.name+' opened '+(DOOR_KINDS[m.w]?.name||'a strange door'));
       break;}
     case 'rv':if(m.q&&typeof m.q==='object'&&typeof m.w==='string'&&Object.hasOwn(DOOR_KINDS,m.w)){p.rv={w:m.w,q:m.q,d:m.d,at:performance.now()};if(RW&&RW.id===from&&RW.w===m.w)ROOMS.sync(m.q)}break;
-    case 'sdr':if(inRun)say(m.r==='theater'?p.name+' silenced the picture house':m.r==='theater-dead'?p.name+' was roasted to death by teenagers':m.r==='esc'?p.name+' beat the glass kiln':m.r==='fall'?p.name+' fell to their death':m.r==='lucky'?p.name+' hid behind a mirror and got lucky':m.r==='mirror'?p.name+' was eaten by the thing behind the mirror':p.name+' was buried in the glass kiln',3);break;
+    case 'sdr':if(inRun)say(m.r==='theater'?p.name+' silenced the picture house':m.r==='theater-dead'?p.name+' was roasted to death by teenagers':m.r==='esc'?p.name+' beat the glass kiln':m.r==='fall'?p.name+' fell to their death':m.r==='lucky'?p.name+' hid behind a mirror and got lucky':m.r==='mirror'?p.name+' was eaten by the thing behind the mirror':m.r==='bathroom'?p.name+' wiped too hard':m.r==='hamlet'?p.name+' was taken by the thing in the village':p.name+' was buried in the glass kiln',3);break;
     case 'warp':{
       const n=(m.d|0)-R.depth;
       if(inRun&&state!=='trans'&&n>=1&&n<=3)mpDescend(n,p.name+' woke a black hole. It throws you all '+n+(n>1?' floors':' floor')+' down');
@@ -3964,6 +6795,11 @@ function mpRecv(m,from){
       if(ok&&WOF.done)wofBegin(m,false);break}
     case 'rr':if(fromHost&&inRun&&rrValid(m.s)&&(!RR||m.s.ver>RR.ver||m.s.seats.length!==RR.seats.length)){RR=m.s;rrShow()}break;
     case 'rra':if(MP.host&&RR&&(m.a==='spin'||m.a==='shoot'))rrApply(m.a,from);break;
+    case 'cg':{if(!fromHost||!inRun||m.d!==R.depth)break;if(m.end){CG=null;break}
+      if(![m.x,m.z,m.y].every(Number.isFinite))break;
+      if(!CG)CG=cgNew(m.x,m.z);
+      CG.tx=m.x;CG.tz=m.z;CG.tyaw=m.y;CG.mv=+m.m||0;CG.chew=m.c?1:0;CG.t=+m.t||0;CG.age=0;break}
+    case 'cgb':if(fromHost&&inRun)cgBitten();break;
     case 'ts':{if(!fromHost||!inRun||m.d!==R.depth)break;if(m.end){TS=null;break}
       if(![m.x,m.z,m.y].every(Number.isFinite))break;
       if(!TS)TS=tsNew(m.x,m.z);
@@ -3977,9 +6813,9 @@ function mpRecv(m,from){
 // the host's view of everyone the creatures can hunt
 function mpTargets(){
   const T=[];
-  if(!P.down)T.push({x:P.x,z:P.z,yaw:P.yaw,fuel:P.fuel,inSafe:P.inSafe||P.away||!!FX.frozen,inv:P.inv,loc:true,mirror:R.mirror,tx:P.tx,ty:P.ty});
+  if(!P.down)T.push({x:P.x,z:P.z,yaw:P.yaw,fuel:P.fuel,inSafe:P.inSafe||P.away||!!FX.frozen||potSafeAt(P.x,P.z),inv:P.inv,loc:true,mirror:R.mirror,tx:P.tx,ty:P.ty,pf:potFlags()});
   if(MP.host)for(const p of MP.peers.values())
-    if(p.run&&!p.down&&p.d===R.depth&&p.x!==undefined&&mpFresh(p))T.push({x:p.x,z:p.z,yaw:p.yaw,fuel:p.fu,inSafe:p.safe,inv:p.inv,loc:false,mirror:!!p.mirror,p,tx:Math.floor(p.x),ty:Math.floor(p.z)});
+    if(p.run&&!p.down&&p.d===R.depth&&p.x!==undefined&&mpFresh(p))T.push({x:p.x,z:p.z,yaw:p.yaw,fuel:p.fu,inSafe:p.safe||potSafeAt(p.x,p.z),inv:p.inv,loc:false,mirror:!!p.mirror,p,tx:Math.floor(p.x),ty:Math.floor(p.z),pf:p.pf|0});
   return T;
 }
 // path distance from every tile to the nearest player
@@ -4059,7 +6895,7 @@ function mpTick(raw){
   MP.pt-=raw;
   if(MP.pt<=0){
     MP.pt=1/15;
-    mpSend({k:'p',d:R.depth,a:[r3(P.x),r3(P.z),r3(P.y),r3(P.yaw),r3(P.pitch),Math.round(P.fuel),mpPosFlags(),P.hp]});
+    mpSend({k:'p',d:R.depth,a:[r3(P.x),r3(P.z),r3(P.y),r3(P.yaw),r3(P.pitch),Math.round(P.fuel),mpPosFlags(),P.hp,potFlags()]});
   }
   rvT-=raw;
   if(state==='room'&&rvT<=0&&MP.peers.size){rvT=0.1;const q=ROOMS.snap();if(q)mpSend({k:'rv',d:R.depth,w:ROOMS.kind,q})}
@@ -4067,15 +6903,15 @@ function mpTick(raw){
     MP.mt-=raw;
     if(MP.mt<=0){
       MP.mt=0.1;
-      const a=[],ml=[];
+      const a=[],ml=[],pv=[];
       for(const s of F.shades){
         if(s.type===3)continue;
         if(facingMoose(s))ml.push(a.length/6);
-        a.push(r2(s.x),r2(s.z),r2(s.face||0),s.state|0,r2(Math.max(0,s.stun||0)),s.frozen?1:0);
+        a.push(r2(s.x),r2(s.z),r2(s.face||0),s.state|0,r2(Math.max(0,s.stun||0)),s.frozen?1:0);pv.push(s.pv|0);
       }
       const M=MIM;
       const moose=[...mooseLures].map(([id,l])=>[id,r2(l.x),r2(l.z),r2(l.yaw),l.hp]);
-      mpSend({k:'m',d:R.depth,t:r2(R.time),b:F.blk|0,s:a,moose,ml,mi:[r2(M.x),r2(M.z),r2(M.face),M.st,M.as,M.vic,r2(M.t)]});
+      mpSend({k:'m',d:R.depth,t:r2(R.time),b:F.blk|0,s:a,pv:pv.some(Boolean)?pv:undefined,hp:F.shades.some(q=>q.type!==3&&q.hpShow>0)?F.shades.filter(q=>q.type!==3).map(q=>q.hpShow>0&&q.hpMax>0?Math.max(1,Math.round(q.hp/q.hpMax*100)):0):undefined,moose,ml,mi:[r2(M.x),r2(M.z),r2(M.face),M.st,M.as,M.vic,r2(M.t)]});
     }
     // everyone is down: the run is over for the whole room
     if(P.down&&!mpAlive().length){mpSend({k:'wipe'});MP.wiping=true;die();MP.wiping=false}
@@ -4091,6 +6927,9 @@ function buildPlayer(p,t,rev,et){
   const S=AV,v=(x,y,z)=>[x*S,y*S,z*S],ph=hashStr(p.id)%100;
   const mv=Math.min(1,p.spd/2.7),w=p.walk,sw=Math.sin(w)*mv,bob=Math.abs(Math.cos(w))*0.018*mv,breath=Math.sin(t*1.7+ph)*0.004;
   const B={p:[p.rx,Math.max(0,p.ry),p.rz],R:rYaw(p.ryaw)};
+  // the dance-off: a groove while the round lasts, and a move for each arrow hit (lane 0 left, 1 down, 2 up, 3 right)
+  const dz=p.dz&&R.time-p.dz.t<0.55?p.dz:null,dk=dz?Math.sin(Math.min(1,(R.time-dz.t)/0.55)*Math.PI)**0.6:0,dl=dz?dz.lane:-1,dancing=p.dz&&R.time-p.dz.t<3;
+  if(dancing){B.p[1]+=Math.abs(Math.sin(R.time*7+ph))*0.02+(dl===2?0.07*dk:dl===1?-0.05*dk:0);B.R=m3(B.R,rX((dl===0?-0.22:dl===3?0.22:0)*dk+Math.sin(R.time*3.5+ph)*0.06))}
   for(const z of[-1,1]){
     const st=sw*z;
     const hip=v(0,0.45,z*0.052),knee=v(0.012+0.09*st,0.25+0.03*Math.max(0,st),z*0.058),ank=v(0.17*st,0.05+0.06*Math.max(0,-st),z*0.062);
@@ -4106,9 +6945,15 @@ function buildPlayer(p,t,rev,et){
   else mimicMaw(U,v,S,rev,t,et,cloak);
   ball(U,v(-0.035,0.2+breath,0),[0.055*S,0.12*S,0.095*S],cloakD);
   const la=-sw*0.09;
-  limb(U,v(0,0.225+breath,-0.1),v(-0.01+la*0.6,0.11+breath,-0.135),v(0.02+la,0.01,-0.115),0.03*S,0.027*S,0.023*S,cloak,cloak,skin,0.026*S);
-  const W1=v(0.16,0.17+breath,0.12);
-  limb(U,v(0,0.225+breath,0.1),v(0.05,0.11+breath,0.15),W1,0.03*S,0.027*S,0.023*S,cloak,cloak,skin,0.026*S);
+  const mix=(a,b,k)=>a.map((q,i)=>q+(b[i]-q)*k);
+  let LH=v(0.02+la,0.01,-0.115),LE=v(-0.01+la*0.6,0.11+breath,-0.135),W1=v(0.16,0.17+breath,0.12),RE=v(0.05,0.11+breath,0.15);
+  if(dz){
+    const L2=dl===0?v(0.02,0.4,-0.34):dl===2?v(0.03,0.52,-0.12):dl===1?v(0.16,0.12,-0.1):v(0.04,0.2,-0.2);
+    const R2=dl===3?v(0.02,0.4,0.34):dl===2?v(0.03,0.52,0.12):dl===1?v(0.18,0.12,0.1):v(0.04,0.2,0.2);
+    LH=mix(LH,L2,dk);W1=mix(W1,R2,dk);LE=mix(LE,[(0+LH[0])/2,(0.225*S+LH[1])/2,(-0.1*S+LH[2])/2-0.03*S],dk);RE=mix(RE,[(0+W1[0])/2,(0.225*S+W1[1])/2,(0.1*S+W1[2])/2+0.03*S],dk);
+  }
+  limb(U,v(0,0.225+breath,-0.1),LE,LH,0.03*S,0.027*S,0.023*S,cloak,cloak,skin,0.026*S);
+  limb(U,v(0,0.225+breath,0.1),RE,W1,0.03*S,0.027*S,0.023*S,cloak,cloak,skin,0.026*S);
   const tb=[W1[0]+0.004,W1[1]-0.05,W1[2]],tt=[W1[0]+0.03,W1[1]+0.13,W1[2]];
   seg(U,tb,tt,0.011,0.013,wood);ball(U,tt,[0.02,0.018,0.02],rag,true);
   seg(U,v(0,0.27+breath,0),v(0.003,0.31+breath,0),0.027*S,0.026*S,skin);
@@ -4558,18 +7403,26 @@ addEventListener('keydown',e=>{
   if(state==='title'){
     if(e.code==='KeyE'||e.code==='Enter'){e.preventDefault();hub.interact()}
   }
+  else if(state==='play'&&P.hug&&['Space','KeyE','Enter'].includes(e.code)){grannyMash()}
+  else if(state==='play'&&BS.dance&&danceKey(e.code)){}
   else if(state==='play'){
     if(e.code==='Space')P.jumpQ=MOVE.jumpBuffer;
-    if(e.code==='KeyE')act();
+    if(e.code==='KeyE')act(false);
+    if(e.code==='KeyY')wCycle();
     if(e.code==='KeyQ')usePick();
     if(e.code==='KeyR')useMoose();
     if(e.code==='KeyG')useMoose(true);
     if(e.code==='KeyM'||e.code==='Tab')mapBig=!mapBig;
+    if(/^Digit[1-6]$/.test(e.code)){const i=+e.code.slice(5)-1;if(i<POT.belt.length){POT.sel=i;POT.hudK='';sfx('pick')}}
+    if(e.code==='KeyH')potDrink();
+    if(e.code==='KeyI')invOpen();
+    if(e.code==='KeyB')potThrow();
     if(e.code==='Escape'||e.code==='KeyP')pause();
     if((e.code==='Enter'||e.code==='NumpadEnter'||e.code==='KeyT')&&MP.on){e.preventDefault();chatOpenBox()}
   }else if(state==='room'){
     if((e.code==='KeyT'||roomMode!=='table'&&(e.code==='Enter'||e.code==='NumpadEnter'))&&MP.on){e.preventDefault();chatOpenBox()}
-  }else if(state==='talk'){
+  }else if(state==='talk'&&talk&&talk.inv)invKey(e);
+  else if(state==='talk'){
     if(e.code==='Escape'||e.code==='KeyQ')closeTalk();
     else if(e.code==='ArrowUp'||e.code==='KeyW')moveTalk(-1);
     else if(e.code==='ArrowDown'||e.code==='KeyS')moveTalk(1);
@@ -4630,8 +7483,9 @@ const selectMooseTile=e=>ROOMS.tap(e.clientX/innerWidth*2-1,1-e.clientY/innerHei
 canvas.addEventListener('pointerdown',e=>{
   if(!loading&&onMooseTable()&&e.button===0)selectMooseTile(e);
 });
-canvas.addEventListener('mousedown',e=>{if(loading)return;if(state==='room'&&!onMooseTable()&&e.button===0)mouseL=true;if(state!=='play'||document.pointerLockElement!==canvas)return;if(e.button===0)act();else if(e.button===2)P.jumpQ=MOVE.jumpBuffer});
-addEventListener('mouseup',e=>{if(e.button===0)mouseL=false});
+canvas.addEventListener('mousedown',e=>{if(loading)return;if(state==='room'&&!onMooseTable()&&e.button===0)mouseL=true;if(state!=='play'||document.pointerLockElement!==canvas)return;if(e.button===0){if(grannyMash())return;W.hold=true;clickL()}else if(e.button===2)clickR();else if(e.button===1){e.preventDefault();potThrow()}});
+canvas.addEventListener('wheel',e=>{if(state==='play'&&document.pointerLockElement===canvas&&POT.belt.length>1){e.preventDefault();potSel(e.deltaY>0?1:-1)}},{passive:false});
+addEventListener('mouseup',e=>{if(e.button===0){mouseL=false;W.hold=false}});
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 $('resumeBtn').addEventListener('click',()=>resume(true));
 $('lobbyPause').addEventListener('click',()=>{initAudio();lobbyPauseHide(true)});
@@ -4645,6 +7499,7 @@ function enableTouch(){
 }
 if(window.matchMedia&&matchMedia('(pointer:coarse)').matches)enableTouch();
 addEventListener('touchstart',()=>{enableTouch();if(state==='room')roomDevice='touch';initAudio()},{passive:true});
+document.addEventListener('touchstart',()=>{if(P.hug)grannyMash()},{capture:true,passive:true});   // any tap struggles out of Granny's hug
 {
   const layer=$('touch'),base=$('stickBase'),knob=$('stickKnob'),SR=52;
   const sceneTaps=new Map();
@@ -4710,6 +7565,9 @@ addEventListener('touchstart',()=>{enableTouch();if(state==='room')roomDevice='t
   btn('tPause',()=>{touch.jump=false;endStick();touch.lookId=null;touch.tapId=null;ROOMS.untap();pause()});
   btn('tMap',()=>{mapBig=!mapBig});
   btn('tPick',()=>{usePick()});
+  {const st=document.createElement('style');st.textContent='#tAtk{right:calc(210px + env(safe-area-inset-right));bottom:calc(26px + env(safe-area-inset-bottom));width:74px;height:74px;font-size:12px}body:not(.hasweapon) #tAtk{display:none}';document.head.appendChild(st);
+   const b=document.createElement('div');b.id='tAtk';b.className='tbtn';b.textContent='ATTACK';$('touch').appendChild(b);btn('tAtk',()=>{touch.atk=true;wAttack()},()=>{touch.atk=false})}
+  {const b=document.createElement('div');b.id='tInv';b.className='tbtn';b.textContent='BAG';$('touch').appendChild(b);btn('tInv',()=>{if(state==='play')invOpen();else if(talk&&talk.inv)closeTalk()})}
   btn('tMoose',()=>{useMoose()});
   btn('tLure',()=>{useMoose(true)});
   btn('tTalk',()=>{touch.talk=true},()=>{touch.talk=false});
@@ -4735,7 +7593,7 @@ function pollPad(){
   const gp=pickPad();pad.gp=gp;
   if(!gp){if(pad.id){pad.id='';$('padLine').textContent='';pad.prev=[]}return}
   if(pad.id!==gp.id){pad.id=gp.id;initAudio();
-    $('padLine').innerHTML='Controller connected. <b>Left stick</b> move · <b>Right stick</b> look · <b>A</b> jump · <b>X</b> or <b>RT</b> flash · <b>LT</b> or click left stick to sprint · <b>Y</b> map · <b>RB</b> pickaxe · <b>Start</b> pause';
+    $('padLine').innerHTML='Controller connected. <b>Left stick</b> move · <b>Right stick</b> look · <b>A</b> jump · <b>RT</b> attack · <b>LB</b> flash · <b>X</b> talk · <b>LT</b> or click left stick to sprint · <b>Y</b> map · <b>RB</b> pickaxe · <b>Back</b> drink a potion · <b>B</b> throw it · <b>D-pad ← →</b> choose · <b>R3</b> inventory · <b>Start</b> pause';
     if(state==='play')say('Controller connected',2)}
   const B=i=>{const b=gp.buttons[i];return !!b&&(b.pressed||b.value>0.4)};
   if(loading){pad.prev=gp.buttons.map((_,i)=>B(i));return}
@@ -4754,20 +7612,27 @@ function pollPad(){
   }
   if(state==='play'){
     if(archiveRun&&hit(8)){finishArchive();pad.prev[8]=true;return}
+    if(P.hug&&(hit(0)||hit(2)||hit(7))){grannyMash();pad.prev=gp.buttons.map((_,i)=>B(i));return}
     pad.jump=B(0)&&performance.now()>padHold;
     pad.curl=FX.hedge>0&&B(4);pad.roll=FX.hedge>0&&B(11);   // the hedgehog borrows LB and the right stick click
-    if(B(6)||(B(4)&&!(FX.hedge>0)))pad.sprint=true;
+    if(B(6))pad.sprint=true;
     if(hit(10))pad.sprintLatch=!pad.sprintLatch;
     if(Math.hypot(pad.mx,pad.my)<0.3)pad.sprintLatch=false;
     if(pad.sprintLatch)pad.sprint=true;
-    if(hit(2)||hit(1)||hit(7))act();
+    if(hit(2)||hit(1)&&!POT.belt.length)act(false);
+    if(hit(7)){if(wHeld()&&!nearNpc&&!nearDoor)wAttack();else if(F&&F.boss&&!nearNpc&&!nearDoor)wPunch();else act(false)}
+    if(B(7)&&wHeld()&&!nearNpc&&!nearDoor)wAttack();
+    if(hit(4)&&!(FX.hedge>0))useFlash();
+    if(hit(1)&&POT.belt.length)potThrow();
+    if(hit(8))potDrink();
+    if(hit(11)&&!(FX.hedge>0))invOpen();
     if(hit(5))usePick();
     if(hit(12))useMoose();
     if(hit(13))useMoose(true);
     if(hit(3))mapBig=!mapBig;
     if(hit(9))pause();
-    if(hit(14))setBright(bright-0.15);
-    if(hit(15))setBright(bright+0.15);
+    if(hit(14)){if(POT.belt.length)potSel(-1);else setBright(bright-0.15)}
+    if(hit(15)){if(POT.belt.length)potSel(1);else setBright(bright+0.15)}
   }else if(state==='title'){
     pad.sprint=B(6)||B(4);
     if(activeStation){
@@ -4786,6 +7651,7 @@ function pollPad(){
     }
   }
   else if(state==='room'&&archiveRun&&hit(8))finishArchive();
+  else if(state==='talk'&&talk&&talk.inv)invPad(hit,gp);
   else if(state==='talk'){
     const sy=(gp.axes[1]||0)>0.6?1:(gp.axes[1]||0)<-0.6?-1:0;
     if(hit(12)||(sy<0&&pad.psy!==-1))moveTalk(-1);else if(hit(13)||(sy>0&&pad.psy!==1))moveTalk(1);
@@ -4841,9 +7707,9 @@ function tone(freq,dur,type,vol,when,slide,pan){
   if(pan&&ac.createStereoPanner){const p=ac.createStereoPanner();p.pan.value=clamp(pan,-1,1);g.connect(p);out=p}
   out.connect(sfxBus);o.start(t);o.stop(t+dur+0.05);
 }
-function noise(dur,vol,freq,q){
+function noise(dur,vol,freq,q,when){
   if(!ac)return;
-  const t=ac.currentTime,s=ac.createBufferSource(),f=ac.createBiquadFilter(),g=ac.createGain();
+  const t=ac.currentTime+(when||0),s=ac.createBufferSource(),f=ac.createBiquadFilter(),g=ac.createGain();
   s.buffer=noiseBuf;s.loop=true;f.type='bandpass';f.frequency.value=freq;f.Q.value=q||1;
   g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
   s.connect(f);f.connect(g);g.connect(sfxBus);s.start(t,Math.random()*0.5);s.stop(t+dur+0.02);
@@ -4927,7 +7793,8 @@ function watcher(s,dt,pfx,pfz){
 }
 /* ---------- update ---------- */
 // speed modifiers shared by the maze and the rooms: the cold slows you, boots speed you up
-const moveMul=()=>(P.chill>0?0.55:1)*(1+0.06*(up.boots|0))*wofSpeed();
+const moveMul=()=>(P.chill>0?0.55:1)*((P.woozy||0)>0?0.7:1)*((P.fizz||0)>0.3?0.8:1)*(1+0.06*(up.boots|0))*wofSpeed()*potSpeed()*bossMoveMul();
+const potPhase=(x,z)=>x<0.6||z<0.6||x>F.W-0.6||z>F.H-0.6;
 // A sprint clip does not pop you through. You are caught in the stone, the air goes, then you are shoved out.
 let wallClip=null;
 function endWallClip(){
@@ -4971,7 +7838,7 @@ function update(dt){
   R.time+=dt;xrayTick(dt);guideTick(dt);mooseLureTick(dt);scoutTick(dt);
   // in a shared game the world keeps going while you pause or talk, but you stand still
   if(P.grab)mimicGrabTick(dt);
-  const ctl=state==='play'&&!P.grab&&!GL.fall&&!(GL.rb&&!GL.rb.fwd)&&!FX.frozen&&FX.curl!==1;
+  const ctl=state==='play'&&!P.grab&&!GL.fall&&!(GL.rb&&!GL.rb.fwd)&&!FX.frozen&&FX.curl!==1&&!potHeld()&&!P.hug&&!BS.dance&&!danceFight();
   if(P.down)mpSpectate();
   else{
   // look and move: the shared movement system (src/movement.js), the same one the rooms use
@@ -4979,13 +7846,19 @@ function update(dt){
   if(wallClip)wallClipTick(dt);
   else{
   const moon=FX.moon>0?-1:1;   // Moonwalk: forward is backward, left is right
-  const fwd=moon*(ctl?((keys.KeyW||keys.ArrowUp)?1:0)-((keys.KeyS||keys.ArrowDown)?1:0)-pad.my-touch.my:0);
+  let fwd=moon*(ctl?((keys.KeyW||keys.ArrowUp)?1:0)-((keys.KeyS||keys.ArrowDown)?1:0)-pad.my-touch.my:0);
   const str=moon*(ctl?(keys.KeyD?1:0)-(keys.KeyA?1:0)+pad.mx+touch.mx:0);
+  const fury=ctl&&ps('fury');if(fury&&Math.abs(fwd)<0.2&&Math.abs(str)<0.2)fwd=1;   // Fury Brew: you cannot stop running
+  const J0=MOVE.jumpV,G0=MOVE.gravity,pvx=P.vx,pvz=P.vz;MOVE.jumpV=J0*potJump();MOVE.gravity=G0*potGrav();
   const ev=stepMove(P,dt,{fwd,str,fx:Math.cos(P.yaw),fz:Math.sin(P.yaw),ctl,
-    jump:FX.fat<=0&&(keys.Space||pad.jump||touch.jump),sprint:keys.ShiftLeft||keys.ShiftRight||pad.sprint||Math.hypot(touch.mx,touch.my)>0.94},
-    {scale:1,speedMul:moveMul()*(P.mounted?1.25:1),lungs:up.lungs|0,blocked});
+    jump:FX.fat<=0&&potJump()>0&&(keys.Space||pad.jump||touch.jump),sprint:fury||keys.ShiftLeft||keys.ShiftRight||pad.sprint||Math.hypot(touch.mx,touch.my)>0.94},
+    {scale:1,speedMul:moveMul()*(P.mounted?1.25:1),lungs:up.lungs|0,blocked:ps('phase')?potPhase:blocked});
+  MOVE.jumpV=J0;MOVE.gravity=G0;
+  if(P.y>0.62&&(potGrav()<1||potJump()>1)){P.y=0.62;if(P.vy>0)P.vy=0}   // floaty potions: bump the ceiling and hang there
+  if(ps('slick')&&ev.ground){const k=Math.min(1,1.4*dt),nvx=pvx+(P.vx-pvx)*k,nvz=pvz+(P.vz-pvz)*k,cx=P.x+(nvx-P.vx)*dt,cz=P.z+(nvz-P.vz)*dt;if(!blocked(cx,P.z))P.x=cx;if(!blocked(P.x,cz))P.z=cz;P.vx=nvx;P.vz=nvz}
+  if(POT.slv){const q=POT.slv;q.t-=dt;const nx=P.x+q.vx*dt,nz=P.z+q.vz*dt;if(!blocked(nx,P.z))P.x=nx;if(!blocked(P.x,nz))P.z=nz;q.vx*=0.9;q.vz*=0.9;if(q.t<=0)POT.slv=null}
   if(ev.jumped)sfx('jump');
-  if(ev.landed>0||ev.step)sfx('step');
+  if((ev.landed>0||ev.step)&&!ps('hush')){sfx('step');if(ps('loud'))tone(55,0.12,'sine',0.25)}
   if(ctl&&ev.ground&&(ev.blockedX||ev.blockedZ)){
     if(!P.wallTouch){
       P.wallTouch=true;
@@ -5001,6 +7874,7 @@ function update(dt){
   for(const q of F.pillars){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=0.2+PR;if(dd<m&&dd>1e-4){P.x=q[0]+ddx/dd*m;P.z=q[1]+ddz/dd*m}}
   if(F.safe){const ddx=P.x-F.safe.x,ddz=P.z-F.safe.z,dd=Math.hypot(ddx,ddz),m=0.3+PR;if(dd<m&&dd>1e-4){P.x=F.safe.x+ddx/dd*m;P.z=F.safe.z+ddz/dd*m}}
   for(const q of F.discs){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=q[2]+PR;if(dd<m&&dd>1e-4){const nx2=q[0]+ddx/dd*m,nz2=q[1]+ddz/dd*m;if(!blocked(nx2,nz2)){P.x=nx2;P.z=nz2}}}
+  potCollide();smithCollide();
   if(F.safe&&F.safe.wheel)for(const q of F.safe.wheel.discs){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=q[2]+PR;if(dd<m&&dd>1e-4){const nx2=q[0]+ddx/dd*m,nz2=q[1]+ddz/dd*m;if(!blocked(nx2,nz2)){P.x=nx2;P.z=nz2}}}
   for(const n of F.npcs){if(n.fall)continue;const X=n.x+(n.ox||0),Z=n.z+(n.oz||0),ddx=P.x-X,ddz=P.z-Z,dd=Math.hypot(ddx,ddz),m=0.16+PR;if(dd<m&&dd>1e-4){const nx2=X+ddx/dd*m,nz2=Z+ddz/dd*m;if(!blocked(nx2,nz2)){P.x=nx2;P.z=nz2}}}
   if(wallClip){P.x=wallClip.hx;P.z=wallClip.hz;P.vx=P.vz=P.vy=0;P.y=0}
@@ -5033,7 +7907,8 @@ function update(dt){
   sealMsgT-=dt;
   if(Math.hypot(F.exit.x-P.x,F.exit.z-P.z)<0.42&&P.y>-0.2){
     if(P.shards>=3){mpSend({k:'down',d:R.depth+1});descend();return}
-    if(sealMsgT<=0){sealMsgT=3;const n=3-P.shards;say(`The seal holds. ${n} shard${n>1?'s':''} to go.`,2.5);sfx('seal')}
+    if(sealMsgT<=0&&F.boss){sealMsgT=3;say(`The seal holds while ${BOSSES[F.boss.i].name} lives.`,2.5);sfx('seal')}
+    else if(sealMsgT<=0){sealMsgT=3;const n=3-P.shards;say(`The seal holds. ${n} shard${n>1?'s':''} to go.`,2.5);sfx('seal')}
   }
   // locked gate
   doorMsgT-=dt;
@@ -5049,11 +7924,13 @@ function update(dt){
     const e=trapExt(tr,R.time);
     if(e>0.5){
       if(!tr.up){tr.up=true;if(Math.abs(tr.x-P.x)+Math.abs(tr.z-P.z)<6)sfx('spike')}
-      if(P.inv<=0&&!P.away&&!P.mounted&&P.y<0.22&&P.y>-0.2&&Math.abs(tr.x-P.x)<0.42&&Math.abs(tr.z-P.z)<0.42){hurt(null);if(state==='dead')return}
+      if(P.inv<=0&&!P.away&&!P.mounted&&P.y<0.22&&P.y>-0.2&&Math.abs(tr.x-P.x)<0.42&&Math.abs(tr.z-P.z)<0.42){if(ps('bouncy')){P.vy=4.2;P.y=0.001;P.inv=1;tone(300,0.2,'sine',0.15,0,400)}else hurt(null);if(state==='dead')return}
     }else tr.up=false;
   }
   } // end of the living player's turn
   wofTick(dt);if(state==='dead')return;
+  potTick(dt);if(state==='dead')return;
+  wTick(dt);if(!MP.guest)wMonTick(dt);bossClientTick(dt);if(state==='dead')return;fizzPlayerTick(dt);grannyPlayerTick(dt);grannyVoiceTick(dt);
   // the humming rooms: lights that fail, knocking in the walls, a map that will not hold
   if(F.back){
     if(!MP.guest){
@@ -5073,9 +7950,10 @@ function update(dt){
   let chasing=0,nearest=99;
   const pfx=Math.cos(P.yaw),pfz=Math.sin(P.yaw);
   const TG=MP.guest?null:mpTargets(), MD=MP.guest?null:mpDist(TG);
+  if(TG)potPowers(dt,TG);
   for(const s of F.shades){
-    if(s.dead){s.x=s.z=-99;s.state=0;s.vis=false;continue}
-    rememberMob(s.type,s);
+    if(s.dead||s.down>0){s.x=s.z=-99;s.state=0;s.vis=false;continue}
+    if(s.type<4)rememberMob(s.type,s);
     s.ph+=dt*3;
     if(s.type===3){if(!P.down&&!followMoose(s,dt,1.9)){watcher(s,dt,pfx,pfz);if(state==='dead')return}continue}
     const cx=Math.floor(s.x),cz=Math.floor(s.z);
@@ -5088,7 +7966,11 @@ function update(dt){
         if(s.type===1){s.snd=(s.snd||0)-dt;if(s.snd<=0){s.snd=0.45;sfx('scrape')}}}
       continue;
     }
-    if(s.stun>0){s.stun-=dt;continue}
+    if(s.type===6){if(s.role==='add'&&potMon(s,dt,TG,MD))continue;bossTick(s,dt,TG);if(state==='dead')return;continue}
+    if(potMon(s,dt,TG,MD)){s.gx=Math.floor(s.x);s.gy=Math.floor(s.z);s.px=-1;continue}
+    if(s.stun>0){s.stun-=dt;if(s.type>=4&&s.state>1)s.state=1;continue}
+    if(s.type===4){fizzTick(s,dt,TG,MD);continue}
+    if(s.type===5){grannyTick(s,dt,TG,MD);continue}
     if(followMoose(s,dt,s.type===1?3.15:2.95)){s.frozen=false;continue}
     const d=MD[cz*F.W+cx];s.d=d;
     const T=mpNearest(TG,s.x,s.z);
@@ -5099,11 +7981,12 @@ function update(dt){
       s.think=0.2;
       const tv=!!T&&eu<9&&los(s.x,s.z,T.x,T.z);
       s.vis=T&&T.loc?tv:!P.down&&Math.hypot(s.x-P.x,s.z-P.z)<9&&los(s.x,s.z,P.x,P.z);
+      const sk=T?potSk(T):1;   // potions change how far away you are noticed
       if(s.type===0){
-        if(s.state===0){if((d>=0&&d<=8&&tv)||(d>=0&&d<=2)||(tDark&&d>=0&&d<=12)){s.state=1;if(dl>=0&&dl<=14)sfx('growl')}}
-        else if(d<0||d>14)s.state=0;
-      }else if(s.type===1)s.state=(d>=0&&d<=45)?1:0;
-      else{if(s.state===0){if(d>=0&&d<=9)s.state=1}else if(d<0||d>13)s.state=0}
+        if(s.state===0){if((d>=0&&d<=8*sk&&tv)||(d>=0&&d<=2*sk)||(tDark&&d>=0&&d<=12*sk)){s.state=1;if(dl>=0&&dl<=14&&!(s.pe&&s.pe.hush))sfx('growl')}}
+        else if(d<0||d>14||sk===0&&d>1)s.state=0;
+      }else if(s.type===1)s.state=(d>=0&&d<=45*Math.min(1,sk))?1:0;
+      else{if(s.state===0){if(d>=0&&d<=9*sk)s.state=1}else if(d<0||d>13||sk===0&&d>1)s.state=0}
       if(s.calm>0){s.calm-=0.2;s.state=0}
       if(!T||T.inSafe)s.state=0;
     }
@@ -5114,12 +7997,12 @@ function update(dt){
       s.frozen=mpWatched(TG,s);
       if(s.frozen||s.state===0)continue;
       sp=3.15;
-      if(dl>=0&&dl<=8){chasing++;if(dl<nearest)nearest=dl;s.snd-=dt;if(s.snd<=0){s.snd=0.45;sfx('scrape')}}
+      if(dl>=0&&dl<=8){chasing++;if(dl<nearest)nearest=dl;s.snd-=dt;if(s.snd<=0){s.snd=0.45;if(!(s.pe&&s.pe.hush))sfx('scrape')}}
     }else sp=s.state===1?2.95:1.4;
     let gx=s.gx+0.5,gz=s.gy+0.5;
     const direct=!!T&&s.state===1&&d>=0&&d<=1&&!T.inSafe;
     if(direct){gx=T.x;gz=T.z;s.gx=cx;s.gy=cz}
-    const dx=gx-s.x,dz=gz-s.z,l=Math.hypot(dx,dz),step=sp*dt;
+    const dx=gx-s.x,dz=gz-s.z,l=Math.hypot(dx,dz),step=sp*dt*(s.pmul||1);
     if(l<=step+0.001){
       s.x=gx;s.z=gz;
       if(!direct){
@@ -5138,7 +8021,7 @@ function update(dt){
       }
     }else{s.x+=dx/l*step;s.z+=dz/l*step;s.face=Math.atan2(dz,dx)}
     const hitT=mpTouching(TG,s);
-    if(hitT){
+    if(hitT&&!potTouch(s,hitT)){
       if(s.type===2){
         // a wisp drinks some of the torch and flits away
         if(hitT.loc){P.fuel=Math.max(0,P.fuel-22);sfx('drain');say('A wisp drinks your flame',2)}else mpHit(hitT,'drain');
@@ -5764,7 +8647,9 @@ if(POST){
     gtaoPass.blendIntensity=1.0;
     gtaoPass.updateGtaoMaterial({radius:0.3,distanceExponent:1.4,thickness:1.2,scale:1.25,samples:12,distanceFallOff:1,screenSpaceRadius:false});
     const ov=gtaoPass.overrideVisibility.bind(gtaoPass);
-    gtaoPass.overrideVisibility=function(){ov();sprMesh.visible=false};
+    // creatures and NPCs stay out of the ambient-occlusion pass: their thin, layered parts read as deep crevices and the pass
+    // darkened whole fronts of them (the Fizzler's label went black at high quality)
+    gtaoPass.overrideVisibility=function(){ov();sprMesh.visible=false;charMesh.visible=false};
     composer.addPass(gtaoPass);
   }
   bloomPass=new UnrealBloomPass(new THREE.Vector2(4,4),0.5,0.55,1.0);composer.addPass(bloomPass);
@@ -5801,13 +8686,14 @@ function render(t){
   if(!F){renderer.clear();return}
   UT.value=t;
   const title=state==='title';
-  const SC=STUDIO&&STUDIO.cam;
+  const DC=title?null:danceCam(),SC=STUDIO&&STUDIO.cam||DC;
   const yaw=SC?SC.yaw:P.yaw, pitch=SC?SC.pitch:title?0:P.pitch;
   const riding=P.mounted&&!P.down&&!P.away;
-  const ex=SC?SC.x:P.x, ez=SC?SC.z:P.z, ey=SC?SC.y:Math.min(CAM_TOP,EYE*(title?1:wofEye())+(title?0:P.y+bobY(P,1)+(riding?.16:0)));
+  const ex=SC?SC.x:P.x, ez=SC?SC.z:P.z, ey=SC?SC.y:Math.min(CAM_TOP,EYE*(title?1:wofEye()*potEye())+(title?0:P.y+bobY(P,1)+(riding?.16:0)));
   {const cp=Math.cos(pitch);camera.position.set(ex,ey,ez);camera.lookAt(ex+cp*Math.cos(yaw),ey+Math.sin(pitch),ez+cp*Math.sin(yaw))}
   if(FX.flyT>0&&!title){const k=Math.min(1,FX.flyT/1.2);camera.rotateZ(Math.sin(t*FX.spin)*0.5*k);camera.rotateX(Math.cos(t*FX.spin*0.7)*0.25*k)}   // tumbling through the air
   if(FX.bob>0&&!title){camera.rotateZ(Math.sin(t*2.3)*0.06);camera.rotateX(Math.sin(t*1.7)*0.03)}
+  if(P.woozy>0&&!title&&!P.down){const k=Math.min(1,P.woozy/1.5);camera.rotateZ(Math.sin(t*1.6)*0.14*k);camera.rotateX(Math.sin(t*1.05)*0.05*k)}   // Granny's perfume
   if(FX.tickled>0&&!title){const k=0.025;camera.position.x+=(Math.random()-0.5)*k;camera.position.y+=(Math.random()-0.5)*k;camera.position.z+=(Math.random()-0.5)*k}
   if(pkShake>0){const k=0.05*pkShake;camera.position.x+=(Math.random()-0.5)*k;camera.position.y+=(Math.random()-0.5)*k;camera.position.z+=(Math.random()-0.5)*k;pkShake=Math.max(0,pkShake-0.03)}
   if(P.grab){const k=0.012+0.02*Math.min(1,P.grab.t);camera.position.x+=(Math.random()-0.5)*k;camera.position.y+=(Math.random()-0.5)*k;camera.position.z+=(Math.random()-0.5)*k}
@@ -5822,7 +8708,7 @@ function render(t){
     const aK=F.ambK||1;
     const aT=F.ambT||[1,1,1],a0=B.amb[0]*aK*aT[0],a1=B.amb[1]*aK*aT[1],a2=B.amb[2]*aK*aT[2];
     L.amb=F.dark?AMB_ZERO:F.back?[a0*pl,a1*pl,a2*pl]:[a0,a1,a2];
-    L.fog=[a0*2.2*pl,a1*2.2*pl,a2*2.2*pl];scene.fog.density=0.062*(F.fogK||1);
+    L.fog=[a0*2.2*pl,a1*2.2*pl,a2*2.2*pl];scene.fog.density=0.062*(F.fogK||1)*(ps('cat')?0.6:1);
     if(F.forest){L.fog=[a0*0.4,a1*0.4,a2*0.4];scene.fog.density=0.062*1.3*(F.fogK||1)}
     {const ak=F.back?2.5:LK.amb;ambLight.color.setRGB(L.amb[0]*ak,L.amb[1]*ak,L.amb[2]*ak)}
     scene.fog.color.setRGB(L.fog[0],L.fog[1],L.fog[2]);
@@ -5834,11 +8720,13 @@ function render(t){
   flashLight.position.set(ex,ey,ez);flashLight.intensity=flashT*LK.flash;
   // nearest coloured lights: [dist2, x,y,z, colour, strength, radius]
   const lights=[];
-  for(const it of F.items){if(it.got||it.type==='chest')continue;const d=(it.x-ex)**2+(it.z-ez)**2;if(d<140)lights.push([d,it.x,0.45,it.z,ITEM[it.type].col,it.type==='gem'?0.5:1.0,2.6])}
+  for(const it of F.items){if(it.got||it.type==='chest'||it.type==='ingr')continue;const d=(it.x-ex)**2+(it.z-ez)**2;if(d<140)lights.push([d,it.x,0.45,it.z,ITEM[it.type].col,it.type==='gem'?0.5:1.0,2.6])}
   const open=P.shards>=3&&!title;
   const exCol=open?[0.4,1.0,0.6]:[1.0,0.2,0.15];
   lights.push([(F.exit.x-ex)**2+(F.exit.z-ez)**2-4,F.exit.x,0.5,F.exit.z,exCol,1.5,3.2]);
-  for(const s of F.shades)if(s.type===2){const d=(s.x-ex)**2+(s.z-ez)**2;if(d<140)lights.push([d,s.x,0.55,s.z,[0.35,0.6,1.0],1.3,3.0])}
+  for(const s of F.shades)if(s.type===2||s.pv&32){const d=(s.x-ex)**2+(s.z-ez)**2;if(d<140)lights.push([d,s.x,0.55,s.z,s.type===2?[0.35,0.6,1.0]:[1,0.9,0.55],1.3,3.0])}
+  // the Fizzler's label catches a little light from the side you see it from, so it reads even in the dark (and on low quality, where nothing glows)
+  for(const s of F.shades)if(s.type===4&&s.x>0){const d=(s.x-ex)**2+(s.z-ez)**2,l=Math.sqrt(d)||1;if(d<120)lights.push([d+1,s.x+(ex-s.x)/l*0.6,0.55,s.z+(ez-s.z)/l*0.6,[1,0.92,0.8],0.9,1.6])}
   if(F.back&&panelLvl>0.01){const near=[];
     for(const q of F.panels){const d=(q.x-ex)**2+(q.z-ez)**2;if(d<90)near.push([d,q])}
     near.sort((a,b)=>a[0]-b[0]);
@@ -5853,7 +8741,7 @@ function render(t){
     lights.push([d-30,F.safe.x,0.85,F.safe.z,[1.0,0.56,0.2],2.3*fl,7.5,'safe'])}}
   for(const n of F.npcs){if(n.type==='keeper')continue;const d=(n.x-ex)**2+(n.z-ez)**2;if(d<140)lights.push([d-3,n.x,n.type==='delver'?0.5:0.95,n.z,[1.0,0.85,0.6],0.75,2.8])}
   if(GD.have&&guideOn()&&!title){const gd=(GD.x-ex)**2+(GD.z-ez)**2;lights.push([gd-10,GD.x,0.65,GD.z,[1.0,0.93,0.8],1.9,6.5])}
-  mpLights(lights,ex,ez,B);
+  bossLights(lights,ex,ez);mpLights(lights,ex,ez,B);
   lights.sort((a,b)=>a[0]-b[0]);
   // the nearest fixed flames get real shadows; everything else shares a pool of plain lights
   {const used=new Set();
@@ -5900,10 +8788,12 @@ function render(t){
     if(lurk)TB=CH;
     if(o.lantern){const q=o.lantern,fl=1+Math.sin(t*10+n.ph)*0.1;spr(q[0],q[1]+0.012,q[2],0.045*fl,0.07*fl,11,1.0,0.6,0.2,1,1);spr(q[0],q[1],q[2],0.5,0.5,7,1.0,0.5,0.15,0.3,1)}
     if(o.lamp){const q=o.lamp;spr(q[0],q[1],q[2],0.22,0.22,7,1.0,0.75,0.3,0.4,1)}
+    if(o.cauldron)potCauldronFx(o.cauldron,t);
+    if(o.anvil)smithFx(o.anvil,t);
     if(!lurk&&!n.used&&n.type!=='keeper'){const y=o.top+0.08+Math.sin(t*3+n.ph)*0.03,X=n.x+(n.ox||0),Z=n.z+(n.oz||0);spr(X,y,Z,0.08,0.08,7,1.0,0.85,0.4,1,1);spr(X,y,Z,0.32,0.32,7,1.0,0.7,0.2,0.3,1)}
   }
   wofDraw(t,ex,ey,ez,dtR);}
-  drawMoose(t,title||!!STUDIO);drawScout(t,title||!!STUDIO);mpDrawPlayers(t,ex,ez,fwx,fwz);mimicDraw(t,ex,ez);glDraw(t,ex,ez,fwx,fwz);
+  if(DC)danceSelf(t);drawMoose(t,title||!!STUDIO);drawScout(t,title||!!STUDIO);mpDrawPlayers(t,ex,ez,fwx,fwz);mimicDraw(t,ex,ez);glDraw(t,ex,ez,fwx,fwz);
   if(F.safe&&(F.safe.x-ex)**2+(F.safe.z-ez)**2<22*22){
     const fl=F.safe.fl||1,X=F.safe.x,Z=F.safe.z;
     spr(X,0.72,Z,0.42*fl,0.62*fl,11,1.0,0.55,0.16,1,1);
@@ -5912,9 +8802,15 @@ function render(t){
     for(let i=0;i<4;i++){const a=((t*0.35+i*0.25)%1);spr(X+Math.sin(i*2.4+t)*0.12*a,0.8+a*0.9,Z+Math.cos(i*1.7+t)*0.12*a,0.025,0.025,7,1.0,0.6,0.2,1-a,1)}
   }
   for(const s of F.shades){
-    const d2=(s.x-ex)**2+(s.z-ez)**2;if(d2>18*18||s.type===2)continue;
+    const d2=(s.x-ex)**2+(s.z-ez)**2;if(d2>18*18)continue;
     if((s.x-ex)*fwx+(s.z-ez)*fwz<-1.5)continue;
+    if(s.pv&&potMonPre(s,t))continue;
+    if(s.type===2){if(s.pv)potMonPost(s,CH.n,sprList.length,t);continue}
+    const pn0=CH.n,ps0=sprList.length;
     if(s.type===3){const e=buildWatcher(s,t,ex,ez);if(F.blk===2)for(const q of e)spr(q[0],q[1],q[2],0.045,0.045,7,0.95,0.92,0.8,1,1)}
+    else if(s.type===6)bossDraw(s,t,ex,ez);
+    else if(s.type===4)buildFizz(s,t,ex,ez);
+    else if(s.type===5)buildGranny(s,t,ex,ez);
     else if(s.type===1)buildStalker(s,t,ex,ez);
     else{
       const o=buildShade(s,t,ex,ez);
@@ -5924,15 +8820,18 @@ function render(t){
         if(o.chase)spr(s.x,0.6,s.z,1.5,1.5,7,0.8,0.05,0.1,0.25,1);
       }
     }
+    if(s.pv)potMonPost(s,pn0,ps0,t);
+    if(s.hitT>0){const W2=CH.w||13,b=CH.buf;for(let i=pn0;i<CH.n;i++){const o=i*W2;b[o+6]=b[o+6]*0.5+0.9;b[o+7]=b[o+7]*0.5+0.08;b[o+8]=b[o+8]*0.5+0.06}}
   }
+  potDraw3D(t,ex,ez,fwx,fwz);wDraw(t,ex,ez,rx,rz);bzDraw(t,ex,ez);
 
   upload(charMesh,CH);
   upload(lurkMesh,LURK);
   // the torch in your hand, drawn close to the eye so it never pokes through a wall
   HB.n=0;
-  if(!title&&state!=='dead'&&!P.down){
+  if(!title&&state!=='dead'&&!P.down&&!DC){
     const fm=wofForm();
-    TB=HB;const q=fm?buildCritter({rx:P.x,rz:P.z,ry:P.y,ryaw:yaw,rpitch:pitch,walk:P.bob,spd:Math.hypot(P.vx,P.vz),fat:FX.fat>0,pox:FX.pox>0,curl:FX.curl},t,fm,true).torch:buildHand(t,ex,ey,ez,yaw,pitch);TB=CH;
+    TB=HB;const q=fm?buildCritter({rx:P.x,rz:P.z,ry:P.y,ryaw:yaw,rpitch:pitch,walk:P.bob,spd:Math.hypot(P.vx,P.vz),fat:FX.fat>0,pox:FX.pox>0,curl:FX.curl},t,fm,true).torch:buildHand(t,ex,ey,ez,yaw,pitch);if(!fm)wDrawHand(t,ex,ey,ez,yaw,pitch);TB=CH;
     const hk=0.3,b=HB.buf;
     for(let i=0;i<HB.n;i++){const o=i*13;b[o]=ex+(b[o]-ex)*hk;b[o+1]=ey+(b[o+1]-ey)*hk;b[o+2]=ez+(b[o+2]-ez)*hk}
     const hx=ex+(q[0]-ex)*hk,hy=ey+(q[1]-ey)*hk,hz=ez+(q[2]-ez)*hk,lit=P.fuel>0;
@@ -5951,6 +8850,7 @@ function render(t){
   for(const it of F.items){
     if(it.got)continue;
     const d2=(it.x-ex)**2+(it.z-ez)**2;if(d2>18*18)continue;
+    if(it.type==='ingr')continue;
     const I=ITEM[it.type],y=0.42+Math.sin(t*2.2+it.ph)*0.05,c=I.col;
     spr(it.x,y,it.z,I.size*2.6,I.size*2.6,7,c[0],c[1],c[2],0.4,1);
     if(it.type!=='shard'&&it.type!=='gem')spr(it.x,y,it.z,I.size,I.size,I.cell,1,1,1,1,0);
@@ -5964,8 +8864,10 @@ function render(t){
     spr(GD.x,WALL_H/2,GD.z,0.9,WALL_H,6,1.0,0.94,0.8,0.38*pu*near,1);
     spr(GD.x,0.62,GD.z,1.5,1.5,7,1.0,0.93,0.78,0.5*pu*near,1);
     spr(GD.x,0.62,GD.z,0.34,0.34,7,1.0,0.98,0.9,0.95*near,1);}
+  potDrawSpr(t,ex,ez);
   for(const s of F.shades){
     if(s.type!==2||(s.x-ex)**2+(s.z-ez)**2>18*18)continue;
+    if(s.pv&&((s.pv&31)===9||(s.pv&31)>=6&&(s.pv&31)<=8))continue;
     const y=0.56+Math.sin(s.ph)*0.03,a=s.stun>0?0.35:1;
     spr(s.x,y,s.z,1.3,1.3,7,0.25,0.45,1.0,0.5*a,1);spr(s.x,y+Math.sin(s.ph*2.3)*0.03,s.z,0.42,0.6,11,1,1,1,a,1);
   }
@@ -6043,7 +8945,8 @@ function drawHUD(){
   setHTML('hearts','♥'.repeat(Math.max(0,P.hp))+'<i>'+'♥'.repeat(Math.max(0,maxHp()-Math.max(0,P.hp)))+'</i>');
   setW('fuelFill',P.fuel);setW('stamFill',P.stam);
   setText('shards',GL.hudOv.shards||'◆ '+P.shards+' / 3 shards');
-  setText('flashes','✦ '+P.flash+' flash'+(P.flash===1?'':'es')+(P.pick>0?'   ⛏ '+P.pick:''));
+  setText('flashes','✦ '+P.flash+' flash'+(P.flash===1?'':'es')+(P.pick>0?'   ⛏ '+P.pick:'')+(wHeld()?'   ⚔ '+WEAPON[wHeld()].name:''));
+  document.body.classList.toggle('hasweapon',!!wHeld()&&state==='play');
   document.body.classList.toggle('haspick',P.pick>0&&state==='play');
   document.body.classList.toggle('hasmoose',P.moose&&!P.down&&state==='play');
   setText('tMoose',P.mounted?'DISMOUNT':'RIDE');
@@ -6085,12 +8988,13 @@ function drawMap(){
   const dot=(x,z,r,col)=>{c.fillStyle=col;c.beginPath();c.arc(ox+x*ts,oy+z*ts,r,0,7);c.fill()};
   if(F.seen[F.exit.ty*F.W+F.exit.tx]||F.reveal){c.fillStyle=P.shards>=3?'#5dff9a':'#ff4a3a';c.fillRect(ox+F.exit.tx*ts,oy+F.exit.ty*ts,ts,ts)}
   for(const it of F.items){
-    if(it.got||(!F.seen[it.ty*F.W+it.tx]&&!(F.reveal&&it.type==='shard')))continue;
+    if(it.got||(!F.seen[it.ty*F.W+it.tx]&&!(F.reveal&&it.type==='shard')&&!(it.type==='gem'&&ps('gems'))))continue;
+    if(it.type==='ingr'){const g=INGREDIENTS[it.ing].col;dot(it.x,it.z,Math.max(1.6,ts*0.2),'rgb('+g.map(v=>Math.round(Math.min(1,v)*255)).join(',')+')');continue}
     dot(it.x,it.z,(it.type==='shard'||it.type==='key')?Math.max(3,ts*0.4):Math.max(1.6,ts*0.22),it.type==='shard'?'#7fe9ff':it.type==='key'?'#ffd35a':it.type==='oil'?'#ff9a2e':it.type==='gem'?'#ffd84a':it.type==='heart'?'#ff5a6a':'#ffffff');
   }
   if(F.safe&&F.seen[F.safe.ty*F.W+F.safe.tx+1])dot(F.safe.x,F.safe.z,Math.max(2.5,ts*0.3),'#ff8a2a');
   for(const n of F.npcs)if(F.seen[Math.floor(n.z)*F.W+Math.floor(n.x)]){c.fillStyle=n.type==='lurk'&&n.aggro?'#ff2a4a':n.type==='keeper'?'#ffe0a0':'#8ff0d0';c.fillRect(ox+n.x*ts-2.5,oy+n.z*ts-2.5,5,5)}
-  for(const s of F.shades)if(s.vis)dot(s.x,s.z,Math.max(3,ts*0.4),s.type===1?'#e6e0d2':s.type===2?'#5aa8ff':s.state===1?'#ff2a4a':'#a07cff');
+  for(const s of F.shades)if(s.vis||s.x>0&&(potSeen(s)||s.type===6))dot(s.x,s.z,Math.max(3,ts*0.4),s.type===1?'#e6e0d2':s.type===2?'#5aa8ff':s.type===4?'#c0732a':s.type===5?'#ff8ad0':s.type===6?(s.role==='add'?'#ff9060':BOSSES[s.boss].col):s.state===1?'#ff2a4a':'#a07cff');
   for(const p of MP.peers.values()){if(!mpShown(p))continue;
     c.save();c.translate(ox+p.rx*ts,oy+p.rz*ts);c.rotate(p.ryaw);c.fillStyle=p.down?'#777':p.hex;
     c.beginPath();c.moveTo(5,0);c.lineTo(-3.5,3.5);c.lineTo(-1.5,0);c.lineTo(-3.5,-3.5);c.closePath();c.fill();c.restore()}
@@ -6145,6 +9049,7 @@ function step(now){
     // Idle work, one small step per frame. A frame under 40 ms counts as idle (so a 30 to 50 fps machine still gets its turn); on a slower one a step still runs every so often.
     if(!hub.riding&&!loading&&(raw<0.04||now-idleStepAt>800)){
       idleStepAt=now;
+      SURFS.idle();
       if(!liftCachePump()&&!pipeWarmPump()&&shaftQueue.length)shaftQueue.shift()();
     }
     hub.syncVisitors(MP.on?[...MP.peers.values()].filter(p=>p.hub&&now-p.hub.at<15000):[],dt,now/1000);
@@ -6162,6 +9067,7 @@ function frame(now){
 function frameBody(now){
   advanceLoading(now);
   const raw=step(now);
+  resize();   // size the canvas and the composer from the very first frame, not after the loading screen (a late first resize stalls on everything queued)
   if(loading&&loading.index<loading.stages.length)return;
   mpVoiceTick(Math.min(raw,0.1));chatTick();
   if(state==='play'&&!STUDIO&&!loading)adapt(raw);
@@ -6599,7 +9505,8 @@ function buildGlimpseProto(depth,turn){
   const look={...passingLook(depth),W,H,g,forest,
     tex:{v:0,seed:0,tint:[1,1,1]},
     panelAt:new Uint8Array(W*H),pocketMask:new Uint8Array(W*H),phantoms:[],door:null,frames:[]};
-  const proto=buildMesh(look,true);
+  // its textures are queued, not painted here: SURFS.idle() paints them in later frames, once their shaders are compiled in parallel
+  SURFS.defer(true);let proto;try{proto=buildMesh(look,true)}finally{SURFS.defer(false)}
   const tx=2,ty=1,yaw=Math.PI/2,fx=Math.cos(yaw),fz=Math.sin(yaw);
   const ex=tx+0.5-fx*0.5,ez=ty+0.5-fz*0.5,angle=yaw+Math.PI/2,k=1.62/EYE;
   proto.rotation.y=angle;proto.scale.setScalar(k);
@@ -6632,28 +9539,33 @@ function memoFloor(seed,depth,look){
 // so several landings can wait in the cache at once. A forest floor builds its world straight away as it always did, so it is only ever cached alone.
 const landingOf=new WeakMap();
 function prepareLanding(seed,depth){
-  let stage=0;
+  let stage=0,waiting=false;
+  const wait=p=>{waiting=true;p.then(()=>{waiting=false;stage++},()=>{waiting=false;stage++})};
+  // the wall textures are queued while the mesh is built, then their shaders compile in parallel and they are painted a couple per step
   const task={floor:null,model:null,mesh:null,decor:null,decorN:0,own:true,installed:false,progress:0,ready:false,
     advance(){
-      if(task.ready)return;
+      if(task.ready||waiting)return;
       if(stage===0){
         task.floor=genFloor(seed,depth);task.own=!task.floor.forest;
-        landingOf.set(task.floor,task);task.progress=0.2;
+        landingOf.set(task.floor,task);task.progress=0.15;stage++;
       }
       else if(stage===1){
-        if(task.own)task.mesh=buildMesh(task.floor,true);
-        else{buildMesh(task.floor);task.mesh=worldMesh}
-        task.progress=0.45;
+        SURFS.defer(true);
+        try{
+          if(task.own)task.mesh=buildMesh(task.floor,true);
+          else{buildMesh(task.floor);task.mesh=worldMesh}
+        }finally{SURFS.defer(false)}
+        task.progress=0.3;stage++;
       }
-      else if(stage===2){task.model=landingGeometry(task.floor,task.mesh);task.progress=0.6}
-      else if(stage===3){
+      else if(stage===2){task.model=landingGeometry(task.floor,task.mesh);task.progress=0.4;stage++}
+      else if(stage===3){task.progress=0.45;wait(SURFS.compileQueued())}
+      else if(stage===4){if(!SURFS.pump(1))stage++;task.progress=Math.max(task.progress,0.5+0.2*(1-SURFS.pending/12))}
+      else if(stage===5){
         buildStatic(task.floor);buildSdf(task.floor);
         task.decorN=DEC.n;task.decor=DEC.buf.slice(0,DEC.n*13);
-        task.progress=0.8;
+        task.progress=0.85;stage++;
       }
-      else if(stage===4){task.progress=1;task.ready=true}
-      else return;
-      stage++;
+      else if(stage===6){task.progress=1;task.ready=true;stage++}
     },
     // called as the run takes this floor: puts its own world and decor in place
     install(){
@@ -6835,23 +9747,18 @@ function startShaftWarm(){
   const depth=defaultLiftFloor();
   if(!$('liftDepth').value)$('liftDepth').value=depth;
   const stages=[],seen=new Set();
-  for(let n=1;n<=4;n++)for(let turn=0;turn<3;turn++){
+  // only the first landing is built behind the loading screen; the rest are built in quiet frames while you are in the hall
+  for(let n=1;n<=10;n++)for(let turn=0;turn<3;turn++){
     const surf=glimpseSurf(n,turn);
     if(seen.has(surf))continue;
     seen.add(surf);
     const floor=n,mouth=turn;
-    stages.push(['Opening landing '+n,()=>buildGlimpseProto(floor,mouth)]);
+    if(n===1)stages.push(['Opening landing '+n,()=>buildGlimpseProto(floor,mouth)]);
+    else shaftQueue.push(()=>buildGlimpseProto(floor,mouth));
   }
   const entry=liftEntry(seed,depth);
   for(let i=0;i<5;i++)stages.push(['Preparing the maze',()=>entry.task.advance()]);
   stages.push(['Lighting the shaft',()=>hub.primeShaft()]);
-  for(let n=5;n<=10;n++)for(let turn=0;turn<3;turn++){
-    const surf=glimpseSurf(n,turn);
-    if(seen.has(surf))continue;
-    seen.add(surf);
-    const floor=n,mouth=turn;
-    shaftQueue.push(()=>buildGlimpseProto(floor,mouth));
-  }
   showLoading('Opening the entrance hall',stages);
   loading.kind='shaft';
 }
@@ -7121,6 +10028,8 @@ function gripProbe(ts,talking){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='
   for(const t of ts){buildNpc(n,t,P.x,0.7,P.z,0.016);res.push({t,...GRIP_DBG})}talk=save;return res}
 function benchNpc(iters){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='keeper');const e=[P.x,0.7,P.z];buildNpc(n,1,e[0],e[1],e[2],0.016);let t0=performance.now();
   for(let i=0;i<iters;i++){CH.n=0;buildNpc(n,1+i*0.016,e[0],e[1],e[2],0.016)}return (performance.now()-t0)/iters}
-window.__game={pipelineWarm:pipeWarmState,liftCache:()=>[...liftCache.values()].map(e=>({seed:e.seed,depth:e.depth,ready:e.task.ready,compiled:e.compiled})),stillwoodWarmState,stillwoodWarm,doorSeed,wofQ:WOQ,tkTargets,rrStart,wofClear,wofTick,mpPosFlags,wof:WOF,fx:FX,get tk(){return TK},get bomb(){return BOMB},get rr(){return RR},set rr(v){RR=v},rrAct,get ts(){return TS},get brk(){return BRK},set tk(v){TK=v},wofSpinStart,wofResolve,wofBegin,NEWS,openStation,get activeStation(){return activeStation},hub,get lobbyPaused(){return lobbyPaused},get roomPaused(){return roomPaused},simLockLost(){if(document.pointerLockElement){document.exitPointerLock();return}usingLock=true;document.dispatchEvent(new Event("pointerlockchange"))},music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={pipelineWarm:pipeWarmState,liftCache:()=>[...liftCache.values()].map(e=>({seed:e.seed,depth:e.depth,ready:e.task.ready,compiled:e.compiled})),stillwoodWarmState,stillwoodWarm,doorSeed,wofQ:WOQ,tkTargets,rrStart,wofClear,wofTick,mpPosFlags,wof:WOF,fx:FX,get tk(){return TK},get bomb(){return BOMB},get rr(){return RR},set rr(v){RR=v},rrAct,get ts(){return TS},get brk(){return BRK},set tk(v){TK=v},get cg(){return CG},set cg(v){CG=v},departFromLift,wofSpinStart,wofResolve,wofBegin,planSpin,pickSlice,sliceAt,spinAngle,NEWS,openStation,get activeStation(){return activeStation},hub,get lobbyPaused(){return lobbyPaused},get roomPaused(){return roomPaused},simLockLost(){if(document.pointerLockElement){document.exitPointerLock();return}usingLock=true;document.dispatchEvent(new Event("pointerlockchange"))},music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch,patYell,initAudio,fizzTick,fizzMe,FIZZ,grannyTick,grannyWoozy,grannyGrab,grannyMash,GRAN,smith:SMITH,W,wAttack,sprList,wApply,wStats,wHeld,wCycle,clickL,clickR,WEAPONS,pot:POT,PFX,potLand,potDrink,potThrow,beltAdd,potBrew,potMon,potTouch,POTIONS,INGREDIENTS,brew,brewAny,potInfo,ps,potHud,wLevelOf,wRanks,wChoice,wGainXp,wXpFor,wReward,smithTalk,BS,BOSSES,bossAt,danceKey,danceChart,bossStart,bossWin,bossTrophies,bMain,wPunch};
 if(state==='title')startShaftWarm();
-requestAnimationFrame(frame);
+// the lobby's shaders compile in parallel before its first frame (a few seconds at most; never wait forever)
+{let go=false;const start=()=>{if(!go){go=true;requestAnimationFrame(frame)}};
+  try{renderer.compileAsync(hub.scene,hub.camera).then(start,start)}catch(e){start()}setTimeout(start,4000)}
