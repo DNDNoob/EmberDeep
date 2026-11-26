@@ -934,11 +934,14 @@ function buildMesh(F,preview=false){
   const mesh=new THREE.Mesh(geo,mats);mesh.castShadow=true;mesh.receiveShadow=true;mesh.frustumCulled=false;
   // A passing landing only needs this mesh. Do not touch the playable world.
   if(preview)return mesh;
+  installWorldMesh(F,mesh);
+}
+function installWorldMesh(F,mesh){
   mesh.matrixAutoUpdate=false;
   if(worldMesh){scene.remove(worldMesh);worldMesh.geometry.dispose()}
   worldMesh=mesh;scene.add(worldMesh);
   if(forestGrp){FOREST.dispose(forestGrp);forestGrp=null}
-  if(fr&&!preview){forestGrp=FOREST.build(F);scene.add(forestGrp);F.fo.stats=forestGrp.userData.stats}
+  if(F.forest){forestGrp=FOREST.build(F);scene.add(forestGrp);F.fo.stats=forestGrp.userData.stats}
   for(const l of shadLights)l.userData.key='';
 }
 function buildSdf(){}
@@ -3283,6 +3286,7 @@ function installFloor(depth,nextFloor,prepared=false){
   if(F?.npcs)for(const npc of F.npcs)disposeGpuRig(npc);
   R.xray=0;R.guide=0;GD.have=false;GD.key='';F=nextFloor;TK=null;WOF.here=false;panelLvl=1;P.grab=null;clearMooseLures();mimicReset();
   if(!prepared){buildMesh(F);buildStatic(F);buildSdf(F)}
+  else landingOf.get(F)?.install();
   sweepWorld();if(F.npcs&&F.npcs.some(q=>q.type==='keeper'))keeperWarm();
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
   P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;P.inSafe=false;P.unseen=false;nearNpc=nearDoor=null;
@@ -3341,6 +3345,7 @@ function startFromMenu(seed,depth){
 }
 function enterRun(seed,sd,floor,landing,liftTrip){
   if(seed===autoSeed&&!$('seedIn').value.trim()){autoSeed=randSeed();reWarm=true}
+  liftCacheClear();
   if(loading?.kind==='shaft')closeLoading(); // an unfinished title warm-up must not hold the doors shut or rebuild the world later
   roomLeave();$('deadTitle').textContent='THE DARK TAKES YOU';wofClear();WOF.done=true;WOF.plan=null;WOF.flap=0;
   showHub(false);
@@ -6137,8 +6142,9 @@ function step(now){
     hub.update(dt,lobbyPaused?NOIN:roomInput(),raw);
     if(sharedLift.trip&&!hub.riding)hub.watchLift(sharedLift.trip.motion);
     else if(!hub.riding)hub.watchLift(null);
-    if(shaftQueue.length&&raw<0.02&&!hub.riding)shaftQueue.shift()();
-    else if(warmed&&warmed.left>0&&raw<0.02&&!hub.riding){warmed.task.advance();warmed.left--}
+    if(raw<0.02&&!hub.riding&&!loading){
+      if(!liftCachePump()&&shaftQueue.length)shaftQueue.shift()();
+    }
     hub.syncVisitors(MP.on?[...MP.peers.values()].filter(p=>p.hub&&now-p.hub.at<15000):[],dt,now/1000);
     updateSettingsScreen();
     $('hubCross').classList.toggle('ready',hub.aimed);
@@ -6525,8 +6531,8 @@ function buildHubVisitor(peer){
   avatar.scale.setScalar(1.62/EYE);
   return avatar;
 }
-function landingGeometry(floor){
-  const source=worldMesh.geometry,{position,normal,uv}=source.attributes;
+function landingGeometry(floor,world=worldMesh){
+  const source=world.geometry,{position,normal,uv}=source.attributes;
   const {tx,ty,yaw}=floor.start,fx=Math.cos(yaw),fz=Math.sin(yaw);
   const ex=tx+0.5-fx*0.5,ez=ty+0.5-fz*0.5;
   const points=[],normals=[],coords=[],geometry=new THREE.BufferGeometry();
@@ -6551,7 +6557,7 @@ function landingGeometry(floor){
   geometry.setAttribute('position',new THREE.Float32BufferAttribute(points,3));
   geometry.setAttribute('normal',new THREE.Float32BufferAttribute(normals,3));
   geometry.setAttribute('uv',new THREE.Float32BufferAttribute(coords,2));
-  const group=new THREE.Group(),mesh=new THREE.Mesh(geometry,worldMesh.material);
+  const group=new THREE.Group(),mesh=new THREE.Mesh(geometry,world.material);
   group.name='Prepared maze entrance';
   const angle=yaw+Math.PI/2,k=1.62/EYE;
   mesh.rotation.y=angle;mesh.scale.setScalar(k);
@@ -6619,39 +6625,107 @@ function memoFloor(seed,depth,look){
   if(!floor){floor=genFloor(seed,depth,look);floorMemo.set(key,floor)}
   return floor;
 }
+// A prepared landing owns its own world mesh and decor snapshot (the world itself is only swapped in when the ride docks),
+// so several landings can wait in the cache at once. A forest floor builds its world straight away as it always did, so it is only ever cached alone.
+const landingOf=new WeakMap();
 function prepareLanding(seed,depth){
   let stage=0;
-  const task={floor:null,model:null,progress:0,ready:false,
+  const task={floor:null,model:null,mesh:null,decor:null,decorN:0,own:true,installed:false,progress:0,ready:false,
     advance(){
       if(task.ready)return;
-      if(stage===0){task.floor=genFloor(seed,depth);task.progress=0.2}
-      else if(stage===1){buildMesh(task.floor);task.progress=0.45}
-      else if(stage===2){task.model=landingGeometry(task.floor);task.progress=0.6}
-      else if(stage===3){buildStatic(task.floor);buildSdf(task.floor);task.progress=0.8}
+      if(stage===0){
+        task.floor=genFloor(seed,depth);task.own=!task.floor.forest;
+        landingOf.set(task.floor,task);task.progress=0.2;
+      }
+      else if(stage===1){
+        if(task.own)task.mesh=buildMesh(task.floor,true);
+        else{buildMesh(task.floor);task.mesh=worldMesh}
+        task.progress=0.45;
+      }
+      else if(stage===2){task.model=landingGeometry(task.floor,task.mesh);task.progress=0.6}
+      else if(stage===3){
+        buildStatic(task.floor);buildSdf(task.floor);
+        if(task.own){task.decorN=DEC.n;task.decor=DEC.buf.slice(0,DEC.n*13)}
+        task.progress=0.8;
+      }
       else if(stage===4){task.progress=1;task.ready=true}
       else return;
       stage++;
     },
+    // called as the run takes this floor: puts its own world and decor in place
+    install(){
+      task.installed=true;
+      if(!task.own||!task.mesh)return;
+      installWorldMesh(task.floor,task.mesh);
+      DEC.buf.set(task.decor);DEC.n=task.decorN;upload(decorMesh,DEC);
+    },
     dispose(){
-      if(task.model){task.model.removeFromParent();if(task.model.children[0])task.model.children[0].geometry.dispose()}
+      if(task.model){task.model.removeFromParent();if(task.model.children[0])task.model.children[0].geometry.dispose();task.model=null}
+      if(task.own&&task.mesh&&!task.installed){task.mesh.geometry.dispose();task.mesh=null}
+      task.decor=null;
     }
   };
   return task;
 }
-let warmed=null,shaftQueue=[];
+// Landings built ahead of time for the lift, keyed by seed and depth: floors 1 to 5 plus the selected floor.
+// A landing is handed out once and never reused, since a run mutates its floor.
+const LIFT_CACHE_MAX=6;
+const liftCache=new Map(),glimpseCompiled=new Set();
+let shaftQueue=[],liftCacheAt=0,liftCompiling=0;
 // the seed a lift ride uses while the seed field is blank; a new one is rolled once a run starts from it, so each ride is a new maze
 let autoSeed=randSeed(),reWarm=false;
 const liftSeed=()=>($('seedIn').value.trim()||autoSeed).toUpperCase();
+function selectedLiftDepth(){
+  const typed=+$('liftDepth').value;
+  return Number.isInteger(typed)&&typed>=1?typed:defaultLiftFloor();
+}
+function liftWanted(){
+  const sel=selectedLiftDepth(),max=+$('liftDepth').max,out=[sel];
+  for(let d=1;d<=5;d++)if(d!==sel&&!(max>=1&&d>max))out.push(d);
+  return out.slice(0,LIFT_CACHE_MAX);
+}
+function liftEntry(seed,depth){
+  const key=seed+'#'+depth;
+  let e=liftCache.get(key);
+  if(!e){e={seed,depth,task:prepareLanding(seed,depth),compiled:false};liftCache.set(key,e)}
+  return e;
+}
+function liftCacheTrim(seed,wanted){
+  for(const [key,e] of liftCache)if(e.seed!==seed||!wanted.includes(e.depth)){e.task.dispose();liftCache.delete(key)}
+}
+function liftCacheClear(){liftCacheTrim(null,[])}
 function preparedLanding(seed,depth){
-  if(warmed&&warmed.seed===seed&&warmed.depth===depth&&warmed.task){
-    const task=warmed.task;warmed.left=0;warmed.task=null;return task;
-  }
+  const key=seed+'#'+depth,e=liftCache.get(key);
+  if(e){liftCache.delete(key);return e.task}
   return prepareLanding(seed,depth);
 }
-function rememberShaft(seed,depth){
-  warmed?.task?.dispose();
-  const task=prepareLanding(seed,depth);
-  warmed={seed,depth,task,left:5};
+function compileAhead(object,done){
+  liftCompiling++;
+  const finish=()=>{liftCompiling--;done()};
+  const p=hub.compileObject(object);
+  if(p&&p.then)p.then(finish,finish);else finish();
+}
+// One small step per idle frame: build the next missing landing, compile a finished one, then compile the near floors' glimpses.
+function liftCachePump(){
+  if(liftCompiling>0||performance.now()<liftCacheAt)return true;
+  const seed=liftSeed(),wanted=liftWanted();
+  liftCacheTrim(seed,wanted);
+  for(const depth of wanted){
+    const e=liftEntry(seed,depth);
+    if(!e.task.ready){e.task.advance();return true}
+    if(!e.compiled){
+      e.compiled=true;
+      if(e.task.model){compileAhead(e.task.model,()=>{});return true}
+    }
+  }
+  for(let n=1;n<=5;n++)for(let turn=0;turn<3;turn++){
+    const surf=glimpseSurf(n,turn);
+    if(glimpseCompiled.has(surf))continue;
+    glimpseCompiled.add(surf);
+    compileAhead(buildGlimpseProto(n,turn),()=>{});
+    return true;
+  }
+  return false;
 }
 function startShaftWarm(){
   if(state!=='title')return;
@@ -6666,9 +6740,8 @@ function startShaftWarm(){
     const floor=n,mouth=turn;
     stages.push(['Opening landing '+n,()=>buildGlimpseProto(floor,mouth)]);
   }
-  rememberShaft(seed,depth);
-  for(let i=0;i<5;i++)stages.push(['Preparing the maze',()=>warmed.task.advance()]);
-  warmed.left=0;
+  const entry=liftEntry(seed,depth);
+  for(let i=0;i<5;i++)stages.push(['Preparing the maze',()=>entry.task.advance()]);
   stages.push(['Lighting the shaft',()=>hub.primeShaft()]);
   for(let n=5;n<=10;n++)for(let turn=0;turn<3;turn++){
     const surf=glimpseSurf(n,turn);
@@ -6680,13 +6753,10 @@ function startShaftWarm(){
   showLoading('Opening the entrance hall',stages);
   loading.kind='shaft';
 }
+// the seed or floor changed: the pump drops landings that no longer match and builds the new ones, after a short pause so typing does not thrash
 function retargetShaft(){
   if(state!=='title'||hub.riding||loading)return;
-  const seed=liftSeed();
-  const typed=+$('liftDepth').value;
-  const depth=Number.isInteger(typed)&&typed>=1?typed:defaultLiftFloor();
-  if(warmed?.task&&warmed.seed===seed&&warmed.depth===depth)return;
-  rememberShaft(seed,depth);
+  liftCacheAt=performance.now()+400;
 }
 function departFromLift(shortcut=false){
   if(state!=='title'||activeStation!=='lift'||!hub.boarded||loading)return;
@@ -6949,6 +7019,6 @@ function gripProbe(ts,talking){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='
   for(const t of ts){buildNpc(n,t,P.x,0.7,P.z,0.016);res.push({t,...GRIP_DBG})}talk=save;return res}
 function benchNpc(iters){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='keeper');const e=[P.x,0.7,P.z];buildNpc(n,1,e[0],e[1],e[2],0.016);let t0=performance.now();
   for(let i=0;i<iters;i++){CH.n=0;buildNpc(n,1+i*0.016,e[0],e[1],e[2],0.016)}return (performance.now()-t0)/iters}
-window.__game={stillwoodWarmState,stillwoodWarm,doorSeed,wofQ:WOQ,tkTargets,rrStart,wofClear,wofTick,mpPosFlags,wof:WOF,fx:FX,get tk(){return TK},get bomb(){return BOMB},get rr(){return RR},set rr(v){RR=v},rrAct,get ts(){return TS},get brk(){return BRK},set tk(v){TK=v},wofSpinStart,wofResolve,wofBegin,NEWS,openStation,get activeStation(){return activeStation},hub,get lobbyPaused(){return lobbyPaused},get roomPaused(){return roomPaused},simLockLost(){if(document.pointerLockElement){document.exitPointerLock();return}usingLock=true;document.dispatchEvent(new Event("pointerlockchange"))},music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={liftCache:()=>[...liftCache.values()].map(e=>({seed:e.seed,depth:e.depth,ready:e.task.ready,compiled:e.compiled})),stillwoodWarmState,stillwoodWarm,doorSeed,wofQ:WOQ,tkTargets,rrStart,wofClear,wofTick,mpPosFlags,wof:WOF,fx:FX,get tk(){return TK},get bomb(){return BOMB},get rr(){return RR},set rr(v){RR=v},rrAct,get ts(){return TS},get brk(){return BRK},set tk(v){TK=v},wofSpinStart,wofResolve,wofBegin,NEWS,openStation,get activeStation(){return activeStation},hub,get lobbyPaused(){return lobbyPaused},get roomPaused(){return roomPaused},simLockLost(){if(document.pointerLockElement){document.exitPointerLock();return}usingLock=true;document.dispatchEvent(new Event("pointerlockchange"))},music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 if(state==='title')startShaftWarm();
 requestAnimationFrame(frame);

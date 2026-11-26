@@ -642,6 +642,17 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       try{renderer.compile(scene,camera)}catch(e){}
       if(hidden)well.visible=false;
     },
+    // compile an off-screen landing or glimpse against the shaft's lights so its first sight in a ride costs nothing
+    compileObject(object){
+      if(ride)return null;
+      const hidden=!well.visible;
+      well.visible=true;
+      camera.updateMatrixWorld();
+      let result=null;
+      try{result=renderer.compileAsync?renderer.compileAsync(object,camera,scene):(renderer.compile(object,camera,scene),null)}catch(e){}
+      if(hidden)well.visible=false;
+      return result;
+    },
     get liftMotion(){return ride&&{travel:ride.travel,extra:0,docked:ride.docked,gaps:Array.from(ride.stretch)}},
     get hangarStats(){return hangar.stats()},
     get aimed(){return !!focus},
