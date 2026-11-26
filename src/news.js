@@ -8,7 +8,7 @@
 // Group small fixes into one post. Rebuild index.html afterwards (npm run build).
 export const NEWS=[
   {date:'2026-11-26',title:'Smoother lift rides',
-    body:'The first few floors are now prepared quietly in the background while you wander the lobby, so the ride down is much less stuttery.'},
+    body:'The first few floors, and everything it takes to light and draw them, are now prepared quietly in the background while you wander the lobby, so the ride down and your first steps in the maze are much less stuttery. Slower computers get their share of that quiet preparation too.'},
   {date:'2026-11-26',title:'Something to take home',
     body:'Make it back out of a certain quiet wood and you may not leave empty-handed. There is also a new achievement waiting for anyone who wanders somewhere bigger than it looks, and on a clear day you can now see mountains from that wood. Its trees are also ready and waiting by the time you step inside.'},
   {date:'2026-11-24',title:'A song for the wood',

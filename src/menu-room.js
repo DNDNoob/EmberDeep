@@ -61,6 +61,20 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     const lamp=new THREE.PointLight(color,power,range);
     lamp.position.set(x,y,z);parent.add(lamp);
   }
+  // A program is built for an exact number of lights, and the shaft's lamps come and go as sections show and hide during a ride, so every
+  // ride-time material used to relink at each step. While riding (and when compiling for a ride) unlit stand-ins top the visible point
+  // lights up to a fixed count, so one set of programs serves the whole descent.
+  const RIDE_LIGHTS=28,pads=[];
+  let padPeak=0;
+  function padLights(total,extra=0){
+    let real=extra;
+    scene.traverseVisible(o=>{if(o.isPointLight&&!o.userData.pad)real++});
+    padPeak=Math.max(padPeak,real);
+    const want=Math.max(0,total-real);
+    while(pads.length<want){const pad=new THREE.PointLight(0x000000,0,1);pad.userData.pad=true;scene.add(pad);pads.push(pad)}
+    pads.forEach((pad,i)=>{pad.visible=i<want});
+  }
+  const countLights=object=>{let n=0;object.traverse(o=>{if(o.isPointLight)n++});return n};
   function target(parent,entry,x,y,z,w,h,d){
     const mesh=box(parent,proxy,x,y,z,w,h,d);
     mesh.userData.entry=entry;hallTargets.push(mesh);targets.push(mesh);
@@ -606,6 +620,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     hangar.update(time||0);hangarFront.update(time||0);
     if(skyMat&&skyMat.uniforms&&skyMat.uniforms.uBody)orrery.fillWindow(skyMat.uniforms,time||0);
     pose();
+    padLights(ride?RIDE_LIGHTS:0);
     renderer.toneMappingExposure=exposure;renderer.setRenderTarget(null);renderer.render(scene,camera);
   }
   function markNewsSeen(){
@@ -634,12 +649,15 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     },
     get boarded(){return !liftAway&&onLiftPlatform(walker.b)},
     get riding(){return !!ride},
+    get lightPeak(){return padPeak},
     primeShaft(){
       if(ride)return;
       const hidden=!well.visible;
       well.visible=true;
       camera.updateMatrixWorld();
+      padLights(RIDE_LIGHTS);
       try{renderer.compile(scene,camera)}catch(e){}
+      padLights(0);
       if(hidden)well.visible=false;
     },
     // compile an off-screen landing or glimpse against the shaft's lights so its first sight in a ride costs nothing
@@ -649,7 +667,9 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       well.visible=true;
       camera.updateMatrixWorld();
       let result=null;
+      padLights(RIDE_LIGHTS,object.parent?0:countLights(object));
       try{result=renderer.compileAsync?renderer.compileAsync(object,camera,scene):(renderer.compile(object,camera,scene),null)}catch(e){}
+      padLights(0);
       if(hidden)well.visible=false;
       return result;
     },
