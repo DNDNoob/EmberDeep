@@ -492,6 +492,39 @@ function makeDoor(){
   return root;
 }
 
+// ---- distant mountains: a few concentric skirts of seeded ridgelines that ride along with the camera (never reachable) ----
+// Each ring is a strip with vertex colors only: fog at the foot, rock/green in the middle, a pale cap on the tallest peaks.
+// Farther rings are paler (atmospheric perspective) and blend toward the sky/fog color.
+const MTN={layers:[{r:126,h:58,base:16,f:0.5,rock:0x6b8a8c,cap:0.8,k:2.3},{r:116,h:42,base:10,f:0.32,rock:0x4f7468,cap:0.4,k:3.1},{r:106,h:24,base:6,f:0.16,rock:0x3d5f50,cap:0,k:4.3}],cols:120,drop:-24};
+function mountainRing(seed,fogHex){
+  const fog=new THREE.Color(fogHex),snow=new THREE.Color(0xf2f6f4),C=MTN.cols,pos=[],col=[],idx=[],tmp=new THREE.Color(),tmp2=new THREE.Color();
+  const put=(x,y,z,c)=>{pos.push(x,y,z);col.push(c.r,c.g,c.b)};
+  const fbm=(a,k,s)=>{const u=Math.cos(a)*k,v=Math.sin(a)*k;return vnoise(u,v,s)*0.55+vnoise(u*2.1+7,v*2.1,s^0x55)*0.3+vnoise(u*4.3,v*4.3+3,s^0x2a)*0.15};
+  MTN.layers.forEach((L,li)=>{
+    const rock=new THREE.Color(L.rock).lerp(fog,L.f),foot=fog.clone().lerp(rock,0.45);
+    const row=[];
+    for(let j=0;j<=C;j++){
+      const aa=(j%C)/C*Math.PI*2;
+      const n=fbm(aa,L.k,seed^(li*977+0x6d)),m=fbm(aa,L.k*0.5,seed^(li*31+0x1f));
+      const pk=Math.pow(clamp((n*0.7+m*0.5-0.28)*1.55,0,1),1.35);
+      const h=L.base+pk*(L.h-L.base)+(vnoise(Math.cos(aa)*40,Math.sin(aa)*40,seed^li)-0.5)*1.3;
+      row.push({x:Math.cos(aa)*L.r,z:Math.sin(aa)*L.r,h,capA:clamp((h-L.h*0.62)/(L.h*0.3),0,1)*L.cap});
+    }
+    const b0=pos.length/3;
+    for(const q of row){
+      put(q.x,MTN.drop,q.z,fog);
+      put(q.x,q.h*0.12,q.z,foot);
+      put(q.x,q.h*(1-0.1-q.capA*0.2),q.z,rock);
+      tmp2.copy(rock).lerp(snow,q.capA*0.9);put(q.x,q.h,q.z,tmp2);
+    }
+    for(let j=0;j<C;j++)for(let r=0;r<3;r++){const a=b0+j*4+r,b=a+4;idx.push(a,a+1,b,b,a+1,b+1)}
+  });
+  const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));g.setAttribute('color',new THREE.Float32BufferAttribute(col,3));g.setIndex(idx);
+  const m=new THREE.MeshBasicMaterial({vertexColors:true,fog:false,side:THREE.DoubleSide,depthWrite:false,depthTest:false,toneMapped:true});
+  const mesh=new THREE.Mesh(g,m);mesh.frustumCulled=false;mesh.renderOrder=-10;
+  return mesh;
+}
+
 export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=7}){
   const Q=o.low?0:1,low=!!o.low;
   const lvl=p=>{p.y=terrainRaw(p.x,p.z,seed);p.wy=p.y-0.04;return p};
@@ -506,6 +539,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   const sun=new THREE.DirectionalLight(0xfff0d0,1.55);
   sun.position.set(40,55,18);group.add(sun);
   const FOGC=new THREE.Color(FOG);
+  const mtn=mountainRing(seed,FOG);group.add(mtn);
 
   // ---- pond bookkeeping shared by ground, placement and the water ----
   const GU={uPondsT:{value:[0,1,2].map(()=>new THREE.Vector4(1e5,1e5,1,0))},uPonds:{value:[0,1,2].map(()=>new THREE.Vector3(1e5,1e5,1))},uSegs:{value:[0,1,2].map(()=>new THREE.Vector4(1e5,1e5,1e5+1,1e5))}};
@@ -1032,8 +1066,10 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     // keep the mirror cheap: no ground cover in it, and only the nearer part of the far LOD (the rest is fogged out anyway)
     slots.forEach(sl=>{if(REFL_SKIP.has(sl.kind)){sl.near.count=0;sl.farM.count=0}else sl.farM.count=Math.ceil(sl.farM.count*0.55)});
     for(const sl of pslots)sl.g.visible=false;door.visible=false;
+    const my=mtn.position.y;mtn.position.set(cp.x,wy,cp.z);mtn.updateMatrixWorld();   // the horizon in the water sits at the water plane
     const prev=renderer.getRenderTarget();
     renderer.setRenderTarget(rt);renderer.clear();renderer.render(scene,vcam);renderer.setRenderTarget(prev);
+    mtn.position.y=my;mtn.updateMatrixWorld();
     pslots.forEach((sl,i)=>{sl.g.visible=vis[i]});door.visible=dv;slots.forEach((sl,i)=>{sl.near.count=cnt[i][0];sl.farM.count=cnt[i][1]});
     S.refl.ms=performance.now()-T0;S.refl.tris=renderer.info.render.triangles;S.refl.frames++;S.refl.pond=pd.i;
   };
@@ -1084,13 +1120,14 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     if(S.mist>0){S.mist=Math.max(0,S.mist-dt);scene.fog.density=fogD*(1+1.1*Math.sin(Math.PI*S.mist/2.4))}
     poseDoor();door.visible=!S.hidden;
     ground.position.x=b.x;ground.position.z=b.z;
+    mtn.position.set(cam.position.x,cam.position.y-1,cam.position.z);
     UT.value=S.t;
     updatePonds(dt,b,moving);
     // the eye follows the feet smoothly on the ground (stepping onto or off a stone does not pop) and exactly in the air
     if(A.watching)poseCam(dt);
   };
   onClear(()=>{
-    deadClear=true;scene.background=prevBg;rt.dispose();ghostBody.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()});ghostDoor.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()});
+    deadClear=true;scene.background=prevBg;rt.dispose();mtn.geometry.dispose();mtn.material.dispose();ghostBody.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()});ghostDoor.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()});
     const gs=new Set([ground.geometry,padGeo,cupGeo,waterGeo,...Object.values(holders)]);
     for(const s of slots){gs.add(s.near.geometry);gs.add(s.farM.geometry);s.near.dispose();s.farM.dispose()}
     for(const g of gs)g.dispose();
