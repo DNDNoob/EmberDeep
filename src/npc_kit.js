@@ -1179,8 +1179,17 @@ export function bakeRecipe(recipe) {
   advance(st, Infinity);
   return st.res;
 }
+// Bakes in the browser's idle time between frames (requestIdleCallback), taking what the frame has to spare (up to 8 ms), so the
+// first seconds on a floor do not stutter while the Keeper is sculpted. If the page is never idle, the timeout still gives it 3 ms
+// every ~40 ms so it finishes.
 export function bakeRecipeIdle(recipe, done) {
   const st = start(recipe);
-  const tick = () => { if (st.done) { if (done) done(st.res); return; } advance(st, 6); setTimeout(tick, 10); };
-  setTimeout(tick, 0);
+  const ric = typeof requestIdleCallback === 'function' ? requestIdleCallback : null;
+  const next = () => ric ? ric(tick, {timeout: 40}) : setTimeout(tick, 16);
+  const tick = dl => {
+    if (st.done) { if (done) done(st.res); return; }
+    advance(st, dl && typeof dl.timeRemaining === 'function' ? Math.max(3, Math.min(8, dl.timeRemaining() - 1)) : 3);
+    next();
+  };
+  next();
 }

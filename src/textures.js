@@ -845,34 +845,71 @@ export function makeSurfaces(renderer, size, wantNormals) {
     rt.texture.anisotropy = an;
     return rt;
   };
-  const run = (mat, rt) => {quad.material = mat; renderer.setRenderTarget(rt); quad.render(renderer); renderer.setRenderTarget(null); mat.dispose()};
+  // One shader per surface layer and look (VAR), compiled once and kept: the noise seed and tint are uniforms, so a new floor reuses them
+  // instead of compiling three fresh shaders per surface (which froze the page while a floor was built).
+  const mats = new Map();
+  const shader = (key, frag, uniforms) => {
+    let m = mats.get(key);
+    if (!m) {m = new THREE.ShaderMaterial({vertexShader: VS, fragmentShader: frag, uniforms, depthTest: false, depthWrite: false, toneMapped: false}); mats.set(key, m)}
+    return m;
+  };
+  const head = (i, v) => `#define VAR ${v}\nuniform float SEED;uniform vec3 TINT;\n` + LIB + SURF[i];
+  const matA = (i, v) => shader('A' + i + ':' + v, head(i, v) + mainA, {SEED: {value: 0}, TINT: {value: new THREE.Vector3(1, 1, 1)}});
+  const matH = (i, v) => shader('H' + i + ':' + v, head(i, v) + mainH, {SEED: {value: 0}, TINT: {value: new THREE.Vector3(1, 1, 1)}});
+  const matN = () => shader('N', FS_N, {tH: {value: null}, px: {value: new THREE.Vector2(1 / size, 1 / size)}, bump: {value: 0.1}});
+  const run = (mat, rt) => {quad.material = mat; renderer.setRenderTarget(rt); quad.render(renderer)};
+  const paint = job => {
+    const prev = renderer.getRenderTarget(), tm = renderer.toneMapping;
+    renderer.toneMapping = THREE.NoToneMapping;
+    const {i, v, seed, tn} = job, set = m => {m.uniforms.SEED.value = seed; m.uniforms.TINT.value.set(tn[0], tn[1], tn[2]); return m};
+    run(set(matA(i, v)), job.A);
+    if (job.N) {
+      const Hh = new THREE.WebGLRenderTarget(size, size, {type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping});
+      run(set(matH(i, v)), Hh);
+      const n = matN();n.uniforms.tH.value = Hh.texture;n.uniforms.bump.value = FLAT[i] ? 0.05 : 0.1;   // floors and ceilings stretch one tile over two metres, walls over one
+      run(n, job.N);
+      n.uniforms.tH.value = null;Hh.dispose();
+    }
+    renderer.toneMapping = tm; renderer.setRenderTarget(prev);
+  };
+  // Deferred mode: get() hands back the surface's textures at once (render targets, so materials can be built with them) and queues
+  // the painting; pump() paints the queue a few at a time, so a floor can be built across many frames (the lift ride, a loading bar).
+  let deferred = false;
+  const queue = [];
   // p = {v: look 0-3, seed: noise offset, tint: [r,g,b]} (all optional). Surfaces are cached per layer and look; sweep() frees the ones a floor stopped using.
   const key = p => p ? `${p.v | 0}|${(p.seed || 0).toFixed(2)}|${(p.tint || [1, 1, 1]).map(c => c.toFixed(3)).join(',')}` : '0|0.00|1.000,1.000,1.000';
   function get(i, p) {
     const ck = i + ':' + key(p);
     if (cache.has(ck)) {const c = cache.get(ck); c.used = true; return c}
-    const prev = renderer.getRenderTarget(), tm = renderer.toneMapping;
-    renderer.toneMapping = THREE.NoToneMapping;
-    const tn = (p && p.tint) || [1, 1, 1];
-    const head = `#define SEED ${(i * 17.31 + 3.7 + ((p && p.seed) || 0)).toFixed(2)}\n#define VAR ${(p && p.v) | 0}\n#define TINT vec3(${tn.map(c => c.toFixed(4)).join(',')})\n` + LIB + SURF[i];
-    const A = target(true);
-    run(new THREE.ShaderMaterial({vertexShader: VS, fragmentShader: head + mainA, depthTest: false, depthWrite: false, toneMapped: false}), A);
-    let N = null;
-    if (wantNormals) {
-      const Hh = new THREE.WebGLRenderTarget(size, size, {type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping});
-      run(new THREE.ShaderMaterial({vertexShader: VS, fragmentShader: head + mainH, depthTest: false, depthWrite: false, toneMapped: false}), Hh);
-      N = target(false);
-      // floors and ceilings stretch one tile of texture over two metres, walls over one
-      const flat = FLAT[i];
-      run(new THREE.ShaderMaterial({vertexShader: VS, fragmentShader: FS_N, depthTest: false, depthWrite: false, toneMapped: false,
-        uniforms: {tH: {value: Hh.texture}, px: {value: new THREE.Vector2(1 / size, 1 / size)}, bump: {value: flat ? 0.05 : 0.1}}}), N);
-      Hh.dispose();
-    }
-    renderer.toneMapping = tm; renderer.setRenderTarget(prev);
-    const out = {map: A.texture, nrm: N ? N.texture : null, rtA: A, rtN: N, used: true};
+    const tn = ((p && p.tint) || [1, 1, 1]).map(c => Math.round(c * 1e4) / 1e4);
+    const job = {i, v: (p && p.v) | 0, seed: Math.round((i * 17.31 + 3.7 + ((p && p.seed) || 0)) * 100) / 100, tn, A: target(true), N: wantNormals ? target(false) : null};
+    if (deferred) queue.push(job); else paint(job);
+    const out = {map: job.A.texture, nrm: job.N ? job.N.texture : null, rtA: job.A, rtN: job.N, used: true};
     cache.set(ck, out);
     return out;
   }
-  const sweep = () => {for (const [k, c] of cache) {if (c.used) c.used = false; else {c.rtA.dispose(); if (c.rtN) c.rtN.dispose(); cache.delete(k)}}};
-  return {get, key, sweep, count: SURF.length, size: () => cache.size};
+  const pump = (n = 1) => {while (n-- > 0 && queue.length) paint(queue.shift()); return queue.length};
+  // in the background: paint only what has had its shaders compiled in parallel (never compile in the middle of a frame), and
+  // start the next parallel compile for anything newly queued. One job a frame at most, so a ride past many landings stays smooth.
+  let compiling = null;
+  const idle = () => {
+    if (!queue.length) return 0;
+    const j = queue.findIndex(q => q.ok);
+    if (j >= 0) paint(queue.splice(j, 1)[0]);
+    if (!compiling && queue.some(q => !q.ok)) {compiling = compileQueued().then(() => {compiling = null})}
+    return queue.length;
+  };
+  // compile the shaders the queue needs, in parallel, before painting with them
+  const compileQueued = () => {
+    const sc = new THREE.Scene(), geo = new THREE.PlaneGeometry(2, 2), seen = new Set();
+    for (const j of queue) for (const m of [matA(j.i, j.v), j.N ? matH(j.i, j.v) : null, j.N ? matN() : null]) if (m && !seen.has(m)) {seen.add(m); const q = new THREE.Mesh(geo, m); q.frustumCulled = false; sc.add(q)}
+    const batch = queue.slice();
+    if (!seen.size) {for (const q of batch) q.ok = true; return Promise.resolve()}
+    const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    return renderer.compileAsync(sc, cam).catch(() => {}).then(() => {geo.dispose(); for (const q of batch) q.ok = true});
+  };
+  const sweep = () => {for (const [k, c] of cache) {if (c.used) c.used = false; else {
+    for (let q = queue.length - 1; q >= 0; q--) if (queue[q].A === c.rtA) queue.splice(q, 1);   // never painted: drop it from the queue too
+    c.rtA.dispose(); if (c.rtN) c.rtN.dispose(); cache.delete(k)}}};
+  return {get, key, sweep, pump, idle, compileQueued, defer: on => {deferred = !!on}, get pending() {return queue.length}, count: SURF.length, size: () => cache.size};
 }

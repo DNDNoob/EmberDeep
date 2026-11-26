@@ -39,6 +39,20 @@ await pg.evaluate(() => { const g = window.__game, P = g.P, w = g.F.safe.wheel; 
 await shot('01b-wheel-wide');
 await pg.evaluate(() => { const g = window.__game, P = g.P, w = g.F.safe.wheel; P.x = w.x + w.nx * 1.25 - w.nz * 0.25; P.z = w.z + w.nz * 1.25 + w.nx * 0.25; P.yaw = Math.atan2(w.z - P.z, w.x - P.x); P.pitch = -0.08; g.onTileChange(); });
 
+
+// every spin is different: how many turns, how long, how it slows; and the last results rarely come straight back
+const vary = await pg.evaluate(() => {
+  const g = window.__game, turns = new Set(), durs = [], es = [];let wrong = 0;
+  for (let k = 0; k < 400; k++) { const i = (Math.random() * 23) | 0, p = g.planSpin(i, Math.random() * 50); if (g.sliceAt(p.to) !== i) wrong++;
+    turns.add(Math.floor((p.to - p.from) / (Math.PI * 2))); durs.push(p.dur); es.push(p.e); }
+  const recent = [], seen = new Array(23).fill(0);let again = 0, back3 = 0;
+  for (let k = 0; k < 2000; k++) { const i = g.pickSlice(recent, 23); seen[i]++; if (recent[recent.length - 1] === i) again++; if (recent.slice(-3).includes(i)) back3++; recent.push(i); if (recent.length > 6) recent.shift(); }
+  return {wrong, turns: turns.size, dmin: Math.min(...durs), dmax: Math.max(...durs), emin: Math.min(...es), emax: Math.max(...es), again: again / 2000, back3: back3 / 2000, minSeen: Math.min(...seen)};
+});
+check(vary.wrong === 0, 'every planned spin still lands on its slice');
+check(vary.turns >= 6 && vary.dmax - vary.dmin > 8 && vary.emax - vary.emin > 2, 'spins vary: ' + vary.turns + ' different turn counts, ' + vary.dmin.toFixed(1) + '-' + vary.dmax.toFixed(1) + ' s, coast curves ' + vary.emin.toFixed(1) + '-' + vary.emax.toFixed(1));
+check(vary.again < 0.01 && vary.back3 < 0.04 && vary.minSeen > 40, 'results rarely repeat (same as last: ' + (vary.again * 100).toFixed(1) + '%, one of the last three: ' + (vary.back3 * 100).toFixed(1) + '%), and every slice still comes up');
+
 // spin from Pat's menu
 const spin = await pg.evaluate(() => {
   const g = window.__game, pat = g.F.npcs.find(n => n.type === 'pat');
@@ -50,7 +64,7 @@ const spin = await pg.evaluate(() => {
 check(spin.after === spin.before - 10, 'a spin costs 10 gems');
 check(spin.state === 'play' && !spin.done, 'the wheel spins in the world and you keep control');
 check(!spin.modal, 'no spin modal');
-check(spin.plan.dur >= 12, 'the spin takes a while (' + spin.plan.dur.toFixed(1) + ' s)');
+check(spin.plan.dur >= 9, 'the spin takes a while (' + spin.plan.dur.toFixed(1) + ' s)');
 await pg.evaluate(() => { window.__game.wof.t = window.__game.wof.plan.dur * 0.3; });
 await frames(2);
 const mid = await pg.evaluate(() => ({a: window.__game.wof.angle, f: window.__game.wof.flap}));
@@ -63,12 +77,12 @@ const land = await pg.evaluate(() => { const W = window.__game.wof; return {done
 check(land.done && Math.abs(land.angle - land.to) < 1e-9, 'the wheel stops where it was planned');
 await shot('03-wheel-result');
 
-await pg.evaluate(() => { window.__wofPlan = (i, a) => { const TAU = Math.PI * 2, W = TAU / 22, base = a - (((a % TAU) + TAU) % TAU) + TAU * 6; return {from: a, to: base + i * W + 0.18, dur: 12}; }; });
+await pg.evaluate(() => { window.__wofPlan = (i, a) => { const TAU = Math.PI * 2, W = TAU / 23, base = a - (((a % TAU) + TAU) % TAU) + TAU * 6; return {from: a, to: base + i * W + 0.18, dur: 12}; }; });
 // every slice lands on itself, many times over (the slice under the pointer is what happens)
 const consistency = await pg.evaluate(async () => {
   const g = window.__game, W = g.wof; let bad = 0;
   for (let k = 0; k < 600; k++) {
-    const i = k % 22; W.done = true; W.angle = Math.random() * 1000;
+    const i = k % 23; W.done = true; W.angle = Math.random() * 1000;
     g.wofBegin({d: g.R.depth, i, c: 0, ...(() => { const p = window.__wofPlan(i, W.angle); return {a0: p.from, a1: p.to, dur: p.dur}; })(), n: 'T'}, false);
     W.t = W.plan.dur + 1; g.update(0.016); if (W.result !== i) bad++;
   }
@@ -80,7 +94,7 @@ check(consistency === 0, 'result always matches the slice the wheel was planned 
 // each outcome
 const outcome = async (i, opts = {}) => pg.evaluate(([i, o]) => {
   const g = window.__game, W = g.wof, F = g.fx;
-  if (o.reset) { F.loudN = 0; for (const k of ['hedge', 'moon', 'bob', 'pug', 'rat', 'plague', 'fat', 'loud', 'tin', 'pox', 'tickled', 'stag']) F[k] = 0; F.dying = false; g.tk = null; g.ts = null; g.rr = null; if (g.brk) g.brk.stop(true); F.frozen = null; }
+  if (o.reset) { F.loudN = 0; for (const k of ['hedge', 'moon', 'bob', 'pug', 'rat', 'plague', 'fat', 'loud', 'tin', 'pox', 'tickled', 'stag']) F[k] = 0; F.dying = false; g.tk = null; g.ts = null; g.cg = null; g.rr = null; if (g.brk) g.brk.stop(true); F.frozen = null; }
   g.P.hp = 50; g.P.inv = 1e6;   // keep the tester alive through hours of shades
   Object.assign(g.R, o.R || {}); Object.assign(g.P, o.P || {}); if (o.wallet != null) g.wallet = o.wallet;
   W.done = true; const p = window.__wofPlan(i, W.angle);
@@ -221,6 +235,15 @@ await shot('24-bomb-boom');
 check(boom.fly > 0 && boom.moved > 1.5, 'Bomb: the blast throws you (' + boom.moved.toFixed(1) + ' m)');
 check(boom.knocked, 'Bomb: Pat is knocked flat');
 check(await pg.evaluate(() => { const g = window.__game; for (let i = 0; i < 60 * 7; i++) g.update(1 / 60); const pat = g.F.npcs.find(n => n.type === 'pat'); return !pat.knock && !pat.fall; }), 'Bomb: and gets back up');
+// Crunch Gremlin: chases you for a minute and takes a bite
+r = await outcome(22, {reset: true}); check(await pg.evaluate(() => !!window.__game.cg && window.__game.cg.t > 55), 'Crunch Gremlin: it shows up for a minute');
+const cg = await pg.evaluate(() => { const g = window.__game, P = g.P, w = g.F.safe.wheel; P.x = w.x + w.nx * 1.8; P.z = w.z + w.nz * 1.8; P.hp = 3; P.inv = 0; P.ward = 0; g.onTileChange();
+  let bit = false; for (let i = 0; i < 60 * 8; i++) { g.update(1 / 60); if (P.hp < 3) { bit = true; break; } P.inv = 0; }
+  return {bit, hp: P.hp}; });
+check(cg.bit, 'Crunch Gremlin: it catches you and takes a bite (' + cg.hp + ' hearts left)');
+await pg.evaluate(() => { const g = window.__game, P = g.P, C = g.cg; g.P.hp = 50; g.P.inv = 1e6; if (C) { P.x = C.x + 1.0; P.z = C.z + 0.3; P.yaw = Math.atan2(C.z - P.z, C.x - P.x); P.pitch = -0.15; C.chew = 3; } });
+await shot('25-crunch-gremlin');
+check(await pg.evaluate(() => { const g = window.__game; for (let i = 0; i < 60 * 62; i++) g.update(1 / 60); return !g.cg; }), 'Crunch Gremlin: gone after a minute');
 // Russian roulette: with a friend at the table there are 4 chambers (2 players, 3 empty, 1 round)
 const rr2 = await pg.evaluate(async () => { const g = window.__game; g.MP.on = true;
   const send = () => g.mpRecv({k: 'p', d: g.R.depth, a: [g.P.x + 1, g.P.z, 0, 0, 0, 80, 4, 3]}, 'friend1'); send(); window.__rrIv = setInterval(send, 200);
