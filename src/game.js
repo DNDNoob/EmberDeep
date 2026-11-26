@@ -13,6 +13,7 @@ import {createVoice} from './voice.js';
 import {guidePath,guideBeacon,GUIDE_RANGE} from './guide.js';
 import {createRooms,kilnGame,KILN,DOOR_KINDS} from './rooms.js';
 import {animalHitEffects,mooseModel,scoutGooseModel,MOOSE_ACH,MOOSE_SPIKE_PRICE} from './moose-defense.js';
+import {stillwoodWarm,stillwoodWarmState} from './stillwood.js';
 import {ROOM_MOBS} from './room-mobs.js';
 import {roomMobExhibit} from './room-mob-exhibits.js';
 import {roomActions,roomControlLabel} from './room-controls.js';
@@ -3031,12 +3032,21 @@ function roomWatch(showProgress=true){
     if(state!=='room'){$('fade').style.transition='opacity .4s';$('fade').style.opacity=0}
   }
 }
+const doorSeed=D=>hashStr(R.seed+'#theater'+R.depth+','+D.tx+','+D.ty);
+// a floor with a still wood door bakes that forest in the background once the floor is up, so the room opens on the real trees
+let swWarmTimer=0;
+function stillwoodWarmSoon(){
+  clearTimeout(swWarmTimer);
+  const fl=F,D=fl&&fl.sdoors&&fl.sdoors.find(q=>q.kind==='stillwood'&&!q.used);if(!D)return;
+  const go=()=>{if(F!==fl)return;if(loading||state==='title'){swWarmTimer=setTimeout(go,1000);return}stillwoodWarm(doorSeed(D))};
+  swWarmTimer=setTimeout(go,1500);
+}
 function sdoorOpen(D,showProgress=false){
   if(loading||state!=='play'||D.used||P.down||P.grab)return;
   D.used=true;nearDoor=null;clearPrompt();RW=null;document.body.classList.remove('rwatch');
   mpSend({k:'sd',d:R.depth,i:F.sdoors.indexOf(D),w:D.kind});
   sfx('door');
-  const seed=hashStr(R.seed+'#theater'+R.depth+','+D.tx+','+D.ty);
+  const seed=doorSeed(D);
   remember('doors',D.kind,{seed,depth:R.depth,look:doorLookOf(D),tx:D.tx,ty:D.ty,ph:D.ph,stone:F.stone.slice()});
   if(!showProgress)buildStatic(F);
   beginRoom(D.kind,roomEnd,seed,showProgress);
@@ -3281,6 +3291,7 @@ function installFloor(depth,nextFloor,prepared=false){
   pkReapply();
   if(MP.guest&&MP.hostId)mpSend({k:'pkq',d:depth},MP.hostId);
   glReset();
+  stillwoodWarmSoon();
 }
 function onTileChange(){
   P.tx=Math.floor(P.x);P.ty=Math.floor(P.z);
@@ -6938,6 +6949,6 @@ function gripProbe(ts,talking){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='
   for(const t of ts){buildNpc(n,t,P.x,0.7,P.z,0.016);res.push({t,...GRIP_DBG})}talk=save;return res}
 function benchNpc(iters){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='keeper');const e=[P.x,0.7,P.z];buildNpc(n,1,e[0],e[1],e[2],0.016);let t0=performance.now();
   for(let i=0;i<iters;i++){CH.n=0;buildNpc(n,1+i*0.016,e[0],e[1],e[2],0.016)}return (performance.now()-t0)/iters}
-window.__game={wofQ:WOQ,tkTargets,rrStart,wofClear,wofTick,mpPosFlags,wof:WOF,fx:FX,get tk(){return TK},get bomb(){return BOMB},get rr(){return RR},set rr(v){RR=v},rrAct,get ts(){return TS},get brk(){return BRK},set tk(v){TK=v},wofSpinStart,wofResolve,wofBegin,NEWS,openStation,get activeStation(){return activeStation},hub,get lobbyPaused(){return lobbyPaused},get roomPaused(){return roomPaused},simLockLost(){if(document.pointerLockElement){document.exitPointerLock();return}usingLock=true;document.dispatchEvent(new Event("pointerlockchange"))},music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
+window.__game={stillwoodWarmState,stillwoodWarm,doorSeed,wofQ:WOQ,tkTargets,rrStart,wofClear,wofTick,mpPosFlags,wof:WOF,fx:FX,get tk(){return TK},get bomb(){return BOMB},get rr(){return RR},set rr(v){RR=v},rrAct,get ts(){return TS},get brk(){return BRK},set tk(v){TK=v},wofSpinStart,wofResolve,wofBegin,NEWS,openStation,get activeStation(){return activeStation},hub,get lobbyPaused(){return lobbyPaused},get roomPaused(){return roomPaused},simLockLost(){if(document.pointerLockElement){document.exitPointerLock();return}usingLock=true;document.dispatchEvent(new Event("pointerlockchange"))},music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch};
 if(state==='title')startShaftWarm();
 requestAnimationFrame(frame);

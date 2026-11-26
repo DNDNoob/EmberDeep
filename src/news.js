@@ -8,7 +8,7 @@
 // Group small fixes into one post. Rebuild index.html afterwards (npm run build).
 export const NEWS=[
   {date:'2026-11-26',title:'Something to take home',
-    body:'Make it back out of a certain quiet wood and you may not leave empty-handed. There is also a new achievement waiting for anyone who wanders somewhere bigger than it looks, and on a clear day you can now see mountains from that wood.'},
+    body:'Make it back out of a certain quiet wood and you may not leave empty-handed. There is also a new achievement waiting for anyone who wanders somewhere bigger than it looks, and on a clear day you can now see mountains from that wood. Its trees are also ready and waiting by the time you step inside.'},
   {date:'2026-11-24',title:'A song for the wood',
     body:'The wood behind that certain door now has a quiet tune of its own that drifts in and out as you come and go. The glowing cone over the water is gone, and the wood is a little harder to fool: you will have to mean it.'},
   {date:'2026-11-24',title:'Still water, smooth strides',

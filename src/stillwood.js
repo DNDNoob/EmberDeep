@@ -330,7 +330,31 @@ const PROPS=[
 ];
 const REFL_SKIP=new Set(['grass','tulip','daisy','slab','reed']);
 const ROCKY=new Set(['bigrock','bigmoss','boulder','mossrock']);
+const HOLD_MAX=8;
 const BAKE_ORDER=['fir0','shrub0','mossrock0','oak0','grass0','tulip0','daisy0','reed0','slab0','bigrock0','boulder0','fir1','grass1','oak1','shrub1','bigmoss0','snag0','fir2','mossrock1','reed1','bigrock1','grass2','slab1'];
+// which prop each BAKE_ORDER id is for a room seed: the room and stillwoodWarm both read this, so their getProp keys always match
+const bakeFam=seed=>(seed%3)*10;
+function bakeSpec(seed){
+  const fam=bakeFam(seed),spec={};
+  for(const p of PROPS)for(let i=0;i<p.n;i++)spec[p.kind+i]={bake:p.bake||p.kind,pseed:fam+i+1,opts:Object.assign({sliceMs:5},p.opts)};
+  return spec;
+}
+// Bake a room's whole prop set ahead of time, one prop at a time in idle slices. Props depend only on seed%3, so it is shared per family and safe to call again.
+const WARM=new Map();
+export function stillwoodWarm(seed){
+  const fam=bakeFam(seed);let w=WARM.get(fam);if(w)return w.promise;
+  const spec=bakeSpec(seed);w={done:0,total:BAKE_ORDER.length,finished:false,ms:0};
+  const t0=performance.now();
+  w.promise=(async()=>{
+    for(const id of BAKE_ORDER){
+      try{await getProp(spec[id].bake,spec[id].pseed,spec[id].opts)}catch(e){console.warn('still wood warm',id,e)}
+      w.done++;
+    }
+    w.finished=true;w.ms=performance.now()-t0;return w;
+  })();
+  WARM.set(fam,w);return w.promise;
+}
+export const stillwoodWarmState=seed=>WARM.get(bakeFam(seed))||null;
 // until a prop's bake lands (or is read from the cache) its slot shows one of these cheap stand-ins
 function placeholder(kind){
   const T=THREE,m=(g,x,y,z,c,sx=1,sy=1,sz=1)=>{g.scale(sx,sy,sz);g.translate(x,y,z);return [g,...c]};
@@ -695,7 +719,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     rock:natureMaterial({Q,UT,sway:0}),
   };
   const matOf={bigrock:M.rock,bigmoss:M.rock,fir:M.fir,oak:M.oak,snag:M.snag,shrub:M.shrub,grass:M.grass,reed:M.reed,tulip:M.flower,daisy:M.flower,mossrock:M.rock,boulder:M.rock,slab:M.rock};
-  const fam=(seed%3)*10;
+  const spec=bakeSpec(seed);
   const holders={};for(const p of PROPS)holders[p.kind]=placeholder(p.kind);
   const slots=[],by={};
   for(const p of PROPS){
@@ -705,7 +729,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
         const im=new THREE.InstancedMesh(holders[p.kind],matOf[p.kind],Math.ceil(cap*(low?0.6:1)));
         im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);im.frustumCulled=false;im.count=0;group.add(im);return im;
       };
-      const sl={kind:p.kind,bake:p.bake||p.kind,i,id:p.kind+i,pseed:fam+i+1,opts:p.opts,far:p.far,nearR:p.near,near:mk(p.cap[0]),farM:mk(p.cap[1]),
+      const sl={kind:p.kind,bake:p.bake||p.kind,i,id:p.kind+i,pseed:spec[p.kind+i].pseed,opts:p.opts,far:p.far,nearR:p.near,near:mk(p.cap[0]),farM:mk(p.cap[1]),
         r:TRUNK0[p.kind]||0,pad:TRUNK_PAD[p.kind]||0,fp:1.8,ready:false};
       slots.push(sl);by[p.kind].push(sl);
     }
@@ -930,7 +954,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
       if(deadClear)return;
       const sl=slotById[id];
       try{
-        const t=performance.now(),p=await getProp(sl.bake,sl.pseed,Object.assign({sliceMs:5},sl.opts));
+        const t=performance.now(),p=await getProp(sl.bake,sl.pseed,spec[id].opts);
         if(deadClear)return;
         applyProp(sl,p);bake.done++;if(p.stats&&p.stats.cached)bake.cached++;bake.log.push([id,Math.round(performance.now()-t)]);
       }catch(e){console.warn('still wood bake',id,e);bake.done++}
@@ -1079,7 +1103,14 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     cam.position.set(b.x,EYE+camY+bobY(b,walker.scale),b.z);
     cam.rotation.set(S.pitch,-S.yaw,0,'YXZ');
   };
+  // safety net: if the forest is not baked yet, hold the room behind a black fade (up to HOLD_MAX s) so it never opens on stand-ins
+  let holdT=0,holding=!A.watching;
   S.update=(dt,input)=>{
+    if(holding){
+      holdT+=dt;
+      if(S.ready||holdT>HOLD_MAX){holding=false;S.fade=0;S.in=0}
+      else{S.fade=1;return}
+    }
     S.t+=dt;let moving=false;
     if(!A.watching){
       lookStep(S,dt,input.lx,input.ly,MOVE.roomPitch);
