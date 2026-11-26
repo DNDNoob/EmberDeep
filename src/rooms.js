@@ -3,6 +3,7 @@
 //   kiln    a stone hall with an arcade console: walk up, press its buttons to steer the falling stones in the glass, burn enough rows and the door lets you go
 //   fall    there is no floor behind the door
 //   mirror  you stand behind a one-way mirror, watching a parlor; something comes in and then looks back at you
+//   bathroom  a locked bathroom: wipe (gently) until the paper comes back white, then you may leave (src/bathroom.js)
 // Each room owns its own scene. See docs/strange-doors.md for the authoring workflow.
 import * as THREE from 'three';
 import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
@@ -17,6 +18,7 @@ import {monolithRoom} from './monoliths.js';
 import {mooseDefenseRoom} from './moose-defense.js';
 import {stillwoodRoom} from './stillwood.js';
 import {hamletRoom} from './hamlet.js';
+import {bathroomRoom} from './bathroom.js';
 import {MOVE,lookStep,lookBy,bobAdvance,bobY,createRoomWalker} from './movement.js';
 import {spotted} from './room-mobs.js';
 
@@ -31,6 +33,7 @@ export const DOOR_KINDS={
   moose:{name:'Mosquito Outpost',look:'moose',css:'mooseroom'}, // walkable arcade with a tabletop camera
   stillwood:{name:'a door into the still wood',look:'stillwood',touchUse:false,infinite:true},
   hamlet:{name:'a door into a little village',look:'hamlet'},
+  bathroom:{name:'the bathroom',look:'bathroom',action:'USE'},   // wipe until the paper comes back white; the door stays locked until then
 };
 const modeOf=k=>DOOR_KINDS[k]?.mode||'walk';
 
@@ -1508,7 +1511,8 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
   const moose=()=>mooseDefenseRoom({group,scene,cam,o,A,finish,onClear:fn=>clearHooks.push(fn)});
   const stillwood=(seed=7)=>stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear:fn=>clearHooks.push(fn),seed});
   const hamlet=(seed=7)=>hamletRoom({group,scene,cam,o,A,finish,onClear:fn=>clearHooks.push(fn),seed});
-  const KINDS={galaxy,fall,kiln,mirror,theater,monoliths,moose,stillwood,hamlet};
+  const bathroom=(seed=7)=>bathroomRoom({group,scene,cam,o,A,finish,onClear:fn=>clearHooks.push(fn),seed});
+  const KINDS={galaxy,fall,kiln,mirror,theater,monoliths,moose,stillwood,hamlet,bathroom};
   for(const kind of Object.keys(DOOR_KINDS))if(!Object.hasOwn(KINDS,kind))throw new Error('Missing room factory for '+kind);
   A.mode=modeOf;
   A.controlMode=()=>cur?.controlMode?.()||modeOf(A.kind);
