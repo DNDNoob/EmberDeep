@@ -6645,7 +6645,7 @@ function prepareLanding(seed,depth){
       else if(stage===2){task.model=landingGeometry(task.floor,task.mesh);task.progress=0.6}
       else if(stage===3){
         buildStatic(task.floor);buildSdf(task.floor);
-        if(task.own){task.decorN=DEC.n;task.decor=DEC.buf.slice(0,DEC.n*13)}
+        task.decorN=DEC.n;task.decor=DEC.buf.slice(0,DEC.n*13);
         task.progress=0.8;
       }
       else if(stage===4){task.progress=1;task.ready=true}
@@ -6655,9 +6655,8 @@ function prepareLanding(seed,depth){
     // called as the run takes this floor: puts its own world and decor in place
     install(){
       task.installed=true;
-      if(!task.own||!task.mesh)return;
-      installWorldMesh(task.floor,task.mesh);
-      DEC.buf.set(task.decor);DEC.n=task.decorN;upload(decorMesh,DEC);
+      if(task.own&&task.mesh)installWorldMesh(task.floor,task.mesh);
+      if(task.decor){DEC.buf.set(task.decor);DEC.n=task.decorN;upload(decorMesh,DEC)}
     },
     dispose(){
       if(task.model){task.model.removeFromParent();if(task.model.children[0])task.model.children[0].geometry.dispose();task.model=null}
