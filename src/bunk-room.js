@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {mergeGeometries} from 'three/addons/utils/BufferGeometryUtils.js';
 import {worldSign} from './archive-hall.js';
+import {createBunkVanity} from './bunk-vanity.js';
 
 export const BUNK_DOOR={x:-20.65,z:8.65,half:1.03,height:2.52};
 const WIDTH=5.8,DEPTH=6.35,HEIGHT=2.85,RADIUS=0.28;
@@ -9,7 +10,7 @@ export function isBunkPosition(x,z){
   return x<BUNK_DOOR.x&&x>=BUNK_DOOR.x-DEPTH&&Math.abs(z-BUNK_DOOR.z)<WIDTH/2;
 }
 
-export function createBunkRoom(sfx){
+export function createBunkRoom(sfx,appearance){
   const group=new THREE.Group();group.name='Bunk room';
   group.position.set(BUNK_DOOR.x,0,BUNK_DOOR.z);group.rotation.y=-Math.PI/2;
   const cube=new THREE.BoxGeometry();
@@ -78,12 +79,14 @@ export function createBunkRoom(sfx){
     box(group,lens,0,2.705,z,1.52,0.045,0.2);
     const lamp=new THREE.PointLight(0xffd2a0,13,7,1.6);lamp.position.set(0,2.53,z);group.add(lamp);
   }
+  const vanity=createBunkVanity(group,box,{trim,wood,lockers,lens},DEPTH,appearance,sfx);
   for(const [parent,batches] of pieces)for(const [material,geometries] of batches){
     parent.add(new THREE.Mesh(mergeGeometries(geometries),material));
   }
 
   let inside=true,ready=false,opening=0;
   function update(dt,body){
+    if(inside)vanity.update(dt);
     if(!ready||opening===1)return;
     if(opening===0){
       if(Math.abs(body.x-BUNK_DOOR.x)>1.6||Math.abs(body.z-BUNK_DOOR.z)>doorHalf+0.18)return;
@@ -102,10 +105,13 @@ export function createBunkRoom(sfx){
     side=THREE.MathUtils.clamp(side,-half+RADIUS,half-RADIUS);
     if(depth>2.26&&depth<5.56)side=Math.max(side,-1.07);
     if(depth>2.48&&depth<6.07)side=Math.min(side,1.84);
+    if(side>vanity.sinkMin-RADIUS&&side<vanity.sinkMax+RADIUS)depth=Math.min(depth,vanity.sinkFront-RADIUS);
     body.x=BUNK_DOOR.x-depth;body.z=BUNK_DOOR.z+side;
     return true;
   }
   return {group,update,collide,place(x,z){inside=isBunkPosition(x,z)},
+    aim(ray,{x,z}){return inside?vanity.aim(ray,z-BUNK_DOOR.z,BUNK_DOOR.x-x):null},
+    use:vanity.use,highlight:vanity.setHighlight,
     setStatus(label,progress){status.setLabel(['ENTRANCE HALL',label],true,progress)},
     unlock(){ready=true;signal.color.setHex(0x8ce8a6);status.setLabel(['ENTRANCE HALL','UNLOCKED'])},
     get opening(){return opening>0},
