@@ -338,6 +338,11 @@ function bakeSpec(seed){
   for(const p of PROPS)for(let i=0;i<p.n;i++)spec[p.kind+i]={bake:p.bake||p.kind,pseed:fam+i+1,opts:Object.assign({sliceMs:5},p.opts)};
   return spec;
 }
+// The maze shares these exact bakes with the room, including their palette and cache keys.
+export function stillwoodProp(id,seed=0){
+  const {bake,pseed,opts}=bakeSpec(seed)[id];
+  return getProp(bake,pseed,opts);
+}
 // Bake a room's whole prop set ahead of time, one prop at a time in idle slices. Props depend only on seed%3, so it is shared per family and safe to call again.
 const WARM=new Map();
 export function stillwoodWarm(seed){
