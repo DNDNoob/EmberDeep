@@ -5055,7 +5055,7 @@ function bossWin(){
   for(const q of F.shades)if(q.type===6&&q.role!=='main'){q.dead=true;q.x=q.z=-99}
   P.shards=3;wallet+=g;R.gems+=g;R.score+=1000*(B.i+1)*(1+B.cyc);store.set('wallet',wallet);
   const rare=[9,10,11,12],got=[];for(let k=0;k<3;k++){const i=rare[(Math.random()*rare.length)|0];POT.bag[i]++;got.push(INGREDIENTS[i].name)}potSaveBag();POT.hudK='';
-  if(!archiveRun){const T=bossTrophies(),e=T[D.id]||{n:0,best:0};e.n++;e.best=Math.max(e.best,R.depth);T[D.id]=e;store.set('trophies',T);hub.setTrophies?.(T)}
+  if(!archiveRun){const T=bossTrophies(),e=T[D.id]||{n:0,best:0};e.n++;e.best=Math.max(e.best,R.depth);T[D.id]=e;store.set('trophies',T);hub.setTrophies?.(T,adminOverride)}
   [523,659,784,1046].forEach((f,i)=>{tone(f,0.5,'triangle',0.12,i*0.14);tone(f/2,0.6,'sine',0.08,i*0.14)});
   wGainXp(wHeld(),80+25*B.i);
   bossCard(D.name+' is defeated!','+'+g+' gems  ·  '+got.join(', ')+'  ·  a trophy for the lobby');
@@ -6101,7 +6101,7 @@ function roomControl(action){return roomControlLabel(action,roomInputDevice())}
 function roomInput(){
   const mode=state==='room'?ROOMS.controlMode():'walk',table=mode==='table',choice=mode==='choice';
   const ax=(a,b)=>(a?1:0)-(b?1:0);
-  const actions=roomActions(keys,pad.roomButtons,{mode,mouse:mouseL,touchPress:touch.act,touchJump:touch.jump});
+  const actions=roomActions(keys,pad.roomButtons,{mode,mouse:mouseL,touchPress:touch.act,touchJump:touch.jump,keyboardSprint:keyboardSprint()});
   return {...actions,
     mx:clamp(ax(keys.KeyD,keys.KeyA)+pad.mx+touch.mx,-1,1),
     my:clamp(ax(keys.KeyS||keys.ArrowDown&&!choice&&!table,keys.KeyW||keys.ArrowUp&&!choice&&!table)+pad.my+touch.my,-1,1),
@@ -6113,6 +6113,17 @@ function roomInput(){
 let doorMsgT=0, tipTimers=[];
 let mapBig=false, usingLock=false, pausedAt=0, flashT=0, sealMsgT=0, lowFuelSaid=false, pingT=0, beatT=0;
 let sens=store.get('sens',1);
+let toggleSprint=store.get('toggleSprint',false)===true,sprintLatched=false;
+const keyboardSprint=()=>toggleSprint?sprintLatched:!!(keys.ShiftLeft||keys.ShiftRight);
+const sprintSettings=document.querySelectorAll('.toggleSprint');
+for(const el of sprintSettings){
+  el.checked=toggleSprint;
+  el.addEventListener('change',()=>{
+    toggleSprint=el.checked;sprintLatched=false;
+    store.set('toggleSprint',toggleSprint);
+    for(const setting of sprintSettings)setting.checked=toggleSprint;
+  });
+}
 $('sens').value=sens;
 $('sens').addEventListener('input',e=>{sens=+e.target.value;store.set('sens',sens);document.querySelectorAll('.sensP').forEach(o=>o.value=sens)});
 document.querySelectorAll('.sensP').forEach(el=>{el.value=sens;el.addEventListener('input',()=>{sens=+el.value;store.set('sens',sens);$('sens').value=sens;document.querySelectorAll('.sensP').forEach(o=>o.value=sens)})});
@@ -6286,6 +6297,7 @@ function startFromMenu(seed,depth){
   if(!loading)startRun(seed,depth,false,true);
 }
 function enterRun(seed,sd,floor,landing,liftTrip){
+  sprintLatched=false;
   liftVisits.clear();liftResume=liftJourney=false;
   if(seed===autoSeed&&!$('seedIn').value.trim()){autoSeed=randSeed();reWarm=true}
   liftCacheClear(!!landing);
@@ -6320,6 +6332,7 @@ function showTips(){
   t.forEach((msg,i)=>tipTimers.push(setTimeout(()=>{if(state==='play'&&R.depth===d)say(msg,4)},4200+i*4600)));
 }
 function toTitle(){
+  sprintLatched=false;
   bossReset();
   if(archiveRun){finishArchive();return}
   if(loading)closeLoading();
@@ -6335,7 +6348,7 @@ function toTitle(){
   if(document.pointerLockElement){usingLock=false;document.exitPointerLock()}
 }
 function showBest(){
-  hub.setTrophies?.(bossTrophies());
+  hub.setTrophies?.(bossTrophies(),adminOverride);
   fillStartSel();
   const b=store.get('best',null);
   $('bestLine').textContent=(b?`Best run: depth ${b.depth}, ${b.score} points · `:'')+`Level ${plLevel()} · ${wallet} gems banked`;
@@ -6343,6 +6356,7 @@ function showBest(){
 function pause(){
   if(state!=='play')return;
   if(activeStation==='lift')closeStation();
+  sprintLatched=false;
   state='pause';pausedAt=performance.now();mpPausePanel();
   $('pause').classList.remove('hidden');
 }
@@ -6354,7 +6368,7 @@ function resume(withLock){
 }
 /* ---------- Esc in the lobby / a door room: a small box, or the pause panel with settings. Only this player's input is held. ---------- */
 let lobbyPaused=false,roomPaused=false;
-function freeInput(){for(const k in keys)keys[k]=false;mouseL=false}
+function freeInput(){for(const k in keys)keys[k]=false;mouseL=false;sprintLatched=false}
 function lobbyPauseShow(){
   if(lobbyPaused||state!=='title'||activeStation||loading||touch.on||archiveRun)return;
   lobbyPaused=true;pausedAt=performance.now();freeInput();
@@ -7544,7 +7558,7 @@ addEventListener('keydown',e=>{
   }
   if(e.target?.matches?.('select, input')){
     const walking=activeStation&&/^Key[WASD]$/.test(e.code);
-    const editing=e.target.matches('input[type=text]:not([readonly]), input[type=number]');
+    const editing=e.target.matches('input[type=text]:not([readonly]), input[type=number], input[type=password]');
     if(!walking||editing)return;
   }
   if((state==='title'||activeStation)&&(e.code==='Tab'||e.target?.closest?.('button')&&(e.code==='Enter'||e.code==='Space')))return;
@@ -7561,6 +7575,7 @@ addEventListener('keydown',e=>{
   if(['Tab','Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
   if(roomMode==='table'&&['Backspace','Enter','NumpadEnter','Escape'].includes(e.code))e.preventDefault();
   if(e.repeat)return;
+  if(toggleSprint&&!activeStation&&['title','play','room'].includes(state)&&(e.code==='ShiftLeft'||e.code==='ShiftRight'))sprintLatched=!sprintLatched;
   keys[e.code]=true;
   initAudio();
   if(e.code==='KeyF'){if(document.fullscreenElement)document.exitFullscreen();else document.documentElement.requestFullscreen().catch(()=>{})}
@@ -7606,8 +7621,8 @@ addEventListener('keydown',e=>{
 });
 addEventListener('keyup',e=>{keys[e.code]=false});
 const lobbyHadLock=()=>state==='title'&&(usingLock||!!document.pointerLockElement);
-addEventListener('blur',()=>{const lobby=lobbyHadLock();for(const k in keys)keys[k]=false;mouseL=false;pause();if(lobby)lobbyPauseShow()});
-document.addEventListener('visibilitychange',()=>{if(document.hidden){const lobby=lobbyHadLock();pause();if(lobby)lobbyPauseShow()}});
+addEventListener('blur',()=>{const lobby=lobbyHadLock();freeInput();pause();if(lobby)lobbyPauseShow()});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){const lobby=lobbyHadLock();sprintLatched=false;pause();if(lobby)lobbyPauseShow()}});
 document.addEventListener('mousemove',e=>{
   const drag=(state==='title'||state==='room')&&(e.buttons&2);
   if(loading||lobbyPaused||roomPaused||!['title','play','room'].includes(state)||(!drag&&document.pointerLockElement!==canvas))return;
@@ -8021,7 +8036,7 @@ function update(dt){
   const fury=ctl&&ps('fury');if(fury&&Math.abs(fwd)<0.2&&Math.abs(str)<0.2)fwd=1;   // Fury Brew: you cannot stop running
   const J0=MOVE.jumpV,G0=MOVE.gravity,pvx=P.vx,pvz=P.vz;MOVE.jumpV=J0*potJump();MOVE.gravity=G0*potGrav();
   const ev=stepMove(P,dt,{fwd,str,fx:Math.cos(P.yaw),fz:Math.sin(P.yaw),ctl,
-    jump:FX.fat<=0&&potJump()>0&&(keys.Space||pad.jump||touch.jump),sprint:fury||keys.ShiftLeft||keys.ShiftRight||pad.sprint||Math.hypot(touch.mx,touch.my)>0.94},
+    jump:FX.fat<=0&&potJump()>0&&(keys.Space||pad.jump||touch.jump),sprint:fury||keyboardSprint()||pad.sprint||Math.hypot(touch.mx,touch.my)>0.94},
     {scale:1,speedMul:moveMul()*(P.mounted?1.25:1),lungs:up.lungs|0,blocked:ps('phase')?potPhase:blocked});
   MOVE.jumpV=J0;MOVE.gravity=G0;
   if(P.y>0.62&&(potGrav()<1||potJump()>1)){P.y=0.62;if(P.vy>0)P.vy=0}   // floaty potions: bump the ceiling and hang there
@@ -9308,6 +9323,7 @@ const archiveCatalog={
     ...Object.fromEntries(Object.entries(ROOM_MOBS).map(([id,mob])=>[id,mob.name]))}},
   glitches:{title:'Glitch Archive',entries:GLITCH_ARCHIVE}
 };
+let adminOverride=store.get('adminOverride',false)===true;
 const archive=Object.fromEntries(Object.keys(archiveCatalog).map(kind=>{
   const saved=store.get('archive.'+kind,{});
   return [kind,saved&&typeof saved==='object'&&!Array.isArray(saved)?saved:{}];
@@ -9379,6 +9395,32 @@ const settingsScreen=createSettingsScreen(board,{
   },
 });
 hub.sharedSettings(settingsScreen.screen,settingsScreen.display);
+const overrideForms=[board,settingsScreen.screen].map(screen=>screen.querySelector('.admin-override'));
+function resetOverrideForms(){
+  for(const form of overrideForms){
+    form.reset();
+    form.querySelector('button').hidden=form.querySelector('input').hidden=adminOverride;
+    form.querySelector('[role=status]').textContent=adminOverride?'Lobby collections unlocked.':'';
+  }
+}
+for(const form of overrideForms)form.addEventListener('submit',event=>{
+  event.preventDefault();
+  if(activeStation!=='settings'||adminOverride||(MP.on&&!hub.settingsInReach(hub.presence)))return;
+  const password=form.querySelector('input');
+  const accepted=password.value==='12345';
+  password.value='';
+  if(!accepted){
+    form.querySelector('[role=status]').textContent='Incorrect password.';
+    password.focus();
+    return;
+  }
+  adminOverride=true;
+  store.set('adminOverride',true);
+  resetOverrideForms();
+  refreshHub();
+  hub.setTrophies(bossTrophies(),adminOverride);
+});
+resetOverrideForms();
 
 const liftFloorLimit=()=>Math.max(40,deepest);
 const defaultLiftFloor=()=>liftResume?R.depth:URL_DEPTH||+$('startSel').value||1;
@@ -9615,9 +9657,21 @@ function rememberRoomMob(id,seed){
     look:door.look,tx:door.tx,ty:door.ty,ph:door.ph,stone:door.stone||F?.stone?.slice()
   });
 }
+// Use preview data only for missing entries, so live discoveries still supersede it.
+function archivePreview(kind,id){
+  const seed='OVERRIDE';
+  if(kind==='glitches')return {preview:true};
+  if(kind==='floors')return {seed,depth:{maze:1,cave:3,back:4,dark:9,forest:7}[id]};
+  const room=kind==='doors'?id:ROOM_MOBS[id]?.room;
+  if(room)return {seed:hashStr(seed+room),depth:1,room};
+  return {seed,depth:1,preview:true};
+}
 function refreshHub(){
   hub.syncArchives(Object.fromEntries(Object.entries(archiveCatalog).map(([kind,catalog])=>[kind,
-    Object.entries(catalog.entries).map(([id,name])=>({kind,id,name,data:archive[kind][id]}))])));
+    Object.entries(catalog.entries).map(([id,name])=>({
+      kind,id,name,data:archive[kind][id]||(adminOverride?archivePreview(kind,id):undefined),
+      discovered:!!archive[kind][id]
+    }))])),adminOverride);
 }
 function showHub(on){
   closeStation();
@@ -9640,6 +9694,7 @@ function openStation(id){
   if(document.pointerLockElement){usingLock=false;document.exitPointerLock()}
   $('stationTitle').textContent=id==='settings'?'Settings':id==='lift'?(onFloor?'Lift controls':'Descent Control'):id==='news'?'Update Log':'Field Guide';
   if(id==='news')hub.markNewsSeen();
+  if(id==='settings')resetOverrideForms();
   if(id==='lift'){
     editingLiftDepth=false;
     $('liftDepth').value=onFloor?nextLiftFloor(R.depth,liftFloorLimit()):defaultLiftFloor();
@@ -9672,6 +9727,7 @@ function closeStation(){
   hub.focusPanel(null);
   board.classList.add('hidden');
   document.body.classList.remove('hub-panel');
+  if(previous==='settings')resetOverrideForms();
   if(previous&&(board.contains(document.activeElement)||settingsScreen.screen.contains(document.activeElement)))document.activeElement.blur();
   updateSettingsScreen();
 }
@@ -10293,6 +10349,7 @@ function startArchive(kind,id,data){
         previewStamina={stam:P.stam,winded:P.winded,spikeTraps:P.spikeTraps,mooseGems:wallet};
         beginRoom(kind==='doors'?id:data.room,finishArchive,data.seed);
       }else if(kind==='mobs'){
+        if(data.preview)data=previewMobEncounter(data);
         restoreEncounter(data);
         replayMob(id,data);
       }
@@ -10301,6 +10358,19 @@ function startArchive(kind,id,data){
       throw error;
     }
   }]]);
+}
+function previewMobEncounter(data){
+  for(let ty=1;ty<F.H-1;ty++)for(let tx=1;tx<F.W-1;tx++){
+    if(!glOpen(tx,ty)||glTrapAt(tx,ty)||Math.hypot(F.exit.x-tx-0.5,F.exit.z-ty-0.5)<2)continue;
+    for(const [dx,dz] of DIRS){
+      let steps=0;
+      while(steps<4&&glOpen(tx+(steps+1)*dx,ty+(steps+1)*dz))steps++;
+      if(steps<4)continue;
+      const x=tx+0.5,z=ty+0.5,yaw=Math.atan2(dz,dx);
+      return {...data,pose:[x,z,yaw,0],mob:[x+3*dx,z+3*dz]};
+    }
+  }
+  return {...data,pose:[P.x,P.z,P.yaw,P.pitch],mob:[P.x,P.z]};
 }
 function restoreEncounter(data){
   if(data.gate&&F.door)openDoor(true);

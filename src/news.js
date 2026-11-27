@@ -9,6 +9,10 @@
 export const NEWS=[
   {date:'2026-11-27',title:'A new home for the Keeper',
     body:'Follow the maze into the Keeper’s sanctuary. Warm up by the fire, visit the booths, and check the live wall map to see where your party is on the floor.'},
+  {date:'2026-11-27',title:'Tap to sprint',
+    body:'Turn on Toggle sprint in Settings to start and stop sprinting with a tap of Shift.'},
+  {date:'2026-11-27',title:'Admin Override',
+    body:'The Settings terminal now has an Admin Override for exploring the hall’s collections.'},
   {date:'2026-11-26',title:'Take your time with Kepler-47',
     body:'The orrery and observation window now move at a gentler pace. Try the pause, speed, and reset buttons on the orrery to control both views.'},
   {date:'2026-11-26',title:'Deeper into the woods',

@@ -12,7 +12,7 @@ const bindings={
   navRight:{keys:['ArrowRight'],button:15},
 };
 
-export function roomActions(keys,buttons,{mode,mouse=false,touchPress=false,touchJump=false}){
+export function roomActions(keys,buttons,{mode,mouse=false,touchPress=false,touchJump=false,keyboardSprint=!!(keys.ShiftLeft||keys.ShiftRight)}){
   const action=name=>{
     const {keys:codes,button}=bindings[name];
     return !!buttons[button]||codes.some(code=>!!keys[code]);
@@ -27,7 +27,7 @@ export function roomActions(keys,buttons,{mode,mouse=false,touchPress=false,touc
     start:table&&action('start'),
     navUp:(table||choice)&&action('navUp'),navDown:(table||choice)&&action('navDown'),
     navLeft:(table||choice)&&action('navLeft'),navRight:(table||choice)&&action('navRight'),
-    sprint:!!(keys.ShiftLeft||keys.ShiftRight||buttons[6]||buttons[10]),
+    sprint:!!(keyboardSprint||buttons[6]||buttons[10]),
   };
 }
 

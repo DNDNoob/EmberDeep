@@ -224,11 +224,12 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
     plate.position.set(0,0.64,-0.06);
     trophySlots.push({b,parts,cupMat,plate,gem,got:null});
   });
-  function setTrophies(T){
+  function setTrophies(T,override=false){
     for(const q of trophySlots){
-      const e=T&&T[q.b.id],got=!!(e&&e.n>0);const key=got?e.n+'/'+e.best:'';if(q.got===key)continue;q.got=key;
+      const e=T&&T[q.b.id],earned=!!(e&&e.n>0),got=earned||override;
+      const key=earned?e.n+'/'+e.best:override?'override':'';if(q.got===key)continue;q.got=key;
       q.parts.forEach((m,k)=>{m.material=got?(k===3?q.gem:cupMat):dim;m.visible=got||k<3});
-      q.plate.setLabel(got?[q.b.name,'Beaten '+e.n+'x  ·  deepest '+e.best]:['???','Waits on floor '+(5*(BOSSES.indexOf(q.b)+1))],got);
+      q.plate.setLabel(got?[q.b.name,earned?'Beaten '+e.n+'x  ·  deepest '+e.best:'Admin Override']:['???','Waits on floor '+(5*(BOSSES.indexOf(q.b)+1))],got);
     }
   }
   setTrophies(null);
@@ -498,16 +499,17 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
   }
   // the lobby is only the active view on the title screen; elsewhere it shows no hint and ignores the orrery keys
   function setActive(on){active=!!on;if(!active){study=null;orreryAim=null;orreryHint.textContent=''}}
-  function syncArchives(groups){
+  function syncArchives(groups,override=false){
     for(const portal of portals){
       const entries=groups[portal.id],known=entries.filter(e=>e.data).length;
       const old=galleries.get(portal.id);
-      if(old?.known===known)continue;
+      const discovered=entries.filter(e=>e.discovered).length;
+      if(old?.known===known&&old.discovered===discovered)continue;
       old?.dispose();
       const hall=createArchiveHall(portal.id,entries,asset);
       hall.group.position.set(portal.x,0,wallZ-6.55);lobby.add(hall.group);
-      galleries.set(portal.id,{...hall,known});
-      portal.sign.setLabel([portal.name,known+' / '+entries.length+' discovered']);
+      galleries.set(portal.id,{...hall,known,discovered});
+      portal.sign.setLabel([portal.name,known+' / '+entries.length+(override?' available':' discovered')]);
     }
     targets.splice(0,targets.length,...hallTargets,...[...galleries.values()].flatMap(hall=>hall.targets));
     scene.updateMatrixWorld(true);
