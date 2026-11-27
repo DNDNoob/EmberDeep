@@ -75,6 +75,15 @@ From depth 2, some floors also hide a neighbor whose shadow is wrong. It wears a
 
 For testing, `__game.glitch('freeze' | 'rubber' | 'rubberfwd' | 'replay' | 'hud' | 'tpose' | 'hole' | 'fall' | 'loop' | 'clip')` in the console forces one.
 
+### Adding a glitch
+
+Add the in-game effect and its Glitch Archive display in the same change.
+
+1. Give the glitch a stable ID. Use it for the test hook, the discovery record, and the entry in `src/glitch-catalog.js` so existing discoveries keep their displays.
+2. Add a looping TV animation in `glitchScreen` in `src/archive-hall.js`. Design it around the glitch's distinctive moment and check that it reads at TV size.
+3. Capture the effect during gameplay and save a short WebM as `src/art/glitches/<id>.webm`. The standalone build checks that each catalog entry has a clip and embeds it in the game.
+4. Build the game and check the display in the lobby. The undiscovered TV shows **Awaiting Signal**. Once discovered, it loops the animation, plays the clip on Use, and resumes the loop when the clip ends. Check that the player can keep walking throughout.
+
 ## Movement
 
 One movement system drives the maze and every strange-door room: `src/movement.js`.

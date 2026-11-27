@@ -34,6 +34,7 @@ import {createSettingsScreen,createTerminalSession} from './shared-terminal.js';
 import {landingMazeZ,liftEye,liftGateTime,liftMouthLamp,liftCabinLamps,mountLiftDock,dockPosition,inDockAnnex} from './lift-dock.js';
 import {NEWS} from './news.js';
 import {floorDiorama,lenticularDoor} from './archive-hall.js';
+import {GLITCH_ARCHIVE} from './glitch-catalog.js';
 import {wheelModel,planSpin,spinAngle,pegPush,sliceAt,pickSlice,WOF_SLICES,WOF_N,WOF_W} from './wheel.js';
 import {announce,statusStrip,tints,coinFlip,breakUI} from './wheel-screens.js';
 import {createBreaks} from './wheel-breaks.js';
@@ -9226,10 +9227,7 @@ const archiveCatalog={
   mobs:{title:'Mob Archive',action:'Encounter',hint:'Spot creatures during a descent, in the maze or behind a strange door, to record them.',entries:{
     0:'Shade',1:'Stalker',2:'Wisp',3:'Watcher',mimic:'Mimic',lurk:'Wrong Shadow',
     ...Object.fromEntries(Object.entries(ROOM_MOBS).map(([id,mob])=>[id,mob.name]))}},
-  glitches:{title:'Glitch Archive',action:'Replay',hint:'Experience anomalies during a descent to record them.',entries:{
-    freeze:'Frozen Frame',rubber:'Rubber Band',rubberfwd:'Fast Forward',replay:'Player Rewind',
-    hud:'Corrupted HUD',tpose:'Rigid Figure',hole:'Unloaded Wall',fall:'Falling Through the World',loop:'Repeating Hall',
-    clip:'Passed Through a Wall'}}
+  glitches:{title:'Glitch Archive',entries:GLITCH_ARCHIVE}
 };
 const archive=Object.fromEntries(Object.keys(archiveCatalog).map(kind=>{
   const saved=store.get('archive.'+kind,{});
@@ -9600,6 +9598,7 @@ function closeStation(){
 }
 function useMenuAsset(entry){
   if(state!=='title'||loading)return;
+  if(entry.playClip){entry.playClip();return}
   initAudio();
   if(entry.locked){sfx('seal');say('Locked. The hangar door will not budge.',2.6);return}
   if(entry.station){openStation(entry.station);return}
@@ -10214,10 +10213,9 @@ function startArchive(kind,id,data){
       if(roomReplay){
         previewStamina={stam:P.stam,winded:P.winded,spikeTraps:P.spikeTraps,mooseGems:wallet};
         beginRoom(kind==='doors'?id:data.room,finishArchive,data.seed);
-      }else if(kind==='mobs'||kind==='glitches'){
+      }else if(kind==='mobs'){
         restoreEncounter(data);
-        if(kind==='mobs')replayMob(id,data);
-        else if(!glStart(id,true,data))say('This anomaly could not be restored in this layout.',4);
+        replayMob(id,data);
       }
     }catch(error){
       finishArchive();

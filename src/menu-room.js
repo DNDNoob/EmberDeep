@@ -523,7 +523,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
       if(ride&&!entry.lift)continue;
       if(entry.kind){
         const portal=portals.find(p=>p.id===entry.kind);
-        if(walker.b.z>=wallZ+0.05||Math.abs(walker.b.x-portal.x)>=2.3||hit.distance>6.2)continue;
+        if(walker.b.z>=wallZ+0.05||Math.abs(walker.b.x-portal.x)>=2.3||hit.distance>(entry.playClip?3.4:6.2))continue;
       }
       if(hit.distance<= (entry.station?8.5:6.2))return entry;
     }

@@ -119,8 +119,30 @@ function glitchScreen(parent,id,name,known){
   box(parent,iron,0,1.47,0,1.96,1.24,0.43);
   box(parent,brass,0,1.47,0.2,1.77,1.06,0.055);
   const screen=new THREE.Mesh(new THREE.PlaneGeometry(1.66,0.96),new THREE.MeshBasicMaterial({map}));
+  screen.name=known?name+' recording':'Undiscovered glitch';
   screen.position.set(0,1.47,0.234);parent.add(screen);
-  let frame=-1;
+  const clip=known?__GLITCH_CLIPS__[id]:null;
+  let frame=-1,video=null;
+  function stop(){
+    if(!video)return;
+    const current=video;
+    video=null;
+    current.pause();
+    current.removeAttribute('src');
+    current.load();
+    frame=-1;
+  }
+  function play(){
+    if(!clip||video)return;
+    const current=document.createElement('video');
+    current.muted=true;
+    current.playsInline=true;
+    current.addEventListener('ended',()=>{if(video===current)stop()},{once:true});
+    current.addEventListener('error',()=>{if(video===current)stop()},{once:true});
+    video=current;
+    current.src=clip;
+    current.play().catch(()=>{if(video===current)stop()});
+  }
   function draw(time){
     const tick=Math.floor(time*12);
     if(tick===frame)return;
@@ -128,18 +150,37 @@ function glitchScreen(parent,id,name,known){
     ctx.fillStyle='#101522';ctx.fillRect(0,0,width,height);
     ctx.strokeStyle='#648f96';ctx.lineWidth=2;ctx.strokeRect(12,12,width-24,height-24);
     ctx.save();ctx.beginPath();ctx.rect(14,14,width-28,height-28);ctx.clip();
-    if(known){
-      const drift=id==='freeze'?0:(tick%28)/28;
+    const playing=video?.readyState>=2;
+    if(playing){
+      const scale=Math.min((width-28)/video.videoWidth,(height-56)/video.videoHeight);
+      const w=video.videoWidth*scale,h=video.videoHeight*scale;
+      ctx.drawImage(video,(width-w)/2,42+(height-56-h)/2,w,h);
+    }else if(known){
+      const freezeTick=tick%72,held=id==='freeze'&&freezeTick>=22&&freezeTick<49;
+      const motion=id==='freeze'?freezeTick-THREE.MathUtils.clamp(freezeTick-22,0,27):tick;
+      const drift=((motion*(id==='rubberfwd'?3:1))%28)/28;
       ctx.strokeStyle=id==='hud'?'#ca78ac':'#72c9b6';
       // CRT illustrations use the anomaly's movement and framing.
-      if(id==='fall'||id==='hole'){
+      if(id==='fall'){
         for(let i=0;i<8;i++){
           const p=((i+drift)/8)**2,w=20+p*350,h=14+p*220;
           ctx.strokeRect(width/2-w/2,height/2-h/2,w,h);
         }
+      }else if(id==='clip'){
+        const phase=tick%48,held=phase>=18&&phase<29;
+        const progress=phase<18?phase/18:phase<29?1:Math.max(0,1-(phase-29)/11);
+        const w=48+progress*290,h=48+progress*165,left=(width-w)/2,top=120-h/2;
+        ctx.strokeStyle='#b49a7d';ctx.strokeRect(left,top,w,h);
+        ctx.fillStyle=held?'#292231':'#543b37';ctx.fillRect(left+1,top+1,w-2,h-2);
+        for(let row=1;row<5;row++){
+          const y=top+h*row/5;
+          ctx.strokeStyle='#211b25';ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(left+w,y);ctx.stroke();
+        }
+        ctx.fillStyle=held?'#eab8a1':'#c4dfbc';ctx.font='13px monospace';
+        ctx.fillText(held?'CAUGHT IN STONE':phase>=29?'PUSHED THROUGH':'APPROACHING WALL',25,172);
       }else if(id==='hud'){
         ctx.fillStyle='#dc87b7';ctx.font='bold 26px monospace';
-        ctx.fillText(tick%6<3?'DEPTH  -1':'D█PTH  ∞',48,109);
+        ctx.fillText(tick%18<10?'DEPTH  -1':'D█PTH  ∞',48,109);
         ctx.fillText('◆ ◆ ◆ / 4',78,147);
       }else{
         for(const side of [-1,1]){
@@ -150,10 +191,19 @@ function glitchScreen(parent,id,name,known){
           const p=((i+drift)/5)**2,w=25+p*330;
           ctx.strokeRect(width/2-w/2,84-p*70,w,42+p*130);
         }
+        if(id==='hole'&&tick%42>=16){
+          ctx.fillStyle='#090b14';ctx.fillRect(251,68,78,127);
+          ctx.strokeStyle='#d3ae89';ctx.setLineDash([5,4]);
+          ctx.strokeRect(251,68,78,127);ctx.setLineDash([]);
+        }
         if(['rubber','rubberfwd','replay','tpose'].includes(id)){
           const x=id==='tpose'?192:192+40*Math.sin(drift*6.28)*(tick%5===0?-1:1);
           ctx.fillStyle='#e4a9b9';ctx.fillRect(x-6,92,12,12);ctx.fillRect(x-3,107,6,37);
           ctx.fillRect(x-18,110,36,4);ctx.fillRect(x-10,142,5,18);ctx.fillRect(x+5,142,5,18);
+        }
+        if(held||id==='loop'){
+          ctx.fillStyle='#e7b599';ctx.font='13px monospace';
+          ctx.fillText(held?'FRAME HELD':'PASSAGE 01 ↻',24,194);
         }
       }
     }else{
@@ -163,11 +213,20 @@ function glitchScreen(parent,id,name,known){
     for(let y=0;y<height;y+=5)ctx.fillRect(0,y,width,2);
     ctx.fillStyle='#111521bb';ctx.fillRect(14,14,width-28,28);
     ctx.fillStyle='#a9d6cd';ctx.font='15px monospace';ctx.textAlign='left';
-    ctx.fillText(known?name.toUpperCase():'NO RECORDING',24,34,336);
+    ctx.fillText(known?name.toUpperCase():'NO RECORDING',24,34,known?246:336);
+    if(known){
+      ctx.fillStyle=tick%18<12?'#e69ba8':'#80606e';
+      ctx.fillText(playing?'▶ CLIP':'● LOOP',306,34);
+      if(clip&&!playing){
+        ctx.fillStyle='#131723';ctx.fillRect(115,182,154,20);
+        ctx.fillStyle='#c8cfdb';ctx.font='12px monospace';ctx.textAlign='center';
+        ctx.fillText('USE · GAMEPLAY CLIP',width/2,196);
+      }
+    }
     ctx.restore();map.needsUpdate=true;
   }
   draw(0);
-  return known?draw:null;
+  return {draw:known?draw:null,play:clip?play:null,stop};
 }
 
 export function createArchiveHall(kind,entries,asset){
@@ -218,6 +277,7 @@ export function createArchiveHall(kind,entries,asset){
   const proxy=new THREE.MeshBasicMaterial({visible:false});
   const screens=[],lenses=[],actors=[],targets=[];
   for(const [index,entry] of entries.entries()){
+    let playback=null;
     const side=index%2===0?-1:1,z=-Math.floor(index/2)*span;
     const bay=new THREE.Group();
     bay.position.set(side*(kind==='floors'?2.40:3.05),0,z);
@@ -238,7 +298,8 @@ export function createArchiveHall(kind,entries,asset){
       box(bay,brass,0,0.93,0,2.02,0.08,1.12);
       if(kind==='glitches'){
         const screen=glitchScreen(bay,entry.id,entry.name,!!entry.data);
-        if(screen)screens.push(screen);
+        if(screen.draw)screens.push(screen);
+        playback=screen.play;
       }else if(entry.data){
         const exhibit=asset(entry);
         if(kind==='floors'){
@@ -267,11 +328,14 @@ export function createArchiveHall(kind,entries,asset){
       box(bay,brass,0,plaqueY,plaqueZ,1.5,0.23,0.065);
       worldSign(bay,entry.name,0,plaqueY,plaqueZ+0.034,1.47,0.20,{font:'600 107px Georgia'});
     }
-    const hit=box(bay,proxy,0,1.42,0.37,2.04,2.75,0.34);
-    hit.userData.entry=entry;
-    targets.push(hit);
+    if(kind!=='glitches'||playback){
+      const hit=box(bay,proxy,0,1.42,0.37,2.04,2.75,0.34);
+      hit.userData.entry=playback?{...entry,playClip:playback}:entry;
+      targets.push(hit);
+    }
   }
   function dispose(){
+    for(const screen of screens)screen.stop();
     const materials=new Set(),geometries=new Set();
     scene.traverse(object=>{
       if(object.isInstancedMesh)object.dispose();
@@ -283,7 +347,7 @@ export function createArchiveHall(kind,entries,asset){
     scene.removeFromParent();
   }
   return {group:scene,end:end-rear,targets,dispose,animate(time,viewer){
-    for(const draw of screens)draw(time);
+    for(const screen of screens)screen.draw(time);
     for(const faceViewer of lenses)faceViewer(viewer);
     for(const animate of actors)animate(time,viewer);
   }};
