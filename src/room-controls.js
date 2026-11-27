@@ -1,6 +1,7 @@
 // Standard gamepad mapping. Labels use Xbox names for the same button positions.
 const bindings={
   press:{keys:['KeyE'],button:2,labels:['E','X','Use']},
+  crouch:{keys:['KeyX','ControlLeft','ControlRight'],button:13,labels:['X','D-pad ↓','Crouch']},
   jump:{keys:['Space'],button:0,labels:['Space','A','Jump']},
   back:{keys:['Escape'],button:1,labels:['Esc','B','Back']},
   alternate:{keys:['KeyQ'],button:3,labels:['Q','Y','Alternate']},
@@ -12,7 +13,7 @@ const bindings={
   navRight:{keys:['ArrowRight'],button:15},
 };
 
-export function roomActions(keys,buttons,{mode,mouse=false,touchPress=false,touchJump=false,keyboardSprint=!!(keys.ShiftLeft||keys.ShiftRight)}){
+export function roomActions(keys,buttons,{mode,mouse=false,touchPress=false,touchJump=false,touchCrouch=false,keyboardSprint=!!(keys.ShiftLeft||keys.ShiftRight)}){
   const action=name=>{
     const {keys:codes,button}=bindings[name];
     return !!buttons[button]||codes.some(code=>!!keys[code]);
@@ -20,6 +21,7 @@ export function roomActions(keys,buttons,{mode,mouse=false,touchPress=false,touc
   const table=mode==='table',choice=mode==='choice';
   return {
     press:action('press')||mouse||touchPress,
+    crouch:!table&&!choice&&(action('crouch')||touchCrouch),
     jump:!table&&(action('jump')||touchJump),
     back:action('back')||(table&&!!keys.Backspace),
     alternate:action('alternate'),

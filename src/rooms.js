@@ -19,7 +19,7 @@ import {mooseDefenseRoom} from './moose-defense.js';
 import {stillwoodRoom} from './stillwood.js';
 import {hamletRoom} from './hamlet.js';
 import {bathroomRoom} from './bathroom.js';
-import {MOVE,lookStep,lookBy,bobAdvance,bobY,createRoomWalker} from './movement.js';
+import {MOVE,lookStep,lookBy,bobAdvance,bobY,createRoomWalker,crouchOffset} from './movement.js';
 import {spotted} from './room-mobs.js';
 import {PLANETS,binaryPolar,orbitalPosition,orbitPolar} from './kepler-system.js';
 
@@ -705,7 +705,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       const B=basis();S.aim=K.over||WK.inAir()?-1:pick(B.f,SNAP);
     };
     // the eye follows the jump and the footstep bob; a watcher gets the same bob from how far the view really moved
-    const view=()=>{S.eyeY=EYE+S.jy+bobY(WK.b,WK.scale)};
+    const view=()=>{S.eyeY=EYE+S.jy+bobY(WK.b,WK.scale)-crouchOffset(WK.b,EYE)};
     const watchView=dt=>{
       const wr=a=>((a+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;
       if(!S.hasPose||Math.hypot(S.tx-S.vx,S.tz-S.vz)>4){S.vx=S.tx;S.vz=S.tz;S.vyaw=S.tyaw;S.vpitch=S.tpitch;S.hasPose=true;return}
@@ -1186,7 +1186,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       }});
     Object.defineProperty(S,'px',{get:()=>WK.b.x,set:v=>{WK.b.x=v}});Object.defineProperty(S,'pz',{get:()=>WK.b.z,set:v=>{WK.b.z=v}});Object.defineProperty(S,'jy',{get:()=>WK.b.y,set:v=>{WK.b.y=v}});
     // the eye: standing height, the jump, the footstep bob, and a dip when you land
-    const view=dt=>{S.dip*=Math.exp(-dt*11);S.eyeY=1.6+bobY(WK.b,WK.scale)+S.jy-S.dip};
+    const view=dt=>{S.dip*=Math.exp(-dt*11);S.eyeY=1.6+bobY(WK.b,WK.scale)+S.jy-crouchOffset(WK.b,1.6)-S.dip};
     const walk=(dt,inp,hold,ok)=>{
       holdNow=hold;
       // not while it breaks through, not when you spray it: you stand still (and a jump already begun keeps going)
@@ -1541,7 +1541,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     return S;
   }
 
-  const theater=createTheater({renderer,scene,cam,o,A,canvasTex,glow,clamp,ss,lerp,nf,rnd,getGroup:()=>group,onClear:fn=>clearHooks.push(fn),finish:r=>finish(r),createRoomWalker,MOVE,lookStep,bobAdvance,bobY});
+  const theater=createTheater({renderer,scene,cam,o,A,canvasTex,glow,clamp,ss,lerp,nf,rnd,getGroup:()=>group,onClear:fn=>clearHooks.push(fn),finish:r=>finish(r),createRoomWalker,MOVE,lookStep,bobAdvance,bobY,crouchOffset});
   const monoliths=(seed=7)=>monolithRoom({group,cam,o,A,finish,rand:rng32(seed),seed});
   const moose=()=>mooseDefenseRoom({group,scene,cam,o,A,finish,onClear:fn=>clearHooks.push(fn)});
   const stillwood=(seed=7)=>stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear:fn=>clearHooks.push(fn),seed});

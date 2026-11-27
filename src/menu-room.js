@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import {bobY, createRoomWalker, lookBy, lookStep} from './movement.js';
+import {bobY, createRoomWalker, lookBy, lookStep,crouchOffset} from './movement.js';
 import {createArchiveHall, worldSign} from './archive-hall.js';
 import {buildAsteroidLobby,TELESCOPE_PANEL} from './asteroid-lobby.js';
 import {createKeplerOrrery} from './kepler-orrery.js';
@@ -584,7 +584,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
     }
     if(camera.near!==0.06){camera.near=0.06;camera.updateProjectionMatrix()}
     const {x,y,z}=walker.b;
-    camera.position.set(x,eye+y+bobY(walker.b,walker.scale)+(ride?cabin.position.y:0),z);
+    camera.position.set(x,eye+y+bobY(walker.b,walker.scale)-crouchOffset(walker.b,eye)+(ride?cabin.position.y:0),z);
     camera.rotation.set(view.pitch,-view.yaw,0,'YXZ');camera.updateMatrixWorld();
   }
   function watchLift(motion){

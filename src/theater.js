@@ -83,7 +83,7 @@ function ensureStyle(){
 }
 
 export function createTheater(env){
-  const {renderer,scene,cam,o,A,canvasTex,glow,clamp,ss,lerp,nf,rnd,onClear,getGroup,finish,createRoomWalker,lookStep,bobAdvance,bobY}=env;
+  const {renderer,scene,cam,o,A,canvasTex,glow,clamp,ss,lerp,nf,rnd,onClear,getGroup,finish,createRoomWalker,lookStep,bobAdvance,bobY,crouchOffset}=env;
   const opts=A.theaterOpts;
   const FY=z=>0.15*clamp(z+5,0,9);               // the floor rises toward the back
   const RX=6,ZF=-9,ZB=8,RH=9.6,EYE=1.6,RAD=0.32;
@@ -639,7 +639,7 @@ export function createTheater(env){
       sound:e=>{if(e.jumped)o.sfx('jump');if(e.landed>0.8){S.dip=Math.min(0.1,0.03+0.02*e.landed);o.sfx('step')}else if(e.step&&!A.watching)o.noise(0.07,0.03,170+(WK.b.stepPh&1)*30,1)}});
     Object.defineProperty(S,'px',{get:()=>WK.b.x,set:v=>{WK.b.x=v}});Object.defineProperty(S,'pz',{get:()=>WK.b.z,set:v=>{WK.b.z=v}});
     S.WK=WK;S.dip=0;
-    const view=dt=>{S.dip*=Math.exp(-dt*11);S.eyeY=EYE+WK.b.y+bobY(WK.b,WK.scale)-S.dip};
+    const view=dt=>{S.dip*=Math.exp(-dt*11);S.eyeY=EYE+WK.b.y+bobY(WK.b,WK.scale)-crouchOffset(WK.b,EYE)-S.dip};
     const walk=(dt,inp)=>{
       lookStep(S,dt,nf(inp.lx)?inp.lx:0,nf(inp.ly)?inp.ly:0,[-1.2,1.2]);S.yaw=((S.yaw+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;
       WK.step(dt,{mx:inp.mx,my:inp.my,sprint:inp.sprint,jump:inp.jump},S.yaw);

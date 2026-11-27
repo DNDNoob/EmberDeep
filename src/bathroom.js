@@ -3,7 +3,7 @@
 // Controls: walk with the usual controls; Use (E / X / tap) sits down on the toilet, wipes while seated, and opens the door once you are
 // clean; Back (Esc / B) stands up. A watcher sees the same visit from the snapshots (position, whether you are seated, the paper).
 import * as THREE from 'three';
-import {MOVE,bobY,createRoomWalker,lookStep} from './movement.js';
+import {MOVE,bobY,createRoomWalker,lookStep,crouchOffset} from './movement.js';
 
 const EYE=1.6,SEAT_EYE=1.12;
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
@@ -163,7 +163,7 @@ export function bathroomRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
     o.hud(A.watching?'<small>'+(A.label||'')+'</small>':'');
     // the camera, seated or walking
     if(S.sit){cam.position.set(T.x,SEAT_EYE,T.z+0.12)}
-    else cam.position.set(b.x,EYE+b.y+bobY(b,walker.scale),b.z);
+    else cam.position.set(b.x,EYE+b.y+bobY(b,walker.scale)-crouchOffset(b,EYE),b.z);
     cam.rotation.set(S.pitch,-S.yaw,0,'YXZ');
     if(S.sit&&G.paper){
       S.anim=Math.max(0,S.anim-dt*0.9);const k=S.anim>0.75?(1-S.anim)/0.25:1;   // it rises into view after each wipe

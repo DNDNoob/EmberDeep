@@ -34,14 +34,14 @@ ok(badL.length===0,'layout identical to main for 5 seeds x depths 1-12 (ignoring
 const B=await ev(()=>{const G=window.__game;return {n:G.BIOMES.length,names:G.BIOMES.map(b=>b.name),base:G.BIOMES.map(b=>b.base),
   early:[1,2,3,4,5].map(d=>G.biomeIx(d)),old:[1,2,3,4,5].map(d=>(d-1-Math.floor(d/4))%4),
   rot:Array.from({length:14},(_,i)=>G.biomeIx(i+1))}});
-ok(B.n===9&&B.names[4]==='The Humming Rooms'&&B.names[8]==='The Dark Forest','nine biomes, Humming Rooms stays at index 4, the Dark Forest is 8');
+ok(B.n===10&&B.names[4]==='The Humming Rooms'&&B.names[8]==='The Dark Forest'&&B.names[9]==='Forgotten Archive','ten biomes including the Forgotten Archive');
 ok(B.names[5]==='The Bone Galleries'&&B.names[6]==='The Rustworks'&&B.names[7]==='The Glimmer Veins','new biome names');
 ok(JSON.stringify(B.early)===JSON.stringify(B.old),'depths 1-5 use the same biomes as before');
 const seen=await ev(()=>{const G=window.__game,s=new Set(),k=new Set();for(let d=1;d<=40;d++){const f=G.genFloor('ROT',d);s.add(f.bi);k.add(f.kind+':'+f.bi)}return [...s].sort()});
-ok(JSON.stringify(seen)==='[0,1,2,3,4,5,6,7,8]','rotation reaches every biome ('+seen+')');
+ok(JSON.stringify(seen)==='[0,1,2,3,4,5,6,7,8,9]','rotation reaches every biome ('+seen+')');
 const rot=await ev(()=>{const O=[0,1,2,3,5,6,7];return Array.from({length:60},(_,i)=>window.__game.biomeIx(i+1)===O[(i-Math.floor((i+1)/4))%7]).every(Boolean)});
 ok(rot,'biomeIx follows ORDER[(depth-1-floor(depth/4)) % 7]');
-const bases=await ev(()=>{const G=window.__game;return G.BIOMES.every((b,i)=>b.base===[0,3,6,9,13,17,20,23,26][i])});
+const bases=await ev(()=>{const G=window.__game;return G.BIOMES.every((b,i)=>b.base===[0,3,6,9,13,17,20,23,26,0][i])});
 ok(bases,'every biome has an explicit base surface layer');
 // ---- variants
 const V=await ev(()=>{const G=window.__game;
@@ -49,12 +49,12 @@ const V=await ev(()=>{const G=window.__game;
   const ixs=new Set(),seeds=new Set();for(let i=0;i<40;i++){const f=G.genFloor('S'+i,6);ixs.add(f.variant.ix);seeds.add(f.variant.seed)}
   const lay=[];for(let i=0;i<4;i++)lay.push(G.genFloor('VARSEED',6,{bi:5,ix:i}).g.join(''));
   return {same:JSON.stringify(a.variant)===JSON.stringify(a2.variant)&&JSON.stringify(a.tex)===JSON.stringify(a2.tex),ixs:[...ixs],seeds:seeds.size,layoutSame:lay.every(x=>x===lay[0]),
-    four:G.VARIANTS.length===9&&G.VARIANTS.every(v=>v.length===4&&new Set(v.map(x=>x.name)).size===4),
+    four:G.VARIANTS.length===10&&G.VARIANTS.every(v=>v.length===4&&new Set(v.map(x=>x.name)).size===4),
     base:G.VARIANTS.map(v=>v[0].tex===0)}});
 ok(V.same,'variant is deterministic per seed and depth');
 ok(V.ixs.length===4,'all four variants turn up across seeds ('+V.ixs+')');
 ok(V.seeds>=35,'noise seed jitter differs between floors ('+V.seeds+' of 40)');
-ok(V.four&&V.base.every(Boolean),'nine biomes x four named variants, variant 0 is the classic one');
+ok(V.four&&V.base.every(Boolean),'ten biomes x four named variants, variant 0 is the classic one');
 ok(V.layoutSame,'variant never changes the maze layout');
 // ---- every biome x variant loads and renders, low then medium
 const renderAll=async(pg,errs,label,flat)=>{
