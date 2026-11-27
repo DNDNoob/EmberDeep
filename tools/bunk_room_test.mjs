@@ -67,14 +67,27 @@ try{
   }
   assert.ok(deferred,'The lobby should start its graphics warm-up');
   assert.equal(await page.evaluate(()=>__game.hub.lobbyReady||__game.hub.bunkDoorOpen),false);
-  await page.evaluate(()=>window.finishHallCompile());
+  await page.evaluate(()=>{
+    const {renderer,hub}=__game,render=renderer.render;
+    window.lobbyWarmDraws=[];
+    renderer.render=function(scene,...args){
+      if(!hub.lobbyReady){
+        if(scene===hub.scene)lobbyWarmDraws.push(this.getRenderTarget()===null?'lobby on screen buffer':'offscreen');
+        else if(scene.getObjectByName('Bunk room'))lobbyWarmDraws.push('bunk room');
+      }
+      return render.call(this,scene,...args);
+    };
+    window.finishHallCompile();
+  });
   let ready=false;
   for(let i=0;i<160&&!ready;i++){
     ready=await page.evaluate(()=>{tick(12);return __game.hub.lobbyReady});
     if(!ready)await page.waitForTimeout(80);
   }
   assert.ok(ready,'Lobby warm-up should finish and unlock the door');
-  assert.equal(await page.evaluate(()=>__game.liftCache().length),0,'Maze preparation should wait until the player leaves the bunk room');
+  assert.deepEqual(await page.evaluate(()=>window.lobbyWarmDraws),['lobby on screen buffer','bunk room'],
+    'The full lobby frame should warm the display buffer and be covered by the locked room');
+  assert.equal(await page.evaluate(()=>__game.liftCache().length),0,'Maze preparation should wait while the player is in the bunk room');
   const exit=await page.evaluate(door=>{
     const g=__game;
     tick(20);
@@ -83,6 +96,9 @@ try{
     return {x:g.menuPosition.x,open,hangar:!!g.hub.hangarStats,threshold:door.x};
   },BUNK_DOOR);
   assert.ok(exit.open&&exit.hangar&&exit.x>exit.threshold+1,'The player should walk straight into the prepared lobby');
+  await page.waitForTimeout(600);
+  assert.equal(await page.evaluate(()=>{tick(3);return __game.liftCache().length}),0,
+    'Crossing into the lobby should leave the maze cache untouched');
   await page.evaluate(({x,z})=>__game.hub.place(x-3.55,z,Math.PI/2,0),BUNK_DOOR);
   await shot('bunk-room-open-lobby.png');
   const crossedBack=await page.evaluate(door=>{
@@ -92,6 +108,13 @@ try{
     return g.menuPosition.x<door.x-1;
   },BUNK_DOOR);
   assert.ok(crossedBack,'The open door should also allow reentry');
+  await page.evaluate(()=>__game.hub.place(0,-6,0,0));
+  let liftWarming=false;
+  for(let i=0;i<60&&!liftWarming;i++){
+    liftWarming=await page.evaluate(()=>{tick();return __game.liftCache().length>0});
+    if(!liftWarming)await page.waitForTimeout(40);
+  }
+  assert.ok(liftWarming,'Pausing near the lift should start warming the destination');
   assert.deepEqual(errors,[]);
-  console.log('Playable bunk spawn, locked door during graphics warm-up, and walkable lobby connection passed.');
+  console.log('Locked door, full lobby warm-up, walkable doorway, and deferred lift preparation passed.');
 }finally{await browser.close();server.close()}

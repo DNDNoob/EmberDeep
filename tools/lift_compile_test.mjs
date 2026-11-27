@@ -25,7 +25,7 @@ async function scenario(br,srv,depth){
   await pg.addInitScript(INIT);
   await pg.goto(srv.url+'index.html');
   await pg.waitForFunction(()=>window.__game?.hub?.lobbyReady,null,{timeout:180000});
-  await pg.evaluate(()=>window.__game.hub.place(0,10));
+  await pg.evaluate(()=>window.__game.hub.place(0,-6));
   // the depth the rider will pick: the lobby caches floors 1 to 5 plus this one
   await pg.evaluate(d=>{const f=document.getElementById('liftDepth');f.value=d;f.dispatchEvent(new Event('input'))},depth);
   const t0=Date.now();let ready=false,st=null;
