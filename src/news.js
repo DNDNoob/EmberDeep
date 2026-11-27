@@ -7,6 +7,8 @@
 // it is, or how to trigger it. No code names, file names, PR numbers or agent names.
 // Group small fixes into one post. Rebuild index.html afterwards (npm run build).
 export const NEWS=[
+  {date:'2026-11-27',title:'Tap to sprint',
+    body:'Turn on Toggle sprint in Settings to start and stop sprinting with a tap of Shift.'},
   {date:'2026-11-27',title:'Admin Override',
     body:'The Settings terminal now has an Admin Override for exploring the hall’s collections.'},
   {date:'2026-11-26',title:'Take your time with Kepler-47',
