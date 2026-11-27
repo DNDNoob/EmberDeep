@@ -3181,7 +3181,7 @@ function buildCritter(p,t,form,self){
 // A thrown potion shatters where it lands. Everything the splash reaches gets the effect: players get the drink effect, monsters their own.
 // Networking: the user sends {k:'pt'} and every client applies what lands on itself; the host (or a solo player) applies what lands on
 // monsters, and streams the visible result (pv) with the creature positions.
-const BELT_MAX=6,SPLASH=1.8,ING_N=INGREDIENTS.length;
+const BELT_MAX=6,SPLASH=1.8,ING_N=INGREDIENTS.length,AUTO_BREW_COST=100;
 // ingredients are kept from run to run (saved); potions on the belt are lost with the run
 const POT={bag:(b=>Array.from({length:ING_N},(_,i)=>Math.max(0,Math.floor(+(Array.isArray(b)?b[i]:0)||0))))(store.get('brewBag',null)),belt:[],sel:0,ps:{},holdK:'',proj:[],zones:[],fx:[],hist:[],histT:0,book:new Set(store.get('brewBook',[]).filter(i=>potInfo(i))),k:1,m:1,pm:{},thick:0,aegis:0,hex:0,rotT:0,
   pnd:0,apo:null,stop:0,hicT:3,snzT:6,regT:15,fireT:0,stormT:0,plT:0,slv:null,hudK:'',dom:null,tapT:0};
@@ -3913,18 +3913,39 @@ function potThings(skip){
   return L;
 }
 const thingName=x=>x.ing!=null?INGREDIENTS[x.ing].name:potInfo(x.pot).name;
+function potFinishBrew(id){
+  potSaveBag();store.set('brewBook',[...POT.book]);POT.lastCol=hex3(potInfo(id).col);
+  if(F.safe&&F.safe.brew)potBurst(F.safe.brew.cx,0.3,F.safe.brew.cz,POT.lastCol,18,0.6);
+}
 function potBrew(a,b){
   const id=brewAny(a,b),take=x=>{if(x.ing!=null)POT.bag[x.ing]--;else{const i=POT.belt.findIndex(q=>q.id===x.pot);beltTake(i)}};
   const back=x=>{if(x.ing!=null)POT.bag[x.ing]++;else beltAdd(x.pot)};
   take(a);take(b);
   if(!beltAdd(id)){back(a);back(b);sfx('seal');return 'Your belt is full. Drink or throw something first.'}
-  potSaveBag();
   const p=potInfo(id),fresh=!POT.book.has(id);
-  POT.book.add(id);store.set('brewBook',[...POT.book]);POT.lastCol=hex3(p.col);
-  if(F.safe&&F.safe.brew)potBurst(F.safe.brew.cx,0.3,F.safe.brew.cz,POT.lastCol,18,0.6);
+  POT.book.add(id);potFinishBrew(id);
   if(id===SLUDGE){tone(110,0.5,'sawtooth',0.1,0,-40);return (a.ing!=null)!==(b.ing!=null)?'An ingredient and a potion do not mix. Murky Sludge.':'Murky Sludge. Well, it is something.'}
   [523,659,784].forEach((f,i)=>tone(f*(1+p.tier*0.12),0.3,'triangle',0.1,i*0.1));
   return (fresh?(p.mix?'A new blend! ':'A new recipe! '):'')+p.name+' ('+(p.debuff?'a debuff, for throwing; ':'a buff; ')+'tier '+p.tier+'). '+(p.debuff?p.mon:p.you);
+}
+function potAutoBrew(){
+  let brewed=0,lastId;
+  const bag=POT.bag;
+  for(let a=0;a<bag.length;a++){
+    const pairs=Math.floor(bag[a]/2);
+    if(pairs){
+      lastId=brewAny({ing:a},{ing:a});beltAdd(lastId,pairs);POT.book.add(lastId);
+      bag[a]-=pairs*2;brewed+=pairs;
+    }
+    if(bag[a]===0)continue;
+    const b=bag.findIndex((n,i)=>i>a&&n>0);
+    if(b<0)break;
+    lastId=brewAny({ing:a},{ing:b});beltAdd(lastId);POT.book.add(lastId);
+    bag[a]--;bag[b]--;brewed++;
+  }
+  if(!brewed)return 'You need at least two ingredients.';
+  potFinishBrew(lastId);sfx('pick');
+  return 'Brewed '+brewed+(brewed===1?' potion.':' potions.')+(bag.some(n=>n>0)?' One ingredient left over.':'');
 }
 function potHintFor(){
   const known=POT.book,hint=new Set(store.get('brewHints',[]));
@@ -3944,9 +3965,21 @@ function potTalk(o){
     const things=potThings(),nIng=POT.bag.reduce((a,c)=>a+c,0);
     o.push({head:'The cauldron',label:'Brew a potion',sub:things.length&&(things.length>1||(things[0].ing!=null?POT.bag[things[0].ing]:1)>1)?'Mix two things you carry ('+nIng+' ingredient'+(nIng===1?'':'s')+', '+beltCount()+' potion'+(beltCount()===1?'':'s')+')':'You need two things to mix. Ingredients lie about the maze.',cost:'',
       off:things.reduce((a,x)=>a+(x.ing!=null?POT.bag[x.ing]:POT.belt.find(q=>q.id===x.pot).n),0)<2,fn:()=>{talk.bm='pick1';talk.sel=0;talk.line=null}});
-    o.push({label:'Recipe book',sub:potNamed()+' of '+MAX_ID+' potions brewed'+(POT.book.size>potNamed()?', and '+(POT.book.size-potNamed())+' blends':''),cost:'',fn:()=>{talk.bm='book';talk.sel=0}});
+    const named=potNamed(),blends=POT.book.size-named;
+    o.push({label:'Recipe book',sub:named+' of '+MAX_ID+' potions brewed'+(blends?', and '+blends+(blends===1?' blend':' blends'):''),cost:'',fn:()=>{talk.bm='book';talk.sel=0}});
     o.push({label:'Buy a hint',sub:'He tells you a recipe you do not know yet',cost:'3 gems',off:wallet<3,fn:()=>{const p=potHintFor();if(!p){talk.line='You know everything I know.';return}
       wallet-=3;store.set('wallet',wallet);sfx('gem');talk.line='Try this: '+recipeText(p)+'. That makes '+p.name+'.'}});
+    if(up.autoBrew){
+      const count=Math.floor(nIng/2);
+      o.push({label:'Auto Brew',sub:count?'Brew '+count+(count===1?' potion':' potions')+' from your ingredients':'You need at least two ingredients',
+        cost:'',off:!count,fn:()=>{talk.line=potAutoBrew()}});
+    }else{
+      o.push({label:'Unlock Auto Brew',sub:'Brew all your ingredients in one batch',cost:AUTO_BREW_COST+' gems',off:wallet<AUTO_BREW_COST,fn:()=>{
+        if(up.autoBrew||wallet<AUTO_BREW_COST)return;
+        wallet-=AUTO_BREW_COST;up.autoBrew=1;store.set('wallet',wallet);store.set('up',up);
+        sfx('gem');talk.line='Auto Brew unlocked. Bring me your ingredients and I can brew them all at once.';
+      }});
+    }
   }else if(b==='pick1'||b==='pick2'){
     const first=b==='pick2'?talk.a:null;
     text=first?'And with the '+thingName(first)+'?':'What goes in first?';
