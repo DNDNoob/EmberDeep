@@ -1,10 +1,13 @@
 import * as THREE from 'three';
+import {BINARY,PLANETS,binaryPolar,orbitalPosition,orbitPolar} from './kepler-system.js';
 
 // Left rock wall sits near x = -20.6; the observation window is the far wall at x ≈ +21, z = 4.
 // Table radius is 1.34, so the center is just clear of the stone that knobs into the room.
 const X=-18.62,Z=4,REACH=1.58;
-const MA=0.957,MB=0.342,M=MA+MB;
-const DAY=1.15,SIM=0.5;
+const DAY=1.15,SIM=0.5/24;
+const STATION={a:0.493,e:0.018,period:110.93,phase:0.9,tilt:0.18};
+const BELT={a:1.18,e:0.01,period:420,phase:0.4};
+const SPEEDS=[1,4,12];
 const TELESCOPE_MAG=0.9;
 export {TELESCOPE_MAG};
 
@@ -19,23 +22,12 @@ const rockShader=new THREE.ShaderMaterial({
     }`
 });
 
-function solve(M0,e){let E=M0;for(let i=0;i<6;i++)E=M0+e*Math.sin(E);return E;}
-function polar(a,e,period,phase,t){
-  const E=solve((2*Math.PI*t)/period+phase,e);
-  const nu=Math.atan2(Math.sqrt(1-e*e)*Math.sin(E),Math.cos(E)-e);
-  return [a*(1-e*Math.cos(E)),nu];
-}
-function flat(r,theta,tilt){
+function flat([r,theta],tilt=0){
   // The disk stays on the wood. Bodies sit high enough that a tilted moon
   // or the asteroid's belly never crosses the tabletop.
   return new THREE.Vector3(r*Math.cos(theta),0.62+Math.sin(tilt)*r*0.22,r*Math.sin(theta));
 }
 
-function inclined(a,e,period,phase,tilt,t){
-  const [r,nu]=polar(a,e,period,phase,t);
-  const x=r*Math.cos(nu),z=r*Math.sin(nu),s=Math.sin(tilt),c=Math.cos(tilt);
-  return [x,-s*z,c*z];
-}
 function add3(a,b){return [a[0]+b[0],a[1]+b[1],a[2]+b[2]];}
 function sub3(a,b){return [a[0]-b[0],a[1]-b[1],a[2]-b[2]];}
 function dot3(a,b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];}
@@ -52,13 +44,9 @@ const WINDOW_TINTS=[
 
 export function windowSky(time){
   const t=(time||0)*DAY*SIM,spin=(time||0)*0.35*SIM;
-  const station=inclined(0.493,0.018,110.93,0.9,0.18,t);
-  const [rb,nub]=polar(0.08145,0.0288,7.4483648,0.2,t);
-  const mora=[Math.cos(nub+Math.PI)*rb*MB/M,0,Math.sin(nub+Math.PI)*rb*MB/M];
-  const osi=[Math.cos(nub)*rb*MA/M,0,Math.sin(nub)*rb*MA/M];
-  const yuron=inclined(0.2877,0.021,49.4643,0.4,0.04,t);
-  const sollel=inclined(0.6992,0.024,187.366,1.1,0.12,t);
-  const obera=inclined(0.9638,0.044,303.227,2.2,0.05,t);
+  const station=orbitalPosition(orbitPolar(STATION,t),STATION.tilt);
+  const [mora,osi]=binaryPolar(t).map(polar=>orbitalPosition(polar));
+  const [yuron,sollel,obera]=PLANETS.map(planet=>orbitalPosition(orbitPolar(planet,t),planet.tilt));
   const moons=[[4.4,2.1,0.3],[6.8,5.4,0.9],[9.6,11.5,1.15]].map(([orbit,period,incl])=>{
     const th=(t/period)*Math.PI*2+incl*2,R=orbit*0.026,lz=Math.sin(th)*R;
     return add3(obera,[Math.cos(th)*R,-Math.sin(incl)*lz,Math.cos(incl)*lz]);
@@ -122,9 +110,31 @@ function plate(){
   const map=new THREE.CanvasTexture(canvas);
   map.colorSpace=THREE.SRGBColorSpace;
   const mesh=new THREE.Mesh(new THREE.BoxGeometry(0.72,0.18,0.02),new THREE.MeshBasicMaterial({map}));
-  mesh.position.set(1.22,0.9,0);
+  mesh.position.set(1.33,0.67,0);
   mesh.rotation.y=Math.PI/2;
   return mesh;
+}
+
+function control(group,brass,z){
+  const frame=new THREE.Mesh(new THREE.BoxGeometry(0.21,0.042,0.31),brass);
+  frame.position.set(1.13,0.81,z);
+  group.add(frame);
+  const canvas=document.createElement('canvas');
+  canvas.width=256;canvas.height=160;
+  const ctx=canvas.getContext('2d');
+  const map=new THREE.CanvasTexture(canvas);
+  map.colorSpace=THREE.SRGBColorSpace;
+  const face=new THREE.Mesh(new THREE.PlaneGeometry(0.29,0.19),new THREE.MeshBasicMaterial({map}));
+  face.position.y=0.022;
+  face.rotation.set(-Math.PI/2,0,Math.PI/2);
+  frame.add(face);
+  return {face,draw(label,lit){
+    ctx.fillStyle=lit?'#60401d':'#251b14';ctx.fillRect(0,0,256,160);
+    ctx.strokeStyle='#be9553';ctx.lineWidth=4;ctx.strokeRect(8,8,240,144);
+    ctx.fillStyle='#ffe7bb';ctx.font='bold 46px "Segoe UI", sans-serif';
+    ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(label,128,81);
+    map.needsUpdate=true;
+  }};
 }
 
 export function createKeplerOrrery(){
@@ -142,6 +152,16 @@ export function createKeplerOrrery(){
     leg.position.set(Math.cos(a)*1.05,0.35,Math.sin(a)*1.05);group.add(leg);
   }
   group.add(plate());
+  let time=0,paused=false,speed=0,drawnTime;
+  const pause=control(group,brass,0.34),rate=control(group,brass,0),reset=control(group,brass,-0.34);
+  pause.face.userData.orreryId='pause';
+  rate.face.userData.orreryId='speed';
+  reset.face.userData.orreryId='reset';
+  function drawControls(){
+    pause.draw(paused?'RESUME':'PAUSE',paused);
+    rate.draw('SPEED '+SPEEDS[speed]+'×',speed!==0);
+  }
+  drawControls();reset.draw('RESET',false);
   const lamp=new THREE.PointLight(0xffc27a,16,7,2);
   lamp.position.y=1.7;group.add(lamp);
   const cord=new THREE.Mesh(new THREE.CylinderGeometry(0.008,0.008,0.7,6),brass);
@@ -190,18 +210,15 @@ export function createKeplerOrrery(){
   cap.position.x=-0.02;cap.rotation.y=Math.PI/2;station.add(cap);
 
   const put=(mesh,p)=>mesh.position.copy(p);
-  wire(model,0xf3e2b8,0.004,u=>{
-    const [r,nu]=polar(0.08145,0.0288,7.4483648,0,u*7.4483648);
-    return flat(r*MB/M,nu,0);
+  wire(model,0xf3e2b8,0.004,u=>flat(binaryPolar(u*BINARY.period)[0]));
+  wire(model,0xe07a3d,0.004,u=>flat(binaryPolar(u*BINARY.period)[1]));
+  PLANETS.forEach((planet,i)=>wire(model,[0x9eb6c9,0xd7c4a1,0x7fbea8][i],0.007,
+    u=>flat(orbitPolar(planet,u*planet.period),planet.tilt)));
+  wire(model,0xc6a15a,0.005,u=>{
+    const p=flat(orbitPolar(STATION,u*STATION.period),STATION.tilt);
+    p.y+=0.22;
+    return p;
   });
-  wire(model,0xe07a3d,0.004,u=>{
-    const [r,nu]=polar(0.08145,0.0288,7.4483648,0,u*7.4483648);
-    return flat(r*MA/M,nu+Math.PI,0);
-  });
-  wire(model,0x9eb6c9,0.007,u=>{const [r,nu]=polar(0.2877,0.021,49.4643,0.4,u*49.4643);return flat(r,nu,0.04);});
-  wire(model,0xd7c4a1,0.007,u=>{const [r,nu]=polar(0.6992,0.024,187.366,1.1,u*187.366);return flat(r,nu,0.12);});
-  wire(model,0x7fbea8,0.007,u=>{const [r,nu]=polar(0.9638,0.044,303.227,2.2,u*303.227);return flat(r,nu,0.05);});
-  wire(model,0xc6a15a,0.005,u=>{const [r,nu]=polar(0.493,0.018,110.93,0.9,u*110.93);const p=flat(r,nu,0.18);p.y+=0.22;return p;});
 
   const beltInner=1.06,beltOuter=1.32;
   const dust=new THREE.Mesh(new THREE.RingGeometry(beltInner,beltOuter,80),new THREE.MeshBasicMaterial({
@@ -245,15 +262,15 @@ export function createKeplerOrrery(){
   const tags=[
     [A,tag('Mora'),0.1],
     [B,tag('Osi'),0.08],
-    [b,tag('Yuron'),0.07],
-    [d,tag('Sollel'),0.1],
-    [c,tag('Obera'),0.08],
+    [b,tag(PLANETS[0].name),0.07],
+    [d,tag(PLANETS[1].name),0.1],
+    [c,tag(PLANETS[2].name),0.08],
     [station,tag('Mind Vault'),0.28],
     [beltBody,tag('Kuiper belt'),0.06]
   ];
   for(const moon of moons)tags.push([moon.mesh,tag(moon.name),0.05]);
 
-  const picks=[];
+  const picks=[pause.face,rate.face,reset.face];
   function mark(mesh,id,radius){
     const hit=new THREE.Mesh(new THREE.SphereGeometry(radius,8,6),new THREE.MeshBasicMaterial({visible:false}));
     hit.userData.orreryId=id;
@@ -266,30 +283,45 @@ export function createKeplerOrrery(){
   picks.push(beltHit);
   const foci={A,B,b,d,c,station,belt:beltBody,m0:moons[0].mesh,m1:moons[1].mesh,m2:moons[2].mesh};
   const reaches={A:0.32,B:0.24,b:0.18,d:0.42,c:0.2,station:0.62,belt:0.16,m0:0.1,m1:0.09,m2:0.11};
-  const names={A:'Mora',B:'Osi',b:'Yuron',d:'Sollel',c:'Obera',station:'Mind Vault',belt:'Kuiper belt',m0:'Obera I',m1:'Obera II',m2:'Obera III'};
+  const names={A:'Mora',B:'Osi',station:'Mind Vault',belt:'Kuiper belt',m0:'Obera I',m1:'Obera II',m2:'Obera III'};
+  for(const planet of PLANETS)names[planet.id]=planet.name;
   const focusV=new THREE.Vector3(),local=new THREE.Vector3();
 
   const origin=new THREE.Vector3();
+  const planets=[b,d,c];
   return {
     group,
+    inReach(body){return Math.hypot(body.x-X,body.z-Z)<=3.25},
+    controlLabel(id){
+      if(id==='pause')return paused?'resume orbits':'pause orbits';
+      if(id==='speed')return 'change orbit speed ('+SPEEDS[speed]+'×)';
+      if(id==='reset')return 'reset orbits';
+      return '';
+    },
+    press(id){
+      if(id==='pause')paused=!paused;
+      else if(id==='speed')speed=(speed+1)%SPEEDS.length;
+      else if(id==='reset'){time=0;speed=0}
+      else return false;
+      drawControls();
+      return true;
+    },
     block(body){
       const dx=body.x-X,dz=body.z-Z;
       if(dx*dx+dz*dz>=REACH*REACH)return;
       const d=Math.hypot(dx,dz)||1;
       body.x=X+(dx/d)*REACH;body.z=Z+(dz/d)*REACH;
     },
-    animate(time){
+    animate(dt=0){
+      if(!paused)time+=dt*SPEEDS[speed];
+      if(time===drawnTime)return;
+      drawnTime=time;
       const t=time*DAY*SIM;
-      const [rb,nub]=polar(0.08145,0.0288,7.4483648,0.2,t);
-      put(B,flat(rb*MA/M,nub,0));
-      put(A,flat(rb*MB/M,nub+Math.PI,0));
-      const planets=[[b,0.2877,0.021,49.4643,0.4,0.04],[d,0.6992,0.024,187.366,1.1,0.12],[c,0.9638,0.044,303.227,2.2,0.05]];
-      for(const [mesh,a,e,period,phase,tilt] of planets){
-        const [r,nu]=polar(a,e,period,phase,t);
-        put(mesh,flat(r,nu,tilt));
-      }
-      const [rs,nus]=polar(0.493,0.018,110.93,0.9,t);
-      station.position.copy(flat(rs,nus,0.18));
+      const [primary,secondary]=binaryPolar(t);
+      put(A,flat(primary));
+      put(B,flat(secondary));
+      PLANETS.forEach((planet,i)=>put(planets[i],flat(orbitPolar(planet,t),planet.tilt)));
+      station.position.copy(flat(orbitPolar(STATION,t),STATION.tilt));
       station.position.y+=0.22;
       station.rotation.y=time*0.35*SIM;
       model.localToWorld(origin.set(0,0,0));
@@ -310,8 +342,7 @@ export function createKeplerOrrery(){
         gravel.setMatrixAt(i,bit.matrix);
       }
       gravel.instanceMatrix.needsUpdate=true;
-      const [rbelt,nubelt]=polar(1.18,0.01,420,0.4,t*0.35);
-      put(beltBody,flat(rbelt,nubelt,0));
+      put(beltBody,flat(orbitPolar(BELT,t*0.35)));
       beltBody.position.y=0.68;
       for(const [obj,sprite,lift] of tags){
         obj.getWorldPosition(local);
@@ -330,7 +361,7 @@ export function createKeplerOrrery(){
     },
     reach(id){return reaches[id]||0.2},
     name(id){return names[id]||'the system'},
-    fillWindow(uniforms,time){
+    fillWindow(uniforms){
       const sky=windowSky(time);
       uniforms.uMag.value=sky.mag;
       uniforms.uRoll.value=sky.roll;

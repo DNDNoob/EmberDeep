@@ -21,6 +21,7 @@ import {hamletRoom} from './hamlet.js';
 import {bathroomRoom} from './bathroom.js';
 import {MOVE,lookStep,lookBy,bobAdvance,bobY,createRoomWalker} from './movement.js';
 import {spotted} from './room-mobs.js';
+import {PLANETS,binaryPolar,orbitalPosition,orbitPolar} from './kepler-system.js';
 
 // Order is part of seeded door rotation. Add new IDs at the end.
 export const DOOR_KINDS={
@@ -317,24 +318,47 @@ export function createRooms(renderer,o0){
     S.neb=[];
     for(const q of [[-220,60,-300,0x5a2a9a,420],[260,-40,-260,0x1a4a9a,380],[60,140,330,0x8a2a4a,360],[-300,-90,160,0x1a7a6a,300],[0,-200,-120,0x6a3a1a,340]]){
       const s=glow(q[3],q[4],0.2);s.position.set(q[0],q[1],q[2]);group.add(s);S.neb.push(s)}
-    // the sun and its worlds, a little below and ahead
+    // Kepler-47, framed below and ahead. Body sizes are enlarged for readability.
     S.sys=new THREE.Group();S.sys.position.set(0,-7,-34);S.sys.rotation.x=0.16;group.add(S.sys);
-    S.sun=new THREE.Mesh(new THREE.SphereGeometry(2.6,32,20),new THREE.MeshBasicMaterial({color:new THREE.Color(3.2,2.1,0.8)}));S.sys.add(S.sun);
-    S.sunGlow=glow(0xffb060,26,0.55);S.sys.add(S.sunGlow);
-    S.light=new THREE.PointLight(0xffe2b0,900,0,2);S.sys.add(S.light);
-    group.add(new THREE.AmbientLight(0x223044,0.5));
+    const systemScale=24;
+    const stars=[
+      {radius:0.66,color:[3.2,2.1,0.8],tint:0xffd7a1,power:720},
+      {radius:0.23,color:[2.8,0.75,0.23],tint:0xff8a45,power:180}
+    ].map(({radius,color,tint,power})=>{
+      const mesh=new THREE.Mesh(new THREE.SphereGeometry(radius,32,20),new THREE.MeshBasicMaterial({color:new THREE.Color(...color)}));
+      const halo=glow(tint,radius*10,0.5);
+      const light=new THREE.PointLight(tint,power,0,2);
+      S.sys.add(mesh,halo,light);
+      return {mesh,halo,light,power};
+    });
+    S.light=new THREE.PointLight(0xff6134,0,0,2);S.sys.add(S.light);
+    group.add(new THREE.AmbientLight(0x687a9c,0.85));
     const band=(a,b,c)=>canvasTex(128,64,(x,w,h)=>{for(let y=0;y<h;y++){const k=Math.sin(y*0.35+Math.sin(y*0.11)*3)*0.5+0.5,m=rnd()*0.12;
       x.fillStyle=`rgb(${a.map((v,i)=>Math.round(clamp(lerp(v,b[i],k)+m*60,0,255))).join(',')})`;x.fillRect(0,y,w,1)}
       for(let i=0;i<c;i++){x.fillStyle=`rgba(${rnd()<0.5?'255,255,255':'0,0,0'},${0.05+rnd()*0.12})`;x.beginPath();x.ellipse(rnd()*w,rnd()*h,3+rnd()*10,1+rnd()*3,0,0,7);x.fill()}});
-    const defs=[[5.2,0.34,[150,120,100],[90,70,60],6],[7.6,0.62,[220,170,90],[180,110,60],10],[10.4,0.7,[50,110,200],[40,160,120],26],[13.4,0.5,[190,80,50],[110,50,40],8],
-      [18.5,1.7,[210,170,120],[150,100,70],18],[24.5,1.35,[220,200,150],[170,150,110],8,1],[30,0.95,[120,200,220],[80,150,200],4]];
-    defs.forEach((d,i)=>{
-      const m=new THREE.Mesh(new THREE.SphereGeometry(d[1],24,16),new THREE.MeshStandardMaterial({map:band(d[2],d[3],d[4]),roughness:0.9,metalness:0}));
-      const p={m,r:d[0],r0:d[0],a:rnd()*6.283,s:d[1],sp:rnd()*2+0.5,gone:false};
-      if(d[5]){const ring=new THREE.Mesh(new THREE.RingGeometry(d[1]*1.35,d[1]*2.3,48),new THREE.MeshBasicMaterial({color:0xcbb890,side:THREE.DoubleSide,transparent:true,opacity:0.55}));ring.rotation.x=1.2;m.add(ring)}
-      S.sys.add(m);S.planets.push(p);
-      const orbit=new THREE.Mesh(new THREE.RingGeometry(d[0]-0.02,d[0]+0.02,96),new THREE.MeshBasicMaterial({color:0x8fa8ff,side:THREE.DoubleSide,transparent:true,opacity:0.1,depthWrite:false}));
-      orbit.rotation.x=Math.PI/2;S.sys.add(orbit);p.orbit=orbit;
+    const palettes=[
+      [[128,179,214],[63,100,151],10,0xa5c9ee],
+      [[220,190,142],[156,109,74],16,0xf0cc99],
+      [[115,190,174],[56,115,118],12,0x99d9ca]
+    ];
+    PLANETS.forEach((planet,i)=>{
+      const [bright,dark,spots,tint]=palettes[i],radius=planet.radiusEarth*0.23;
+      const m=new THREE.Mesh(new THREE.SphereGeometry(radius,32,20),new THREE.MeshStandardMaterial({
+        map:band(bright,dark,spots),roughness:0.9,emissive:tint,emissiveIntensity:0.17
+      }));
+      if(planet.id==='d'){
+        const ring=new THREE.Mesh(new THREE.RingGeometry(radius*1.35,radius*2.3,48),new THREE.MeshBasicMaterial({
+          color:0xcbb890,side:THREE.DoubleSide,transparent:true,opacity:0.55,depthWrite:false
+        }));
+        ring.rotation.x=1.2;m.add(ring);
+      }
+      const points=Array.from({length:128},(_,j)=>{
+        const pos=orbitalPosition(orbitPolar(planet,planet.period*j/128),planet.tilt);
+        return new THREE.Vector3(...pos).multiplyScalar(systemScale);
+      });
+      const orbit=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(points),
+        new THREE.LineBasicMaterial({color:tint,transparent:true,opacity:0.26,depthWrite:false}));
+      S.sys.add(m,orbit);S.planets.push({planet,m,orbit,radius,spin:rnd()*0.7+0.3});
     });
     // the hole: a black ball, a ring of burning matter, and a thin bright edge
     S.hole=new THREE.Mesh(new THREE.SphereGeometry(1,32,20),new THREE.MeshBasicMaterial({color:0x000000}));S.hole.visible=false;S.sys.add(S.hole);
@@ -360,30 +384,39 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       lookStep(S,dt,inp.lx,inp.ly);
       if(!A.watching)o.hud('<small>'+o.hint('galaxy')+'</small>');
       if(S.said===0&&t>0.9){S.said=1;o.say('You are floating. There is no floor, and no maze.',4)}
-      if(S.said===1&&t>HOLE_AT){S.said=2;o.say('The sun goes out.',3.5);o.tone(55,3.5,'sawtooth',0.2,0,-30);o.noise(2.5,0.25,180,0.7)}
+      if(S.said===1&&t>HOLE_AT){S.said=2;o.say('The twin stars go dark.',3.5);o.tone(55,3.5,'sawtooth',0.2,0,-30);o.noise(2.5,0.25,180,0.7)}
       if(S.said===2&&t>EAT+1.6){S.said=3;o.say('It is pulling everything in.',3.5)}
       if(S.said===3&&t>END-0.1){S.said=4;o.noise(1.4,0.6,900,0.5);o.tone(880,1.2,'sine',0.25,0,-700);o.rumble(900,1,1)}
-      // the sun caves in between HOLE_AT and EAT
+      // The observed orbital model gives way to the door's fictional collapse.
       const col=ss(HOLE_AT,EAT,t),pull=ss(EAT,END,t);
-      S.sun.scale.setScalar(Math.max(0.001,1-col));
-      S.sun.material.color.setRGB(3.2*(1-col*0.4),2.1*(1-col),0.8*(1-col));
-      S.sunGlow.material.opacity=0.55*(1-col);S.sunGlow.scale.setScalar(26*(1-col*0.7));
-      S.light.intensity=900*(1-col)+260*col;S.light.color.setRGB(1,0.89-0.4*col,0.69-0.45*col);
+      const day=t*4+36*pull*pull;
+      binaryPolar(day).forEach((polar,i)=>{
+        const {mesh,halo,light,power}=stars[i];
+        mesh.position.set(...orbitalPosition(polar)).multiplyScalar(systemScale*(1-col));
+        mesh.scale.setScalar(Math.max(0.001,1-col));
+        mesh.visible=col<1;
+        halo.position.copy(mesh.position);halo.material.opacity=0.5*(1-col);
+        light.position.copy(mesh.position);light.intensity=power*(1-col);
+      });
+      S.light.intensity=260*col;
       const hr=col*(1.5+pull*2.0);
       S.hole.visible=S.disk.visible=col>0.02;
       S.hole.scale.setScalar(Math.max(hr,0.001));
       S.disk.scale.setScalar(Math.max(hr*0.9,0.001));S.disk.material.uniforms.uT.value=t;S.disk.material.uniforms.uK.value=col;
       S.edge.material.opacity=col*0.8;S.edge.scale.setScalar(hr*3.1);
-      // worlds wind inward and are stretched along the way
       for(const p of S.planets){
-        if(p.gone)continue;
-        if(t>EAT){p.r-=dt*(0.9+pull*pull*26)*(6/Math.max(p.r,2.5));}
-        p.a+=dt*2.1*Math.pow(5.2/Math.max(p.r,0.6),1.5)*(1+pull*1.5);
-        const sq=1+ss(9,0,p.r)*pull*2.4;
-        p.m.position.set(Math.cos(p.a)*p.r,0,Math.sin(p.a)*p.r);
-        p.m.rotation.y=-p.a+t*p.sp;p.m.scale.set(sq,1/Math.sqrt(sq),1/Math.sqrt(sq));
-        p.orbit.material.opacity=0.1*(1-ss(EAT,EAT+2,t));
-        if(p.r<hr+p.s*0.4){p.gone=true;p.m.visible=false;o.tone(140+p.r0*8,0.5,'sine',0.14,0,-90);o.rumble(160,0.6,0.4)}
+        const polar=orbitPolar(p.planet,day);
+        const contraction=1-ss(0,0.64+0.36*p.planet.a,pull);
+        p.m.position.set(...orbitalPosition(polar,p.planet.tilt)).multiplyScalar(systemScale*contraction);
+        const radius=p.m.position.length(),stretch=1+ss(9,0,radius)*pull*2.4;
+        p.m.rotation.y=-polar[1]+t*p.spin;
+        p.m.scale.set(stretch,1/Math.sqrt(stretch),1/Math.sqrt(stretch));
+        p.orbit.material.opacity=0.26*(1-ss(EAT,EAT+2,t));
+        const visible=radius>=hr+p.radius*0.4;
+        if(dt>0&&p.m.visible&&!visible){
+          o.tone(140+p.planet.a*systemScale*8,0.5,'sine',0.14,0,-90);o.rumble(160,0.6,0.4);
+        }
+        p.m.visible=visible;
       }
       // the sky itself leans toward the hole
       const sk=pull*pull;
@@ -415,8 +448,10 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       if(nf(q.yaw))S.yaw=q.yaw;if(nf(q.pitch))S.pitch=clamp(q.pitch,-1.2,1.2);
       if(!nf(q.t))return;
       const to=clamp(q.t,0,FIN+1),d=to-S.t;
-      // the worlds wind inward step by step, so a jump forward is played through silently
-      if(Math.abs(d)>0.25){if(d>0){A.mute++;try{for(let n=0;n<420&&!held&&S.t<to-0.001;n++)S.update(Math.min(0.05,to-S.t),Z)}finally{A.mute--}}else S.t=to}
+      if(Math.abs(d)>0.25){
+        if(d>0){A.mute++;try{for(let n=0;n<420&&!held&&S.t<to-0.001;n++)S.update(Math.min(0.05,to-S.t),Z)}finally{A.mute--}}
+        else{S.t=to;S.update(0,Z)}
+      }
     };
     return S;
   }
