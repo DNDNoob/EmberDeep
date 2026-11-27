@@ -24,7 +24,9 @@ import {KEEPER} from './npc_recipes.js';
 import {createBabyFace,createFallVoid} from './babyface.js';
 import {pickVariant,VARIANTS} from './variants.js';
 import {ARCHIVE_DEPTH,ARCHIVE_CEILING,ARCHIVE_CORRIDOR,ARCHIVE_BODY,BALCONY_Y,LIBRARIAN,isArchiveDepth,carveArchive,archiveGround,archiveBlocked,archiveHeadroom,archiveMobBlocked,archiveLowOpening,archiveHidden,drawArchive,drawLibrarian} from './forgotten-archive.js';
-import {createForest,coreFaces,INSET,CORE_H} from './forest.js';
+import {createForest,CORE_H,warmForest} from './forest.js';
+import {carveForestRoutes,creekBanks,forestGround,forestSubmerged,forestRootAt,forestRootTile,forestCover,forestBlocked,
+  ROOT_CLEARANCE,drawCreekTerrain,drawForestGround,drawForestRoutes} from './forest-routes.js';
 import {MOVE,stepMove,lookStep,lookBy,bobY,crouchOffset,noclipDest} from './movement.js';
 import {lurkStep} from './lurk.js';
 import {initAmbience,updateAmbience,amb} from './ambience.js';
@@ -240,7 +242,8 @@ function genFloor(seedStr,depth,look){
     for(let cy=0;cy<ch;cy++)for(let cx=0;cx<cw;cx++)cells.push([cx*2+1,cy*2+1]);
   }
   const archive=kind==='archive'?carveArchive(g,W,mulberry32(hashStr(seedStr+'#archive'+depth))):null;
-  const reserved=(x,z)=>archive?.reserved(x,z);
+  let forestRoutes=null;
+  const reserved=(x,z)=>archive?.reserved(x,z)||forestRoutes?.reserved(x,z);
   if(archive){
     [stx,sty]=archive.start;
     cells=cells.filter(([x,z])=>!reserved(x,z));
@@ -266,6 +269,11 @@ function genFloor(seedStr,depth,look){
     for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++)safeMask[idx(safe.tx+dx,safe.ty+dy)]=1;
     g[idx(safe.tx,safe.ty)]=4;safe.x=safe.tx+0.5;safe.z=safe.ty+0.5;
     cells=cells.filter(c=>g[idx(c[0],c[1])]===0);
+  }
+  if(kind==='forest'&&(look?.bi==null||look.bi===8)){
+    forestRoutes=carveForestRoutes(g,W,H,[stx,sty],safe,bfs,mulberry32(hashStr(seedStr+'#creek'+depth)));
+    stx=forestRoutes.creek.x0+1;sty=forestRoutes.creek.z0+3;
+    cells=cells.filter(([x,z])=>!reserved(x,z));
   }
   // pillars: free-standing columns in chambers, stalagmites in caverns (tile value 3)
   const pillars=[];
@@ -515,7 +523,7 @@ function genFloor(seedStr,depth,look){
   const litter=[];
   if(variant.rubbleK>1&&kind!=='back'&&!archive){
     const spots=[];
-    for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=idx(x,y);if(g[i]!==0||safeMask[i]||pocketMask[i]||(x===stx&&y===sty)||(x===ex&&y===ey))continue;
+    for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=idx(x,y);if(g[i]!==0||safeMask[i]||pocketMask[i]||reserved(x,y)||(x===stx&&y===sty)||(x===ex&&y===ey))continue;
       for(const d of DIRS)if(g[idx(x+d[0],y+d[1])]===1){spots.push([x,y,d]);break}}
     const n=Math.min(spots.length,Math.round(nCells/10*(variant.rubbleK-1)));
     for(let k=0;k<n;k++){const j=k+((vr()*(spots.length-k))|0),c=spots[j];spots[j]=spots[k];spots[k]=c;
@@ -534,6 +542,14 @@ function genFloor(seedStr,depth,look){
           seen:new Uint8Array(W*H),dist:d0,bi,biome:B,...(forest?{forest:true,fo:{seed:seedStr,depth}}:{}),
           ...(BA?{boss:BA,music:'silent'}:{}),   // no floor music in an arena: the fight brings its own
           name:BA?BOSSES[BA.i].arena:kind==='cave'?'The Hollow':kind==='dark'?'The Black Hush':BIOMES[bi].name};
+  if(forestRoutes){
+    floor.forestRoutes=forestRoutes;
+    const {creek:c,arch,oak}=forestRoutes;
+    const nearBank=creekBanks(c,c.bridge)[0]-.52;
+    for(const [x,z,dx,dz] of [[nearBank,c.bridge-.72,0,1],[oak.x-.69,oak.z+.52,1,0],[arch.x+.93,arch.z-.57,-1,0]]){
+      sconces.push({x,z,dx,dz,lx:x-dx*.22,lz:z-dz*.22,ph:x+z});
+    }
+  }
   if(archive){
     floor.archive=archive;
     for(const z of [3.04,7.06])items.push({type:'gem',tx:7,ty:Math.floor(z),x:7.16,z,y:BALCONY_Y,got:false,ph:z});
@@ -558,7 +574,7 @@ renderer.outputColorSpace=THREE.SRGBColorSpace;
 renderer.toneMapping=THREE.ACESFilmicToneMapping;
 renderer.shadowMap.enabled=SHADOWS>0;
 renderer.shadowMap.type=Q>=2?THREE.PCFSoftShadowMap:THREE.PCFShadowMap;
-const scene=new THREE.Scene();
+const scene=new THREE.Scene(),forestSky=new THREE.Color(0x111d29);
 const camera=new THREE.PerspectiveCamera(72,1,0.03,60);
 scene.add(camera);
 scene.fog=new THREE.FogExp2(0x000000,0.062);
@@ -649,6 +665,22 @@ function worldMaterial(o){
   return m;
 }
 const worldMats=new Map();
+const creekMaterial=new THREE.MeshStandardMaterial({color:0x336766,roughness:.53,metalness:.08,emissive:0x142321,emissiveIntensity:.42});
+creekMaterial.onBeforeCompile=shader=>{
+  shader.uniforms.creekTime=UT;
+  shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>\nvarying vec2 vCreek;')
+    .replace('#include <begin_vertex>','#include <begin_vertex>\nvCreek=position.xz;');
+  shader.fragmentShader=shader.fragmentShader.replace('#include <common>','#include <common>\nvarying vec2 vCreek;uniform float creekTime;')
+    .replace('#include <color_fragment>',`#include <color_fragment>
+      float w1=sin(vCreek.y*32.-creekTime*4.4+sin(vCreek.x*6.+vCreek.y*2.)*1.15);
+      float w2=sin(vCreek.y*6.+vCreek.x*3.9-creekTime*1.1);
+      float patches=.5+.5*sin(vCreek.x*15.+vCreek.y*3.+w2*2.1);
+      float ripple=smoothstep(.79,.99,w1)*smoothstep(.15,.84,patches);
+      diffuseColor.rgb*=.83+.28*ripple+.12*w2;
+      diffuseColor.rgb+=vec3(.035,.067,.060)*ripple;
+    `);
+};
+creekMaterial.customProgramCacheKey=()=>'forest-creek';
 // Keep the installed floor and the reusable shaft previews textured across runs.
 function sweepWorld(){
   const keep=new Set(worldMesh.material);
@@ -659,6 +691,7 @@ function sweepWorld(){
   SURFS.sweep(new Set([...keep].map(material=>material.map)));
 }
 function getWorldMat(F,k){
+  if(k===8&&F.forestRoutes)return creekMaterial;
   const office=k>=10,kd=k%10,panel=kd===4||kd===6,B=F.biome,stoneFr=kd===7;
   const base=office?13:stoneFr?0:F.base,tex=office||kd===3||panel||stoneFr?null:F.tex;
   const layer=kd===3?12:base+(panel?3:kd===5||stoneFr?0:kd);
@@ -953,8 +986,10 @@ function buildMesh(F,preview=false){
     const top=topAt(x,y);
     const pk=F.pocketMask[y*W+x]?10:0;
     const fu=[[x/2,y/2],[(x+1)/2,y/2],[(x+1)/2,(y+1)/2],[x/2,(y+1)/2]];
-    quad([[x,0,y],[x+1,0,y],[x+1,0,y+1],[x,0,y+1]],[0,1,0],fu,1+pk);
-    // a forest has no ceiling at all, only black sky (the noclip pockets keep theirs); its walls are the undergrowth cores built below
+    if(!F.forestRoutes||!drawForestGround(F.forestRoutes.creek,x,y,quad)){
+      quad([[x,0,y],[x+1,0,y],[x+1,0,y+1],[x,0,y+1]],[0,1,0],fu,1+pk);
+    }
+    // The sky is open above the hedges. Only pockets and the sanctuary keep a ceiling.
     if(!fr||pk||indoor)quad([[x,top,y],[x+1,top,y],[x+1,top,y+1],[x,top,y+1]],[0,-1,0],fu,(pk?4:F.panelAt[y*W+x]===2?6:F.panelAt[y*W+x]?4:2)+pk);
     if(fr&&!pk&&!indoor)continue;
     const uvTop=1-top/Y;
@@ -991,14 +1026,19 @@ function buildMesh(F,preview=false){
       quad([[x,bottom,y],[x+1,bottom,y],[x+1,top,y],[x,top,y]],[0,0,1],[[x,1-bottom/Y],[x+1,1-bottom/Y],[x+1,uvTop],[x,uvTop]],pk);
     }
   }
+  if(F.forestRoutes)drawCreekTerrain(F.forestRoutes.creek,quad);
+  let hedges=null;
   if(fr){
-    // occluding undergrowth core: each wall face sits INSET into its tile, with floor laid under the gap, and runs on past its tile edge at inside corners
-    const vt=1-CORE_H/Y,under=new Set();
-    for(const c of FOREST.faces(F)){
-      const {tx,ty,dx,dz}=c,k=ty*W+tx;
-      if(!under.has(k)){under.add(k);const fu=[[tx/2,ty/2],[(tx+1)/2,ty/2],[(tx+1)/2,(ty+1)/2],[tx/2,(ty+1)/2]];quad([[tx,0,ty],[tx+1,0,ty],[tx+1,0,ty+1],[tx,0,ty+1]],[0,1,0],fu,1)}
-      if(dx){const px=(dx>0?tx+1:tx)-dx*INSET,z0=ty-c.e0,z1=ty+1+c.e1;quad([[px,0,z0],[px,0,z1],[px,CORE_H,z1],[px,CORE_H,z0]],[dx,0,0],[[z0,1],[z1,1],[z1,vt],[z0,vt]],0)}
-      else{const pz=(dz>0?ty+1:ty)-dz*INSET,x0=tx-c.e0,x1=tx+1+c.e1;quad([[x0,0,pz],[x1,0,pz],[x1,CORE_H,pz],[x0,CORE_H,pz]],[0,0,dz],[[x0,1],[x1,1],[x1,vt],[x0,vt]],0)}
+    const faces=FOREST.faces(F),under=new Set();
+    hedges=FOREST.hedge(F,faces);
+    if(F.fo)F.fo.hedgeTris=hedges.reduce((n,part)=>n+part.data.p.length/9,0);
+    // Soil extends just under the rounded hedge so the base never opens onto the sky.
+    for(const {tx,ty} of faces){
+      const k=ty*W+tx;
+      if(under.has(k))continue;
+      under.add(k);
+      const fu=[[tx/2,ty/2],[(tx+1)/2,ty/2],[(tx+1)/2,(ty+1)/2],[tx/2,(ty+1)/2]];
+      quad([[tx,0,ty],[tx+1,0,ty],[tx+1,0,ty+1],[tx,0,ty+1]],[0,1,0],fu,1);
     }
   }
   // walls that are not really there
@@ -1033,7 +1073,8 @@ function buildMesh(F,preview=false){
   // sort the triangles by surface kind, make every one face the way its normal points, and hand them to Three.js
   const nV=v.length/9,tris=[];for(let i=0;i<nV;i+=3)tris.push(i);
   tris.sort((a,b)=>v[a*9+8]-v[b*9+8]);
-  const pos=new Float32Array(nV*3),nor=new Float32Array(nV*3),uv=new Float32Array(nV*2),mats=[];
+  const hedgeVertices=hedges?.reduce((n,part)=>n+part.data.p.length/3,0)||0,total=nV+hedgeVertices;
+  const pos=new Float32Array(total*3),nor=new Float32Array(total*3),uv=new Float32Array(total*2),mats=[];
   const geo=new THREE.BufferGeometry();let o=0,curK=-1,gStart=0;
   for(const t of tris){
     const k=v[t*9+8];
@@ -1046,6 +1087,19 @@ function buildMesh(F,preview=false){
     }
   }
   if(curK>=0)geo.addGroup(gStart,o-gStart,mats.length-1);
+  if(hedgeVertices){
+    const colors=new Float32Array(total*3),sway=new Float32Array(total);
+    let cursor=nV;
+    for(const part of hedges){
+      const n=part.data.p.length/3;
+      pos.set(part.data.p,cursor*3);nor.set(part.data.n,cursor*3);
+      colors.set(part.data.c,cursor*3);sway.set(part.data.w,cursor);
+      geo.addGroup(cursor,n,mats.length);mats.push(part.material);
+      cursor+=n;
+    }
+    geo.setAttribute('color',new THREE.BufferAttribute(colors,3));
+    geo.setAttribute('aSw',new THREE.BufferAttribute(sway,1));
+  }
   geo.setAttribute('position',new THREE.BufferAttribute(pos,3));geo.setAttribute('normal',new THREE.BufferAttribute(nor,3));geo.setAttribute('uv',new THREE.BufferAttribute(uv,2));
   geo.computeBoundingSphere();
   const mesh=new THREE.Mesh(geo,mats);mesh.castShadow=true;mesh.receiveShadow=true;mesh.frustumCulled=false;
@@ -2106,6 +2160,7 @@ function buildStatic(F){
       for(const a of[-1,1])for(const b of[-1,1])slab(f,[lx+a*0.028,0.665,lz+b*0.028],[0.008,0.1,0.008],iron);
     }else{slab(f,[0,0.72,0],[0.05,0.2,0.05],iron);slab(f,[-q.dx*0.07,0.82,-q.dz*0.07],[0.12,0.04,0.12],iron)}}
   if(F.archive)drawArchive(F.archive,I,{slab,seg,rZ,rX});
+  if(F.forestRoutes)drawForestRoutes(F.forestRoutes,I,{slab,seg,ball,emit,mesh6,rZ});
   for(const pr of F.props)buildProp(pr,F);
   for(const D of F.sdoors){
     const f={p:[D.x,0,D.z],R:rYaw(D.r),lo:[D.x*0.37,0,D.z*0.37]};
@@ -6193,7 +6248,8 @@ $('gtx').addEventListener('change',e=>{lsSet('gtx',e.target.checked);lsSet('safe
 
 function playerEye(extra=0){
   const base=EYE*wofEye()*potEye();
-  const headroom=F.archive?archiveHeadroom(F.archive,P.x,P.z,P.y,PR):CAM_TOP+.06;
+  const headroom=F.archive?archiveHeadroom(F.archive,P.x,P.z,P.y,PR):
+    F.forestRoutes&&forestRootAt(F.forestRoutes,P.x,P.z,PR)?ROOT_CLEARANCE:CAM_TOP+.06;
   return Math.min(headroom-.06,base+P.y+bobY(P,1)+extra-crouchOffset(P,base));
 }
 
@@ -6235,7 +6291,7 @@ function installFloor(depth,nextFloor,prepared=false,landing=null){
   if(prepared)afterLiftFrame(()=>{if(state==='play'&&F===nextFloor&&!loading)sweepWorld()});else sweepWorld();
   if(F.npcs&&F.npcs.some(q=>q.type==='keeper'))keeperWarm();
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
-  P.y=0;P.vy=0;P.vx=0;P.vz=0;P.crouched=false;P.crouchBlend=0;P.keys=0;P.jumpQ=0;P.inSafe=false;P.unseen=false;nearNpc=nearDoor=null;
+  P.y=0;P.vy=0;P.vx=0;P.vz=0;P.crouched=false;P.crouchBlend=0;P.inWater=false;P.keys=0;P.jumpQ=0;P.inSafe=false;P.unseen=false;nearNpc=nearDoor=null;
   const visit=liftVisits.get(depth);
   if(visit?.floor===F){
     P.shards=visit.shards;P.keys=visit.keys;
@@ -6248,6 +6304,7 @@ function installFloor(depth,nextFloor,prepared=false,landing=null){
   if(MP.guest&&MP.hostId)mpSend({k:'pkq',d:depth},MP.hostId);
   glReset();
   stillwoodWarmSoon();
+  if(floorKind(depth+1)==='forest')setTimeout(warmForest,1200);
 }
 function onTileChange(){
   P.tx=Math.floor(P.x);P.ty=Math.floor(P.z);
@@ -6574,7 +6631,7 @@ function pkWhy(tx,ty){
   if(tx<1||ty<1||tx>W-2||ty>H-2)return 'border';
   if(F.mazeH&&ty>=F.mazeH-1)return 'kept';
   if(F.g[ty*W+tx]!==1)return 'notwall';
-  if(F.archive?.reserved(tx,ty))return 'kept';
+  if(F.archive?.reserved(tx,ty)||F.forestRoutes?.reserved(tx,ty))return 'kept';
   const near=(x,y,r)=>Math.abs(x-tx)<=r&&Math.abs(y-ty)<=r;
   for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){const i=(ty+dy)*W+tx+dx;if(F.safeMask[i]||F.pocketMask[i])return 'kept'}
   if(F.door&&near(F.door.tx,F.door.ty,1))return 'gate';
@@ -7032,16 +7089,17 @@ function mpRecv(m,from){
 // the host's view of everyone the creatures can hunt
 function inArchiveAlcove(x,z,y=0,crouched=false){return !!F.archive&&archiveHidden(F.archive,x,z,y,crouched)}
 const playerInArchiveCover=()=>inArchiveAlcove(P.x,P.z,P.y,P.crouched);
+const underForestRoots=(x,z,y,crouched)=>!!F.forestRoutes&&forestCover(F.forestRoutes,x,z,y,crouched);
 function mpTargets(){
   const T=[];
-  if(!P.down)T.push({x:P.x,z:P.z,y:P.y,yaw:P.yaw,fuel:P.fuel,inSafe:P.inSafe||F.archive&&P.y>.84||playerInArchiveCover()||P.away||!!FX.frozen||potSafeAt(P.x,P.z),inv:P.inv,loc:true,mirror:R.mirror,tx:P.tx,ty:P.ty,pf:potFlags()});
+  if(!P.down)T.push({x:P.x,z:P.z,y:P.y,yaw:P.yaw,fuel:P.fuel,inSafe:P.inSafe||F.archive&&P.y>.84||playerInArchiveCover()||underForestRoots(P.x,P.z,P.y,P.crouched)||P.away||!!FX.frozen||potSafeAt(P.x,P.z),inv:P.inv,loc:true,mirror:R.mirror,tx:P.tx,ty:P.ty,pf:potFlags()});
   if(MP.host)for(const p of MP.peers.values())
-    if(p.run&&!p.down&&p.d===R.depth&&p.x!==undefined&&mpFresh(p))T.push({x:p.x,z:p.z,y:p.y,yaw:p.yaw,fuel:p.fu,inSafe:p.safe||F.archive&&p.y>.84||inArchiveAlcove(p.x,p.z,p.y,p.crouched)||potSafeAt(p.x,p.z),inv:p.inv,loc:false,mirror:!!p.mirror,p,tx:Math.floor(p.x),ty:Math.floor(p.z),pf:p.pf|0});
+    if(p.run&&!p.down&&p.d===R.depth&&p.x!==undefined&&mpFresh(p))T.push({x:p.x,z:p.z,y:p.y,yaw:p.yaw,fuel:p.fu,inSafe:p.safe||F.archive&&p.y>.84||inArchiveAlcove(p.x,p.z,p.y,p.crouched)||underForestRoots(p.x,p.z,p.y,p.crouched)||potSafeAt(p.x,p.z),inv:p.inv,loc:false,mirror:!!p.mirror,p,tx:Math.floor(p.x),ty:Math.floor(p.z),pf:p.pf|0});
   return T;
 }
 // path distance from every tile to the nearest player
 function mpDist(T,archiveRoute=false){
-  if(!archiveRoute&&T.length===1&&T[0].loc)return F.dist;
+  if(!archiveRoute&&!F.forestRoutes&&T.length===1&&T[0].loc)return F.dist;
   const key=T.map(t=>t.tx+','+t.ty).join(';')+(F.door?'d':'');
   const field=archiveRoute?'archiveMd':'md',memo=field+'Key';
   if(F[memo]===key&&F[field])return F[field];
@@ -7049,7 +7107,7 @@ function mpDist(T,archiveRoute=false){
   for(const t of T){if(t.tx<0||t.ty<0||t.tx>=W||t.ty>=H)continue;const i=t.ty*W+t.tx;if(d[i]<0){d[i]=0;q[qt++]=i}}
   while(qh<qt){
     const c=q[qh++],cx=c%W,cy=(c/W)|0,nd=d[c]+1;
-    for(let k=0;k<4;k++){const nx=cx+DIRS[k][0],ny=cy+DIRS[k][1];if(nx<0||ny<0||nx>=W||ny>=H)continue;const n=ny*W+nx;if(g[n]===0&&d[n]<0&&(!archiveRoute||!archiveMobBlocked(F.archive,nx+.5,ny+.5))){d[n]=nd;q[qt++]=n}}
+    for(let k=0;k<4;k++){const nx=cx+DIRS[k][0],ny=cy+DIRS[k][1];if(nx<0||ny<0||nx>=W||ny>=H)continue;const n=ny*W+nx;if(g[n]===0&&d[n]<0&&(!F.forestRoutes||!forestRootTile(F.forestRoutes,nx,ny))&&(!archiveRoute||!archiveMobBlocked(F.archive,nx+.5,ny+.5))){d[n]=nd;q[qt++]=n}}
   }
   F[memo]=key;F[field]=d;return d;
 }
@@ -7076,7 +7134,7 @@ function mpSpectate(){
   const L=mpAlive(),f=L.find(p=>p.id===MP.follow)||L[0];
   MP.follow=f?f.id:null;
   if(!f)return;
-  P.x=f.rx;P.z=f.rz;P.y=F.archive?f.ry:0;P.crouched=f.crouched;P.crouchBlend=Number(!!f.crouched);P.yaw=f.ryaw;P.pitch=f.rpitch*0.6;P.fuel=f.fu;P.inSafe=f.safe;
+  P.x=f.rx;P.z=f.rz;P.y=F.archive||F.forestRoutes?f.ry:0;P.crouched=f.crouched;P.crouchBlend=Number(!!f.crouched);P.yaw=f.ryaw;P.pitch=f.rpitch*0.6;P.fuel=f.fu;P.inSafe=f.safe;
   if(Math.floor(P.x)!==P.tx||Math.floor(P.z)!==P.ty)onTileChange();
 }
 function mpCycle(){const L=mpAlive();if(L.length<2)return;const i=L.findIndex(p=>p.id===MP.follow);MP.follow=L[(i+1)%L.length].id}
@@ -8104,16 +8162,21 @@ function update(dt){
   const fury=ctl&&ps('fury');if(fury&&Math.abs(fwd)<0.2&&Math.abs(str)<0.2)fwd=1;   // Fury Brew: you cannot stop running
   const J0=MOVE.jumpV,G0=MOVE.gravity,pvx=P.vx,pvz=P.vz;MOVE.jumpV=J0*potJump();MOVE.gravity=G0*potGrav();
   const normalBlock=ps('phase')?potPhase:blocked;
-  const groundAt=F.archive?(x,z)=>archiveGround(F.archive,x,z,P.y):undefined;
+  const routes=F.forestRoutes;
+  const groundAt=F.archive?(x,z)=>archiveGround(F.archive,x,z,P.y):
+    routes?(x,z)=>forestGround(routes,x,z,P.y):undefined;
   const height=()=>ARCHIVE_BODY*(P.crouched?MOVE.crouchEye:1);
-  const headroom=F.archive?(x,z)=>archiveHeadroom(F.archive,x,z,P.y,PR):null;
-  const sceneryBlock=F.archive?(x,z)=>archiveBlocked(F.archive,x,z,P.y,height(),PR,P.y<=groundAt(P.x,P.z)):null;
+  const headroom=F.archive?(x,z)=>archiveHeadroom(F.archive,x,z,P.y,PR):
+    routes?(x,z)=>forestRootAt(routes,x,z,PR)?ROOT_CLEARANCE:Infinity:null;
+  const sceneryBlock=F.archive?(x,z)=>archiveBlocked(F.archive,x,z,P.y,height(),PR,P.y<=groundAt(P.x,P.z)):
+    routes?(x,z)=>forestBlocked(routes,x,z,P.y,height(),PR):null;
+  const wading=routes&&forestSubmerged(routes,P.x,P.z,P.y);
   const walkBlock=sceneryBlock?(x,z)=>normalBlock(x,z)||sceneryBlock(x,z):normalBlock;
   const slideBlock=sceneryBlock?(x,z)=>blocked(x,z)||sceneryBlock(x,z):blocked;
   const crouch=ctl&&!P.mounted&&(keys.ControlLeft||keys.ControlRight||keys.KeyX&&!FX.hedge||pad.crouch||touch.crouch);
   const ev=stepMove(P,dt,{fwd,str,fx:Math.cos(P.yaw),fz:Math.sin(P.yaw),ctl,crouch,
     jump:FX.fat<=0&&potJump()>0&&(keys.Space||pad.jump||touch.jump),sprint:fury||keyboardSprint()||pad.sprint||Math.hypot(touch.mx,touch.my)>0.94},
-    {scale:1,speedMul:moveMul()*(P.mounted?1.25:1),lungs:up.lungs|0,blocked:walkBlock,groundAt,snap:F.archive?0.115:0,
+    {scale:1,speedMul:moveMul()*(P.mounted?1.25:1)*(wading?.49:1),lungs:up.lungs|0,blocked:walkBlock,groundAt,snap:F.archive?0.115:0,
       canStand:headroom?()=>P.y+ARCHIVE_BODY<=headroom(P.x,P.z):null,
       ceilingAt:headroom?(x,z)=>headroom(x,z)-height():null});
   MOVE.jumpV=J0;MOVE.gravity=G0;
@@ -8121,7 +8184,10 @@ function update(dt){
   if(ps('slick')&&ev.ground){const k=Math.min(1,1.4*dt),nvx=pvx+(P.vx-pvx)*k,nvz=pvz+(P.vz-pvz)*k,cx=P.x+(nvx-P.vx)*dt,cz=P.z+(nvz-P.vz)*dt;if(!slideBlock(cx,P.z))P.x=cx;if(!slideBlock(P.x,cz))P.z=cz;P.vx=nvx;P.vz=nvz}
   if(POT.slv){const q=POT.slv;q.t-=dt;const nx=P.x+q.vx*dt,nz=P.z+q.vz*dt;if(!slideBlock(nx,P.z))P.x=nx;if(!slideBlock(P.x,nz))P.z=nz;q.vx*=0.9;q.vz*=0.9;if(q.t<=0)POT.slv=null}
   if(ev.jumped)sfx('jump');
-  if((ev.landed>0||ev.step)&&!ps('hush')){sfx('step');if(ps('loud'))tone(55,0.12,'sine',0.25)}
+  const inWater=routes&&forestSubmerged(routes,P.x,P.z,P.y);
+  if(inWater&&!P.inWater&&!ps('hush'))noise(.17,.12,690,.62);
+  P.inWater=!!inWater;
+  if((ev.landed>0||ev.step)&&!ps('hush')){if(inWater)noise(.12,.09,810,.65);else sfx('step');if(ps('loud'))tone(55,0.12,'sine',0.25)}
   if(ctl&&ev.ground&&(ev.blockedX||ev.blockedZ)){
     if(!P.wallTouch){
       P.wallTouch=true;
@@ -8161,9 +8227,11 @@ function update(dt){
       if($('tFlash').textContent!==action)$('tFlash').textContent=action;
     }
     const pt=!best&&!nd&&state==='play'&&P.pick>0&&!P.down&&!P.away&&!P.grab?pkAim():null;
-    const low=F.archive&&!P.crouched&&archiveLowOpening(F.archive,P.x,P.z,P.y,P.yaw);
+    const inRoots=underForestRoots(P.x,P.z,P.y,P.crouched);
+    const low=!P.crouched&&(F.archive&&archiveLowOpening(F.archive,P.x,P.z,P.y,P.yaw)||
+      F.forestRoutes&&forestRootAt(F.forestRoutes,P.x+Math.cos(P.yaw)*.39,P.z+Math.sin(P.yaw)*.39,PR));
     const crouchHint=touch.on?'Hold Crouch':pad.id?'Hold D-pad ↓ to crouch':'Hold X to crouch';
-    if(state!=='room')setText('prompt',playerInArchiveCover()?(P.z>=2?'Hidden under the reading desk':'Hidden in the alcove'):low?crouchHint:lift?(touch.on?'USE':pad.id?'X':'E')+': use lift controls':best?(touch.on?'TALK':pad.id?'X':'E')+': speak with '+NPC[best.type].name:nd?(touch.on?'OPEN':pad.id?'X':'E')+': open the strange door':pt?pt.ok?(touch.on?'PICK':pad.id?'RB':'Q')+': break through this wall':'This wall will not break':'');}
+    if(state!=='room')setText('prompt',playerInArchiveCover()?(P.z>=2?'Hidden under the reading desk':'Hidden in the alcove'):inRoots?'Hidden under the roots':low?crouchHint:lift?(touch.on?'USE':pad.id?'X':'E')+': use lift controls':best?(touch.on?'TALK':pad.id?'X':'E')+': speak with '+NPC[best.type].name:nd?(touch.on?'OPEN':pad.id?'X':'E')+': open the strange door':pt?pt.ok?(touch.on?'PICK':pad.id?'RB':'Q')+': break through this wall':'This wall will not break':'');}
   if(P.fuel<20&&!lowFuelSaid){lowFuelSaid=true;say(P.fuel<=0?'Your torch is out':'Your torch is guttering. Find oil.',3)}
   if(P.inv>0)P.inv-=dt;
   if(P.chill>0){P.chill-=dt;$('chill').style.opacity=clamp(P.chill/1.2,0,1)}else if(P.chill<0||P.chill===0&&$('chill').style.opacity!=='0'){P.chill=0;$('chill').style.opacity='0'}
@@ -8285,7 +8353,8 @@ function update(dt){
       if(s.state===1&&dl>=0&&dl<=11){chasing++;nearest=Math.min(nearest,dl)}
     }else sp=s.state===1?2.95:1.4;
     let gx=s.gx+0.5,gz=s.gy+0.5;
-    const direct=!!T&&s.state===1&&d>=0&&d<=1&&!T.inSafe&&(!librarian||!archiveMobBlocked(F.archive,T.x,T.z));
+    const direct=!!T&&s.state===1&&d>=0&&d<=1&&!T.inSafe&&(!librarian||!archiveMobBlocked(F.archive,T.x,T.z))&&
+      (!F.forestRoutes||!forestRootTile(F.forestRoutes,T.tx,T.ty));
     if(direct){gx=T.x;gz=T.z;s.gx=cx;s.gy=cz}
     const dx=gx-s.x,dz=gz-s.z,l=Math.hypot(dx,dz),step=sp*dt*(s.pmul||1);
     if(l<=step+0.001){
@@ -8295,7 +8364,8 @@ function update(dt){
         for(const k of DIRS){
           const nx2=cx+k[0],ny2=cz+k[1];
           if(nx2<0||ny2<0||nx2>=F.W||ny2>=F.H||F.g[ny2*F.W+nx2]||F.safeMask[ny2*F.W+nx2]||F.pocketMask[ny2*F.W+nx2])continue;
-          if(inArchiveAlcove(nx2+.5,ny2+.5)||librarian&&archiveMobBlocked(F.archive,nx2+.5,ny2+.5))continue;
+          if(inArchiveAlcove(nx2+.5,ny2+.5)||librarian&&archiveMobBlocked(F.archive,nx2+.5,ny2+.5)||
+            F.forestRoutes&&forestRootTile(F.forestRoutes,nx2,ny2))continue;
           const nd=distances[ny2*F.W+nx2];
           if(nd>=0&&nd<bestD){bestD=nd;bestN=[nx2,ny2]}
           if(!(nx2===s.px&&ny2===s.py))opts.push([nx2,ny2]);
@@ -8352,12 +8422,12 @@ function update(dt){
 }
 
 function lurkTick(dt){
-  if(!F||P.away||!F.npcs||playerInArchiveCover()||F.archive&&P.y>.84)return;
+  if(!F||P.away||!F.npcs||playerInArchiveCover()||underForestRoots(P.x,P.z,P.y,P.crouched)||F.archive&&P.y>.84)return;
   for(const n of F.npcs){
     if(n.type!=='lurk'||n.x<0)continue;
     const r=lurkStep(n,dt,{x:P.x,z:P.z,yaw:P.yaw,down:!!P.down||state!=='play'},{
       los:(x,z)=>los(P.x,P.z,x,z),
-      open:(x,z)=>x>0&&z>0&&x<F.W-1&&z<F.H-1&&F.g[z*F.W+x]===0&&!F.safeMask[z*F.W+x]&&!F.pocketMask[z*F.W+x]&&!inArchiveAlcove(x+0.5,z+0.5),
+      open:(x,z)=>x>0&&z>0&&x<F.W-1&&z<F.H-1&&F.g[z*F.W+x]===0&&!F.safeMask[z*F.W+x]&&!F.pocketMask[z*F.W+x]&&!inArchiveAlcove(x+0.5,z+0.5)&&(!F.forestRoutes||!forestRootTile(F.forestRoutes,x,z)),
       rand:()=>Math.random(),
     });
     if(n.aggro&&!n.said){n.said=1;sfx('growl');say('It noticed you looking.',2.4)}
@@ -8987,6 +9057,8 @@ function render(t){
   if(FX.tickled>0&&!title){const k=0.025;camera.position.x+=(Math.random()-0.5)*k;camera.position.y+=(Math.random()-0.5)*k;camera.position.z+=(Math.random()-0.5)*k}
   if(pkShake>0){const k=0.05*pkShake;camera.position.x+=(Math.random()-0.5)*k;camera.position.y+=(Math.random()-0.5)*k;camera.position.z+=(Math.random()-0.5)*k;pkShake=Math.max(0,pkShake-0.03)}
   if(P.grab){const k=0.012+0.02*Math.min(1,P.grab.t);camera.position.x+=(Math.random()-0.5)*k;camera.position.y+=(Math.random()-0.5)*k;camera.position.z+=(Math.random()-0.5)*k}
+  scene.background=F.forest?forestSky:null;
+  if(forestGrp)FOREST.focus(forestGrp,ex,ez);
   const B=F.biome;
   const fwx=Math.cos(yaw),fwz=Math.sin(yaw),rx=-fwz,rz=fwx;
   const flick=1+Math.sin(t*11)*0.02+Math.sin(t*23.7)*0.015+Math.sin(t*5.3)*0.02;
@@ -8999,7 +9071,11 @@ function render(t){
     const aT=F.ambT||[1,1,1],a0=B.amb[0]*aK*aT[0],a1=B.amb[1]*aK*aT[1],a2=B.amb[2]*aK*aT[2];
     L.amb=F.dark?AMB_ZERO:F.back?[a0*pl,a1*pl,a2*pl]:[a0,a1,a2];
     L.fog=[a0*2.2*pl,a1*2.2*pl,a2*2.2*pl];scene.fog.density=0.062*(F.fogK||1)*(ps('cat')?0.6:1);
-    if(F.forest){L.fog=[a0*0.4,a1*0.4,a2*0.4];scene.fog.density=0.062*1.3*(F.fogK||1)}
+    if(F.forest){
+      L.amb=[a0+.004,a1+.008,a2+.013];
+      L.fog=[a0+.006,a1+.014,a2+.026];
+      scene.fog.density=.076*(F.fogK||1);
+    }
     {const ak=F.back?2.5:LK.amb;ambLight.color.setRGB(L.amb[0]*ak,L.amb[1]*ak,L.amb[2]*ak)}
     scene.fog.color.setRGB(L.fog[0],L.fog[1],L.fog[2]);
     if(scene.environment)scene.environmentIntensity=F.dark?0.01:F.back?0.3*pl:F.forest?0.012:LK.env;}
@@ -9010,6 +9086,13 @@ function render(t){
   flashLight.position.set(ex,ey,ez);flashLight.intensity=flashT*LK.flash;
   // nearest coloured lights: [dist2, x,y,z, colour, strength, radius]
   const lights=[];
+  if(F.forestRoutes){
+    const c=F.forestRoutes.creek;
+    for(const z of [c.z0+1.45,c.z1-1.38]){
+      const d=(c.mid-ex)**2+(z-ez)**2;
+      if(d<100)lights.push([d-3,c.mid,1.12,z,[.38,.65,.73],1.06,4.5]);
+    }
+  }
   if(F.archive)for(const l of F.archive.lamps){
     const d=(l.x-ex)**2+(l.z-ez)**2;
     if(d<125)lights.push([d-8,l.x,l.y-0.11,l.z,[1.0,0.69,0.37],2.2,6]);
@@ -9201,6 +9284,12 @@ function render(t){
     for(const q of P2.flies){if((q.x-ex)**2+(q.z-ez)**2>64)continue;
       const fx=q.x+Math.sin(t*q.sp+q.ph)*0.3,fy=q.y+Math.sin(t*q.sp*1.7+q.ph*2)*0.1,fz=q.z+Math.cos(t*q.sp*0.8+q.ph)*0.3,bl=0.5+0.5*Math.sin(t*(1.2+q.sp)+q.ph*3);
       spr(fx,fy,fz,0.045,0.045,7,0.75,1,0.4,0.95*bl,1);spr(fx,fy,fz,0.2,0.2,7,0.5,1,0.3,0.3*bl,1)}
+    for(const q of P2.landmarks){
+      if((q.x-ex)**2+(q.z-ez)**2<34){
+        const glow=.22+.045*Math.sin(t*1.2+q.rot);
+        spr(q.x,.21,q.z,.65,.58,7,.35,1,.72,glow,1);
+      }
+    }
     if(fv.glow>0)for(const q of P2.shrooms){if((q.x-ex)**2+(q.z-ez)**2<30)spr(q.x,0.07,q.z,0.32*q.sx,0.32*q.sx,7,0.3,0.9,0.8,0.05*fv.glow,1)}
   }
   // a strange door gives itself away at the keyhole: cold starlight, kiln glow, or nothing at all

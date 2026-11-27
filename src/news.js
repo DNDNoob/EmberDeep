@@ -7,6 +7,10 @@
 // it is, or how to trigger it. No code names, file names, PR numbers or agent names.
 // Group small fixes into one post. Rebuild index.html afterwards (npm run build).
 export const NEWS=[
+  {date:'2026-11-27',title:'Across the Dark Forest creek',
+    body:'A creek runs through a new clearing in the Dark Forest. Take the footbridge or hop the stepping stones, and keep an eye out for old roots and ruins along the paths.'},
+  {date:'2026-11-27',title:'Living hedges in the Dark Forest',
+    body:'Living hedges now wind between the Dark Forest’s sculpted firs and mossy stones. Look for clusters of glowcaps where paths meet.'},
   {date:'2026-11-27',title:'Above the Archive',
     body:'Climb to the Forgotten Archive’s balconies and make your way across broken walkways. You can now crouch during a descent to slip beneath low obstacles.'},
   {date:'2026-11-27',title:'The Forgotten Archive',
