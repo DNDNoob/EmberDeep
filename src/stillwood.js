@@ -1,8 +1,6 @@
 // A strange door into a wood that does not end.
-// The way back walks with you and stays directly behind your head, so turning never shows it.
-// The still pond is a scrying pool, not a true mirror: looking down into it shows the door
-// that is standing behind you. Seeing that reflection, or seeing the door itself, holds the
-// door where it is. Look away from both and it slips behind you again.
+// The first pool shows the way back for a moment. Another pool can pin the door in place.
+// Once pinned, it stays put while you see the reflection or the door itself.
 import * as THREE from 'three';
 import {MOVE,bobY,createRoomWalker,lookStep,scaleFor} from './movement.js';
 import {getProp,natureMaterial} from './nature.js';
@@ -12,7 +10,7 @@ const clamp=(v,a,b)=>v<a?a:v>b?b:v;
 
 export const STILL={
   behind:4.2, doorHalf:0.52, doorH:2.2, pondR:5.5, pondEvery:304.8, pondMax:3,
-  grace:0.15, seeMargin:0.03, hidePad:0.3, waterY:0.045,
+  grace:0.15, glimpseTime:0.5, seeMargin:0.03, hidePad:0.3, waterY:0.045,
   vfov:72*Math.PI/180, waterReach:25, waterFill:2/9,
   freezeReach:12, freezeFill:0.4, freezeN:5, freezeSpan:0.8, freezeDwell:0.5,
 };
@@ -202,8 +200,9 @@ export function crossedDoor(x0,z0,x1,z1,door,half=STILL.doorHalf){
 // The instant neither holds (after a tiny grace against flicker) it slips back directly behind the player.
 // (s.eye, yaw and pitch must be the pose the camera will actually render with this frame.)
 export function stillStep(s,dt){
-  const ponds=s.ponds||[s.pond],eye=[s.x,s.eye??EYE,s.z],fov=s.fov||viewFov(STILL.vfov,s.aspect||16/9),margin=s.seeMargin??STILL.seeMargin;
-  const fill=waterFill(eye,s.yaw,s.pitch,ponds,fov,s.waterReach??STILL.waterReach);
+  const ponds=s.ponds||[s.pond],usablePonds=s.usablePonds??ponds;
+  const eye=[s.x,s.eye??EYE,s.z],fov=s.fov||viewFov(STILL.vfov,s.aspect||16/9),margin=s.seeMargin??STILL.seeMargin;
+  const fill=waterFill(eye,s.yaw,s.pitch,usablePonds,fov,s.waterReach??STILL.waterReach);
   const water=fill>=(s.waterFill??STILL.waterFill)-1e-9;
   s.locked=false;s.released=false;s.direct=false;s.hidden=false;
   if(s.pinned){
@@ -215,12 +214,12 @@ export function stillStep(s,dt){
   }
   if(!s.pinned){
     // free: pond, you and the door in a straight line with you in the middle
-    const p=placeLine(s.x,s.z,nearestOf(ponds,s.x,s.z),s.yaw,s.behind??STILL.behind,s.blocked);
+    const p=placeLine(s.x,s.z,nearestOf(usablePonds.length?usablePonds:ponds,s.x,s.z),s.yaw,s.behind??STILL.behind,s.blocked);
     s.door.x=p.x;s.door.z=p.z;s.door.face=p.face;
     if(s.groundAt)s.door.y=s.groundAt(p.x,p.z);
     // any part of the spot on screen hides the door (never counted as seen) until it leaves the view: it cannot pop in ahead of you
     s.hidden=doorSeen(eye,s.yaw,s.pitch,s.door,fov,margin+(s.hidePad??STILL.hidePad));
-    const wr=waterRays(eye,s.yaw,s.pitch,ponds,fov,s.freezeReach??STILL.freezeReach,STILL.freezeN,STILL.freezeSpan);
+    const wr=waterRays(eye,s.yaw,s.pitch,usablePonds,fov,s.freezeReach??STILL.freezeReach,STILL.freezeN,STILL.freezeSpan);
     const want=wr.centre&&wr.fill>=(s.freezeFill??STILL.freezeFill)-1e-9&&!s.hidden;
     s.dwell=want?(s.dwell||0)+dt:0;
     if(s.dwell>=(s.freezeDwell??STILL.freezeDwell)-1e-9){s.pinned=true;s.locked=true;s.hold=s.grace??STILL.grace;s.dwell=0}
@@ -229,14 +228,14 @@ export function stillStep(s,dt){
   return s;
 }
 
-// A new pond is due once the player is a long walk (500 ft) from the newest one.
+// After the first pond, keep new ponds at least a long walk (1,000 ft) from the newest one.
 export function pondSpawnDue(px,pz,last,every=STILL.pondEvery){
   return Math.hypot(px-last.x,pz-last.z)>=every;
 }
 // Where the next pond appears: 25-35 m ahead of the player, in a seeded direction within about 15 degrees of where they face,
 // turned aside if it would crowd an existing pond. Pure and seeded: the host's result is what guests receive.
 export function pondSpawnAt({seed,index,x,z,yaw,ponds=[]}){
-  const h1=hash2(index,17,seed),h2=hash2(index,29,seed),h3=hash2(index,43,seed),r=4.8+h3*1.2;
+  const h1=hash2(index,17,seed),h2=hash2(index,29,seed),h3=hash2(index,43,seed),r=index===0?STILL.pondR:4.8+h3*1.2;
   let ang=yaw+(h2-0.5)*0.5,px=0,pz=0;
   for(let k=0;k<6;k++){
     const f=horizForward(ang),dist=25+10*h1;
@@ -552,7 +551,7 @@ function mountainRing(seed,fogHex){
 export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=7}){
   const Q=o.low?0:1,low=!!o.low;
   const lvl=p=>{p.y=terrainRaw(p.x,p.z,seed);p.wy=p.y-0.04;return p};
-  let ponds=[lvl({x:((seed%5)-2)*2.2,z:-16,r:STILL.pondR,i:0,fx:0,fz:0})];
+  let ponds=[];
   const H=(x,z)=>terrainH(x,z,seed,ponds);
   cam.fov=72;cam.near=0.08;cam.far=160;
   const prevBg=scene.background;
@@ -571,7 +570,6 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   ground.frustumCulled=false;group.add(ground);
   const pondDist=(x,z)=>{let m=1e9;for(const p of ponds){const d=Math.hypot(x-p.x,z-p.z)-p.r;if(d<m)m=d}return m};
   const pathDist=(x,z)=>{let m=1e9;for(const p of ponds)m=Math.min(m,segDist(x,z,p.fx,p.fz,p.x,p.z));return m};
-  const nearestPond=(x,z)=>{let m=1e9,q=ponds[0];for(const p of ponds){const d=Math.hypot(x-p.x,z-p.z)-p.r;if(d<m){m=d;q=p}}return q};
 
   // the water mirrors the real scene: the main camera is mirrored about the pond's water plane and drawn into this target (reduced resolution)
   const reflH=low?176:288;
@@ -962,12 +960,13 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     bake.ms=performance.now()-bake.t0;S.ready=true;
   })();
 
-  const door=makeDoor();group.add(door);
+  const door=makeDoor();door.visible=false;group.add(door);
   // reflection-only figures (layer 1): the player's double and the door's image
   const ghostBody=makeBody(Q),ghostDoor=makeDoor();
   ghostDoor.traverse(o=>{if(o.isLight)o.intensity=0});ghostDoor.traverse(o=>o.layers.set(1));
   ghostBody.visible=ghostDoor.visible=false;group.add(ghostBody,ghostDoor);
   S={t:0,yaw:0,pitch:0,bloom:0.18,seed,pinned:false,hold:0,said:0,doorX:0,doorZ:4.2,doorFace:0,ready:false,bake,mist:0,shim:0,water:false,direct:false,fill:0};
+  S.distance=0;S.spentPond=null;S.unlocked=false;S.hidden=true;
   S.ponds=()=>ponds.map(p=>({...p}));
   S.dims=()=>slots.filter(s=>s.ready).map(s=>{const g=s.near.geometry;if(!g.boundingBox)g.computeBoundingBox();const b=g.boundingBox;return {id:s.id,w:+(b.max.x-b.min.x).toFixed(2),h:+(b.max.y-b.min.y).toFixed(2),y0:+b.min.y.toFixed(2),d:+(b.max.z-b.min.z).toFixed(2)}});
   S.byKind=()=>{const o={};for(const s of slots){const nt=s.near.geometry.attributes.position.count/3,ft=s.farM.geometry.attributes.position.count/3;const a=o[s.kind]||(o[s.kind]={near:0,far:0,ni:0,fi:0});a.near+=Math.round(s.near.count*nt);a.far+=Math.round(s.farM.count*ft);a.ni+=s.near.count;a.fi+=s.farM.count}return o};
@@ -1029,23 +1028,45 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     setPonds(list);rebuild(Math.round(b.x/16),Math.round(b.z/16),b.vx,b.vz);
   };
   S.snap=()=>({sd:seed,x:+b.x.toFixed(2),z:+b.z.toFixed(2),y:+b.y.toFixed(2),yaw:+S.yaw.toFixed(3),pitch:+S.pitch.toFixed(3),dx:+S.doorX.toFixed(2),dz:+S.doorZ.toFixed(2),face:+S.doorFace.toFixed(3),pin:S.pinned?1:0,
+    spent:S.spentPond,unlocked:S.unlocked,hidden:S.hidden,
     po:ponds.map(p=>[p.x,p.z,p.r,p.fx,p.fz,p.i])});
   S.apply=q=>{
     if(![q.x,q.z,q.y,q.yaw,q.pitch,q.dx,q.dz,q.face].every(Number.isFinite))return;
     S.yaw=q.yaw;S.pitch=clamp(q.pitch,-MOVE.roomPitch,MOVE.roomPitch);
     camY=null;S.doorX=q.dx;S.doorZ=q.dz;S.doorFace=q.face;S.pinned=!!q.pin;
-    if(Array.isArray(q.po)&&q.po.length>=1&&q.po.length<=STILL.pondMax){
+    S.spentPond=Number.isInteger(q.spent)?q.spent:null;
+    S.unlocked=q.unlocked??true;S.hidden=q.hidden??false;
+    if(Array.isArray(q.po)&&q.po.length<=STILL.pondMax){
       const list=q.po.filter(a=>Array.isArray(a)&&a.length>=6&&a.slice(0,6).every(Number.isFinite)).map(a=>({x:a[0],z:a[1],r:clamp(a[2],3,8),fx:a[3],fz:a[4],i:Math.max(0,a[5]|0)}));
       const same=list.length===ponds.length&&list.every((p,k)=>p.i===ponds[k].i&&p.x===ponds[k].x&&p.z===ponds[k].z);
-      if(list.length&&!same){setPonds(list);S.mist=2.4}
+      if(list.length===q.po.length&&!same){setPonds(list);S.mist=list.length?2.4:0}
     }
     walker.watch(0.1,q.x,q.z,clamp(q.y,-12,14));
   };
   let camY=null;
   const frustum=new THREE.Frustum(),pm=new THREE.Matrix4(),sph=new THREE.Sphere(),plane=new THREE.Plane(),clipV=new THREE.Vector4(),qv=new THREE.Vector4();
   const cp=new THREE.Vector3(),cq=new THREE.Quaternion(),cs=new THREE.Vector3(),fw=new THREE.Vector3(),tg=new THREE.Vector3(),nrm=new THREE.Vector3(0,1,0),pt=new THREE.Vector3();
+  const reflectedDoor=(p,x,z,face)=>{
+    const q=mirrorPoint(p.x,p.z,b.x,b.z,x,z,p.r*0.55);
+    return q&&{x:q[0],z:q[1],y:H(q[0],q[1]),face:Math.PI-mirrorYaw(p.x,p.z,b.x,b.z,face)};
+  };
+  const seesReflectedDoor=(p,door)=>{
+    const d=Math.hypot(b.x-p.x,b.z-p.z),eye=cam.position;
+    if(d<=1.2||d-p.r>=70||eye.y<=p.wy+0.1)return false;
+    const image=reflectedDoor(p,door.x,door.z,door.face);
+    if(!image)return false;
+    cam.updateMatrixWorld();
+    // Trace from the camera to the door's virtual image below the water.
+    return doorPoints(image).some(([x,y,z])=>{
+      if(y<=p.wy)return false;
+      const yMirror=2*p.wy-y,t=(p.wy-eye.y)/(yMirror-eye.y);
+      if(Math.hypot(eye.x+(x-eye.x)*t-p.x,eye.z+(z-eye.z)*t-p.z)>p.r)return false;
+      pt.set(x,yMirror,z).project(cam);
+      return Math.abs(pt.x)<1&&Math.abs(pt.y)<1&&Math.abs(pt.z)<1;
+    });
+  };
   S.refl={ms:0,tris:0,on:false,frames:0,pond:-1};S.ghosts=()=>({body:[ghostBody.visible,ghostBody.position.x,ghostBody.position.y,ghostBody.position.z],door:[ghostDoor.visible,ghostDoor.position.x,ghostDoor.position.y,ghostDoor.position.z]});
-  let walkPh=0,lastWX=0,lastWZ=0,reflFlip=0;
+  let walkPh=0,lastWX=0,lastWZ=0,reflFlip=0,glimpse=null;
   S.frame=()=>{
     cam.updateMatrixWorld();
     // is a pond on screen? no water in view: no reflection pass at all
@@ -1056,20 +1077,24 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
       const d=Math.hypot(cp.x-p.x,cp.z-p.z)-p.r;if(d<best&&d<70&&cp.y>p.wy+0.1){best=d;prim=sl}}
     for(const sl of pslots)sl.mat.uniforms.uReflOn.value=sl===prim?1:0;
     S.refl.on=!!prim;if(!prim)return;
-    if(low&&(reflFlip^=1))return;                 // low quality: a new reflection every other frame
     const pd=prim.pond,wy=pd.wy,T0=performance.now();
+    const reflectDoor=pd.i!==S.spentPond;
+    // Refresh immediately when the previous reflection still contains the vanished door.
+    if(low&&(reflFlip^=1)&&S.refl.pond===pd.i&&(reflectDoor||!ghostDoor.visible))return;
     // the double and the door's image stand where an upright mirror set in the pond would show them (see mirrorPoint)
-    const mm=pd.r*0.55,qp=mirrorPoint(pd.x,pd.z,b.x,b.z,b.x,b.z,mm),qd=mirrorPoint(pd.x,pd.z,b.x,b.z,S.doorX,S.doorZ,mm);
+    const qp=mirrorPoint(pd.x,pd.z,b.x,b.z,b.x,b.z,pd.r*0.55);
     const show=!!qp&&Math.hypot(b.x-pd.x,b.z-pd.z)>1.2;
-    ghostBody.visible=ghostDoor.visible=show;
+    ghostBody.visible=show;ghostDoor.visible=show&&reflectDoor;
     if(show){
       const mv=Math.hypot(b.x-lastWX,b.z-lastWZ);lastWX=b.x;lastWZ=b.z;walkPh+=mv*2.6;
       const sw=Math.sin(walkPh)*Math.min(0.7,mv*30);
       ghostBody.position.set(qp[0],H(qp[0],qp[1])+Math.max(0,b.y-H(b.x,b.z)),qp[1]);
       ghostBody.rotation.y=-mirrorYaw(pd.x,pd.z,b.x,b.z,S.yaw);
       const ud=ghostBody.userData.legs,ua=ghostBody.userData.arms;ud[0].rotation.x=sw;ud[1].rotation.x=-sw;ua[0].rotation.x=-sw*0.8;ua[1].rotation.x=sw*0.8;
-      ghostDoor.position.set(qd[0],H(qd[0],qd[1]),qd[1]);
-      ghostDoor.rotation.y=Math.PI-mirrorYaw(pd.x,pd.z,b.x,b.z,S.doorFace);
+      if(reflectDoor){
+        const d=reflectedDoor(pd,S.doorX,S.doorZ,S.doorFace);
+        ghostDoor.position.set(d.x,d.y,d.z);ghostDoor.rotation.y=d.face;
+      }
     }
     // mirror the camera about the water plane y=wy
     const asp=cam.aspect||16/9,rw=Math.round(reflH*asp);if(rt.width!==rw)rt.setSize(rw,reflH);
@@ -1116,12 +1141,14 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
       lookStep(S,dt,input.lx,input.ly,MOVE.roomPitch);
       const ox=b.x,oz=b.z;
       walker.step(dt,input,S.yaw);
-      moving=Math.hypot(b.x-ox,b.z-oz)>dt*0.4;
+      const distance=Math.hypot(b.x-ox,b.z-oz);
+      moving=distance>dt*0.4;
       rebuild(Math.round(b.x/16),Math.round(b.z/16),b.vx,b.vz);
-      // another pond, a long walk on
+      // The first pond counts the path walked, including turns and backtracking.
       const last=ponds[ponds.length-1];
-      if(pondSpawnDue(b.x,b.z,last)){
-        addPond(pondSpawnAt({seed,index:last.i+1,x:b.x,z:b.z,yaw:S.yaw,ponds}));
+      if(!last)S.distance+=distance;
+      if(last?pondSpawnDue(b.x,b.z,last):S.distance>=STILL.pondEvery){
+        addPond(pondSpawnAt({seed,index:last?last.i+1:0,x:b.x,z:b.z,yaw:S.yaw,ponds}));
         S.mist=2.4;
         o.tone(392,0.6,'sine',0.03,0,-90);
       }
@@ -1129,17 +1156,27 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
       const sim={
         x:b.x,z:b.z,yaw:S.yaw,pitch:S.pitch,eye:cam.position.y,aspect:cam.aspect||16/9,
         door:{x:S.doorX,z:S.doorZ,y:H(S.doorX,S.doorZ),face:S.doorFace},
-        ponds,pinned:S.pinned,hold:S.hold,dwell:S.dwell||0,blocked:blockedAt,groundAt:H,
+        ponds,usablePonds:S.spentPond===null?[]:ponds.filter(p=>p.i!==S.spentPond),
+        pinned:S.pinned,hold:S.hold,dwell:S.dwell||0,blocked:blockedAt,groundAt:H,
       };
       stillStep(sim,dt);
+      if(S.spentPond===null){
+        if(!glimpse){
+          const p=ponds.find(p=>seesReflectedDoor(p,sim.door));
+          if(p)glimpse={i:p.i,time:STILL.glimpseTime};
+        }else if((glimpse.time-=dt)<=0){
+          S.spentPond=glimpse.i;glimpse=null;
+          o.tone(330,0.4,'sine',0.018,0,90);
+        }
+      }else if(sim.locked){
+        S.unlocked=true;
+        S.shim=1.2;o.tone(494,0.5,'sine',0.03,0,-160);o.tone(740,0.7,'sine',0.014,0.1);
+      }else if(sim.released){o.tone(330,0.4,'sine',0.018,0,90);}
       S.pinned=sim.pinned;S.hold=sim.hold;S.dwell=sim.dwell;S.doorX=sim.door.x;S.doorZ=sim.door.z;S.doorFace=sim.door.face;
       S.water=sim.water;S.direct=sim.direct;S.fill=sim.fill;S.hidden=sim.hidden;
-      if(S.pinned&&b.y-G(b.x,b.z)<1.4&&crossedDoor(ox,oz,b.x,b.z,sim.door)){
+      if(S.unlocked&&S.pinned&&b.y-G(b.x,b.z)<1.4&&crossedDoor(ox,oz,b.x,b.z,sim.door)){
         finish({k:'leave',why:'stillwood'});return;
       }
-      // a quiet cue when the door becomes watched or lets go
-      if(sim.locked){S.shim=1.2;o.tone(494,0.5,'sine',0.03,0,-160);o.tone(740,0.7,'sine',0.014,0.1);}
-      else if(sim.released){o.tone(330,0.4,'sine',0.018,0,90);}
       const near=pondDist(b.x,b.z)<14;
       o.hud(A.watching?'<small>'+(A.label||'')+'</small>':'');   // no instructions: the room is discovered, not explained
       if(near&&!A.watching&&Math.floor(S.t)%5===0&&S.t%5<dt)o.tone(880+Math.sin(S.t)*40,0.12,'sine',0.015);
@@ -1149,7 +1186,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     }
     S.shim=Math.max(0,(S.shim||0)-dt);
     if(S.mist>0){S.mist=Math.max(0,S.mist-dt);scene.fog.density=fogD*(1+1.1*Math.sin(Math.PI*S.mist/2.4))}
-    poseDoor();door.visible=!S.hidden;
+    poseDoor();door.visible=S.unlocked&&!S.hidden;
     ground.position.x=b.x;ground.position.z=b.z;
     mtn.position.set(cam.position.x,cam.position.y-1,cam.position.z);
     UT.value=S.t;

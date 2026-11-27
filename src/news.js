@@ -7,6 +7,8 @@
 // it is, or how to trigger it. No code names, file names, PR numbers or agent names.
 // Group small fixes into one post. Rebuild index.html afterwards (npm run build).
 export const NEWS=[
+  {date:'2026-11-26',title:'Deeper into the woods',
+    body:'Take the long way through the quiet wood. You may find something new along the way.'},
   {date:'2026-11-26',title:'A quicker trip to the cauldron',
     body:'Old Fennick now offers Auto Brew for a one-time payment of 100 gems. Once unlocked, he can brew every pair of ingredients you carry in one batch.'},
   {date:'2026-11-26',title:'A smoother walk into the hall',
