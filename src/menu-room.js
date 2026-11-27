@@ -279,6 +279,10 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
     });
   }
   const liftDesk={x:1.09,y:1.45,z:-9.93,w:1.15,h:0.83};
+  function canWarmLift(){
+    const {x,z,vx,vz}=walker.b;
+    return lobbyReady&&!ride&&Math.hypot(x-liftDesk.x,z-liftDesk.z)<8&&Math.hypot(vx,vz)<0.1;
+  }
   terminals.lift=liftDesk;
   box(cabin,iron,liftDesk.x,0.51,liftDesk.z-0.16,0.76,1.04,0.37);
   box(cabin,iron,liftDesk.x,liftDesk.y,liftDesk.z-0.13,liftDesk.w+0.15,liftDesk.h+0.16,0.23);
@@ -653,8 +657,16 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
       ? `Close view of ${orrery.name(study)}. Click another body to go there. Scroll to move closer. Q walks again.`
       : orreryAim ? `E: look closer at ${orrery.name(orreryAim)}` : '';
   }
+  function animateLobby(time,view){
+    if(!ride)for(const hall of galleries.values())hall.animate(time,view.position);
+    orrery.animate(time);
+    hangar.update(time||0);hangarFront.update(time||0);
+    if(skyMat?.uniforms){
+      skyMat.uniforms.uTime.value=time||0;
+      if(skyMat.uniforms.uBody)orrery.fillWindow(skyMat.uniforms,time||0);
+    }
+  }
   function render(exposure,time,mazeExposure=exposure){
-    if(skyMat&&skyMat.uniforms)skyMat.uniforms.uTime.value=time||0;
     const width=innerWidth,height=innerHeight;
     const aspect=width/height;
     const baseFov=Math.min(105,Math.max(61,THREE.MathUtils.radToDeg(2*Math.atan(0.78/aspect))));
@@ -680,10 +692,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
       else if(!projectPanel(width,height,'settings',sharedSettings)&&panel==='settings')onLeavePanel();
     }
     if(panel&&!(sharedVisible&&panel==='settings')&&!projectPanel(width,height,panel,stationForm))stationForm.style.visibility='hidden';
-    if(!ride)for(const hall of galleries.values())hall.animate(time,camera.position);
-    orrery.animate(time);
-    hangar.update(time||0);hangarFront.update(time||0);
-    if(skyMat&&skyMat.uniforms&&skyMat.uniforms.uBody)orrery.fillWindow(skyMat.uniforms,time||0);
+    animateLobby(time,camera);
     pose();
     pool();
     lights.update(camera,Math.min(0.1,Math.max(0,(time||0)-(lightT??(time||0)))));lightT=time||0;
@@ -698,20 +707,18 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
   }
   return {get scene(){return scene},get camera(){return camera},update,render,markNewsSeen,get newsUnseen(){return !newsSeen},syncArchives,syncVisitors,watchLift,liftMode,setSharedLift,engageLift,reset,resetLift,setActive,
     get lobbyReady(){return lobbyReady},get bunkDoorOpen(){return bunk.open},
-    get inBunk(){return isBunkPosition(walker.b.x,walker.b.z)},
+    canWarmLift,
     buildLobbyStep(){const build=lobbyBuilders.shift();if(!build)return false;build();return true},
     setLobbyStatus:bunk.setStatus,
     unlockLobby(){
       lobbyReady=true;bunk.unlock();
     },
-    drawLobbyWarmFrame(){
+    drawLobbyWarmFrame(exposure,time){
       const view=camera.clone();view.position.set(BUNK_DOOR.x+0.72,eye,BUNK_DOOR.z);
-      view.lookAt(0,eye,3);view.updateMatrixWorld();
+      view.lookAt(0,eye,BUNK_DOOR.z);view.updateMatrixWorld();
+      animateLobby(time,view);
       pool().rescan();lights.update(view,0.35);
-      const previous=renderer.getRenderTarget();
-      const preview=new THREE.WebGLRenderTarget(192,108);
-      try{renderer.setRenderTarget(preview);renderer.render(scene,view)}
-      finally{renderer.setRenderTarget(previous);preview.dispose()}
+      renderer.toneMappingExposure=exposure;renderer.setRenderTarget(null);renderer.render(scene,view);
     },
     createDockModel,
     projectDockPanel(viewCamera,model){return projectPanel(innerWidth,innerHeight,'lift',stationForm,viewCamera,model)},

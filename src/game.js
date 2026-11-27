@@ -9005,7 +9005,6 @@ function render(t){
 }
 
 /* ---------- self-check: is the picture actually there? ---------- */
-let titleFrames=0;
 function gpuName(){try{const e=gl.getExtension('WEBGL_debug_renderer_info');return e?gl.getParameter(e.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER)}catch(e){return 'unknown'}}
 function selfCheck(){
   const px=new Uint8Array(16*16*4);
@@ -9110,7 +9109,7 @@ function drawMap(){
 }
 
 /* ---------- main loop ---------- */
-let last=performance.now(),wasPlaying=false,idleStepAt=0;
+let last=performance.now(),wasPlaying=false;
 function step(now){
   const raw=Math.max(0,(now-last)/1000);last=now;
   const dt=Math.min(raw,0.05);
@@ -9137,11 +9136,7 @@ function step(now){
     else if(!hub.riding)hub.watchLift(null);
     // Leave the locked room's input and draw on the animation frame. The lobby gets one step in a separate idle callback.
     if(!hub.lobbyReady)scheduleLobbyWarm();
-    // Warm destinations while the player is in the hall, or during descent if they board right away.
-    else if(!hub.inBunk&&!hub.riding&&!loading&&(raw<0.04||now-idleStepAt>800)){
-      idleStepAt=now;
-      SURFS.idle();if(!liftCachePump())pipeWarmPump();
-    }
+    else if(hub.canWarmLift())scheduleLiftWarm();
     hub.syncVisitors(MP.on?[...MP.peers.values()].filter(p=>p.hub&&now-p.hub.at<15000):[],dt,now/1000);
     updateSettingsScreen();
     $('hubCross').classList.toggle('ready',hub.aimed);
@@ -9164,11 +9159,16 @@ function frameBody(now){
   setHum();updateAmbience(Math.min(raw,0.1),{F,state,hold:GL.frz>0||!!GL.fall||P.away});
   updateMusic(Math.min(raw,0.1),{F,state,lift:state==='title'&&hub.riding,chasing:CHASE.n,nearest:CHASE.near,inRoom:state==='room'||ROOMS.watching||ROOMS.active,room:ROOMS.kind,voiceActive:MP.on&&[...MP.peers.keys()].some(id=>VOX.speaking(id))});
   if(GL.frz<=0){
-    if(!window.__norender){
+    const warm=state==='title'&&lobbyWarmFrame;
+    if(warm||!window.__norender){
       if(state==='title'){
-        resize();if(PIPE.draw&&!hub.inBunk)pipeDraw();
-        hub.render(Math.sqrt(bright/1.3),now/1000,mazeExposure());
-        if(hub.lobbyReady&&++titleFrames===20)selfCheck();
+        const exposure=Math.sqrt(bright/1.3),time=now/1000;
+        if(warm){
+          lobbyWarmFrame=null;
+          warm(exposure,time);
+        }else if(PIPE.draw&&hub.canWarmLift())pipeDraw();
+        hub.render(exposure,time,mazeExposure());
+        if(warm&&!window.__norender)selfCheck();
       }
       else if((state==='room'||ROOMS.watching)&&ROOMS.active){resize();renderer.toneMappingExposure=1;ROOMS.render()}
       else if(FX.frozen&&BRK&&BRK.active&&state!=='room'){resize();renderer.toneMappingExposure=1;BRK.render(raw)}
@@ -9835,6 +9835,17 @@ function liftCachePump(){
   }
   return false;
 }
+let liftWarmScheduled=false;
+function scheduleLiftWarm(){
+  if(liftWarmScheduled||PIPE.draw)return;
+  liftWarmScheduled=true;
+  afterLiftFrame(()=>{
+    liftWarmScheduled=false;
+    if(state!=='title'||loading||!hub.canWarmLift())return;
+    SURFS.idle();
+    if(!liftCachePump())pipeWarmPump();
+  });
+}
 /* ---------- warm the in-game render pipeline in the lobby ---------- */
 // The first frames of a floor used to link dozens of programs on the spot: the world surfaces lit by the game's lights and shadows,
 // the characters and sprites, and every pass of the post chain. Each link can stall the page for a good fraction of a second, so the
@@ -9962,12 +9973,17 @@ function pipeDraw(){
   }catch(e){console.error(e)}
   PIPE.busy=false;
 }
-let lobbyWarm,lobbyWarmWaiting=false,lobbyWarmScheduled=false,lobbyWarmStatus='';
+let lobbyWarm,lobbyWarmFrame,lobbyWarmWaiting=false,lobbyWarmScheduled=false,lobbyWarmStatus='';
 function* prepareLobby(){
   while(hub.buildLobbyStep())yield ['FURNISHING LOBBY',0.25];
   yield ['PREPARING ARCHIVES',0.5,refreshHub];
   yield ['LIGHTING THE LOBBY',0.75,()=>hub.compileLobby()];
-  yield ['FINISHING LOBBY',0.97,()=>hub.drawLobbyWarmFrame()];
+  // Draw to the same framebuffer as the lobby, then paint the locked bunk room over it in that frame.
+  yield ['FINISHING LOBBY',0.97,()=>new Promise((resolve,reject)=>{
+    lobbyWarmFrame=(exposure,time)=>{
+      try{hub.drawLobbyWarmFrame(exposure,time);resolve()}catch(error){reject(error)}
+    };
+  })];
 }
 function scheduleLobbyWarm(){
   if(!lobbyWarm||lobbyWarmWaiting||lobbyWarmScheduled)return;

@@ -72,7 +72,7 @@ async function scenario(ctx,srv,depth,wantSw,rep){
   await pg.addInitScript(INIT);
   await pg.goto(srv.url+'index.html');
   await pg.waitForFunction(()=>window.__game?.hub?.lobbyReady,null,{timeout:120000});
-  await pg.evaluate(()=>window.__game.hub.place(0,10));
+  await pg.evaluate(()=>window.__game.hub.place(0,-6));
   // let the idle-time NPC mesh bake finish (it is cached in IndexedDB for later pages of the same context, as for a returning player)
   for(let i=0;i<300;i++){await pg.waitForTimeout(1000);if(await pg.evaluate(()=>window.__game.keeperSaved()))break}
   await pg.waitForTimeout(3000);
