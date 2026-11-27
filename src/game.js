@@ -33,6 +33,7 @@ import {initAmbience,updateAmbience,amb} from './ambience.js';
 import {initMusic,useStore,updateMusic,setVolumes,getVolumes,onVolumes,music} from './music.js';
 import {createMenuRoom,onLiftPlatform} from './menu-room.js';
 import {isBunkPosition} from './bunk-room.js';
+import {appearanceChoice,appearanceField,normalizeAppearance} from './player-appearance.js';
 import {createSettingsScreen,createTerminalSession} from './shared-terminal.js';
 import {landingMazeZ,liftEye,liftGateTime,liftMouthLamp,liftCabinLamps,mountLiftDock,dockPosition,inDockAnnex} from './lift-dock.js';
 import {NEWS} from './news.js';
@@ -94,6 +95,9 @@ const store={
 const WALL_H=1.25, EYE=0.9, PR=0.22, CAM_TOP=WALL_H-0.09;   // CAM_TOP: the camera never rises into the ceiling (a jump peaks at 0.56 m)
 const liftScale=EYE/liftEye;
 const AV=EYE/0.84;   // scale of the humanoid player avatars: the avatar's eyes are at 0.84*scale, so they sit at EYE
+const defaultPlayerColor=[0.62,0.32,0.2];
+let playerLook=normalizeAppearance(store.get('appearance',0));
+function setPlayerLook(look){playerLook=look;store.set('appearance',look)}
 const BIOMES=[
   {base:0,name:'The Old Stonework', wall:[1.0,0.92,0.82], floor:[0.9,0.85,0.8],  ceil:[0.7,0.65,0.6],   torch:[1.0,0.72,0.42], amb:[0.012,0.012,0.02], stone:[0.44,0.4,0.34], spec:[0.12,0.2,0.05], wet:0.5},
   {base:3,name:'Mossgrown Halls',   wall:[0.7,0.95,0.7],  floor:[0.65,0.85,0.6], ceil:[0.5,0.65,0.5],   torch:[1.0,0.8,0.5],   amb:[0.008,0.02,0.012], stone:[0.3,0.36,0.27], spec:[0.08,0.16,0.05], wet:0.9},
@@ -5649,7 +5653,7 @@ function danceCam(){
 function danceSelf(t){
   const id=MP.on?MP.id:'me',m=bMain();
   if(m)P.yaw=turnTo(P.yaw,Math.atan2(m.z-P.z,m.x-P.x),0.2);   // you face your partner
-  BS.self=BS.self||{};Object.assign(BS.self,{id,col:MP.on?MP_COLS[hashStr(MP.id||'')%MP_COLS.length]:[0.62,0.32,0.2],rx:P.x,rz:P.z,ry:P.y,ryaw:P.yaw,rpitch:0,spd:0,walk:0,
+  BS.self=BS.self||{};Object.assign(BS.self,{id,col:localPlayerColor(),look:playerLook,rx:P.x,rz:P.z,ry:P.y,ryaw:P.yaw,rpitch:0,spd:0,walk:0,
     dz:BS.move||{lane:-1,t:R.time-1},fat:FX.fat>0,pox:FX.pox>0});
   const q=buildPlayer(BS.self,t).torch;
   if(P.fuel>0){spr(q[0],q[1]+0.02,q[2],0.07,0.12,11,1.0,0.6,0.2,1,1);spr(q[0],q[1],q[2],0.5,0.5,7,1.0,0.5,0.15,0.25,1)}
@@ -6757,6 +6761,7 @@ function collect(it){
    where each player is, what the creatures are doing (the host runs them), and events
    such as a pickup, a gate, a descent. See src/net.js for the connection itself. */
 const MP_COLS=[[0.31,0.76,0.97],[0.51,0.82,0.45],[0.78,0.45,0.9],[1.0,0.72,0.3],[0.97,0.42,0.62],[0.35,0.85,0.75],[1.0,0.92,0.42],[0.62,0.6,1.0]];
+const localPlayerColor=()=>MP.on?MP_COLS[hashStr(MP.id||'')%MP_COLS.length]:defaultPlayerColor;
 const MP={on:false,host:false,guest:false,local:false,room:null,code:'',id:'',hostId:null,peers:new Map(),run:null,wantJoin:false,wiping:false,pt:0,mt:0,follow:null};
 const myName=()=>String(store.get('name','')||'').trim().slice(0,16)||'Delver';
 const toHex=c=>'#'+c.map(v=>Math.round(clamp(v,0,1)*255).toString(16).padStart(2,'0')).join('');
@@ -6773,7 +6778,7 @@ function mpLink(){
 }
 function mpPeer(id){
   let p=MP.peers.get(id);
-  if(!p){const c=MP_COLS[hashStr(id||'')%MP_COLS.length];p={id,name:'Delver',col:c,hex:toHex(c),d:0,run:false,down:false,inv:0,walk:0,spd:0,fu:100};MP.peers.set(id,p)}
+  if(!p){const c=MP_COLS[hashStr(id||'')%MP_COLS.length];p={id,name:'Delver',col:c,hex:toHex(c),look:0,d:0,run:false,down:false,inv:0,walk:0,spd:0,fu:100};MP.peers.set(id,p)}
   return p;
 }
 const hostName=()=>{const h=MP.peers.get(MP.hostId);return h?h.name:'the host'};
@@ -6903,6 +6908,7 @@ function mpRecv(m,from){
         if(!sharedLift.trip.members.includes(from))sharedLift.trip.members.push(from);
       }
       p.hub={x,y,z,yaw,station,ride,ready:!!m.ready,at:performance.now()};p.run=false;
+      if(m.look!==p.look)p.look=normalizeAppearance(m.look);
       if(validLiftDepth(m.deepest))p.deepest=m.deepest;
       if(MP.host)terminalSession.expire();
       break;}
@@ -6971,6 +6977,7 @@ function mpRecv(m,from){
     case 'p':{
       const a=m.a;if(!Array.isArray(a))return;
       p.hub=null;
+      if(m.look!==p.look)p.look=normalizeAppearance(m.look);
       p.positionAt=performance.now();
       p.d=m.d;p.x=+a[0];p.z=+a[1];p.y=+a[2];p.yaw=+a[3];p.pitch=+a[4];p.fu=+a[5];p.down=!!(a[6]&1);p.safe=!!(a[6]&2);p.run=!!(a[6]&4);p.away=!!(a[6]&8);p.mounted=!!(a[6]&16);p.unseen=!!(a[6]&32);p.hp=a[7];p.form=a[6]>>6&3;p.fat=!!(a[6]&256);p.pox=!!(a[6]&512);p.frz=!!(a[6]&1024);p.bob=!!(a[6]&2048);p.hedge=!!(a[6]&4096);p.curl=a[6]&8192?1:a[6]&16384?2:0;p.mirror=!!(a[6]&32768);p.crouched=!!(a[6]&65536);p.pf=a[8]|0;
       if(p.rx===undefined||p.rd!==p.d||Math.hypot(p.x-p.rx,p.z-p.rz)>3){p.rx=p.x;p.rz=p.z;p.ry=p.y;p.ryaw=p.yaw;p.rpitch=p.pitch;p.rd=p.d}
@@ -7161,10 +7168,10 @@ function sanctuaryPeers(floor){
 }
 function sendHubPresence(to){
   const {x,y,z,yaw,station,ride,ready}=hub.presence;
-  mpSend({k:'hub',a:[r3(x),r3(y),r3(z),r3(wrapA(yaw))],station,ride,ready,deepest},to);
+  mpSend({k:'hub',a:[r3(x),r3(y),r3(z),r3(wrapA(yaw))],station,ride,ready,deepest,look:playerLook},to);
 }
 function sendRunPresence(to){
-  mpSend({k:'p',d:R.depth,a:[r3(P.x),r3(P.z),r3(P.y),r3(P.yaw),r3(P.pitch),Math.round(P.fuel),mpPosFlags(),P.hp,potFlags()]},to);
+  mpSend({k:'p',d:R.depth,a:[r3(P.x),r3(P.z),r3(P.y),r3(P.yaw),r3(P.pitch),Math.round(P.fuel),mpPosFlags(),P.hp,potFlags()],look:playerLook},to);
 }
 function mpTick(raw){
   if(!MP.on)return;
@@ -7217,13 +7224,54 @@ function mpTick(raw){
     if(P.down&&!mpAlive().length){mpSend({k:'wipe'});MP.wiping=true;die();MP.wiping=false}
   }
 }
+const appearanceColor=(look,field)=>field.colors[appearanceChoice(look,field)];
+function playerHead(H,look,skin,cloak,cloakD,blink){
+  const {face:shape,hair:hairStyle,hairColor,beard:facialHair,tattoo:ink}=appearanceField;
+  const scales=shape.scales[appearanceChoice(look,shape)];
+  const head=scales===shape.scales[0]?H:{p:H.p,R:H.R.map((value,i)=>value*scales[i%3])};
+  const hair=appearanceChoice(look,hairStyle),color=appearanceColor(look,hairColor);
+  face(head,{skin,blink,iris:[0.3,0.25,0.18],brow:color,browH:0.006,eyeS:1.1,ears:hair!==0,
+    nose:[0.012,0.013,0.011],mouth:[0.6,0.32,0.3],mouthW:0.022});
+  if(hair===0){
+    ball(head,[-0.03,0.1,0],[0.088,0.1,0.094],cloak);
+    ball(head,[-0.05,0.04,0],[0.07,0.07,0.09],cloakD,true);
+  }else if(hair!==4){
+    ball(head,[-0.024,0.111,0],[0.068,0.075,0.083],color);
+    ball(head,[0.009,0.155,0],[0.071,0.037,0.082],color);
+    if(hair===2){
+      ball(head,[0.033,0.177,-0.018],[0.055,0.039,0.065],color);
+      ball(head,[0.05,0.151,0.047],[0.022,0.033,0.027],color,true);
+    }
+    if(hair===3)for(const side of [-1,1]){
+      for(let i=0;i<6;i++)ball(head,[0.007+0.005*(i%2),0.109-i*0.026,side*(0.073+0.004*(i%2))],
+        [0.019,0.023,0.019],color,true);
+      ball(head,[0.007,-0.027,side*0.075],[0.014,0.009,0.014],cloak,true);
+    }
+  }
+  const beard=appearanceChoice(look,facialHair);
+  if(beard===1)ball(head,[0.052,0.026,0],[0.029,0.021,0.056],color,true);
+  if(beard===2||beard===3)for(const side of [-1,1]){
+    seg(head,[0.089,0.047,0],[0.073,0.035,side*0.035],0.008,0.004,color);
+  }
+  if(beard===3)ball(head,[0.05,0.011,0],[0.039,0.038,0.061],color);
+  if(beard===4)ball(head,[0.075,0.013,0],[0.019,0.027,0.026],color,true);
+  const tattoo=appearanceChoice(look,ink),pigment=[0.045,0.16,0.18,1];
+  if(tattoo===1){
+    seg(head,[0.079,0.064,-0.039],[0.068,0.049,-0.05],0.003,0.0025,pigment);
+    seg(head,[0.073,0.063,-0.049],[0.062,0.049,-0.058],0.003,0.0025,pigment);
+  }
+  if(tattoo===2)slab(head,[0.074,0.058,-0.044],[0.006,0.016,0.016],pigment,rX(Math.PI/4));
+  if(tattoo===3)for(let i=0;i<3;i++)ball(head,[0.078-i*0.005,0.059,-0.036-i*0.009],0.0035,pigment,true);
+}
+
 // friends drawn in the maze, built from the same jointed parts as everyone else
 function buildPlayer(p,t,rev,et){
   if(p.hedge&&!rev)return buildHedgehog(p,t,false);
   if(p.form&&!rev)return buildCritter(p,t,p.form,false);
   rev=rev||0;et=et||0;
-  const c=p.col,cloak=[c[0]*0.72,c[1]*0.72,c[2]*0.72,2],cloakD=[c[0]*0.42,c[1]*0.42,c[2]*0.42,2];
-  const leg=[0.22,0.17,0.13,2],boot=[0.3,0.19,0.1,3],belt=[0.3,0.17,0.08,3],skin=[0.86,0.65,0.5,1],wood=[0.36,0.23,0.12,6],rag=[0.13,0.1,0.08,2];
+  const look=p.look||0,c=appearanceColor(look,appearanceField.cloak)||p.col;
+  const cloak=[c[0]*0.72,c[1]*0.72,c[2]*0.72,2],cloakD=[c[0]*0.42,c[1]*0.42,c[2]*0.42,2];
+  const leg=[0.22,0.17,0.13,2],boot=[0.3,0.19,0.1,3],belt=[0.3,0.17,0.08,3],skin=appearanceColor(look,appearanceField.skin),wood=[0.36,0.23,0.12,6],rag=[0.13,0.1,0.08,2];
   const S=AV,v=(x,y,z)=>[x*S,y*S,z*S],ph=hashStr(p.id)%100;
   const crouch=rev?0:p.crouchBlend||0,hipY=.45-.31*crouch;
   const mv=Math.min(1,p.spd/2.7),w=p.walk,sw=Math.sin(w)*mv,bob=Math.abs(Math.cos(w))*0.018*mv,breath=Math.sin(t*1.7+ph)*0.004;
@@ -7261,9 +7309,7 @@ function buildPlayer(p,t,rev,et){
   const H=subF(U,v(0.003-0.03*rev,0.305+breath+0.02*rev,0),rev?m3(rZ(rev*1.05),rX(rev*0.35+Math.sin(t*23)*0.04*rev)):rZ(clamp(p.rpitch,-0.6,0.6)*0.7));
   const bk=p.bob?3:1,HS={p:H.p,R:H.R.map(q=>q*S*bk)};   // Bobblehead: the head grows from the neck and wobbles
   if(p.bob){const w=m3(rZ(Math.sin(t*6+ph)*0.25),rX(Math.sin(t*4.3+ph)*0.2));HS.R=m3(HS.R,w)}
-  face(HS,{skin,blink:((t*0.23+ph*0.01)%1)<0.035?0.12:1,iris:[0.3,0.25,0.18],brow:[0.25,0.16,0.1,5],browH:0.006,eyeS:1.1,nose:[0.012,0.013,0.011],mouth:[0.6,0.32,0.3],mouthW:0.022});
-  ball(HS,[-0.03,0.1,0],[0.088,0.1,0.094],cloak);
-  ball(HS,[-0.05,0.04,0],[0.07,0.07,0.09],cloakD,true);
+  playerHead(HS,look,skin,cloak,cloakD,((t*0.23+ph*0.01)%1)<0.035?0.12:1);
   if(p.pox)for(let i=0;i<7;i++)ball(HS,[0.075+((i*3)%4)*0.004,0.03+((i*7)%9)*0.011,((i*5)%11-5)*0.011],0.007,[0.82,0.12,0.1,1],true);   // smallpox
   if(p.mirror)ball(HS,[-0.098,0.085,0],[0.012,0.046,0.046],[0.78,0.9,0.96,1],true);   // a small round mirror on the back of the head
   return {torch:fpt(U,[tt[0],tt[1]+0.035,tt[2]])};
@@ -7635,7 +7681,7 @@ function mimicDraw(t,ex,ez){
   if((M.rx-ex)**2+(M.rz-ez)**2>18*18)return;
   const as=MP.peers.get(M.as),col=as?as.col:MP_COLS[hashStr(M.as||'')%MP_COLS.length];
   const rev=M.st===2?clamp(M.t/0.45,0,1):M.st===3?Math.sin(clamp(M.t/0.7,0,1)*Math.PI)*0.7:0;
-  const q=buildPlayer({id:M.as+'~',col,rx:M.rx,ry:0,rz:M.rz,ryaw:M.rface,rpitch:0,spd:M.spd,walk:M.walk},t,rev,M.st===2?M.t:0);
+  const q=buildPlayer({id:M.as+'~',col,look:as?.look,rx:M.rx,ry:0,rz:M.rz,ryaw:M.rface,rpitch:0,spd:M.spd,walk:M.walk},t,rev,M.st===2?M.t:0);
   if(rev<0.5){const k=1,fl=1+Math.sin(t*13)*0.08;
     spr(q.torch[0],q.torch[1]+0.02,q.torch[2],0.07*k*fl,0.12*k*fl,11,1.0,0.6,0.2,1,1);
     spr(q.torch[0],q.torch[1],q.torch[2],0.5*k,0.5*k,7,1.0,0.5,0.15,0.22*fl,1)}
@@ -8023,6 +8069,7 @@ function noise(dur,vol,freq,q,when){
 }
 function sfx(n){
   switch(n){
+    case 'washFace':noise(0.7,0.19,1750,0.71);noise(0.17,0.13,2650,0.9,0.32);break;
     case 'scare':tone(70,1.4,'sawtooth',0.55,0,-30);tone(466,1.1,'square',0.22,0,-260);tone(493,1.1,'sawtooth',0.22,0.02,-300);
       tone(1250,0.6,'sawtooth',0.18,0.05,-900);noise(1.3,0.7,1600,0.6);noise(0.5,0.6,300,0.8);break;
     case 'step':if(F&&F.back)noise(0.12,0.1,110+Math.random()*50,0.8);else noise(0.09,0.12,260+Math.random()*120,1.2);break;
@@ -9519,7 +9566,8 @@ const archive=Object.fromEntries(Object.keys(archiveCatalog).map(kind=>{
   return [kind,saved&&typeof saved==='object'&&!Array.isArray(saved)?saved:{}];
 }));
 const hub=createMenuRoom(renderer,{sfx,asset:exhibitAsset,activate:useMenuAsset,enterLanding:startFromLanding,arriveLobby:finishLiftInLobby,mazeFov:camera.fov,
-  sampleFloor:memoFloor,prepareLanding:preparedLanding,landingGlimpse,passingLook,onLeavePanel:()=>closeStation(),createVisitor:buildHubVisitor});
+  sampleFloor:memoFloor,prepareLanding:preparedLanding,landingGlimpse,passingLook,onLeavePanel:()=>closeStation(),createVisitor:buildHubVisitor,
+  appearance:{getLook:()=>playerLook,setLook:setPlayerLook,getName:myName,getColor:localPlayerColor,buildPortrait:buildMirrorPortrait}});
 const floorLift=hub.createDockModel();
 let floorLiftGate=1;
 scene.add(floorLift.model);
@@ -9983,12 +10031,24 @@ function finishLiftInLobby(tripId){
   sfx('descend');
 }
 function buildHubVisitor(peer){
-  const pose={id:peer.id,col:peer.col,rx:0,ry:0,rz:0,ryaw:0,rpitch:0,spd:0,walk:0};
+  const pose={id:peer.id,col:peer.col,look:peer.look,rx:0,ry:0,rz:0,ryaw:0,rpitch:0,spd:0,walk:0};
   const avatar=exhibitModel((time,stride)=>{pose.spd=stride*2.7;buildPlayer(pose,time)},true);
   const animate=avatar.userData.pose;
   avatar.userData.pose=(time,stride,pace)=>{pose.walk=pace;animate(time,stride)};
   avatar.scale.setScalar(1.62/EYE);
   return avatar;
+}
+function buildMirrorPortrait(look,baseColor){
+  const color=appearanceColor(look,appearanceField.cloak)||baseColor;
+  const cloak=[color[0]*0.72,color[1]*0.72,color[2]*0.72,2],shadow=[color[0]*0.42,color[1]*0.42,color[2]*0.42,2];
+  const skin=appearanceColor(look,appearanceField.skin);
+  return exhibitModel(()=>{
+    const head={p:[0,0,0],R:rYaw(-Math.PI/2).map(value=>value*2.35)};
+    ball(head,[-0.013,-0.108,0],[0.063,0.079,0.146],cloak);
+    ball(head,[0.023,-0.075,0.0],[0.049,0.045,0.104],shadow,true);
+    seg(head,[0.008,-0.082,0],[0.008,0.038,0],0.035,0.033,skin);
+    playerHead(head,look,skin,cloak,shadow,1);
+  });
 }
 function landingView(floor,world,copyGeometry=false){
   const {x:ex,z:ez,yaw}=floor.lift;

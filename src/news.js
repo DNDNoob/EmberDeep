@@ -7,6 +7,8 @@
 // it is, or how to trigger it. No code names, file names, PR numbers or agent names.
 // Group small fixes into one post. Rebuild index.html afterwards (npm run build).
 export const NEWS=[
+  {date:'2026-11-27',title:'A new look in the bunk room',
+    body:'Try a different cloak color, hairstyle, beard, or tattoo at the bunk room mirror. Wash your face at the sink any time you want your original look back.'},
   {date:'2026-11-27',title:'Across the Dark Forest creek',
     body:'A creek runs through a new clearing in the Dark Forest. Take the footbridge or hop the stepping stones, and keep an eye out for old roots and ruins along the paths.'},
   {date:'2026-11-27',title:'Living hedges in the Dark Forest',
