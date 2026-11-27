@@ -2,7 +2,7 @@
 // The first pool shows the way back for a moment. Another pool can pin the door in place.
 // Once pinned, it stays put while you see the reflection or the door itself.
 import * as THREE from 'three';
-import {MOVE,bobY,createRoomWalker,lookStep,scaleFor} from './movement.js';
+import {MOVE,bobY,createRoomWalker,lookStep,scaleFor,crouchOffset} from './movement.js';
 import {getProp,natureMaterial} from './nature.js';
 
 const EYE=1.6;
@@ -1125,7 +1125,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   // the camera pose this frame will render with; the door's visibility is decided from exactly this pose
   const poseCam=dt=>{
     if(camY===null||b.y>G(b.x,b.z)+0.05||Math.abs(b.y-camY)>3)camY=b.y;else camY+=(b.y-camY)*Math.min(1,dt*16);
-    cam.position.set(b.x,EYE+camY+bobY(b,walker.scale),b.z);
+    cam.position.set(b.x,EYE+camY+bobY(b,walker.scale)-crouchOffset(b,EYE),b.z);
     cam.rotation.set(S.pitch,-S.yaw,0,'YXZ');
   };
   // safety net: if the forest is not baked yet, hold the room behind a black fade (up to HOLD_MAX s) so it never opens on stand-ins

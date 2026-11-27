@@ -2,7 +2,7 @@
 // Villagers run the paths until the sun sets, and then something comes out of the dark.
 // A chest in the square holds an obsidian-glass sword. Each hit takes one limb.
 import * as THREE from 'three';
-import {MOVE,bobY,createRoomWalker,lookStep} from './movement.js';
+import {MOVE,bobY,createRoomWalker,lookStep,crouchOffset} from './movement.js';
 import {crossedDoor} from './stillwood.js';
 import {spotted} from './room-mobs.js';
 
@@ -292,7 +292,7 @@ export function hamletRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
     const swing=S.cool>0.2?Math.sin((0.48-S.cool)*14):0.4;
     sword.position.set(b.x+Math.sin(S.yaw)*0.45+Math.cos(S.yaw)*0.28,0.85+b.y,b.z-Math.cos(S.yaw)*0.45+Math.sin(S.yaw)*0.28);
     sword.rotation.set(swing,-S.yaw,0.2);
-    cam.position.set(b.x,EYE+b.y+bobY(b,walker.scale),b.z);
+    cam.position.set(b.x,EYE+b.y+bobY(b,walker.scale)-crouchOffset(b,EYE),b.z);
     cam.rotation.set(S.pitch,-S.yaw,0,'YXZ');
     S.vx=b.x;S.vz=b.z;
   };

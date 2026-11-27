@@ -42,6 +42,10 @@ export const VARIANTS=[
    V('thicket',{tex:1,tint:[1.02,.98,.96],ambT:[1.08,1,.9],fo:{tree:.5,bush:1.6,bram:2.3,fern:.8,shroom:.3,dead:.1,glow:.2,fly:0,lit:[.14,.2,.08],dark:[.035,.045,.02],bark:[.2,.12,.08],leaf:[.12,.19,.07],thorn:[.149,.055,.044]}}),
    V('deadwood',{tex:2,tint:[1.05,1.02,.96],ambK:1.1,ambT:[1.08,1,.85],fogK:.92,fo:{tree:1,bush:.5,bram:1,fern:.15,shroom:.1,dead:.78,glow:0,fly:0,lit:[.2,.15,.09],dark:[.04,.03,.02],bark:[.27,.25,.22],leaf:[.17,.13,.08],thorn:[.138,.110,.088]}}),
    V('mossy',{tex:3,wetK:2.2,tint:[.94,1.04,.97],fogK:1.12,ambT:[.9,1.1,1.12],torch:[.97,1,1],fo:{tree:.9,bush:1.1,bram:.5,fern:1.7,shroom:1.4,dead:.03,glow:1,fly:1,lit:[.1,.26,.13],dark:[.02,.06,.04],bark:[.12,.15,.09],leaf:[.06,.22,.1],thorn:[.083,.088,.055]}})],
+  [V('plain',{tex:0}),
+   V('dustbound',{tex:0,fogK:1.24,ambK:.91,tint:[1.03,.94,.81]}),
+   V('amber stacks',{tex:0,tint:[1.09,.98,.85],torch:[1.03,.91,.76]}),
+   V('faded turquoise',{tex:0,tint:[.87,1,1.02],ambT:[.82,1,1.08]})],
 ];
 // four named variants of this biome, plus a small continuous per-floor jitter (colour, light, noise seed) so even the same variant never repeats exactly
 export function pickVariant(rng,bi,force){

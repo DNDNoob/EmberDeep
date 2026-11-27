@@ -7,6 +7,10 @@
 // it is, or how to trigger it. No code names, file names, PR numbers or agent names.
 // Group small fixes into one post. Rebuild index.html afterwards (npm run build).
 export const NEWS=[
+  {date:'2026-11-27',title:'Above the Archive',
+    body:'Climb to the Forgotten Archive’s balconies and make your way across broken walkways. You can now crouch during a descent to slip beneath low obstacles.'},
+  {date:'2026-11-27',title:'The Forgotten Archive',
+    body:'An ancient library waits below, with winding stacks, raised galleries, and fallen shelves to leap over. Keep an eye out for the Librarian as you explore.'},
   {date:'2026-11-27',title:'A new home for the Keeper',
     body:'Follow the maze into the Keeper’s sanctuary. Warm up by the fire, visit the booths, and check the live wall map to see where your party is on the floor.'},
   {date:'2026-11-27',title:'Tap to sprint',

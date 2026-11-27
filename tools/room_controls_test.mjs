@@ -12,6 +12,9 @@ for(const [action,key,button] of [
   assert.ok(actions('table',{[key]:true})[action]);
   assert.ok(actions('table',{},[button])[action]);
 }
+assert.ok(actions('walk',{KeyX:true}).crouch&&actions('walk',{ControlLeft:true}).crouch);
+assert.ok(actions('walk',{},[13]).crouch&&!actions('table',{},[13]).crouch&&!actions('choice',{},[13]).crouch);
+assert.ok(roomActions({},[],{mode:'walk',touchCrouch:true}).crouch);
 assert.ok(actions('walk',{Space:true}).jump&&actions('walk',{},[0]).jump);
 assert.ok(!actions('table',{Space:true},[0]).jump&&!actions('table',{Space:true},[0]).start);
 assert.ok(!actions('walk',{Enter:true,KeyQ:true},[3,9]).start);
@@ -21,7 +24,7 @@ assert.ok(roomActions({},[],{mode:'walk',touchPress:true}).press);
 assert.ok(roomActions({},[],{mode:'walk',touchJump:true}).jump);
 
 const {chromium}=createRequire(import.meta.url)('playwright');
-const browser=await chromium.launch();
+const browser=await chromium.launch({executablePath:process.env.LIFT_BROWSER||undefined});
 const build=new URL('../index.html',import.meta.url);
 try{
   const page=await browser.newPage({viewport:{width:1120,height:700}});

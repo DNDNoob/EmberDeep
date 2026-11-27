@@ -23,8 +23,9 @@ import {hairAtlas,ATLAS_TILES} from './npc_hair.js';
 import {KEEPER} from './npc_recipes.js';
 import {createBabyFace,createFallVoid} from './babyface.js';
 import {pickVariant,VARIANTS} from './variants.js';
+import {ARCHIVE_DEPTH,ARCHIVE_CEILING,ARCHIVE_CORRIDOR,ARCHIVE_BODY,BALCONY_Y,LIBRARIAN,isArchiveDepth,carveArchive,archiveGround,archiveBlocked,archiveHeadroom,archiveMobBlocked,archiveLowOpening,archiveHidden,drawArchive,drawLibrarian} from './forgotten-archive.js';
 import {createForest,coreFaces,INSET,CORE_H} from './forest.js';
-import {MOVE,stepMove,lookStep,lookBy,bobY,noclipDest} from './movement.js';
+import {MOVE,stepMove,lookStep,lookBy,bobY,crouchOffset,noclipDest} from './movement.js';
 import {lurkStep} from './lurk.js';
 import {initAmbience,updateAmbience,amb} from './ambience.js';
 import {initMusic,useStore,updateMusic,setVolumes,getVolumes,onVolumes,music} from './music.js';
@@ -101,6 +102,7 @@ const BIOMES=[
   {base:20,name:'The Rustworks',      wall:[0.95,0.85,0.78], floor:[0.85,0.8,0.75], ceil:[0.7,0.64,0.6],  torch:[1.0,0.7,0.4],   amb:[0.014,0.011,0.01], stone:[0.34,0.27,0.22], spec:[0.5,0.55,0.35], wet:0.7},
   {base:23,name:'The Glimmer Veins',  wall:[0.8,0.85,1.05], floor:[0.8,0.85,1.0],  ceil:[0.6,0.65,0.85], torch:[0.98,0.86,0.72], amb:[0.012,0.016,0.03], stone:[0.28,0.3,0.36], spec:[0.4,0.45,0.25], wet:0.35},
   {base:26,name:'The Dark Forest',   wall:[0.7,0.9,0.7],  floor:[0.8,0.85,0.75], ceil:[0,0,0],        torch:[1.0,0.76,0.46], amb:[0.005,0.012,0.009], stone:[0.3,0.28,0.24], spec:[0.05,0.16,0.04], wet:0.45},
+  {base:0,name:'Forgotten Archive',wall:[1.24,1.02,0.72],floor:[1.06,0.9,0.68],ceil:[0.86,0.77,0.61],torch:[1,0.81,0.57],amb:[0.072,0.055,0.038],stone:[0.58,0.42,0.28],spec:[0.11,0.12,0.04],wet:0},
 ];
 const ITEM={
   shard:{cell:0,col:[0.35,0.9,1.0], size:0.36},
@@ -131,7 +133,7 @@ function bfs(g,W,H,sx,sy){
 // every floor that is not a Humming Rooms floor moves on to the next biome
 const ORDER=[0,1,2,3,5,6,7];
 function biomeIx(depth){return ORDER[(depth-1-Math.floor(depth/4))%ORDER.length]}
-function floorKind(depth){if(bossAt(depth))return 'arena';if(depth>=4&&depth%4===0)return 'back';if(depth>=7&&depth%8===7)return 'forest';if(depth>=3&&depth%4===3)return 'cave';if(depth>=5&&depth%4===1)return 'dark';return 'maze'}
+function floorKind(depth){if(bossAt(depth))return 'arena';if(isArchiveDepth(depth))return 'archive';if(depth>=4&&depth%4===0)return 'back';if(depth>=7&&depth%8===7)return 'forest';if(depth>=3&&depth%4===3)return 'cave';if(depth>=5&&depth%4===1)return 'dark';return 'maze'}
 function genFloor(seedStr,depth,look){
   const rng=mulberry32(hashStr(seedStr+'#'+depth));
   const ri=n=>(rng()*n)|0;
@@ -237,6 +239,12 @@ function genFloor(seedStr,depth,look){
     stx=sx*2+1; sty=sy*2+1;
     for(let cy=0;cy<ch;cy++)for(let cx=0;cx<cw;cx++)cells.push([cx*2+1,cy*2+1]);
   }
+  const archive=kind==='archive'?carveArchive(g,W,mulberry32(hashStr(seedStr+'#archive'+depth))):null;
+  const reserved=(x,z)=>archive?.reserved(x,z);
+  if(archive){
+    [stx,sty]=archive.start;
+    cells=cells.filter(([x,z])=>!reserved(x,z));
+  }
   // sanctuary: a 3x3 safe room around a brazier (tile value 4). Creatures never enter it.
   let safe=null;
   if(kind==='arena'){}
@@ -249,7 +257,7 @@ function genFloor(seedStr,depth,look){
     }
     if(sc.length){const c=sc[ri(sc.length)];safe={tx:c[0],ty:c[1]}}
   }else{
-    const rx=ri(cw-1),ry=ri(ch-1);
+    const rx=ri(cw-1),ry=archive?5+ri(ch-6):ri(ch-1);
     for(let y=ry*2+1;y<=ry*2+3;y++)for(let x=rx*2+1;x<=rx*2+3;x++)g[idx(x,y)]=0;
     safe={tx:rx*2+2,ty:ry*2+2};
   }
@@ -268,7 +276,7 @@ function genFloor(seedStr,depth,look){
       if(ok&&rng()<0.07){g[idx(x,y)]=3;pillars.push([x+0.5,y+0.5])}
     }
   }else if(kind==='arena'){for(const c of bossPillars(BA.i,W,H)){g[idx(c[0],c[1])]=3;pillars.push([c[0]+0.5,c[1]+0.5])}}
-  else if(kind!=='back')for(let y=2;y<H-2;y+=2)for(let x=2;x<W-2;x+=2)if(g[idx(x,y)]===0&&rng()<0.6){g[idx(x,y)]=3;pillars.push([x+0.5,y+0.5])}
+  else if(kind!=='back')for(let y=2;y<H-2;y+=2)for(let x=2;x<W-2;x+=2)if(!reserved(x,y)&&g[idx(x,y)]===0&&rng()<0.6){g[idx(x,y)]=3;pillars.push([x+0.5,y+0.5])}
   const d0=bfs(g,W,H,stx,sty);
   // exit = farthest spot from the start
   let ex=stx,ey=sty,best=-1;
@@ -295,6 +303,11 @@ function genFloor(seedStr,depth,look){
   const spawn=(type,n)=>{for(let i=0;i<n&&far.length;i++){const c=far.splice(ri(far.length),1)[0];
     shades.push({type,x:c[0]+0.5,z:c[1]+0.5,gx:c[0],gy:c[1],px:-1,py:-1,state:0,stun:0,think:rng()*0.2,vis:false,frozen:false,ph:rng()*6.28,d:99,snd:0})}};
   if(BA){}
+  else if(archive){
+    const x=10.5,z=archive.aisle;
+    shades.push({type:LIBRARIAN,x,z,gx:Math.floor(x),gy:Math.floor(z),px:-1,py:-1,state:0,stun:0,think:0,vis:false,ph:0,d:99,snd:0,face:Math.PI});
+    spawn(0,3);spawn(2,1);
+  }
   else if(kind==='back'){spawn(0,Math.max(1,Math.min(Math.floor(depth*0.3),4)));spawn(3,1+(depth>=12?1:0))}
   else{
     spawn(0,Math.min(1+Math.floor((depth-1)*0.6),7));
@@ -312,7 +325,7 @@ function genFloor(seedStr,depth,look){
   // corridor tiles: exactly two open neighbours, opposite each other
   const corr=[];
   if(kind!=='cave'&&kind!=='back'&&!BA)for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
-    if(g[idx(x,y)]||safeMask[idx(x,y)]||((x&1)===(y&1)))continue;
+    if(reserved(x,y)||g[idx(x,y)]||safeMask[idx(x,y)]||((x&1)===(y&1)))continue;
     const l=g[idx(x-1,y)],r=g[idx(x+1,y)],u=g[idx(x,y-1)],dn=g[idx(x,y+1)];
     if((!l&&!r&&u&&dn)||(l&&r&&!u&&!dn))corr.push([x,y]);
   }
@@ -373,7 +386,7 @@ function genFloor(seedStr,depth,look){
   const sconces=[],rubble=[];
   if(kind!=='dark'&&kind!=='back'){
     const sc=[];
-    for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){if(g[idx(x,y)]!==0)continue;
+    for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){if(reserved(x,y)||g[idx(x,y)]!==0)continue;
       for(const d of DIRS)if(g[idx(x+d[0],y+d[1])]===1){sc.push([x,y,d[0],d[1]]);break}}
     shuffle(sc);const maxS=BA?14:Math.round(nCells/(kind==='cave'?30:16));
     for(const c of sc){
@@ -384,7 +397,7 @@ function genFloor(seedStr,depth,look){
     }
   }
   for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
-    if(kind==='back'||g[idx(x,y)]!==0||rng()>0.16)continue;
+    if(kind==='back'||reserved(x,y)||g[idx(x,y)]!==0||rng()>0.16)continue;
     for(const d of DIRS)if(g[idx(x+d[0],y+d[1])]===1){
       const n=1+ri(3);
       for(let k=0;k<n;k++){const along=(rng()-0.5)*0.8,off=0.36+rng()*0.08;
@@ -400,7 +413,7 @@ function genFloor(seedStr,depth,look){
   if(kind!=='back'&&!BA){
     const pc=[];
     for(let y=2;y<H-2;y++)for(let x=2;x<W-2;x++){
-      if(g[idx(x,y)]!==1)continue;
+      if(reserved(x,y)||g[idx(x,y)]!==1)continue;
       let open=null,walls=0;
       for(const d of DIRS){const v=g[idx(x+d[0],y+d[1])];if(v===1)walls++;else if(v===0)open=d}
       if(walls!==3||!open)continue;
@@ -431,7 +444,7 @@ function genFloor(seedStr,depth,look){
     const RAD={log:0.13,stump:0.14,barrel:0.13,crate:0.15,urn:0.09,sack:0.11,ice:0.08,ember:0.11,boxes:0.15,cabinet:0.14,plant:0.08,chair:0.13};
     const cands=[];
     for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
-      const i=idx(x,y);if(g[i]!==0||safeMask[i]||pocketMask[i]||busy.has(i))continue;
+      const i=idx(x,y);if(reserved(x,y)||g[i]!==0||safeMask[i]||pocketMask[i]||busy.has(i))continue;
       if(phantoms.some(q=>q.tx+q.dx===x&&q.ty+q.dz===y))continue;
       if(door&&Math.abs(x-door.tx)+Math.abs(y-door.ty)<=1)continue;
       cands.push([x,y,g[idx(x+1,y)]===1?1:g[idx(x-1,y)]===1?-1:0,g[idx(x,y+1)]===1?1:g[idx(x,y-1)]===1?-1:0]);
@@ -464,7 +477,7 @@ function genFloor(seedStr,depth,look){
   {const dr=mulberry32(hashStr(seedStr+'#doors'+depth)),dc=[];
     for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
       const i=idx(x,y);
-      if(g[i]!==0||safeMask[i]||pocketMask[i]||d0[i]<3||(x===ex&&y===ey))continue;
+      if(reserved(x,y)||g[i]!==0||safeMask[i]||pocketMask[i]||d0[i]<3||(x===ex&&y===ey))continue;
       if(traps.some(q=>q.tx===x&&q.ty===y)||npcs.some(q=>Math.floor(q.x)===x&&Math.floor(q.z)===y))continue;
       if(door&&Math.abs(x-door.tx)+Math.abs(y-door.ty)<=1)continue;
       for(const d of DIRS){
@@ -494,12 +507,13 @@ function genFloor(seedStr,depth,look){
   // face down an open corridor at the start
   let yaw=0;
   for(const d of DIRS){if(g[idx(stx+d[0],sty+d[1])]===0){yaw=Math.atan2(d[1],d[0]);break}}
+  if(archive)yaw=0;
   if(BA)yaw=-Math.PI/2;   // into the arena, toward the boss
-  const bi=look&&look.bi!=null?look.bi:BA?BOSSES[BA.i].bi:kind==='back'?4:kind==='forest'?8:biomeIx(depth);
+  const bi=archive?9:look&&look.bi!=null?look.bi:BA?BOSSES[BA.i].bi:kind==='back'?4:kind==='forest'?8:biomeIx(depth);
   // looks are drawn last, from their own dice, so nothing above ever moves
   const vr=mulberry32(hashStr(seedStr+'#var#'+depth)),variant=pickVariant(vr,bi,look&&look.ix),B=BIOMES[bi];
   const litter=[];
-  if(variant.rubbleK>1&&kind!=='back'){
+  if(variant.rubbleK>1&&kind!=='back'&&!archive){
     const spots=[];
     for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=idx(x,y);if(g[i]!==0||safeMask[i]||pocketMask[i]||(x===stx&&y===sty)||(x===ex&&y===ey))continue;
       for(const d of DIRS)if(g[idx(x+d[0],y+d[1])]===1){spots.push([x,y,d]);break}}
@@ -512,7 +526,7 @@ function genFloor(seedStr,depth,look){
   const stone=[B.stone[0]*variant.stone[0],B.stone[1]*variant.stone[1],B.stone[2]*variant.stone[2]];
   const forest=bi===8;
   // ingredients for the Brewer, from their own dice so nothing else moves
-  potSeedIngredients(seedStr,depth,g,W,H,safeMask,pocketMask,items,[[stx,sty],[ex,ey]],d0,bi,nCells);
+  potSeedIngredients(seedStr,depth,g,W,H,safeMask,pocketMask,items,[[stx,sty],[ex,ey]],d0,bi,nCells,reserved);
   fizzPlace(seedStr,depth,g,W,H,safeMask,pocketMask,d0,shades,kind);
   if(BA)bossSpawn(BA,W,H,shades);
   grannyPlace(seedStr,depth,g,W,H,safeMask,pocketMask,d0,shades,kind);   // Granny, about one floor in twenty   // the Fizzler, about one floor in ten
@@ -520,6 +534,10 @@ function genFloor(seedStr,depth,look){
           seen:new Uint8Array(W*H),dist:d0,bi,biome:B,...(forest?{forest:true,fo:{seed:seedStr,depth}}:{}),
           ...(BA?{boss:BA,music:'silent'}:{}),   // no floor music in an arena: the fight brings its own
           name:BA?BOSSES[BA.i].arena:kind==='cave'?'The Hollow':kind==='dark'?'The Black Hush':BIOMES[bi].name};
+  if(archive){
+    floor.archive=archive;
+    for(const z of [3.04,7.06])items.push({type:'gem',tx:7,ty:Math.floor(z),x:7.16,z,y:BALCONY_Y,got:false,ph:z});
+  }
   if(sanctuaryEntrance){
     attachSanctuary(floor,sanctuaryEntrance);
     floor.dist=bfs(floor.g,W,floor.H,stx,sty);
@@ -920,17 +938,19 @@ const sanctuaryDisplay=createSanctuaryDisplay();
 sanctuaryDisplay.group.visible=false;
 scene.add(sanctuaryDisplay.group);
 function buildMesh(F,preview=false){
-  const v=[],{W,H,g}=F,Y=WALL_H;
+  const v=[],{W,H,g}=F,Y=F.archive?ARCHIVE_CEILING:WALL_H;
   if(F.start&&!F.lift&&!archiveRun)F.lift=mountLiftDock(F,bfs(g,W,H,F.start.tx,F.start.ty));
   const dock=F.lift;
   const quad=(p,n,uv,layer)=>{for(const i of[0,1,2,0,2,3])v.push(p[i][0],p[i][1],p[i][2],n[0],n[1],n[2],uv[i][0],uv[i][1],layer)};
   const wall=(x,y)=>x<0||y<0||x>=W||y>=H?!(dock&&x===dock.tx-dock.fx&&y===dock.tz-dock.fz):g[y*W+x]===1;
   const fr=F.forest,room=F.safe?.room;
+  const topAt=(x,z)=>room&&F.safeMask[z*W+x]&&z>=room.front?SANCTUARY_HEIGHT:
+    F.archive&&!F.archive.reserved(x,z)?ARCHIVE_CORRIDOR:Y;
   for(let y=0;y<H;y++)for(let x=0;x<W;x++){
     if(g[y*W+x]===1)continue;
     const indoor=room&&F.safeMask[y*W+x];
     const tall=indoor&&y>=room.front;
-    const top=tall?SANCTUARY_HEIGHT:Y;
+    const top=topAt(x,y);
     const pk=F.pocketMask[y*W+x]?10:0;
     const fu=[[x/2,y/2],[(x+1)/2,y/2],[(x+1)/2,(y+1)/2],[x/2,(y+1)/2]];
     quad([[x,0,y],[x+1,0,y],[x+1,0,y+1],[x,0,y+1]],[0,1,0],fu,1+pk);
@@ -938,10 +958,35 @@ function buildMesh(F,preview=false){
     if(!fr||pk||indoor)quad([[x,top,y],[x+1,top,y],[x+1,top,y+1],[x,top,y+1]],[0,-1,0],fu,(pk?4:F.panelAt[y*W+x]===2?6:F.panelAt[y*W+x]?4:2)+pk);
     if(fr&&!pk&&!indoor)continue;
     const uvTop=1-top/Y;
+    if(F.archive&&dock&&x===dock.tx&&y===dock.tz){
+      const bottom=WALL_H,uv=[[0,1-bottom/Y],[1,1-bottom/Y],[1,uvTop],[0,uvTop]];
+      if(dock.fx){
+        const edge=x+(dock.fx<0?1:0);
+        quad([[edge,bottom,y],[edge,bottom,y+1],[edge,top,y+1],[edge,top,y]],[dock.fx,0,0],uv,0);
+      }else{
+        const edge=y+(dock.fz<0?1:0);
+        quad([[x,bottom,edge],[x+1,bottom,edge],[x+1,top,edge],[x,top,edge]],[0,0,dock.fz],uv,0);
+      }
+    }
     if(wall(x+1,y))quad([[x+1,0,y],[x+1,0,y+1],[x+1,top,y+1],[x+1,top,y]],[-1,0,0],[[y,1],[y+1,1],[y+1,uvTop],[y,uvTop]],pk);
     if(wall(x-1,y))quad([[x,0,y],[x,0,y+1],[x,top,y+1],[x,top,y]],[1,0,0],[[y,1],[y+1,1],[y+1,uvTop],[y,uvTop]],pk);
     if(wall(x,y+1))quad([[x,0,y+1],[x+1,0,y+1],[x+1,top,y+1],[x,top,y+1]],[0,0,-1],[[x,1],[x+1,1],[x+1,uvTop],[x,uvTop]],pk);
-    if(wall(x,y-1)||tall&&y===room.front){
+    if(F.archive){
+      for(const [dx,dz] of DIRS){
+        if(x+dx<0||x+dx>=W||y+dz<0||y+dz>=H||wall(x+dx,y+dz))continue;
+        const lower=topAt(x+dx,y+dz);
+        if(lower>=top)continue;
+        const uv=[[0,1-lower/Y],[1,1-lower/Y],[1,uvTop],[0,uvTop]];
+        if(dx){
+          const edge=x+(dx>0?1:0);
+          quad([[edge,lower,y],[edge,lower,y+1],[edge,top,y+1],[edge,top,y]],[-dx,0,0],uv,0);
+        }else{
+          const edge=y+(dz>0?1:0);
+          quad([[x,lower,edge],[x+1,lower,edge],[x+1,top,edge],[x,top,edge]],[0,0,-dz],uv,0);
+        }
+      }
+    }
+    if(wall(x,y-1)||tall&&y===room.front&&!F.archive){
       const bottom=wall(x,y-1)?0:Y;
       quad([[x,bottom,y],[x+1,bottom,y],[x+1,top,y],[x,top,y]],[0,0,1],[[x,1-bottom/Y],[x+1,1-bottom/Y],[x+1,uvTop],[x,uvTop]],pk);
     }
@@ -1631,6 +1676,10 @@ function buildNpc(n,t,ex,ey,ez,dtR){
 }
 /* ---------- creatures in the same jointed style ---------- */
 const facingMoose=s=>s.mooseLure?.active||MP.guest&&s.mooseFollowing;
+function buildLibrarian(s,t,exhibit=false){
+  const y=exhibit||!F?.archive?0:archiveGround(F.archive,s.x,s.z,0);
+  drawLibrarian({p:[s.x,y,s.z],R:rYaw(s.face??Math.PI)},s,t,{slab,seg,ball,rZ});
+}
 function buildShade(s,t,ex,ez){
   const chase=s.state===1&&s.stun<=0,tp=Math.atan2(ez-s.z,ex-s.x),fa=chase&&!facingMoose(s)?tp:(s.face||0);
   const y=0.06+Math.sin(s.ph)*0.03;
@@ -2056,6 +2105,7 @@ function buildStatic(F){
       slab(f,[lx,0.725,lz],[0.082,0.02,0.082],iron);slab(f,[lx,0.745,lz],[0.04,0.02,0.04],iron);
       for(const a of[-1,1])for(const b of[-1,1])slab(f,[lx+a*0.028,0.665,lz+b*0.028],[0.008,0.1,0.008],iron);
     }else{slab(f,[0,0.72,0],[0.05,0.2,0.05],iron);slab(f,[-q.dx*0.07,0.82,-q.dz*0.07],[0.12,0.04,0.12],iron)}}
+  if(F.archive)drawArchive(F.archive,I,{slab,seg,rZ,rX});
   for(const pr of F.props)buildProp(pr,F);
   for(const D of F.sdoors){
     const f={p:[D.x,0,D.z],R:rYaw(D.r),lo:[D.x*0.37,0,D.z*0.37]};
@@ -2384,7 +2434,7 @@ function openTalk(n){
   state='talk';talk={npc:n,sel:0,line:null,opts:[]};
   if(document.pointerLockElement){talk.relock=true;document.exitPointerLock()}
   clearPrompt();$('talk').classList.remove('hidden');
-  touch.mx=touch.my=0;touch.stickId=null;touch.lookId=null;touch.jump=false;$('stickBase').style.display=$('stickKnob').style.display='none';
+  touch.mx=touch.my=0;touch.stickId=null;touch.lookId=null;touch.jump=touch.crouch=false;$('stickBase').style.display=$('stickKnob').style.display='none';
   sfx('pick');buildTalk();
 }
 function closeTalk(){
@@ -3323,7 +3373,7 @@ function potThrow(i){
   if(!POT.belt.length){say(nearPotHint(),2);return}
   if(potHeld()){say('You can\'t move to throw',1.2);return}
   if(!POT.belt[k])return;const id=ps('arch')?POT.belt[k].id:beltTake(k);if(!id)return;
-  const cp=Math.cos(P.pitch),sp=6.2,eyeY=Math.min(CAM_TOP,EYE*wofEye()*potEye()+P.y);
+  const cp=Math.cos(P.pitch),sp=6.2,eyeY=playerEye();
   const q={id,x:P.x+Math.cos(P.yaw)*0.25,y:eyeY-0.1,z:P.z+Math.sin(P.yaw)*0.25,vx:Math.cos(P.yaw)*cp*sp+P.vx*0.5,vy:Math.sin(P.pitch)*sp+1.4,vz:Math.sin(P.yaw)*cp*sp+P.vz*0.5,t:0,mine:true,rot:0};
   if(solidAt(q.x,q.z)){q.x=P.x;q.z=P.z}
   POT.proj.push(q);noise(0.15,0.08,900,1);
@@ -3422,7 +3472,7 @@ function potFar(s,minD){   // somewhere well away from everyone
   const MD=mpDist(mpTargets());
   for(let tries=0;tries<80;tries++){
     const rx=1+(Math.random()*(F.W-2)|0),ry=1+(Math.random()*(F.H-2)|0),i=ry*F.W+rx;
-    if(F.g[i]===0&&!F.safeMask[i]&&!F.pocketMask[i]&&(MD[i]>minD||tries>60&&MD[i]>4)){potPlace(s,rx+0.5,ry+0.5);return}
+    if(F.g[i]===0&&!F.safeMask[i]&&!F.pocketMask[i]&&!inArchiveAlcove(rx+0.5,ry+0.5)&&(MD[i]>minD||tries>60&&MD[i]>4)){potPlace(s,rx+0.5,ry+0.5);return}
   }
 }
 function potKill(s,quiet){s.dead=true;banish(s,quiet);s.pe=null}
@@ -3865,11 +3915,11 @@ const ING_W=(()=>{   // weights by biome index (0 Old Stonework ... 8 Dark Fores
   const boost=[{ember:0.6,frost:0.6,rust:0.4,glimmer:0.4,bone:0.4},{moss:4,water:1.5},{frost:5},{ember:5},{pretzel:2.5,water:1,rust:1},{bone:5},{rust:5,water:1},{glimmer:5},{glowcap:3,moss:2,bat:2}];
   return boost.map(b=>INGREDIENTS.map(g=>(base[g.id]||0)+(b[g.id]||0)));
 })();
-function potSeedIngredients(seedStr,depth,g,W,H,safeMask,pocketMask,items,skip,d0,bi,nCells){
+function potSeedIngredients(seedStr,depth,g,W,H,safeMask,pocketMask,items,skip,d0,bi,nCells,reserved){
   const r=mulberry32(hashStr(seedStr+'#brew#'+depth)),idx=(x,y)=>y*W+x;
   const taken=new Set(items.map(it=>idx(it.tx,it.ty)));for(const q of skip)taken.add(idx(q[0],q[1]));
   const spots=[];
-  for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=idx(x,y);if(g[i]!==0||safeMask[i]||pocketMask[i]||taken.has(i)||d0[i]<3)continue;
+  for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=idx(x,y);if(g[i]!==0||safeMask[i]||pocketMask[i]||taken.has(i)||reserved(x,y)||d0[i]<3)continue;
     let walls=0,wd=null;for(const d of DIRS)if(g[idx(x+d[0],y+d[1])]===1){walls++;wd=wd||d}
     spots.push([x,y,walls,wd])}
   const n=Math.min(spots.length,Math.min(18,5+Math.round(nCells/18)+Math.floor(depth/3)));
@@ -4219,7 +4269,7 @@ function invOpen(){
   if(state!=='play'||P.down||P.away||loading||FX.frozen)return;
   state='talk';talk={inv:true,sel:0,opts:[]};
   if(document.pointerLockElement){talk.relock=true;document.exitPointerLock()}
-  clearPrompt();touch.mx=touch.my=0;touch.stickId=null;touch.lookId=null;touch.jump=false;$('stickBase').style.display=$('stickKnob').style.display='none';
+  clearPrompt();touch.mx=touch.my=0;touch.stickId=null;touch.lookId=null;touch.jump=touch.crouch=false;$('stickBase').style.display=$('stickKnob').style.display='none';
   INV.focus=Math.min(POT.sel,BELT_MAX-1);sfx('pick');invBuild();potHud();
 }
 function invNav(dx,dy){
@@ -4500,7 +4550,7 @@ function wBlast(q,st,hits,skip){
   if(!hits&&out.length)wSend(out);
 }
 function wShoot(st,off,jav){
-  const a=P.yaw+off,sp=st.shot.speed,y=Math.min(CAM_TOP,EYE*wofEye()*potEye()+P.y)-0.12;
+  const a=P.yaw+off,sp=st.shot.speed,y=playerEye()-0.12;
   W.shots.push({x:P.x+Math.cos(a)*0.2,y,z:P.z+Math.sin(a)*0.2,vx:Math.cos(a)*sp,vz:Math.sin(a)*sp,sp,t:0,life:(st.range||14)/sp,left:st.shot.pierce|0,hit:new Set(),st,jav:!!jav});
 }
 // true when the weapon (a parry, a lunge, the maul's bulwark) takes a blow instead of you
@@ -6101,7 +6151,7 @@ function roomControl(action){return roomControlLabel(action,roomInputDevice())}
 function roomInput(){
   const mode=state==='room'?ROOMS.controlMode():'walk',table=mode==='table',choice=mode==='choice';
   const ax=(a,b)=>(a?1:0)-(b?1:0);
-  const actions=roomActions(keys,pad.roomButtons,{mode,mouse:mouseL,touchPress:touch.act,touchJump:touch.jump,keyboardSprint:keyboardSprint()});
+  const actions=roomActions(keys,pad.roomButtons,{mode,mouse:mouseL,touchPress:touch.act,touchJump:touch.jump,touchCrouch:touch.crouch,keyboardSprint:keyboardSprint()});
   return {...actions,
     mx:clamp(ax(keys.KeyD,keys.KeyA)+pad.mx+touch.mx,-1,1),
     my:clamp(ax(keys.KeyS||keys.ArrowDown&&!choice&&!table,keys.KeyW||keys.ArrowUp&&!choice&&!table)+pad.my+touch.my,-1,1),
@@ -6141,6 +6191,12 @@ document.querySelectorAll('.gtxP').forEach(el=>{el.checked=WANT_GTX;el.addEventL
 $('gtx').checked=WANT_GTX;
 $('gtx').addEventListener('change',e=>{lsSet('gtx',e.target.checked);lsSet('safe',0);location.reload()});
 
+function playerEye(extra=0){
+  const base=EYE*wofEye()*potEye();
+  const headroom=F.archive?archiveHeadroom(F.archive,P.x,P.z,P.y,PR):CAM_TOP+.06;
+  return Math.min(headroom-.06,base+P.y+bobY(P,1)+extra-crouchOffset(P,base));
+}
+
 function solidAt(x,z){
   const tx=Math.floor(x),ty=Math.floor(z);
   if(tx<0||ty<0||tx>=F.W||ty>=F.H)return !F.lift||!inDockAnnex(F.lift,x,z,liftScale,floorLiftGate===1);
@@ -6179,7 +6235,7 @@ function installFloor(depth,nextFloor,prepared=false,landing=null){
   if(prepared)afterLiftFrame(()=>{if(state==='play'&&F===nextFloor&&!loading)sweepWorld()});else sweepWorld();
   if(F.npcs&&F.npcs.some(q=>q.type==='keeper'))keeperWarm();
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
-  P.y=0;P.vy=0;P.vx=0;P.vz=0;P.keys=0;P.jumpQ=0;P.inSafe=false;P.unseen=false;nearNpc=nearDoor=null;
+  P.y=0;P.vy=0;P.vx=0;P.vz=0;P.crouched=false;P.crouchBlend=0;P.keys=0;P.jumpQ=0;P.inSafe=false;P.unseen=false;nearNpc=nearDoor=null;
   const visit=liftVisits.get(depth);
   if(visit?.floor===F){
     P.shards=visit.shards;P.keys=visit.keys;
@@ -6518,6 +6574,7 @@ function pkWhy(tx,ty){
   if(tx<1||ty<1||tx>W-2||ty>H-2)return 'border';
   if(F.mazeH&&ty>=F.mazeH-1)return 'kept';
   if(F.g[ty*W+tx]!==1)return 'notwall';
+  if(F.archive?.reserved(tx,ty))return 'kept';
   const near=(x,y,r)=>Math.abs(x-tx)<=r&&Math.abs(y-ty)<=r;
   for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){const i=(ty+dy)*W+tx+dx;if(F.safeMask[i]||F.pocketMask[i])return 'kept'}
   if(F.door&&near(F.door.tx,F.door.ty,1))return 'gate';
@@ -6858,7 +6915,7 @@ function mpRecv(m,from){
       const a=m.a;if(!Array.isArray(a))return;
       p.hub=null;
       p.positionAt=performance.now();
-      p.d=m.d;p.x=+a[0];p.z=+a[1];p.y=+a[2];p.yaw=+a[3];p.pitch=+a[4];p.fu=+a[5];p.down=!!(a[6]&1);p.safe=!!(a[6]&2);p.run=!!(a[6]&4);p.away=!!(a[6]&8);p.mounted=!!(a[6]&16);p.unseen=!!(a[6]&32);p.hp=a[7];p.form=a[6]>>6&3;p.fat=!!(a[6]&256);p.pox=!!(a[6]&512);p.frz=!!(a[6]&1024);p.bob=!!(a[6]&2048);p.hedge=!!(a[6]&4096);p.curl=a[6]&8192?1:a[6]&16384?2:0;p.mirror=!!(a[6]&32768);p.pf=a[8]|0;
+      p.d=m.d;p.x=+a[0];p.z=+a[1];p.y=+a[2];p.yaw=+a[3];p.pitch=+a[4];p.fu=+a[5];p.down=!!(a[6]&1);p.safe=!!(a[6]&2);p.run=!!(a[6]&4);p.away=!!(a[6]&8);p.mounted=!!(a[6]&16);p.unseen=!!(a[6]&32);p.hp=a[7];p.form=a[6]>>6&3;p.fat=!!(a[6]&256);p.pox=!!(a[6]&512);p.frz=!!(a[6]&1024);p.bob=!!(a[6]&2048);p.hedge=!!(a[6]&4096);p.curl=a[6]&8192?1:a[6]&16384?2:0;p.mirror=!!(a[6]&32768);p.crouched=!!(a[6]&65536);p.pf=a[8]|0;
       if(p.rx===undefined||p.rd!==p.d||Math.hypot(p.x-p.rx,p.z-p.rz)>3){p.rx=p.x;p.rz=p.z;p.ry=p.y;p.ryaw=p.yaw;p.rpitch=p.pitch;p.rd=p.d}
       break;}
     case 'm':{
@@ -6973,25 +7030,28 @@ function mpRecv(m,from){
   }
 }
 // the host's view of everyone the creatures can hunt
+function inArchiveAlcove(x,z,y=0,crouched=false){return !!F.archive&&archiveHidden(F.archive,x,z,y,crouched)}
+const playerInArchiveCover=()=>inArchiveAlcove(P.x,P.z,P.y,P.crouched);
 function mpTargets(){
   const T=[];
-  if(!P.down)T.push({x:P.x,z:P.z,yaw:P.yaw,fuel:P.fuel,inSafe:P.inSafe||P.away||!!FX.frozen||potSafeAt(P.x,P.z),inv:P.inv,loc:true,mirror:R.mirror,tx:P.tx,ty:P.ty,pf:potFlags()});
+  if(!P.down)T.push({x:P.x,z:P.z,y:P.y,yaw:P.yaw,fuel:P.fuel,inSafe:P.inSafe||F.archive&&P.y>.84||playerInArchiveCover()||P.away||!!FX.frozen||potSafeAt(P.x,P.z),inv:P.inv,loc:true,mirror:R.mirror,tx:P.tx,ty:P.ty,pf:potFlags()});
   if(MP.host)for(const p of MP.peers.values())
-    if(p.run&&!p.down&&p.d===R.depth&&p.x!==undefined&&mpFresh(p))T.push({x:p.x,z:p.z,yaw:p.yaw,fuel:p.fu,inSafe:p.safe||potSafeAt(p.x,p.z),inv:p.inv,loc:false,mirror:!!p.mirror,p,tx:Math.floor(p.x),ty:Math.floor(p.z),pf:p.pf|0});
+    if(p.run&&!p.down&&p.d===R.depth&&p.x!==undefined&&mpFresh(p))T.push({x:p.x,z:p.z,y:p.y,yaw:p.yaw,fuel:p.fu,inSafe:p.safe||F.archive&&p.y>.84||inArchiveAlcove(p.x,p.z,p.y,p.crouched)||potSafeAt(p.x,p.z),inv:p.inv,loc:false,mirror:!!p.mirror,p,tx:Math.floor(p.x),ty:Math.floor(p.z),pf:p.pf|0});
   return T;
 }
 // path distance from every tile to the nearest player
-function mpDist(T){
-  if(T.length===1&&T[0].loc)return F.dist;
+function mpDist(T,archiveRoute=false){
+  if(!archiveRoute&&T.length===1&&T[0].loc)return F.dist;
   const key=T.map(t=>t.tx+','+t.ty).join(';')+(F.door?'d':'');
-  if(F.mdKey===key&&F.md)return F.md;
+  const field=archiveRoute?'archiveMd':'md',memo=field+'Key';
+  if(F[memo]===key&&F[field])return F[field];
   const W=F.W,H=F.H,g=F.g,d=new Int16Array(W*H).fill(-1),q=new Int32Array(W*H);let qh=0,qt=0;
   for(const t of T){if(t.tx<0||t.ty<0||t.tx>=W||t.ty>=H)continue;const i=t.ty*W+t.tx;if(d[i]<0){d[i]=0;q[qt++]=i}}
   while(qh<qt){
     const c=q[qh++],cx=c%W,cy=(c/W)|0,nd=d[c]+1;
-    for(let k=0;k<4;k++){const nx=cx+DIRS[k][0],ny=cy+DIRS[k][1];if(nx<0||ny<0||nx>=W||ny>=H)continue;const n=ny*W+nx;if(g[n]===0&&d[n]<0){d[n]=nd;q[qt++]=n}}
+    for(let k=0;k<4;k++){const nx=cx+DIRS[k][0],ny=cy+DIRS[k][1];if(nx<0||ny<0||nx>=W||ny>=H)continue;const n=ny*W+nx;if(g[n]===0&&d[n]<0&&(!archiveRoute||!archiveMobBlocked(F.archive,nx+.5,ny+.5))){d[n]=nd;q[qt++]=n}}
   }
-  F.mdKey=key;F.md=d;return d;
+  F[memo]=key;F[field]=d;return d;
 }
 function mpNearest(T,x,z){let b=null,bd=1e9;for(const t of T){const d=(t.x-x)**2+(t.z-z)**2;if(d<bd){bd=d;b=t}}return b}
 function mpWatched(T,s){
@@ -7002,7 +7062,7 @@ function mpWatched(T,s){
   }
   return false;
 }
-function mpTouching(T,s){for(const t of T)if(!t.inSafe&&Math.hypot(s.x-t.x,s.z-t.z)<0.5)return t;return null}
+function mpTouching(T,s){for(const t of T)if(!t.inSafe&&(!F.archive||t.y<.84)&&Math.hypot(s.x-t.x,s.z-t.z)<0.5)return t;return null}
 function mpHit(t,w){if(w!=='drain')t.p.inv=1.6;mpSend({k:'hit',w},t.p.id)}
 function mpFollowShade(s,dt){
   if(s.nx===undefined)return;
@@ -7016,13 +7076,13 @@ function mpSpectate(){
   const L=mpAlive(),f=L.find(p=>p.id===MP.follow)||L[0];
   MP.follow=f?f.id:null;
   if(!f)return;
-  P.x=f.rx;P.z=f.rz;P.y=0;P.yaw=f.ryaw;P.pitch=f.rpitch*0.6;P.fuel=f.fu;P.inSafe=f.safe;
+  P.x=f.rx;P.z=f.rz;P.y=F.archive?f.ry:0;P.crouched=f.crouched;P.crouchBlend=Number(!!f.crouched);P.yaw=f.ryaw;P.pitch=f.rpitch*0.6;P.fuel=f.fu;P.inSafe=f.safe;
   if(Math.floor(P.x)!==P.tx||Math.floor(P.z)!==P.ty)onTileChange();
 }
 function mpCycle(){const L=mpAlive();if(L.length<2)return;const i=L.findIndex(p=>p.id===MP.follow);MP.follow=L[(i+1)%L.length].id}
 // flags packed into a[6] of the per-frame position message: 1 down, 2 safe, 4 run, 8 away, 16 mounted, 32 unseen,
-// 64+128 wheel form, 256 fat, 512 pox, 1024 frozen, 2048 bobblehead, 4096 hedgehog, 8192/16384 curl (1 / 2), 32768 mirror on the back of the head
-const mpPosFlags=()=>(P.down?1:0)|(P.inSafe||P.away||FX.frozen?2:0)|4|(P.away?8:0)|(P.mounted?16:0)|(P.unseen?32:0)|((wofForm()<4?wofForm():0)<<6)|(FX.fat>0?256:0)|(FX.pox>0?512:0)|(FX.frozen?1024:0)|(FX.bob>0?2048:0)|(FX.hedge>0?4096:0)|(FX.curl===1?8192:FX.curl===2?16384:0)|(R.mirror?32768:0);
+// 64+128 wheel form, 256 fat, 512 pox, 1024 frozen, 2048 bobblehead, 4096 hedgehog, 8192/16384 curl (1 / 2), 32768 mirror on the back of the head, 65536 crouched
+const mpPosFlags=()=>(P.down?1:0)|(P.inSafe||P.away||FX.frozen?2:0)|4|(P.away?8:0)|(P.mounted?16:0)|(P.unseen?32:0)|((wofForm()<4?wofForm():0)<<6)|(FX.fat>0?256:0)|(FX.pox>0?512:0)|(FX.frozen?1024:0)|(FX.bob>0?2048:0)|(FX.hedge>0?4096:0)|(FX.curl===1?8192:FX.curl===2?16384:0)|(R.mirror?32768:0)|(P.crouched?65536:0);
 const mpFresh=p=>performance.now()-(p.seen||0)<15000;
 const mpShown=p=>MP.on&&p.run&&!p.away&&!p.unseen&&p.d===R.depth&&p.rx!==undefined&&state!=='title'&&mpFresh(p);
 function sanctuaryPeers(floor){
@@ -7057,6 +7117,7 @@ function mpTick(raw){
     if(p.x===undefined)continue;
     const k=Math.min(1,dt*12),ox=p.rx,oz=p.rz;
     p.rx+=(p.x-p.rx)*k;p.rz+=(p.z-p.rz)*k;p.ry+=(p.y-p.ry)*k;
+    p.crouchBlend=(p.crouchBlend||0)+(Number(!!p.crouched)-(p.crouchBlend||0))*k;
     p.ryaw+=wrapA(p.yaw-p.ryaw)*k;p.rpitch+=(p.pitch-p.rpitch)*k;
     const sp=dt>0?Math.hypot(p.rx-ox,p.rz-oz)/dt:0;p.spd+=(sp-p.spd)*Math.min(1,dt*8);p.walk+=p.spd*dt*5.5;
     if(p.inv>0)p.inv-=raw;
@@ -7106,6 +7167,7 @@ function buildPlayer(p,t,rev,et){
   const c=p.col,cloak=[c[0]*0.72,c[1]*0.72,c[2]*0.72,2],cloakD=[c[0]*0.42,c[1]*0.42,c[2]*0.42,2];
   const leg=[0.22,0.17,0.13,2],boot=[0.3,0.19,0.1,3],belt=[0.3,0.17,0.08,3],skin=[0.86,0.65,0.5,1],wood=[0.36,0.23,0.12,6],rag=[0.13,0.1,0.08,2];
   const S=AV,v=(x,y,z)=>[x*S,y*S,z*S],ph=hashStr(p.id)%100;
+  const crouch=rev?0:p.crouchBlend||0,hipY=.45-.31*crouch;
   const mv=Math.min(1,p.spd/2.7),w=p.walk,sw=Math.sin(w)*mv,bob=Math.abs(Math.cos(w))*0.018*mv,breath=Math.sin(t*1.7+ph)*0.004;
   const B={p:[p.rx,Math.max(0,p.ry),p.rz],R:rYaw(p.ryaw)};
   // the dance-off: a groove while the round lasts, and a move for each arrow hit (lane 0 left, 1 down, 2 up, 3 right)
@@ -7113,11 +7175,11 @@ function buildPlayer(p,t,rev,et){
   if(dancing){B.p[1]+=Math.abs(Math.sin(R.time*7+ph))*0.02+(dl===2?0.07*dk:dl===1?-0.05*dk:0);B.R=m3(B.R,rX((dl===0?-0.22:dl===3?0.22:0)*dk+Math.sin(R.time*3.5+ph)*0.06))}
   for(const z of[-1,1]){
     const st=sw*z;
-    const hip=v(0,0.45,z*0.052),knee=v(0.012+0.09*st,0.25+0.03*Math.max(0,st),z*0.058),ank=v(0.17*st,0.05+0.06*Math.max(0,-st),z*0.062);
+    const hip=v(0,hipY,z*.052),knee=v(.012+.09*st+.125*crouch,.25+.03*Math.max(0,st)-.11*crouch,z*.058),ank=v(.17*st,.05+.06*Math.max(0,-st),z*.062);
     seg(B,hip,knee,0.047*S,0.038*S,leg);ball(B,knee,0.04*S,leg,true);seg(B,knee,ank,0.04*S,0.03*S,boot);
     ball(B,[ank[0]+0.03,ank[1]-0.02,ank[2]],[0.062*S,0.03*S,0.036*S],boot,true);
   }
-  const U=subF(B,v(0,0.45+bob,0),m3(rYaw(sw*0.12),rZ(-0.06*mv)));
+  const U=subF(B,v(0,hipY+bob,0),m3(rYaw(sw*0.12),rZ(-0.06*mv-.23*crouch)));
   ball(U,v(0,0.02,0),[0.075*S,0.06*S,0.09*S],cloakD);
   seg(U,v(0,-0.1,0),v(0,0.07,0),0.12*S,0.078*S,cloak);
   seg(U,v(0,0.045,0),v(0,0.075,0),0.083*S,0.081*S,belt);
@@ -7673,7 +7735,7 @@ $('resumeBtn').addEventListener('click',()=>resume(true));
 $('lobbyPause').addEventListener('click',()=>{initAudio();lobbyPauseHide(true)});
 $('againBtn').addEventListener('click',()=>{startFromMenu();lock()});
 // touch controls
-const touch={on:false,mx:0,my:0,jump:false,stickId:null,lookId:null,tapId:null,sx:0,sy:0,lx:0,ly:0};
+const touch={on:false,mx:0,my:0,jump:false,crouch:false,stickId:null,lookId:null,tapId:null,sx:0,sy:0,lx:0,ly:0};
 function enableTouch(){
   if(touch.on)return;touch.on=true;document.body.classList.add('touch');
   const upd=()=>{$('rotHint').textContent=innerHeight>innerWidth?'Turn your phone sideways for a wider view':''};
@@ -7739,12 +7801,13 @@ document.addEventListener('touchstart',()=>{if(P.hug)grannyMash()},{capture:true
     el.addEventListener('touchend',u);el.addEventListener('touchcancel',u);
     el.addEventListener('touchmove',e=>{e.preventDefault();e.stopPropagation()},{passive:false});};
   btn('tJump',()=>{touch.jump=true;if(state==='play')P.jumpQ=MOVE.jumpBuffer},()=>{touch.jump=false});
+  btn('tCrouch',()=>{touch.crouch=true},()=>{touch.crouch=false});
   btn('tFlash',()=>{
     touch.act=true;
     if(state==='play')act();
     else if(state==='title')hub.interact();
   },()=>{touch.act=false});
-  btn('tPause',()=>{touch.jump=false;endStick();touch.lookId=null;touch.tapId=null;ROOMS.untap();pause()});
+  btn('tPause',()=>{touch.jump=touch.crouch=false;endStick();touch.lookId=null;touch.tapId=null;ROOMS.untap();pause()});
   btn('tMap',()=>{mapBig=!mapBig});
   btn('tPick',()=>{usePick()});
   {const st=document.createElement('style');st.textContent='#tAtk{right:calc(210px + env(safe-area-inset-right));bottom:calc(26px + env(safe-area-inset-bottom));width:74px;height:74px;font-size:12px}body:not(.hasweapon) #tAtk{display:none}';document.head.appendChild(st);
@@ -7771,11 +7834,11 @@ function rumble(ms,strong,weak){
   try{const a=pad.gp&&pad.gp.vibrationActuator;if(a&&a.playEffect)a.playEffect('dual-rumble',{duration:ms,strongMagnitude:strong,weakMagnitude:weak})}catch(e){}
 }
 function pollPad(){
-  pad.mx=pad.my=pad.lx=pad.ly=0;pad.sprint=false;pad.jump=false;pad.roomButtons.length=0;
+  pad.mx=pad.my=pad.lx=pad.ly=0;pad.sprint=false;pad.jump=false;pad.crouch=false;pad.roomButtons.length=0;
   const gp=pickPad();pad.gp=gp;
   if(!gp){if(pad.id){pad.id='';$('padLine').textContent='';pad.prev=[]}return}
   if(pad.id!==gp.id){pad.id=gp.id;initAudio();
-    $('padLine').innerHTML='Controller connected. <b>Left stick</b> move · <b>Right stick</b> look · <b>A</b> jump · <b>RT</b> attack · <b>LB</b> flash · <b>X</b> talk · <b>LT</b> or click left stick to sprint · <b>Y</b> map · <b>RB</b> pickaxe · <b>Back</b> drink a potion · <b>B</b> throw it · <b>D-pad ← →</b> choose · <b>R3</b> inventory · <b>Start</b> pause';
+    $('padLine').innerHTML='Controller connected. <b>Left stick</b> move · <b>Right stick</b> look · <b>A</b> jump · hold <b>D-pad ↓</b> to crouch · <b>RT</b> attack · <b>LB</b> flash · <b>X</b> talk · <b>LT</b> or click left stick to sprint · <b>Y</b> map · <b>RB</b> pickaxe · <b>Back</b> drink a potion · <b>B</b> throw it · <b>D-pad ← →</b> choose · <b>R3</b> inventory · <b>Start</b> pause';
     if(state==='play')say('Controller connected',2)}
   const B=i=>{const b=gp.buttons[i];return !!b&&(b.pressed||b.value>0.4)};
   if(loading){pad.prev=gp.buttons.map((_,i)=>B(i));return}
@@ -7822,7 +7885,12 @@ function pollPad(){
     if(hit(11)&&!(FX.hedge>0))invOpen();
     if(hit(5))usePick();
     if(hit(12))useMoose();
-    if(hit(13))useMoose(true);
+    if(hit(13))pad.crouchStart=performance.now();
+    if(B(13)&&pad.crouchStart!==undefined)pad.crouch=performance.now()-pad.crouchStart>=180;
+    if(!B(13)&&pad.prev[13]&&pad.crouchStart!==undefined){
+      if(performance.now()-pad.crouchStart<180)useMoose(true);
+      pad.crouchStart=undefined;
+    }
     if(hit(3))mapBig=!mapBig;
     if(hit(9))pause();
     if(hit(14)){if(POT.belt.length)potSel(-1);else setBright(bright-0.15)}
@@ -8035,13 +8103,23 @@ function update(dt){
   const str=moon*(ctl?(keys.KeyD?1:0)-(keys.KeyA?1:0)+pad.mx+touch.mx:0);
   const fury=ctl&&ps('fury');if(fury&&Math.abs(fwd)<0.2&&Math.abs(str)<0.2)fwd=1;   // Fury Brew: you cannot stop running
   const J0=MOVE.jumpV,G0=MOVE.gravity,pvx=P.vx,pvz=P.vz;MOVE.jumpV=J0*potJump();MOVE.gravity=G0*potGrav();
-  const ev=stepMove(P,dt,{fwd,str,fx:Math.cos(P.yaw),fz:Math.sin(P.yaw),ctl,
+  const normalBlock=ps('phase')?potPhase:blocked;
+  const groundAt=F.archive?(x,z)=>archiveGround(F.archive,x,z,P.y):undefined;
+  const height=()=>ARCHIVE_BODY*(P.crouched?MOVE.crouchEye:1);
+  const headroom=F.archive?(x,z)=>archiveHeadroom(F.archive,x,z,P.y,PR):null;
+  const sceneryBlock=F.archive?(x,z)=>archiveBlocked(F.archive,x,z,P.y,height(),PR,P.y<=groundAt(P.x,P.z)):null;
+  const walkBlock=sceneryBlock?(x,z)=>normalBlock(x,z)||sceneryBlock(x,z):normalBlock;
+  const slideBlock=sceneryBlock?(x,z)=>blocked(x,z)||sceneryBlock(x,z):blocked;
+  const crouch=ctl&&!P.mounted&&(keys.ControlLeft||keys.ControlRight||keys.KeyX&&!FX.hedge||pad.crouch||touch.crouch);
+  const ev=stepMove(P,dt,{fwd,str,fx:Math.cos(P.yaw),fz:Math.sin(P.yaw),ctl,crouch,
     jump:FX.fat<=0&&potJump()>0&&(keys.Space||pad.jump||touch.jump),sprint:fury||keyboardSprint()||pad.sprint||Math.hypot(touch.mx,touch.my)>0.94},
-    {scale:1,speedMul:moveMul()*(P.mounted?1.25:1),lungs:up.lungs|0,blocked:ps('phase')?potPhase:blocked});
+    {scale:1,speedMul:moveMul()*(P.mounted?1.25:1),lungs:up.lungs|0,blocked:walkBlock,groundAt,snap:F.archive?0.115:0,
+      canStand:headroom?()=>P.y+ARCHIVE_BODY<=headroom(P.x,P.z):null,
+      ceilingAt:headroom?(x,z)=>headroom(x,z)-height():null});
   MOVE.jumpV=J0;MOVE.gravity=G0;
-  if(P.y>0.62&&(potGrav()<1||potJump()>1)){P.y=0.62;if(P.vy>0)P.vy=0}   // floaty potions: bump the ceiling and hang there
-  if(ps('slick')&&ev.ground){const k=Math.min(1,1.4*dt),nvx=pvx+(P.vx-pvx)*k,nvz=pvz+(P.vz-pvz)*k,cx=P.x+(nvx-P.vx)*dt,cz=P.z+(nvz-P.vz)*dt;if(!blocked(cx,P.z))P.x=cx;if(!blocked(P.x,cz))P.z=cz;P.vx=nvx;P.vz=nvz}
-  if(POT.slv){const q=POT.slv;q.t-=dt;const nx=P.x+q.vx*dt,nz=P.z+q.vz*dt;if(!blocked(nx,P.z))P.x=nx;if(!blocked(P.x,nz))P.z=nz;q.vx*=0.9;q.vz*=0.9;if(q.t<=0)POT.slv=null}
+  if(!F.archive&&P.y>0.62&&(potGrav()<1||potJump()>1)){P.y=0.62;if(P.vy>0)P.vy=0}
+  if(ps('slick')&&ev.ground){const k=Math.min(1,1.4*dt),nvx=pvx+(P.vx-pvx)*k,nvz=pvz+(P.vz-pvz)*k,cx=P.x+(nvx-P.vx)*dt,cz=P.z+(nvz-P.vz)*dt;if(!slideBlock(cx,P.z))P.x=cx;if(!slideBlock(P.x,cz))P.z=cz;P.vx=nvx;P.vz=nvz}
+  if(POT.slv){const q=POT.slv;q.t-=dt;const nx=P.x+q.vx*dt,nz=P.z+q.vz*dt;if(!slideBlock(nx,P.z))P.x=nx;if(!slideBlock(P.x,nz))P.z=nz;q.vx*=0.9;q.vz*=0.9;if(q.t<=0)POT.slv=null}
   if(ev.jumped)sfx('jump');
   if((ev.landed>0||ev.step)&&!ps('hush')){sfx('step');if(ps('loud'))tone(55,0.12,'sine',0.25)}
   if(ctl&&ev.ground&&(ev.blockedX||ev.blockedZ)){
@@ -8083,14 +8161,16 @@ function update(dt){
       if($('tFlash').textContent!==action)$('tFlash').textContent=action;
     }
     const pt=!best&&!nd&&state==='play'&&P.pick>0&&!P.down&&!P.away&&!P.grab?pkAim():null;
-    if(state!=='room')setText('prompt',lift?(touch.on?'USE':pad.id?'X':'E')+': use lift controls':best?(touch.on?'TALK':pad.id?'X':'E')+': speak with '+NPC[best.type].name:nd?(touch.on?'OPEN':pad.id?'X':'E')+': open the strange door':pt?pt.ok?(touch.on?'PICK':pad.id?'RB':'Q')+': break through this wall':'This wall will not break':'');}
+    const low=F.archive&&!P.crouched&&archiveLowOpening(F.archive,P.x,P.z,P.y,P.yaw);
+    const crouchHint=touch.on?'Hold Crouch':pad.id?'Hold D-pad ↓ to crouch':'Hold X to crouch';
+    if(state!=='room')setText('prompt',playerInArchiveCover()?(P.z>=2?'Hidden under the reading desk':'Hidden in the alcove'):low?crouchHint:lift?(touch.on?'USE':pad.id?'X':'E')+': use lift controls':best?(touch.on?'TALK':pad.id?'X':'E')+': speak with '+NPC[best.type].name:nd?(touch.on?'OPEN':pad.id?'X':'E')+': open the strange door':pt?pt.ok?(touch.on?'PICK':pad.id?'RB':'Q')+': break through this wall':'This wall will not break':'');}
   if(P.fuel<20&&!lowFuelSaid){lowFuelSaid=true;say(P.fuel<=0?'Your torch is out':'Your torch is guttering. Find oil.',3)}
   if(P.inv>0)P.inv-=dt;
   if(P.chill>0){P.chill-=dt;$('chill').style.opacity=clamp(P.chill/1.2,0,1)}else if(P.chill<0||P.chill===0&&$('chill').style.opacity!=='0'){P.chill=0;$('chill').style.opacity='0'}
   if(flashT>0)flashT=Math.max(0,flashT-dt*1.6);
   // pickups
   for(const it of F.items){
-    if(it.got||P.y<-0.2)continue;
+    if(it.got||P.y<-0.2||F.archive&&Math.abs(P.y-(it.y||0))>.72)continue;
     const dx=it.x-P.x,dz=it.z-P.z;
     if(dx*dx+dz*dz<0.2)collect(it);
   }
@@ -8141,10 +8221,13 @@ function update(dt){
   let chasing=0,nearest=99;
   const pfx=Math.cos(P.yaw),pfz=Math.sin(P.yaw);
   const TG=MP.guest?null:mpTargets(), MD=MP.guest?null:mpDist(TG);
+  const archiveTargets=F.archive&&TG?TG.filter(t=>!t.inSafe&&t.y<.84):null;
+  const archiveDist=archiveTargets?mpDist(archiveTargets,true):null;
   if(TG)potPowers(dt,TG);
   for(const s of F.shades){
     if(s.dead||s.down>0){s.x=s.z=-99;s.state=0;s.vis=false;continue}
     if(s.type<4)rememberMob(s.type,s);
+    else if(s.type===LIBRARIAN)rememberMob('librarian',s);
     s.ph+=dt*3;
     if(s.type===3){if(!P.down&&!followMoose(s,dt,1.9)){watcher(s,dt,pfx,pfz);if(state==='dead')return}continue}
     const cx=Math.floor(s.x),cz=Math.floor(s.z);
@@ -8153,7 +8236,7 @@ function update(dt){
       mpFollowShade(s,dt);
       s.think=(s.think||0)-dt;
       if(s.think<=0){s.think=0.2;s.vis=Math.hypot(s.x-P.x,s.z-P.z)<9&&los(s.x,s.z,P.x,P.z)}
-      if(s.stun<=0&&s.state===1&&dl>=0&&dl<=14&&(s.type===0||(s.type===1&&!s.frozen&&dl<=8))){chasing++;if(dl<nearest)nearest=dl;
+      if(s.stun<=0&&s.state===1&&dl>=0&&dl<=14&&(s.type===0||s.type===LIBRARIAN&&dl<=11||(s.type===1&&!s.frozen&&dl<=8))){chasing++;if(dl<nearest)nearest=dl;
         if(s.type===1){s.snd=(s.snd||0)-dt;if(s.snd<=0){s.snd=0.45;sfx('scrape')}}}
       continue;
     }
@@ -8163,8 +8246,11 @@ function update(dt){
     if(s.type===4){fizzTick(s,dt,TG,MD);continue}
     if(s.type===5){grannyTick(s,dt,TG,MD);continue}
     if(followMoose(s,dt,s.type===1?3.15:2.95)){s.frozen=false;continue}
-    const d=MD[cz*F.W+cx];s.d=d;
-    const T=mpNearest(TG,s.x,s.z);
+    const librarian=s.type===LIBRARIAN;
+    const targets=librarian?archiveTargets:TG,distances=librarian?archiveDist:MD;
+    const d=distances[cz*F.W+cx];s.d=d;
+    const T=mpNearest(targets,s.x,s.z);
+    if(librarian&&!T&&s.state===1){s.state=0;s.think=0}
     const eu=T?Math.hypot(s.x-T.x,s.z-T.z):99, tDark=!!T&&T.fuel<=0;
     const chaseSpeed=Math.min(2.95+R.depth*0.06,3.6)+(tDark?0.35:0);
     s.think-=dt;
@@ -8176,6 +8262,11 @@ function update(dt){
       if(s.type===0){
         if(s.state===0){if((d>=0&&d<=8*sk&&tv)||(d>=0&&d<=2*sk)||(tDark&&d>=0&&d<=12*sk)){s.state=1;if(dl>=0&&dl<=14&&!(s.pe&&s.pe.hush))sfx('growl')}}
         else if(d<0||d>14||sk===0&&d>1)s.state=0;
+      }else if(librarian){
+        if(!s.state&&tv&&d>=0&&d<=8*sk){
+          s.state=1;
+          if(dl>=0&&dl<=11&&!(s.pe&&s.pe.hush))sfx('scrape');
+        }else if(!T||d<0||d>11||sk===0)s.state=0;
       }else if(s.type===1)s.state=(d>=0&&d<=45*Math.min(1,sk))?1:0;
       else{if(s.state===0){if(d>=0&&d<=9*sk)s.state=1}else if(d<0||d>13||sk===0&&d>1)s.state=0}
       if(s.calm>0){s.calm-=0.2;s.state=0}
@@ -8189,9 +8280,12 @@ function update(dt){
       if(s.frozen||s.state===0)continue;
       sp=3.15;
       if(dl>=0&&dl<=8){chasing++;if(dl<nearest)nearest=dl;s.snd-=dt;if(s.snd<=0){s.snd=0.45;if(!(s.pe&&s.pe.hush))sfx('scrape')}}
+    }else if(librarian){
+      sp=s.state===1?3.25:1.15;
+      if(s.state===1&&dl>=0&&dl<=11){chasing++;nearest=Math.min(nearest,dl)}
     }else sp=s.state===1?2.95:1.4;
     let gx=s.gx+0.5,gz=s.gy+0.5;
-    const direct=!!T&&s.state===1&&d>=0&&d<=1&&!T.inSafe;
+    const direct=!!T&&s.state===1&&d>=0&&d<=1&&!T.inSafe&&(!librarian||!archiveMobBlocked(F.archive,T.x,T.z));
     if(direct){gx=T.x;gz=T.z;s.gx=cx;s.gy=cz}
     const dx=gx-s.x,dz=gz-s.z,l=Math.hypot(dx,dz),step=sp*dt*(s.pmul||1);
     if(l<=step+0.001){
@@ -8201,7 +8295,8 @@ function update(dt){
         for(const k of DIRS){
           const nx2=cx+k[0],ny2=cz+k[1];
           if(nx2<0||ny2<0||nx2>=F.W||ny2>=F.H||F.g[ny2*F.W+nx2]||F.safeMask[ny2*F.W+nx2]||F.pocketMask[ny2*F.W+nx2])continue;
-          const nd=MD[ny2*F.W+nx2];
+          if(inArchiveAlcove(nx2+.5,ny2+.5)||librarian&&archiveMobBlocked(F.archive,nx2+.5,ny2+.5))continue;
+          const nd=distances[ny2*F.W+nx2];
           if(nd>=0&&nd<bestD){bestD=nd;bestN=[nx2,ny2]}
           if(!(nx2===s.px&&ny2===s.py))opts.push([nx2,ny2]);
         }
@@ -8211,14 +8306,14 @@ function update(dt){
         if(next){s.px=cx;s.py=cz;s.gx=next[0];s.gy=next[1]}
       }
     }else{s.x+=dx/l*step;s.z+=dz/l*step;s.face=Math.atan2(dz,dx)}
-    const hitT=mpTouching(TG,s);
+    const hitT=mpTouching(targets,s);
     if(hitT&&!potTouch(s,hitT)){
       if(s.type===2){
         // a wisp drinks some of the torch and flits away
         if(hitT.loc){P.fuel=Math.max(0,P.fuel-22);sfx('drain');say('A wisp drinks your flame',2)}else mpHit(hitT,'drain');
         for(let tries=0;tries<60;tries++){
           const rx=1+(Math.random()*(F.W-2)|0),ry=1+(Math.random()*(F.H-2)|0),rd=MD[ry*F.W+rx];
-          if(F.g[ry*F.W+rx]===0&&!F.safeMask[ry*F.W+rx]&&!F.pocketMask[ry*F.W+rx]&&(rd>10||(tries>40&&rd>4))){s.x=rx+0.5;s.z=ry+0.5;s.gx=rx;s.gy=ry;s.px=-1;break}
+          if(F.g[ry*F.W+rx]===0&&!F.safeMask[ry*F.W+rx]&&!F.pocketMask[ry*F.W+rx]&&!inArchiveAlcove(rx+0.5,ry+0.5)&&(rd>10||(tries>40&&rd>4))){s.x=rx+0.5;s.z=ry+0.5;s.gx=rx;s.gy=ry;s.px=-1;break}
         }
         s.state=0;s.stun=1.5;
       }else if(hitT.inv<=0){
@@ -8257,12 +8352,12 @@ function update(dt){
 }
 
 function lurkTick(dt){
-  if(!F||P.away||!F.npcs)return;
+  if(!F||P.away||!F.npcs||playerInArchiveCover()||F.archive&&P.y>.84)return;
   for(const n of F.npcs){
     if(n.type!=='lurk'||n.x<0)continue;
     const r=lurkStep(n,dt,{x:P.x,z:P.z,yaw:P.yaw,down:!!P.down||state!=='play'},{
       los:(x,z)=>los(P.x,P.z,x,z),
-      open:(x,z)=>x>0&&z>0&&x<F.W-1&&z<F.H-1&&F.g[z*F.W+x]===0&&!F.safeMask[z*F.W+x]&&!F.pocketMask[z*F.W+x],
+      open:(x,z)=>x>0&&z>0&&x<F.W-1&&z<F.H-1&&F.g[z*F.W+x]===0&&!F.safeMask[z*F.W+x]&&!F.pocketMask[z*F.W+x]&&!inArchiveAlcove(x+0.5,z+0.5),
       rand:()=>Math.random(),
     });
     if(n.aggro&&!n.said){n.said=1;sfx('growl');say('It noticed you looking.',2.4)}
@@ -8882,7 +8977,8 @@ function render(t){
   const DC=title?null:danceCam(),SC=STUDIO&&STUDIO.cam||DC;
   const yaw=SC?SC.yaw:P.yaw, pitch=SC?SC.pitch:title?0:P.pitch;
   const riding=P.mounted&&!P.down&&!P.away;
-  const ex=SC?SC.x:P.x, ez=SC?SC.z:P.z, ey=SC?SC.y:Math.min(CAM_TOP,EYE*(title?1:wofEye()*potEye())+(title?0:P.y+bobY(P,1)+(riding?.16:0)));
+  const ex=SC?SC.x:P.x,ez=SC?SC.z:P.z;
+  const ey=SC?SC.y:title?EYE:playerEye(riding?.16:0);
   sanctuaryDisplay.update(F,R.depth,!title&&!STUDIO,ex,ez,t,sanctuaryPeers);
   {const cp=Math.cos(pitch);camera.position.set(ex,ey,ez);camera.lookAt(ex+cp*Math.cos(yaw),ey+Math.sin(pitch),ez+cp*Math.sin(yaw))}
   if(FX.flyT>0&&!title){const k=Math.min(1,FX.flyT/1.2);camera.rotateZ(Math.sin(t*FX.spin)*0.5*k);camera.rotateX(Math.cos(t*FX.spin*0.7)*0.25*k)}   // tumbling through the air
@@ -8914,6 +9010,10 @@ function render(t){
   flashLight.position.set(ex,ey,ez);flashLight.intensity=flashT*LK.flash;
   // nearest coloured lights: [dist2, x,y,z, colour, strength, radius]
   const lights=[];
+  if(F.archive)for(const l of F.archive.lamps){
+    const d=(l.x-ex)**2+(l.z-ez)**2;
+    if(d<125)lights.push([d-8,l.x,l.y-0.11,l.z,[1.0,0.69,0.37],2.2,6]);
+  }
   if(F.lift&&floorLift.model.visible){
     const {x,z,fx,fz}=F.lift,ahead=(landingMazeZ-liftMouthLamp.z)*liftScale;
     const lx=x+fx*ahead,lz=z+fz*ahead,d=(lx-ex)**2+(lz-ez)**2;
@@ -8925,7 +9025,7 @@ function render(t){
       if(distance<12)lights.push([distance-4,cx,liftCabinLamps.y*liftScale,cz,cabinLampColor,3.2,3.7]);
     }
   }
-  for(const it of F.items){if(it.got||it.type==='chest'||it.type==='ingr')continue;const d=(it.x-ex)**2+(it.z-ez)**2;if(d<140)lights.push([d,it.x,0.45,it.z,ITEM[it.type].col,it.type==='gem'?0.5:1.0,2.6])}
+  for(const it of F.items){if(it.got||it.type==='chest'||it.type==='ingr')continue;const d=(it.x-ex)**2+(it.z-ez)**2;if(d<140)lights.push([d,it.x,.45+(it.y||0),it.z,ITEM[it.type].col,it.type==='gem'?0.5:1.0,2.6])}
   const open=P.shards>=3&&!title;
   const exCol=open?[0.4,1.0,0.6]:[1.0,0.2,0.15];
   lights.push([(F.exit.x-ex)**2+(F.exit.z-ez)**2-4,F.exit.x,0.5,F.exit.z,exCol,1.5,3.2]);
@@ -8981,7 +9081,7 @@ function render(t){
   for(const it of F.items){
     if(it.got||(it.type!=='shard'&&it.type!=='gem'))continue;
     if((it.x-ex)**2+(it.z-ez)**2>18*18)continue;
-    const y=0.44+Math.sin(t*2.2+it.ph)*0.05,c=ITEM[it.type].col,sh=it.type==='shard';
+    const y=(it.y||0)+0.44+Math.sin(t*2.2+it.ph)*0.05,c=ITEM[it.type].col,sh=it.type==='shard';
     emit(mesh6('octa'),{p:[it.x,sh?y:y-0.12,it.z],R:rYaw((sh?t*1.4:t*2)+it.ph),lo:ZERO3},ZERO3,sh?[0.1,0.23,0.1]:[0.075,0.09,0.075],[c[0],c[1],c[2],11]);
   }
   {const dtR=Math.min(0.1,Math.max(0,t-(CH.lt||t)));CH.lt=t;
@@ -9019,6 +9119,7 @@ function render(t){
     else if(s.type===6)bossDraw(s,t,ex,ez);
     else if(s.type===4)buildFizz(s,t,ex,ez);
     else if(s.type===5)buildGranny(s,t,ex,ez);
+    else if(s.type===LIBRARIAN)buildLibrarian(s,t);
     else if(s.type===1)buildStalker(s,t,ex,ez);
     else{
       const o=buildShade(s,t,ex,ez);
@@ -9091,9 +9192,9 @@ function render(t){
   pkFxDraw();xrayDraw(t);
   for(const m of DUST){
     const px=ex+((m[0]+Math.sin(t*0.21+m[3])*0.4-ex)%8+12)%8-4,pz=ez+((m[2]+Math.cos(t*0.17+m[3])*0.4-ez)%8+12)%8-4;
-    const py=0.05+((m[1]+t*0.012+Math.sin(t*0.3+m[3])*0.05)%1.15);
+    const py=(0.05+((m[1]+t*0.012+Math.sin(t*0.3+m[3])*0.05)%1.15))*(F.archive?1.85:1);
     const k=clamp(1-Math.hypot(px-ex,pz-ez)/Math.min(torchR,4),0,1);
-    if(k>0.02)spr(px,py,pz,m[4]*2.4,m[4]*2.4,7,B.torch[0],B.torch[1],B.torch[2],k*0.5,1);
+    if(k>0.02)spr(px,py,pz,m[4]*2.4,m[4]*2.4,7,B.torch[0],B.torch[1],B.torch[2],k*(F.archive?0.79:0.5),1);
   }
   if(F.forest&&F.fo.n){
     const P2=F.fo.n,fv=F.variant.fo;
@@ -9317,9 +9418,9 @@ const archiveCatalog={
   doors:{title:'Door Archive',action:'Enter',hint:'Open strange doors during a descent to record them.',entries:Object.fromEntries(
     Object.entries(DOOR_KINDS).map(([id,door])=>[id,door.name[0].toUpperCase()+door.name.slice(1)]))},
   floors:{title:'Floor Archive',action:'Explore',hint:'Reach a floor type during a descent to record it.',entries:{
-    maze:'Stone Maze',cave:'The Hollow',back:'The Humming Rooms',dark:'The Black Hush',forest:'The Dark Forest'}},
+    maze:'Stone Maze',cave:'The Hollow',back:'The Humming Rooms',dark:'The Black Hush',forest:'The Dark Forest',archive:'Forgotten Archive'}},
   mobs:{title:'Mob Archive',action:'Encounter',hint:'Spot creatures during a descent, in the maze or behind a strange door, to record them.',entries:{
-    0:'Shade',1:'Stalker',2:'Wisp',3:'Watcher',mimic:'Mimic',lurk:'Wrong Shadow',
+    0:'Shade',1:'Stalker',2:'Wisp',3:'Watcher',mimic:'Mimic',lurk:'Wrong Shadow',librarian:'Librarian',
     ...Object.fromEntries(Object.entries(ROOM_MOBS).map(([id,mob])=>[id,mob.name]))}},
   glitches:{title:'Glitch Archive',entries:GLITCH_ARCHIVE}
 };
@@ -9638,7 +9739,7 @@ function rememberFloor(){
   remember('floors',F.kind,{seed:R.seed,depth:R.depth,label:floorTag()});
 }
 function encounterSnapshot(){
-  return {seed:R.seed,depth:R.depth,pose:[P.x,P.z,P.yaw,P.pitch],gate:F.doorOpen,breaks:R.pk[R.depth]?.slice(),blackout:F.blk};
+  return {seed:R.seed,depth:R.depth,pose:[P.x,P.z,P.yaw,P.pitch],gate:F.doorOpen,breaks:R.pk[R.depth]?.slice(),blackout:F.blk,...(F.archive?{y:P.y,crouched:P.crouched}:{})};
 }
 function rememberMob(id,mob){
   if(archiveRun||P.down||state!=='play'||Object.hasOwn(archive.mobs,id))return;
@@ -9661,10 +9762,10 @@ function rememberRoomMob(id,seed){
 function archivePreview(kind,id){
   const seed='OVERRIDE';
   if(kind==='glitches')return {preview:true};
-  if(kind==='floors')return {seed,depth:{maze:1,cave:3,back:4,dark:9,forest:7}[id]};
+  if(kind==='floors')return {seed,depth:{maze:1,cave:3,back:4,dark:9,forest:7,archive:ARCHIVE_DEPTH}[id]};
   const room=kind==='doors'?id:ROOM_MOBS[id]?.room;
   if(room)return {seed:hashStr(seed+room),depth:1,room};
-  return {seed,depth:1,preview:true};
+  return {seed,depth:id==='librarian'?ARCHIVE_DEPTH:1,preview:true};
 }
 function refreshHub(){
   hub.syncArchives(Object.fromEntries(Object.entries(archiveCatalog).map(([kind,catalog])=>[kind,
@@ -10309,6 +10410,7 @@ function exhibitAsset({kind,id,data}){
     if(id==='0')eyes=buildShade(mob,time,0,4).eyes;
     else if(id==='1')buildStalker(mob,time,0,4);
     else if(id==='3')eyes=buildWatcher(mob,time,0,4);
+    else if(id==='librarian')buildLibrarian(mob,time,true);
     else if(id==='lurk')buildNpc({type:'lurk',guise:'map',x:0,z:0,ph:0.4,yaw:Math.PI/2,hy:0,hp:0,used:true},time,0,1.2,4,0.016);
     else{
       player.walk=time*7;player.spd=stride;player.rpitch=Math.sin(time*2.0)*0.17;
@@ -10360,6 +10462,7 @@ function startArchive(kind,id,data){
   }]]);
 }
 function previewMobEncounter(data){
+  if(F.archive){const z=F.archive.aisle;return {...data,pose:[9.5,z,0,0],mob:[11,z]}}
   for(let ty=1;ty<F.H-1;ty++)for(let tx=1;tx<F.W-1;tx++){
     if(!glOpen(tx,ty)||glTrapAt(tx,ty)||Math.hypot(F.exit.x-tx-0.5,F.exit.z-ty-0.5)<2)continue;
     for(const [dx,dz] of DIRS){
@@ -10378,7 +10481,14 @@ function restoreEncounter(data){
   F.blk=data.blackout||0;
   F.shades=[];
   const [x,z,yaw,pitch]=data.pose;
-  if(!blocked(x,z)){Object.assign(P,{x,z,yaw,pitch});onTileChange()}
+  if(!blocked(x,z)){
+    Object.assign(P,{x,z,yaw,pitch});
+    if(F.archive){
+      P.y=archiveGround(F.archive,x,z,data.y||0);
+      P.crouched=!!data.crouched;P.crouchBlend=Number(P.crouched);
+    }
+    onTileChange();
+  }
   P.inSafe=F.safeMask[P.ty*F.W+P.tx]===1;
 }
 function replayMob(id,data){
@@ -10391,7 +10501,7 @@ function replayMob(id,data){
     const i=F.npcs.findIndex(q=>q.type==='lurk');
     if(i>=0)F.npcs[i]=n;else F.npcs.push(n);
   }else{
-    F.shades.push({type:Number(id),x,z,gx,gy,px:-1,py:-1,state:0,stun:0,think:0,vis:false,
+    F.shades.push({type:id==='librarian'?LIBRARIAN:Number(id),x,z,gx,gy,px:-1,py:-1,state:0,stun:0,think:0,vis:false,
       frozen:false,ph:0,d:99,snd:0,hid:0,seen:0,life:16});
   }
 }
