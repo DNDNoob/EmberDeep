@@ -33,6 +33,7 @@ import {isBunkPosition} from './bunk-room.js';
 import {createSettingsScreen,createTerminalSession} from './shared-terminal.js';
 import {landingMazeZ,liftEye,liftGateTime,liftMouthLamp,liftCabinLamps,mountLiftDock,dockPosition,inDockAnnex} from './lift-dock.js';
 import {NEWS} from './news.js';
+import {findSanctuaryEntrance,attachSanctuary,createSanctuaryDisplay,SANCTUARY_HEIGHT} from './sanctuary.js';
 import {floorDiorama,lenticularDoor} from './archive-hall.js';
 import {GLITCH_ARCHIVE} from './glitch-catalog.js';
 import {wheelModel,planSpin,spinAngle,pegPush,sliceAt,pickSlice,WOF_SLICES,WOF_N,WOF_W} from './wheel.js';
@@ -316,7 +317,7 @@ function genFloor(seedStr,depth,look){
     if((!l&&!r&&u&&dn)||(l&&r&&!u&&!dn))corr.push([x,y]);
   }
   // one locked gate that seals off part of the floor; its key is always on the near side
-  let door=null;
+  let door=null,sanctuaryEntrance;
   if(kind!=='cave'&&kind!=='back'&&!BA&&depth>=2){
     let total=0;for(let i=0;i<W*H;i++)if(!g[i])total++;
     for(const c of shuffle(corr.slice())){
@@ -327,6 +328,10 @@ function genFloor(seedStr,depth,look){
       const behind=total-1-reach;
       const ki=(!safe||f[idx(safe.tx-1,safe.ty)]>=0)&&behind>=total*0.08&&behind<=total*0.5?pool.findIndex(q=>f[idx(q[0],q[1])]>5):-1;
       if(ki<0){g[di]=0;continue}
+      if(safe){
+        sanctuaryEntrance=findSanctuaryEntrance(g,W,H,safe,f);
+        if(!sanctuaryEntrance){g[di]=0;continue}
+      }
       put('key',pool.splice(ki,1)[0]);
       door={tx:c[0],ty:c[1],ax:g[idx(c[0]-1,c[1])]!==1?0:1};
       // a little reward waiting behind the gate
@@ -335,12 +340,14 @@ function genFloor(seedStr,depth,look){
       break;
     }
   }
+  if(safe&&!sanctuaryEntrance)sanctuaryEntrance=findSanctuaryEntrance(g,W,H,safe,d0);
+  const sanctuaryApproach=(x,y)=>sanctuaryEntrance&&x===sanctuaryEntrance.x&&y>sanctuaryEntrance.z;
   // friendly faces: the Keeper tends every sanctuary, and a wanderer sometimes waits in the maze
   const npcs=[];
   if(safe)npcs.push({type:'keeper',x:safe.x+0.62,z:safe.z+0.62,ph:rng()*6.28,used:false});
   // the Wheel of Misfortune stands in a sanctuary corner with no passage beside it (away from the Keeper when it can), Pat Sajak at its side.
   // Placed without drawing from rng so the rest of the floor is the same as before.
-  if(safe){
+  if(safe&&!sanctuaryEntrance){
     const closed=(cx,cz)=>g[idx(safe.tx+2*cx,safe.ty+cz)]===1&&g[idx(safe.tx+cx,safe.ty+2*cz)]===1;
     const c=[[-1,-1],[1,-1],[-1,1]].find(q=>closed(q[0],q[1]))||[-1,-1];
     const wx=safe.x+c[0]*1.1,wz=safe.z+c[1]*1.1,nx=-c[0]*Math.SQRT1_2,nz=-c[1]*Math.SQRT1_2;   // n: the way the wheel faces (into the room)
@@ -406,6 +413,7 @@ function genFloor(seedStr,depth,look){
     const want=(rng()<0.4?1:0)+(depth>=6&&rng()<0.3?1:0);
     for(let n=0;n<want&&n<pc.length;n++){
       const c=pc[n],i=idx(c[0],c[1]);
+      if(sanctuaryApproach(c[0],c[1])||sanctuaryApproach(c[0]-1,c[1])||sanctuaryApproach(c[0]+1,c[1]))continue;
       if(pockets.some(q=>Math.abs(q.tx-c[0])+Math.abs(q.ty-c[1])<4))continue;
       g[i]=0;pocketMask[i]=1;
       phantoms.push({tx:c[0],ty:c[1],dx:c[2],dz:c[3]});pockets.push({tx:c[0],ty:c[1],x:c[0]+0.5,z:c[1]+0.5,found:false});
@@ -461,6 +469,7 @@ function genFloor(seedStr,depth,look){
       if(door&&Math.abs(x-door.tx)+Math.abs(y-door.ty)<=1)continue;
       for(const d of DIRS){
         if(g[idx(x+d[0],y+d[1])]!==1)continue;
+        if(sanctuaryApproach(x+d[0],y+d[1]))continue;
         const px=x+0.5+d[0]*0.5,pz=y+0.5+d[1]*0.5;
         if(sconces.some(q=>Math.hypot(q.x-px,q.z-pz)<0.85)||props.some(q=>Math.hypot(q.x-px,q.z-pz)<0.66))continue;
         dc.push([x,y,d[0],d[1],px,pz]);
@@ -507,13 +516,19 @@ function genFloor(seedStr,depth,look){
   fizzPlace(seedStr,depth,g,W,H,safeMask,pocketMask,d0,shades,kind);
   if(BA)bossSpawn(BA,W,H,shades);
   grannyPlace(seedStr,depth,g,W,H,safeMask,pocketMask,d0,shades,kind);   // Granny, about one floor in twenty   // the Fizzler, about one floor in ten
-  // Pat joins after props and items are placed, so he changes nothing else about the floor
-  if(safe&&safe.wheel)npcs.push({type:'pat',x:safe.wheel.pat[0],z:safe.wheel.pat[1],ph:(safe.tx*7.31+safe.ty*3.7)%6.28,used:true});
-  potPlaceBrewer(safe,npcs);smithPlace(safe,npcs);
-  return {W,H,g,cw,ch,kind:forest?'forest':kind==='forest'?'maze':kind,dark:kind==='dark',back:kind==='back',base:B.base,variant,litter,stone,wet:clamp(B.wet*variant.wetK,0,1),fogK:variant.fogK,ambK:variant.ambK,ambT:variant.ambT,torchT:variant.torch,tex:{v:variant.tex,seed:variant.seed,tint:variant.tint},panels,panelAt,pocketMask,phantoms,pockets,blk:0,boT:22+rng()*25,props,discs,safe,safeMask,npcs,reveal:false,door,sdoors,traps,pillars,sconces,rubble,frames:[],start:{tx:stx,ty:sty,yaw},exit:{tx:ex,ty:ey,x:ex+0.5,z:ey+0.5},items,shades,
+  const floor={W,H,g,cw,ch,kind:forest?'forest':kind==='forest'?'maze':kind,dark:kind==='dark',back:kind==='back',base:B.base,variant,litter,stone,wet:clamp(B.wet*variant.wetK,0,1),fogK:variant.fogK,ambK:variant.ambK,ambT:variant.ambT,torchT:variant.torch,tex:{v:variant.tex,seed:variant.seed,tint:variant.tint},panels,panelAt,pocketMask,phantoms,pockets,blk:0,boT:22+rng()*25,props,discs,safe,safeMask,npcs,reveal:false,door,sdoors,traps,pillars,sconces,rubble,frames:[],start:{tx:stx,ty:sty,yaw},exit:{tx:ex,ty:ey,x:ex+0.5,z:ey+0.5},items,shades,
           seen:new Uint8Array(W*H),dist:d0,bi,biome:B,...(forest?{forest:true,fo:{seed:seedStr,depth}}:{}),
           ...(BA?{boss:BA,music:'silent'}:{}),   // no floor music in an arena: the fight brings its own
           name:BA?BOSSES[BA.i].arena:kind==='cave'?'The Hollow':kind==='dark'?'The Black Hush':BIOMES[bi].name};
+  if(sanctuaryEntrance){
+    attachSanctuary(floor,sanctuaryEntrance);
+    floor.dist=bfs(floor.g,W,floor.H,stx,sty);
+  }
+  // The residents join after the rest of the floor has been placed.
+  if(safe?.wheel)npcs.push({type:'pat',x:safe.wheel.pat[0],z:safe.wheel.pat[1],ph:(safe.tx*7.31+safe.ty*3.7)%6.28,used:true,
+    yaw:Math.atan2(safe.wheel.nz,safe.wheel.nx)});
+  potPlaceBrewer(safe,npcs);smithPlace(safe,npcs);
+  return floor;
 }
 function trapExt(tr,time){const t=(time+tr.ph)%2.8;return t<0.12?t/0.12:t<1.0?1:t<1.2?1-(t-1)/0.2:0}
 
@@ -901,25 +916,35 @@ const SURFS=makeSurfaces(renderer,Q>=2?1024:Q>=1?512:256,NORMALMAP), spriteTex=m
 /* ---------- world mesh ---------- */
 let worldMesh=null,forestGrp=null;
 const FOREST=createForest({UT,Q,shadows:SHADOWS>0});
+const sanctuaryDisplay=createSanctuaryDisplay();
+sanctuaryDisplay.group.visible=false;
+scene.add(sanctuaryDisplay.group);
 function buildMesh(F,preview=false){
   const v=[],{W,H,g}=F,Y=WALL_H;
   if(F.start&&!F.lift&&!archiveRun)F.lift=mountLiftDock(F,bfs(g,W,H,F.start.tx,F.start.ty));
   const dock=F.lift;
   const quad=(p,n,uv,layer)=>{for(const i of[0,1,2,0,2,3])v.push(p[i][0],p[i][1],p[i][2],n[0],n[1],n[2],uv[i][0],uv[i][1],layer)};
   const wall=(x,y)=>x<0||y<0||x>=W||y>=H?!(dock&&x===dock.tx-dock.fx&&y===dock.tz-dock.fz):g[y*W+x]===1;
-  const fr=F.forest;
+  const fr=F.forest,room=F.safe?.room;
   for(let y=0;y<H;y++)for(let x=0;x<W;x++){
     if(g[y*W+x]===1)continue;
+    const indoor=room&&F.safeMask[y*W+x];
+    const tall=indoor&&y>=room.front;
+    const top=tall?SANCTUARY_HEIGHT:Y;
     const pk=F.pocketMask[y*W+x]?10:0;
     const fu=[[x/2,y/2],[(x+1)/2,y/2],[(x+1)/2,(y+1)/2],[x/2,(y+1)/2]];
     quad([[x,0,y],[x+1,0,y],[x+1,0,y+1],[x,0,y+1]],[0,1,0],fu,1+pk);
     // a forest has no ceiling at all, only black sky (the noclip pockets keep theirs); its walls are the undergrowth cores built below
-    if(!fr||pk)quad([[x,Y,y],[x+1,Y,y],[x+1,Y,y+1],[x,Y,y+1]],[0,-1,0],fu,(pk?4:F.panelAt[y*W+x]===2?6:F.panelAt[y*W+x]?4:2)+pk);
-    if(fr&&!pk)continue;
-    if(wall(x+1,y))quad([[x+1,0,y],[x+1,0,y+1],[x+1,Y,y+1],[x+1,Y,y]],[-1,0,0],[[y,1],[y+1,1],[y+1,0],[y,0]],pk);
-    if(wall(x-1,y))quad([[x,0,y],[x,0,y+1],[x,Y,y+1],[x,Y,y]],[1,0,0],[[y,1],[y+1,1],[y+1,0],[y,0]],pk);
-    if(wall(x,y+1))quad([[x,0,y+1],[x+1,0,y+1],[x+1,Y,y+1],[x,Y,y+1]],[0,0,-1],[[x,1],[x+1,1],[x+1,0],[x,0]],pk);
-    if(wall(x,y-1))quad([[x,0,y],[x+1,0,y],[x+1,Y,y],[x,Y,y]],[0,0,1],[[x,1],[x+1,1],[x+1,0],[x,0]],pk);
+    if(!fr||pk||indoor)quad([[x,top,y],[x+1,top,y],[x+1,top,y+1],[x,top,y+1]],[0,-1,0],fu,(pk?4:F.panelAt[y*W+x]===2?6:F.panelAt[y*W+x]?4:2)+pk);
+    if(fr&&!pk&&!indoor)continue;
+    const uvTop=1-top/Y;
+    if(wall(x+1,y))quad([[x+1,0,y],[x+1,0,y+1],[x+1,top,y+1],[x+1,top,y]],[-1,0,0],[[y,1],[y+1,1],[y+1,uvTop],[y,uvTop]],pk);
+    if(wall(x-1,y))quad([[x,0,y],[x,0,y+1],[x,top,y+1],[x,top,y]],[1,0,0],[[y,1],[y+1,1],[y+1,uvTop],[y,uvTop]],pk);
+    if(wall(x,y+1))quad([[x,0,y+1],[x+1,0,y+1],[x+1,top,y+1],[x,top,y+1]],[0,0,-1],[[x,1],[x+1,1],[x+1,uvTop],[x,uvTop]],pk);
+    if(wall(x,y-1)||tall&&y===room.front){
+      const bottom=wall(x,y-1)?0:Y;
+      quad([[x,bottom,y],[x+1,bottom,y],[x+1,top,y],[x,top,y]],[0,0,1],[[x,1-bottom/Y],[x+1,1-bottom/Y],[x+1,uvTop],[x,uvTop]],pk);
+    }
   }
   if(fr){
     // occluding undergrowth core: each wall face sits INSET into its tile, with floor laid under the gap, and runs on past its tile edge at inside corners
@@ -1996,6 +2021,32 @@ function buildStatic(F){
   const I=(x,z,yaw)=>({p:[x,0,z],R:rYaw(yaw||0),lo:[x*0.61,0,z*0.61]});
   if(!F.forest)for(const q of F.pillars)emit(mesh6('pillar'),I(q[0],q[1]),ZERO3,[1,1,1],st);
   if(F.safe){const f=I(F.safe.x,F.safe.z);emit(mesh6('pillar'),f,ZERO3,[1.15,0.3,1.15],st);emit(mesh6('bowl'),f,[0,0.375,0],[1,1,1],iron)}
+  const room=F.safe?.room;
+  if(room){
+    const wood=[0.29,0.16,0.082,6], edge=[0.46,0.27,0.12,6], brass=[0.54,0.32,0.13,4];
+    for(const booth of room.booths){
+      const f=I(booth.x,booth.z,-booth.yaw);
+      const cloth=booth.type==='brewer'?[0.05,0.26,0.17,2]:booth.type==='smith'?[0.37,0.11,0.055,2]:[0.24,0.065,0.29,2];
+      for(const side of [-1,1]){
+        slab(f,[side*0.82,0.73,0.57],[0.10,1.46,0.10],wood);
+        slab(f,[side*0.82,0.73,-0.57],[0.10,1.46,0.10],wood);
+        slab(f,[side*0.82,0.25,0],[0.065,0.45,1.15],wood);
+        slab(f,[side*0.82,0.06,0.57],[0.15,0.12,0.15],brass);
+      }
+      for(let i=-4;i<=4;i++)slab(f,[i*0.18,1.02,-0.59],[0.177,0.96,0.06],wood);
+      slab(f,[0,1.54,0],[1.86,0.09,1.28],wood);
+      slab(f,[0,1.44,0.57],[1.77,0.23,0.10],cloth);
+      slab(f,[0,1.31,0.575],[1.77,0.035,0.10],edge);
+      slab(f,[-0.57,0.31,0.45],[0.50,0.59,0.27],wood);
+      slab(f,[-0.57,0.62,0.45],[0.53,0.065,0.32],edge);
+    }
+    const frame=I(room.mapX,room.back);
+    slab(frame,[0,1.15,-0.05],[2.76,1.69,0.09],wood);
+    for(const side of [-1,1]){
+      slab(frame,[side*1.325,1.15,-0.105],[0.075,1.65,0.035],brass);
+      slab(frame,[0,1.15+side*0.79,-0.105],[2.65,0.065,0.035],brass);
+    }
+  }
   for(const r of F.rubble.concat(F.litter||[]))emit(mesh6('octa'),I(r.x,r.z,r.r),[0,r.s*r.sy*0.6,0],[r.s*1.4,r.s*r.sy,r.s],dk);
   for(const q of F.sconces){const f=I(q.x,q.z);
     if(F.forest){ // an old iron lantern hung from a leaning wooden post
@@ -3834,11 +3885,14 @@ function potSeedIngredients(seedStr,depth,g,W,H,safeMask,pocketMask,items,skip,d
 // the Brewer and his cauldron stand in the sanctuary corner beside the Keeper that the wheel did not take
 function potPlaceBrewer(safe,npcs){
   if(!safe)return;
+  const booth=safe.room?.booths.find(b=>b.type==='brewer');
   const wc=safe.wheel?[Math.sign(safe.wheel.x-safe.x),Math.sign(safe.wheel.z-safe.z)]:[-1,-1];
   const c=[[1,-1],[-1,1]].find(q=>!(q[0]===wc[0]&&q[1]===wc[1]))||[1,-1];
-  const bx=safe.x+c[0]*1.0,bz=safe.z+c[1]*0.6,cx=safe.x+c[0]*1.0,cz=safe.z+c[1]*1.05;
+  const bx=booth?.x??safe.x+c[0]*1.0,bz=booth?.z??safe.z+c[1]*0.6;
+  const cx=booth?bx+0.43:safe.x+c[0]*1.0,cz=booth?bz:safe.z+c[1]*1.05;
   safe.brew={x:bx,z:bz,cx,cz,disc:[cx,cz,0.19]};
-  npcs.push({type:'brewer',x:bx,z:bz,ph:(safe.tx*3.17+safe.ty*5.3)%6.28,used:true,lock:true,yaw:Math.atan2(safe.z-bz,safe.x-bx)});
+  npcs.push({type:'brewer',x:bx,z:bz,ph:(safe.tx*3.17+safe.ty*5.3)%6.28,used:true,lock:true,
+    yaw:booth?Math.atan2(booth.nz,booth.nx):Math.atan2(safe.z-bz,safe.x-bx)});
 }
 function potCollide(){
   const b=F.safe&&F.safe.brew;if(!b)return;const q=b.disc,dx=P.x-q[0],dz=P.z-q[1],d=Math.hypot(dx,dz),m=q[2]+PR;
@@ -4517,11 +4571,14 @@ function wDraw(t,ex,ez,rx,rz){
 // ---- the Blacksmith: a burly, bald smith in a leather apron, striking a glowing bar on his anvil
 function smithPlace(safe,npcs){
   if(!safe)return;
+  const booth=safe.room?.booths.find(b=>b.type==='smith');
   const used=[[1,1]];if(safe.wheel)used.push([Math.sign(safe.wheel.x-safe.x),Math.sign(safe.wheel.z-safe.z)]);if(safe.brew)used.push([Math.sign(safe.brew.cx-safe.x),Math.sign(safe.brew.cz-safe.z)]);
-  const c=[[-1,-1],[1,-1],[-1,1]].find(q=>!used.some(u=>u[0]===q[0]&&u[1]===q[1]));if(!c)return;
-  const bx=safe.x+c[0]*0.58,bz=safe.z+c[1]*1.0,ax=safe.x+c[0]*1.03,az=safe.z+c[1]*1.0;
+  const c=[[-1,-1],[1,-1],[-1,1]].find(q=>!used.some(u=>u[0]===q[0]&&u[1]===q[1]));if(!booth&&!c)return;
+  const bx=booth?.x??safe.x+c[0]*0.58,bz=booth?.z??safe.z+c[1]*1.0;
+  const ax=booth?bx-0.45:safe.x+c[0]*1.03,az=booth?bz:safe.z+c[1]*1.0;
   safe.smith={x:bx,z:bz,ax,az,disc:[ax,az,0.18]};
-  npcs.push({type:'smith',x:bx,z:bz,ph:(safe.tx*5.13+safe.ty*2.9)%6.28,used:true,lock:true,yaw:Math.atan2(safe.z-bz,safe.x-bx)});
+  npcs.push({type:'smith',x:bx,z:bz,ph:(safe.tx*5.13+safe.ty*2.9)%6.28,used:true,lock:true,
+    yaw:booth?Math.atan2(booth.nz,booth.nx):Math.atan2(safe.z-bz,safe.x-bx)});
 }
 function smithCollide(){
   const b=F.safe&&F.safe.smith;if(!b)return;const q=b.disc,dx=P.x-q[0],dz=P.z-q[1],d=Math.hypot(dx,dz),m=q[2]+PR;
@@ -6459,6 +6516,7 @@ function pkWhy(tx,ty){
   if(!F||!Number.isInteger(tx)||!Number.isInteger(ty))return 'bad';
   const W=F.W,H=F.H;
   if(tx<1||ty<1||tx>W-2||ty>H-2)return 'border';
+  if(F.mazeH&&ty>=F.mazeH-1)return 'kept';
   if(F.g[ty*W+tx]!==1)return 'notwall';
   const near=(x,y,r)=>Math.abs(x-tx)<=r&&Math.abs(y-ty)<=r;
   for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){const i=(ty+dy)*W+tx+dx;if(F.safeMask[i]||F.pocketMask[i])return 'kept'}
@@ -6799,6 +6857,7 @@ function mpRecv(m,from){
     case 'p':{
       const a=m.a;if(!Array.isArray(a))return;
       p.hub=null;
+      p.positionAt=performance.now();
       p.d=m.d;p.x=+a[0];p.z=+a[1];p.y=+a[2];p.yaw=+a[3];p.pitch=+a[4];p.fu=+a[5];p.down=!!(a[6]&1);p.safe=!!(a[6]&2);p.run=!!(a[6]&4);p.away=!!(a[6]&8);p.mounted=!!(a[6]&16);p.unseen=!!(a[6]&32);p.hp=a[7];p.form=a[6]>>6&3;p.fat=!!(a[6]&256);p.pox=!!(a[6]&512);p.frz=!!(a[6]&1024);p.bob=!!(a[6]&2048);p.hedge=!!(a[6]&4096);p.curl=a[6]&8192?1:a[6]&16384?2:0;p.mirror=!!(a[6]&32768);p.pf=a[8]|0;
       if(p.rx===undefined||p.rd!==p.d||Math.hypot(p.x-p.rx,p.z-p.rz)>3){p.rx=p.x;p.rz=p.z;p.ry=p.y;p.ryaw=p.yaw;p.rpitch=p.pitch;p.rd=p.d}
       break;}
@@ -6966,6 +7025,22 @@ function mpCycle(){const L=mpAlive();if(L.length<2)return;const i=L.findIndex(p=
 const mpPosFlags=()=>(P.down?1:0)|(P.inSafe||P.away||FX.frozen?2:0)|4|(P.away?8:0)|(P.mounted?16:0)|(P.unseen?32:0)|((wofForm()<4?wofForm():0)<<6)|(FX.fat>0?256:0)|(FX.pox>0?512:0)|(FX.frozen?1024:0)|(FX.bob>0?2048:0)|(FX.hedge>0?4096:0)|(FX.curl===1?8192:FX.curl===2?16384:0)|(R.mirror?32768:0);
 const mpFresh=p=>performance.now()-(p.seen||0)<15000;
 const mpShown=p=>MP.on&&p.run&&!p.away&&!p.unseen&&p.d===R.depth&&p.rx!==undefined&&state!=='title'&&mpFresh(p);
+function sanctuaryPeers(floor){
+  const now=performance.now(),room=floor.safe.room;
+  const inMaze=(x,z)=>{
+    if(!Number.isFinite(x)||!Number.isFinite(z)||x<0||z<0||x>=floor.W||z>=floor.mazeH)return false;
+    const i=Math.floor(z)*floor.W+Math.floor(x);
+    return floor.g[i]!==1&&!floor.pocketMask[i]&&
+      !(Math.floor(x)===room.entrance.x&&z>=room.entrance.z+1);
+  };
+  const peers=[];
+  for(const p of MP.peers.values()){
+    if(!mpShown(p)||now-p.positionAt>=15000||!inMaze(p.x,p.z))continue;
+    const smooth=inMaze(p.rx,p.rz);
+    peers.push({name:p.name,hex:p.hex,down:p.down,x:smooth?p.rx:p.x,z:smooth?p.rz:p.z});
+  }
+  return peers;
+}
 function sendHubPresence(to){
   const {x,y,z,yaw,station,ride,ready}=hub.presence;
   mpSend({k:'hub',a:[r3(x),r3(y),r3(z),r3(wrapA(yaw))],station,ride,ready,deepest},to);
@@ -8808,6 +8883,7 @@ function render(t){
   const yaw=SC?SC.yaw:P.yaw, pitch=SC?SC.pitch:title?0:P.pitch;
   const riding=P.mounted&&!P.down&&!P.away;
   const ex=SC?SC.x:P.x, ez=SC?SC.z:P.z, ey=SC?SC.y:Math.min(CAM_TOP,EYE*(title?1:wofEye()*potEye())+(title?0:P.y+bobY(P,1)+(riding?.16:0)));
+  sanctuaryDisplay.update(F,R.depth,!title&&!STUDIO,ex,ez,t,sanctuaryPeers);
   {const cp=Math.cos(pitch);camera.position.set(ex,ey,ez);camera.lookAt(ex+cp*Math.cos(yaw),ey+Math.sin(pitch),ez+cp*Math.sin(yaw))}
   if(FX.flyT>0&&!title){const k=Math.min(1,FX.flyT/1.2);camera.rotateZ(Math.sin(t*FX.spin)*0.5*k);camera.rotateX(Math.cos(t*FX.spin*0.7)*0.25*k)}   // tumbling through the air
   if(FX.bob>0&&!title){camera.rotateZ(Math.sin(t*2.3)*0.06);camera.rotateX(Math.sin(t*1.7)*0.03)}
@@ -8868,6 +8944,9 @@ function render(t){
   if(F.safe){const d=(F.safe.x-ex)**2+(F.safe.z-ez)**2;if(d<400){
     const fl=1+Math.sin(t*8.3)*0.08+Math.sin(t*19.1)*0.05;F.safe.fl=fl;
     lights.push([d-30,F.safe.x,0.85,F.safe.z,[1.0,0.56,0.2],2.3*fl,7.5,'safe'])}}
+  const room=F.safe?.room;
+  if(room&&Math.hypot(room.mapX-ex,room.back-ez)<12)
+    lights.push([-3,room.mapX,1.7,room.back-0.52,[0.52,0.87,0.79],0.95,4.8]);
   for(const n of F.npcs){if(n.type==='keeper')continue;const d=(n.x-ex)**2+(n.z-ez)**2;if(d<140)lights.push([d-3,n.x,n.type==='delver'?0.5:0.95,n.z,[1.0,0.85,0.6],0.75,2.8])}
   if(GD.have&&guideOn()&&!title){const gd=(GD.x-ex)**2+(GD.z-ez)**2;lights.push([gd-10,GD.x,0.65,GD.z,[1.0,0.93,0.8],1.9,6.5])}
   bossLights(lights,ex,ez);mpLights(lights,ex,ez,B);

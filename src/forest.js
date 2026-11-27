@@ -18,7 +18,8 @@ const mulc=(a,k)=>[a[0]*k,a[1]*k,a[2]*k];
 // that neighbouring faces meet exactly at inside corners and outside corners, leaving no gap to see through.
 export function coreFaces(F){
   const {W,H,g,pocketMask}=F,out=[];
-  const op=(x,y)=>x>=0&&y>=0&&x<W&&y<H&&g[y*W+x]!==1&&!pocketMask[y*W+x];
+  const op=(x,y)=>x>=0&&y>=0&&x<W&&y<H&&g[y*W+x]!==1&&!pocketMask[y*W+x]&&
+    !(F.mazeH&&F.safeMask[y*W+x]);
   for(let ty=0;ty<H;ty++)for(let tx=0;tx<W;tx++){
     if(g[ty*W+tx]!==1)continue;
     for(const [dx,dz] of DIRS){
