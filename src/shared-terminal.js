@@ -6,6 +6,7 @@ const fields={
   brightness:{event:'input',label:'Brightness',read:v=>number(v,0.6,3)},
   qSel:{event:'change',label:'Graphics',read:v=>['auto','high','medium','low'].includes(v)?v:undefined},
   gtx:{event:'change',label:'Dedicated graphics',read:v=>typeof v==='boolean'?v:undefined},
+  toggleSprint:{event:'change',label:'Toggle sprint',read:v=>typeof v==='boolean'?v:undefined},
   voice:{event:'change',label:'Voice chat',read:v=>['off','ptt','open'].includes(v)?v:undefined},
   music:{event:'input',label:'Music volume',read:v=>number(v,0,100)},
   sfx:{event:'input',label:'Effects volume',read:v=>number(v,0,100)},
@@ -83,7 +84,7 @@ export function createTerminalSession({canReach,publish,apply,read,playerId,play
 }
 
 export function createSettingsScreen(board,{select,close,enabled}){
-  const selectors={nameIn:'#nameIn',seedIn:'#seedIn',startSel:'#startSel',sens:'#sens',brightness:'.brightS',qSel:'#qSel',gtx:'#gtx',voice:'.voiceSel',music:'.volSl[data-bus=music]',sfx:'.volSl[data-bus=sfx]',ambience:'.volSl[data-bus=ambience]',voices:'.volSl[data-bus=voices]',mic:'.volSl[data-bus=mic]',prox:'.proxChk'};
+  const selectors={nameIn:'#nameIn',seedIn:'#seedIn',startSel:'#startSel',sens:'#sens',brightness:'.brightS',qSel:'#qSel',gtx:'#gtx',toggleSprint:'.toggleSprint',voice:'.voiceSel',music:'.volSl[data-bus=music]',sfx:'.volSl[data-bus=sfx]',ambience:'.volSl[data-bus=ambience]',voices:'.volSl[data-bus=voices]',mic:'.volSl[data-bus=mic]',prox:'.proxChk'};
   const source=Object.fromEntries(Object.entries(selectors).map(([key,selector])=>[key,board.querySelector(selector)]));
   const screen=board.cloneNode(true);
   const display=document.createElement('canvas');
@@ -134,6 +135,7 @@ export function createSettingsScreen(board,{select,close,enabled}){
       seedIn:values.seedIn||'Random',startSel:'Depth '+values.startSel,
       sens:values.sens+'×',brightness:Math.round(+values.brightness/1.3*100)+'%',
       qSel:graphics[values.qSel],gtx:values.gtx?'On':'Off',
+      toggleSprint:values.toggleSprint?'On':'Off',
     };
     Object.keys(text).forEach((key,i)=>{
       const x=42+i%2*418,y=176+Math.floor(i/2)*81;

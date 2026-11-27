@@ -6044,7 +6044,7 @@ function roomControl(action){return roomControlLabel(action,roomInputDevice())}
 function roomInput(){
   const mode=state==='room'?ROOMS.controlMode():'walk',table=mode==='table',choice=mode==='choice';
   const ax=(a,b)=>(a?1:0)-(b?1:0);
-  const actions=roomActions(keys,pad.roomButtons,{mode,mouse:mouseL,touchPress:touch.act,touchJump:touch.jump});
+  const actions=roomActions(keys,pad.roomButtons,{mode,mouse:mouseL,touchPress:touch.act,touchJump:touch.jump,keyboardSprint:keyboardSprint()});
   return {...actions,
     mx:clamp(ax(keys.KeyD,keys.KeyA)+pad.mx+touch.mx,-1,1),
     my:clamp(ax(keys.KeyS||keys.ArrowDown&&!choice&&!table,keys.KeyW||keys.ArrowUp&&!choice&&!table)+pad.my+touch.my,-1,1),
@@ -6056,6 +6056,17 @@ function roomInput(){
 let doorMsgT=0, tipTimers=[];
 let mapBig=false, usingLock=false, pausedAt=0, flashT=0, sealMsgT=0, lowFuelSaid=false, pingT=0, beatT=0;
 let sens=store.get('sens',1);
+let toggleSprint=store.get('toggleSprint',false)===true,sprintLatched=false;
+const keyboardSprint=()=>toggleSprint?sprintLatched:!!(keys.ShiftLeft||keys.ShiftRight);
+const sprintSettings=document.querySelectorAll('.toggleSprint');
+for(const el of sprintSettings){
+  el.checked=toggleSprint;
+  el.addEventListener('change',()=>{
+    toggleSprint=el.checked;sprintLatched=false;
+    store.set('toggleSprint',toggleSprint);
+    for(const setting of sprintSettings)setting.checked=toggleSprint;
+  });
+}
 $('sens').value=sens;
 $('sens').addEventListener('input',e=>{sens=+e.target.value;store.set('sens',sens);document.querySelectorAll('.sensP').forEach(o=>o.value=sens)});
 document.querySelectorAll('.sensP').forEach(el=>{el.value=sens;el.addEventListener('input',()=>{sens=+el.value;store.set('sens',sens);$('sens').value=sens;document.querySelectorAll('.sensP').forEach(o=>o.value=sens)})});
@@ -6229,6 +6240,7 @@ function startFromMenu(seed,depth){
   if(!loading)startRun(seed,depth,false,true);
 }
 function enterRun(seed,sd,floor,landing,liftTrip){
+  sprintLatched=false;
   liftVisits.clear();liftResume=liftJourney=false;
   if(seed===autoSeed&&!$('seedIn').value.trim()){autoSeed=randSeed();reWarm=true}
   liftCacheClear(!!landing);
@@ -6263,6 +6275,7 @@ function showTips(){
   t.forEach((msg,i)=>tipTimers.push(setTimeout(()=>{if(state==='play'&&R.depth===d)say(msg,4)},4200+i*4600)));
 }
 function toTitle(){
+  sprintLatched=false;
   bossReset();
   if(archiveRun){finishArchive();return}
   if(loading)closeLoading();
@@ -6286,6 +6299,7 @@ function showBest(){
 function pause(){
   if(state!=='play')return;
   if(activeStation==='lift')closeStation();
+  sprintLatched=false;
   state='pause';pausedAt=performance.now();mpPausePanel();
   $('pause').classList.remove('hidden');
 }
@@ -6297,7 +6311,7 @@ function resume(withLock){
 }
 /* ---------- Esc in the lobby / a door room: a small box, or the pause panel with settings. Only this player's input is held. ---------- */
 let lobbyPaused=false,roomPaused=false;
-function freeInput(){for(const k in keys)keys[k]=false;mouseL=false}
+function freeInput(){for(const k in keys)keys[k]=false;mouseL=false;sprintLatched=false}
 function lobbyPauseShow(){
   if(lobbyPaused||state!=='title'||activeStation||loading||touch.on||archiveRun)return;
   lobbyPaused=true;pausedAt=performance.now();freeInput();
@@ -7486,6 +7500,7 @@ addEventListener('keydown',e=>{
   if(['Tab','Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
   if(roomMode==='table'&&['Backspace','Enter','NumpadEnter','Escape'].includes(e.code))e.preventDefault();
   if(e.repeat)return;
+  if(toggleSprint&&!activeStation&&['title','play','room'].includes(state)&&(e.code==='ShiftLeft'||e.code==='ShiftRight'))sprintLatched=!sprintLatched;
   keys[e.code]=true;
   initAudio();
   if(e.code==='KeyF'){if(document.fullscreenElement)document.exitFullscreen();else document.documentElement.requestFullscreen().catch(()=>{})}
@@ -7531,8 +7546,8 @@ addEventListener('keydown',e=>{
 });
 addEventListener('keyup',e=>{keys[e.code]=false});
 const lobbyHadLock=()=>state==='title'&&(usingLock||!!document.pointerLockElement);
-addEventListener('blur',()=>{const lobby=lobbyHadLock();for(const k in keys)keys[k]=false;mouseL=false;pause();if(lobby)lobbyPauseShow()});
-document.addEventListener('visibilitychange',()=>{if(document.hidden){const lobby=lobbyHadLock();pause();if(lobby)lobbyPauseShow()}});
+addEventListener('blur',()=>{const lobby=lobbyHadLock();freeInput();pause();if(lobby)lobbyPauseShow()});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){const lobby=lobbyHadLock();sprintLatched=false;pause();if(lobby)lobbyPauseShow()}});
 document.addEventListener('mousemove',e=>{
   const drag=(state==='title'||state==='room')&&(e.buttons&2);
   if(loading||lobbyPaused||roomPaused||!['title','play','room'].includes(state)||(!drag&&document.pointerLockElement!==canvas))return;
@@ -7946,7 +7961,7 @@ function update(dt){
   const fury=ctl&&ps('fury');if(fury&&Math.abs(fwd)<0.2&&Math.abs(str)<0.2)fwd=1;   // Fury Brew: you cannot stop running
   const J0=MOVE.jumpV,G0=MOVE.gravity,pvx=P.vx,pvz=P.vz;MOVE.jumpV=J0*potJump();MOVE.gravity=G0*potGrav();
   const ev=stepMove(P,dt,{fwd,str,fx:Math.cos(P.yaw),fz:Math.sin(P.yaw),ctl,
-    jump:FX.fat<=0&&potJump()>0&&(keys.Space||pad.jump||touch.jump),sprint:fury||keys.ShiftLeft||keys.ShiftRight||pad.sprint||Math.hypot(touch.mx,touch.my)>0.94},
+    jump:FX.fat<=0&&potJump()>0&&(keys.Space||pad.jump||touch.jump),sprint:fury||keyboardSprint()||pad.sprint||Math.hypot(touch.mx,touch.my)>0.94},
     {scale:1,speedMul:moveMul()*(P.mounted?1.25:1),lungs:up.lungs|0,blocked:ps('phase')?potPhase:blocked});
   MOVE.jumpV=J0;MOVE.gravity=G0;
   if(P.y>0.62&&(potGrav()<1||potJump()>1)){P.y=0.62;if(P.vy>0)P.vy=0}   // floaty potions: bump the ceiling and hang there
