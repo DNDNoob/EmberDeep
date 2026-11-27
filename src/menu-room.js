@@ -7,7 +7,9 @@ import {NEWS} from './news.js';
 import {BOSSES} from './bosses.js';
 import {createLightPool} from './light-pool.js';
 import {DOOR,WALL_Z,buildHangar,buildHangarFront,wallRects} from './hangar.js';
-import {createMineLanding,createMineRockGap,createShaftHead,landingMazeZ} from './mine-shaft.js';
+import {BUNK_DOOR,BUNK_SPAWN,createBunkRoom,isBunkPosition} from './bunk-room.js';
+import {createLiftBay,createLiftPassage,createMineLanding,createMineRockGap,createShaftHead} from './mine-shaft.js';
+import {liftEye as eye,liftGateZ,liftCabinZ as shaftZ,liftCabinLamps,landingMazeZ} from './lift-dock.js';
 
 const portals=[
   {id:'doors',x:-15.35,name:'Door Archive',color:0xb9c4ff},
@@ -15,21 +17,24 @@ const portals=[
   {id:'mobs',x:6.55,name:'Mob Archive',color:0xf3b29b},
   {id:'glitches',x:15.35,name:'Glitch Archive',color:0xd9b3f9}
 ];
-const wallZ=-7,eye=1.62,floorMin=8.2,floorMax=17;
-const liftGateZ=-10.75,landingEntranceZ=landingMazeZ-0.8,liftExitHalfWidth=0.47;
+const wallZ=-7,floorMin=8.2,floorMax=17;
 const terminalWidth=4.5,terminalHeight=2.98;
 const TROPHY={x:-15.35,z:14.62};
 const screenWidth=900,screenHeight=596;
 const clamp=THREE.MathUtils.clamp;
 export const onLiftPlatform=({x,z})=>Math.abs(x)<1.66&&z<wallZ-0.3&&z>liftGateZ;
 
-export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleFloor,prepareLanding,landingGlimpse,passingLook,onLeavePanel,createVisitor}){
+export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveLobby,mazeFov,sampleFloor,prepareLanding,landingGlimpse,passingLook,onLeavePanel,createVisitor}){
   const scene=new THREE.Scene();
   scene.background=new THREE.Color(0x14121d);
   scene.fog=new THREE.Fog(0x17151f,24,64);
   const lobby=new THREE.Group();scene.add(lobby);
+  const bunk=createBunkRoom(sfx),bunkScene=new THREE.Scene();
+  bunkScene.background=scene.background;
+  bunkScene.add(bunk.group,new THREE.HemisphereLight(0xddd5f9,0x877075,1.22));
+  let lobbyReady=false,bunkAttached=false,hangar,hangarFront,skyMat;
   const camera=new THREE.PerspectiveCamera(61,1,0.06,77);
-  const view={yaw:0,pitch:0};
+  const view={yaw:BUNK_SPAWN.yaw,pitch:0};
   const cube=new THREE.BoxGeometry();
   const material=(color,options)=>new THREE.MeshStandardMaterial({color,roughness:0.78,...options});
   const stone=material(0x5b5965),dark=material(0x272530),iron=material(0x383540,{metalness:0.52});
@@ -81,21 +86,13 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     box(mount,iron,0,0,-0.047,w+0.11,h+0.11,0.095);
     return worldSign(mount,text,0,0,0.005,w,h,options);
   }
-  const walker=createRoomWalker({eye,x:0,z:13.1,speedMul:()=>0.76,o:{sfx},collide(b){
+  const walker=createRoomWalker({eye,x:BUNK_SPAWN.x,z:BUNK_SPAWN.z,speedMul:()=>0.76,o:{sfx},collide(b){
     if(ride){
       b.x=clamp(b.x,-1.58,1.58);
-      b.z=Math.min(b.z,-7.4);
-      if(ride.gate<1){
-        b.z=Math.max(b.z,liftGateZ+0.35);
-      }else if(!ride.onLanding&&Math.abs(b.x)>liftExitHalfWidth){
-        b.z=Math.max(b.z,liftGateZ+0.23);
-      }else if(b.z<liftGateZ-0.12){
-        ride.onLanding=true;
-        b.x=clamp(b.x,-liftExitHalfWidth,liftExitHalfWidth);
-        b.z=Math.max(b.z,landingEntranceZ-0.06);
-      }else if(b.z>=liftGateZ)ride.onLanding=false;
+      b.z=clamp(b.z,liftGateZ+0.35,-7.4);
       return;
     }
+    if(bunk.collide(b))return;
     b.x=clamp(b.x,-20.1,20.1);b.z=Math.min(14.55,b.z);
     if(b.z>=wallZ)channel=null;
     else {
@@ -124,11 +121,9 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   light(lobby,0xc3b4f4,163,0,7.9,4,30);
   box(lobby,dark,0,-0.19,3.97,41.1,0.35,21.94);
   for(const [x0,x1,y0,y1] of wallRects(-0.02,4.6,20.7))box(lobby,stone,(x0+x1)/2,(y0+y1)/2,WALL_Z,x1-x0,y1-y0,0.18);
-  const hangar=buildHangar(lobby),hangarFront=buildHangarFront(lobby);
   target(lobby,{locked:'hangar'},DOOR.x,DOOR.h/2,WALL_Z-0.12,DOOR.w,DOOR.h,0.1);
-  const skyMat=buildAsteroidLobby(lobby);
-  orrery=createKeplerOrrery();
-  lobby.add(orrery.group);
+  const lobbyBuilders=[()=>{skyMat=buildAsteroidLobby(lobby)},()=>{hangarFront=buildHangarFront(lobby)},()=>{hangar=buildHangar(lobby)},
+    ()=>{orrery=createKeplerOrrery();lobby.add(orrery.group)}];
 
   const tiles=new THREE.InstancedMesh(cube,stone,680);
   const tile=new THREE.Object3D(),shade=new THREE.Color();
@@ -241,15 +236,19 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   const overhead=[];
   const cabin=new THREE.Group(),well=new THREE.Group();
   scene.add(createShaftHead(),well,cabin);
-  const shaftZ=-8.9;
   box(cabin,iron,0,-0.14,shaftZ,3.67,0.27,4.02);
   for(let x=-1.65;x<1.75;x+=0.24)box(cabin,brass,x,0.008,shaftZ,0.018,0.023,3.92);
   // A cage made of rails and a cable frame leaves the moving landings in view.
   box(cabin,iron,0,3.17,shaftZ,3.77,0.16,0.22);
   box(cabin,brass,0,3.26,shaftZ,0.28,0.16,0.34);
   box(cabin,iron,0,11.0,shaftZ,0.062,15.64,0.062);
-  box(cabin,gold,-1.43,2.89,shaftZ-0.71,0.25,0.085,0.26);
-  light(cabin,0xffc78e,21,-1.42,2.82,shaftZ-0.68,7.2);
+  const lens=new THREE.MeshBasicMaterial({color:liftCabinLamps.color});
+  for(const x of liftCabinLamps.sides){
+    box(cabin,iron,x,3.04,shaftZ,0.09,0.26,0.18);
+    box(cabin,iron,x,2.91,shaftZ,0.32,0.12,1.52);
+    box(cabin,lens,x,2.84,shaftZ,0.25,0.045,1.37);
+    light(cabin,liftCabinLamps.color,17,x,liftCabinLamps.y,shaftZ,6.6);
+  }
   for(const x of [-1.74,1.74]){
     for(const z of [shaftZ-1.86,shaftZ+1.86])box(cabin,iron,x,1.59,z,0.14,3.19,0.15);
     for(const z of [shaftZ-0.92,shaftZ+0.92])box(cabin,iron,x,0.49,z,0.072,0.96,0.078);
@@ -290,6 +289,28 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   stationLabels.lift={screen:liftLabel,text:''};
   box(cabin,green,liftDesk.x+0.51,liftDesk.y-0.48,liftDesk.z,0.071,0.027,0.028);
   target(cabin,{lift:true},liftDesk.x,liftDesk.y,liftDesk.z+0.025,liftDesk.w,liftDesk.h,0.07);
+  function createDockModel(){
+    const model=new THREE.Group(),parked=cabin.clone(false),gates=[];
+    model.name='Docked lift';
+    for(const child of cabin.children){
+      if(child.isLight||child===liftLabel||child.material===proxy||overhead.some(({cab})=>cab.parent===child))continue;
+      const copy=child.clone();
+      const gate=exitGates.find(entry=>entry.gate===child);
+      if(gate)gates.push({mesh:copy,side:gate.side});
+      if(child===cage)copy.visible=true;
+      parked.add(copy);
+    }
+    model.add(parked,createLiftPassage(),createLiftBay());
+    const sign=worldSign(model,['LIFT'],0,1.97,landingMazeZ-0.025,1.35,0.34,{font:'700 145px monospace'});
+    sign.rotation.y=Math.PI;
+    const screen=worldSign(model,['SELECT FLOOR','LIFT CONTROLS'],liftDesk.x,liftDesk.y,liftDesk.z+0.012,liftDesk.w,liftDesk.h,{
+      font:'700 54px monospace',subFont:'600 31px monospace',background:'#101b20',border:'#3c6c64',color:'#a9e5d7'
+    });
+    return {model,screen,setGate(progress){
+      const swing=THREE.MathUtils.smoothstep(progress,0,1)*Math.PI/2;
+      for(const {mesh,side} of gates)mesh.rotation.y=-side*swing;
+    }};
+  }
   const shaftSections=[];
   for(let i=0;i<5;i++){
     const section=createMineLanding({height:floorMin,sampleFloor,numberSign:(parent,z)=>
@@ -331,17 +352,23 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     }
     if(sharedLift!==selection){sharedLift=selection;liftMode(guest,hosting)}
   }
-  function engageLift(depth,seed,group=null){
-    if(ride||liftAway||!onLiftPlatform(walker.b))return false;
+  function engageLift(depth,seed,group=null,from=0,departure=null){
+    if(!lobbyReady||ride||liftAway||!onLiftPlatform(walker.b)||depth===from)return false;
     const solo=!group?.follow;
-    ride={depth,travel:0,extra:0,speed:0,seed,group,task:prepareLanding(seed,depth),docked:false,gate:0,onLanding:false,
-      count:solo?3:0,countAt:0,warm:1,calm:solo?0.45:0,shown:!solo,stretch:new Float64Array(depth+1),settle:new Uint8Array(depth+1)};
+    const stops=Math.abs(depth-from),direction=Math.sign(depth-from);
+    ride={depth,from,stops,direction,departure,travel:0,extra:0,speed:0,seed,group,
+      task:depth===0?null:prepareLanding(seed,depth),docked:false,
+      count:solo?3:0,countAt:0,warm:1,shown:!solo,stretch:new Float64Array(stops+1),settle:new Uint8Array(stops+1)};
+    cabin.position.y=-from*floorMin;
+    bunk.group.visible=false;
+    lobby.visible=from===0;
     cage.visible=true;
     if(!solo)well.visible=true;
-    liftLabel.setLabel(ride.count?['3','FLOOR '+depth]:['FLOOR '+depth,'PREPARING MAZE'],true,0);
-    indicators(1);sfx(ride.count?'ding':'door');
+    liftLabel.setLabel(ride.count?['3',destinationLabel(depth)]:[destinationLabel(depth),'PREPARING LIFT'],true,0);
+    indicators(from);sfx(ride.count?'ding':'door');
     return true;
   }
+  const destinationLabel=depth=>depth===0?'LOBBY':'FLOOR '+depth;
   function floorDist(n){
     let d=0;
     for(let i=1;i<=n;i++)d+=floorMin+ride.stretch[i];
@@ -352,19 +379,10 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     ride.countAt+=dt;
     if(ride.countAt<1)return;
     ride.countAt-=1;ride.count--;
-    if(ride.count>0){sfx('ding');liftLabel.setLabel([String(ride.count),'FLOOR '+ride.depth],true,(3-ride.count)/3)}
+    if(ride.count>0){sfx('ding');liftLabel.setLabel([String(ride.count),destinationLabel(ride.depth)],true,(3-ride.count)/3)}
   }
-  function tickLift(dt,previousZ){
+  function tickLift(dt){
     if(!ride)return;
-    if(ride.docked){
-      ride.gate=Math.min(1,ride.gate+dt/0.42);
-      const swing=THREE.MathUtils.smoothstep(ride.gate,0,1)*Math.PI/2;
-      for(const {gate,side} of exitGates)gate.rotation.y=-side*swing;
-      if(previousZ>landingEntranceZ&&walker.b.z<=landingEntranceZ){
-        enterLanding(ride.depth,ride.seed,ride.task.floor,{x:walker.b.x,z:walker.b.z,yaw:view.yaw,pitch:view.pitch},ride.group?.id);
-      }
-      return;
-    }
     const following=!!ride.group?.follow;
     // The count is only the numbers and the ding. Loading starts after the car is released.
     if(!following&&ride.count>0){
@@ -374,28 +392,29 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       return;
     }
     if(ride.settle)for(let i=1;i<ride.settle.length;i++)if(ride.settle[i]===2)ride.settle[i]=1;
-    if(!following&&ride.task&&!ride.task.ready)ride.task.advance();
-    else if(ride.warm<=ride.depth)landingGlimpse(ride.seed,ride.warm++,true);
+    if(ride.task&&!ride.task.ready)ride.task.advance();
+    else if(ride.warm<ride.stops)landingGlimpse(ride.seed,ride.from+ride.direction*ride.warm++,true);
+    const ready=(!ride.task||ride.task.warmArrival())&&(!ride.group||following||ride.group.ready());
     let arriving;
     if(following){
       const motion=ride.group.follow();
       if(!motion)return;
       if(motion.gaps&&ride.stretch)for(let i=0;i<ride.stretch.length&&i<motion.gaps.length;i++)ride.stretch[i]=motion.gaps[i];
       const k=1-Math.exp(-Math.min(dt,0.055)*8);
-      const destination=floorDist(ride.depth);
+      const destination=floorDist(ride.stops);
       ride.travel+=(motion.travel-ride.travel)*k;
-      arriving=motion.docked&&ride.task.ready&&destination-ride.travel<0.04;
+      arriving=motion.docked&&ready&&destination-ride.travel<0.04;
       if(arriving)ride.travel=destination;
     }else{
       const step=Math.min(dt,0.055);
-      const destination=floorDist(ride.depth);
+      const destination=floorDist(ride.stops);
       // an express car: top speed grows with the distance, so a deep ride takes seconds, not a minute (it still waits for loading)
       const cruise=THREE.MathUtils.clamp(Math.max(destination,floorMin)/4.5,2.4,70),accel=Math.max(2.1,cruise/1.4),brake=Math.max(1.6,cruise/2.2);
       let next=1,acc=0;
-      while(next<=ride.depth&&acc+floorMin+ride.stretch[next]<=ride.travel+0.04){acc+=floorMin+ride.stretch[next];next++}
-      next=Math.min(next,ride.depth);
-      if(next<ride.depth&&ride.settle[next]===0&&landingGlimpse(ride.seed,next,false))ride.settle[next]=1;
-      const loaded=next<ride.depth?ride.settle[next]===1:!!(ride.task&&ride.task.ready&&(!ride.group||ride.group.ready()));
+      while(next<=ride.stops&&acc+floorMin+ride.stretch[next]<=ride.travel+0.04){acc+=floorMin+ride.stretch[next];next++}
+      next=Math.min(next,ride.stops);
+      if(next<ride.stops&&ride.settle[next]===0&&landingGlimpse(ride.seed,ride.from+ride.direction*next,false))ride.settle[next]=1;
+      const loaded=next<ride.stops?ride.settle[next]===1:ready;
       const open=Math.max(0,floorMax-floorMin-ride.stretch[next]);
       const closing=loaded||open<=0;
       const desired=closing?Math.min(cruise,Math.sqrt(2*brake*Math.max(0,destination-ride.travel))):cruise;
@@ -405,52 +424,62 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       if(!loaded&&open>0){
         const copy=Math.min(open,Math.max(movement,step*3.2));
         ride.stretch[next]+=copy;ride.travel+=copy;
-      }else ride.travel=Math.min(floorDist(ride.depth),ride.travel+movement);
-      const destNow=floorDist(ride.depth);
-      arriving=loaded&&next===ride.depth&&destNow-ride.travel<=0.03;
+      }else ride.travel=Math.min(floorDist(ride.stops),ride.travel+movement);
+      const destNow=floorDist(ride.stops);
+      arriving=loaded&&next===ride.stops&&destNow-ride.travel<=0.03;
       if(arriving)ride.travel=destNow;
     }
     let passed=0,cursor=0;
-    while(passed<ride.depth&&cursor+floorMin+ride.stretch[passed+1]<=ride.travel+0.2){cursor+=floorMin+ride.stretch[passed+1];passed++}
-    indicators(Math.max(1,Math.min(ride.depth,passed+1)));
-    cabin.position.y=-ride.travel;
+    while(passed<ride.stops&&cursor+floorMin+ride.stretch[passed+1]<=ride.travel+0.2){cursor+=floorMin+ride.stretch[passed+1];passed++}
+    indicators(ride.from+ride.direction*Math.min(ride.stops,passed+1));
+    cabin.position.y=rideY(ride.travel);
     lobby.visible=cabin.position.y>-4.5;
-    const destination=floorDist(ride.depth);
+    const destination=floorDist(ride.stops);
+    ride.remaining=destination-ride.travel;
     const progress=Math.round(Math.min(0.99,(ride.travel/Math.max(destination,1))*0.68+(ride.task?ride.task.progress:1)*0.32)*100);
     if(progress!==ride.progress){
       ride.progress=progress;
-      liftLabel.setLabel(['FLOOR '+ride.depth,'DESCENDING  '+progress+'%'],true,progress/100);
+      liftLabel.setLabel([destinationLabel(ride.depth),(ride.direction>0?'DESCENDING':'ASCENDING')+'  '+progress+'%'],true,progress/100);
     }
     placeShaft(true);
     if(arriving){
       ride.docked=true;
-      liftLabel.setLabel(['FLOOR '+ride.depth,'WALK INTO MAZE'],true,1);
+      if(ride.depth===0){arriveLobby(ride.group?.id);return}
       sfx('descend');
+      enterLanding(ride.depth,ride.seed,ride.task.floor,{...walker.b,...view},ride.group?.id);
     }
     function placeShaft(dress){
       let budget=dress?1:0,acc=0,base=0;
-      while(base<ride.depth&&acc+floorMin+ride.stretch[base+1]<=ride.travel){acc+=floorMin+ride.stretch[base+1];base++}
+      while(base<ride.stops&&acc+floorMin+ride.stretch[base+1]<=ride.travel){acc+=floorMin+ride.stretch[base+1];base++}
       base=Math.max(0,base-1);
-      for(let number=base;number<base+shaftSections.length;number++){
-        const section=shaftSections[number%shaftSections.length];
-        const y=number===0?0:-floorDist(Math.min(number,ride.depth));
-        section.group.position.y=number>ride.depth?y-(number-ride.depth)*floorMin:y;
-        section.group.visible=number<=ride.depth;
-        const destined=number===ride.depth&&ride.task.model;
-        const showMouth=number>0&&number<=ride.depth&&!destined;
+      for(let stop=base;stop<base+shaftSections.length;stop++){
+        const number=ride.from+ride.direction*stop,slot=stop%shaftSections.length;
+        const section=shaftSections[slot];
+        const y=rideY(floorDist(Math.min(stop,ride.stops))+Math.max(0,stop-ride.stops)*floorMin);
+        section.group.position.y=y;
+        section.group.visible=stop<=ride.stops;
+        const destined=stop===ride.stops&&ride.task?.model||stop===0&&ride.departure;
+        const showMouth=number>0&&stop<=ride.stops&&!destined;
         const glimpse=showMouth?landingGlimpse(ride.seed,number,false):null;
-        const look=number===ride.depth&&ride.task.floor?ride.task.floor:(showMouth?passingLook(number):null);
+        const look=number===ride.depth&&ride.task?.floor||number>0&&passingLook(number)||null;
         if(budget>0&&section.update(ride.seed,number,look))budget--;
-        section.setMaze(destined?ride.task.model:glimpse);
-        const sleeve=sleeves[number%shaftSections.length];
-        if(number>=1&&number<=ride.depth)sleeve.resize(-floorDist(number-1),ride.stretch[number]);
+        section.setMaze(destined||glimpse,!!destined);
+        const sleeve=sleeves[slot];
+        if(stop>=1&&stop<=ride.stops)sleeve.resize(Math.max(y,rideY(floorDist(stop-1))),ride.stretch[stop]);
         else sleeve.resize(0,0);
       }
     }
   }
+  // Subtract the added gaps from the lobby end so an upward trip docks flush with the hall.
+  function rideY(travel){
+    const start=ride.direction<0?-ride.depth*floorMin-floorDist(ride.stops):-ride.from*floorMin;
+    return start-ride.direction*travel;
+  }
   function resetLift(){
-    ride?.task.dispose();
-    ride=null;lobby.visible=true;cabin.position.y=0;well.visible=cage.visible=false;
+    ride?.task?.dispose();
+    ride?.departure?.removeFromParent();
+    ride?.departure?.children[0].geometry.dispose();
+    ride=null;lobby.visible=true;bunk.group.visible=true;cabin.position.y=0;well.visible=cage.visible=false;
     cabin.visible=!liftAway;
     for(const {gate} of exitGates)gate.rotation.y=0;
     indicators(0);liftMode(guest,hosting);
@@ -459,6 +488,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     resetLift();
     channel=null;
     Object.assign(walker.b,{x:0,z:13.1,y:0,vx:0,vz:0,vy:0,jumpQ:0,bob:0});
+    bunk.place(walker.b.x,walker.b.z);
     view.yaw=view.pitch=0;
     study=null;orreryHint.textContent='';
   }
@@ -497,14 +527,15 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
   }
   const panelCorners=[[-1,1],[1,1],[1,-1],[-1,-1]].map(([x,y])=>[x*terminalWidth/2,y*terminalHeight/2]);
   const stationForm=document.getElementById('title');
-  function projectPanel(width,height,id,form){
+  function projectPanel(width,height,id,form,viewCamera=camera,model=null){
     const desk=terminals[id];
     const w=desk.w||terminalWidth,h=desk.h||terminalHeight;
     const projected=panelCorners.map(([x,y])=>{
       worldPoint.set(desk.x+(desk.f||1)*x*w/terminalWidth,desk.y+y*h/terminalHeight,desk.z+(desk.f||1)*0.015);
-      worldPoint.applyMatrix4(camera.matrixWorldInverse);
-      if(worldPoint.z>=-camera.near)return null;
-      worldPoint.applyMatrix4(camera.projectionMatrix);
+      if(model)model.localToWorld(worldPoint);
+      worldPoint.applyMatrix4(viewCamera.matrixWorldInverse);
+      if(worldPoint.z>=-viewCamera.near)return null;
+      worldPoint.applyMatrix4(viewCamera.projectionMatrix);
       return [(worldPoint.x+1)*width/2,(1-worldPoint.y)*height/2];
     });
     if(projected.some(point=>!point)||projected.every(([x])=>x<0)||projected.every(([x])=>x>width)||
@@ -548,7 +579,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     camera.rotation.set(view.pitch,-view.yaw,0,'YXZ');camera.updateMatrixWorld();
   }
   function watchLift(motion){
-    if(ride)return;
+    if(!lobbyReady||ride)return;
     if(!motion){
       if(cabin.position.y!==0||well.visible){
         cabin.position.y=0;well.visible=cage.visible=awayGate.visible=false;lobby.visible=true;
@@ -556,7 +587,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       }
       return;
     }
-    const y=-(motion.travel||0)-(motion.extra||0);
+    const y=motion.y??-(motion.travel||0)-(motion.extra||0);
     const gone=y<-3.2;
     cabin.visible=true;well.visible=true;cage.visible=y<-0.15;awayGate.visible=gone;
     cabin.position.y=y;
@@ -570,7 +601,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       // In the car, only the people who boarded are in here. From the hall, riders
       // stay visible inside the cabin so a departure doesn't blink them out.
       if(ride&&p.ride!==ride.group?.id)continue;
-      const parent=(ride||p.ride)?cabin:lobby;
+      const parent=(ride||p.ride)?cabin:isBunkPosition(p.x,p.z)?(bunkAttached?scene:bunkScene):lobby;
       seen.add(peer.id);
       let visitor=visitors.get(peer.id);
       if(!visitor){
@@ -606,10 +637,10 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       studyYaw-=input.lx*dt*2.2;
       studyPitch=clamp(studyPitch-input.ly*dt*2.2,-1.05,1.15);
     }else lookStep(view,dt,input.lx,input.ly);
-    const previousZ=walker.b.z;
-    if(!study)walker.step(dt,input,view.yaw);
-    tickLift(Math.min(elapsed,0.25),previousZ);
+    if(!study){bunk.update(dt,walker.b);walker.step(dt,input,view.yaw)}
+    tickLift(Math.min(elapsed,0.25));
     pose();if(ride)cabin.updateMatrixWorld(true);
+    if(!lobbyReady){focus=null;return}
     if(panel){
       const desk=terminals[panel];
       if(panel==='lift'&&!onLiftPlatform(walker.b)||(desk.f||1)*(walker.b.z-desk.z)<=0.08||
@@ -622,19 +653,27 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       ? `Close view of ${orrery.name(study)}. Click another body to go there. Scroll to move closer. Q walks again.`
       : orreryAim ? `E: look closer at ${orrery.name(orreryAim)}` : '';
   }
-  function render(exposure,time){
+  function render(exposure,time,mazeExposure=exposure){
     if(skyMat&&skyMat.uniforms)skyMat.uniforms.uTime.value=time||0;
     const width=innerWidth,height=innerHeight;
     const aspect=width/height;
     const baseFov=Math.min(105,Math.max(61,THREE.MathUtils.radToDeg(2*Math.atan(0.78/aspect))));
-    const open=ride?.docked?THREE.MathUtils.smoothstep(ride.gate,0,1):0;
-    const fov=THREE.MathUtils.lerp(baseFov,Math.max(72,baseFov),open);
+    const approach=ride?.task?.arrivalReady?1-THREE.MathUtils.smoothstep(ride.remaining??2,0,1.4):0;
+    const fov=THREE.MathUtils.lerp(baseFov,mazeFov,approach);
     if(camera.aspect!==aspect||camera.fov!==fov){
       camera.aspect=aspect;
       camera.fov=fov;
       camera.updateProjectionMatrix();
     }
     pose();
+    if(!lobbyReady||(!bunkAttached&&isBunkPosition(walker.b.x,walker.b.z)&&!bunk.opening)){
+      renderer.toneMappingExposure=exposure;renderer.setRenderTarget(null);renderer.render(bunkScene,camera);
+      return;
+    }
+    if(!bunkAttached){
+      scene.add(bunk.group);bunkAttached=true;
+      pool().rescan();lights.update(camera,0.35);
+    }
     const sharedVisible=sharedSettings&&!sharedSettings.hidden;
     if(sharedVisible){
       if(ride||terminals.settings.f*(walker.b.z-terminals.settings.z)<=0.08)sharedSettings.style.visibility='hidden';
@@ -648,7 +687,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     pose();
     pool();
     lights.update(camera,Math.min(0.1,Math.max(0,(time||0)-(lightT??(time||0)))));lightT=time||0;
-    renderer.toneMappingExposure=exposure;renderer.setRenderTarget(null);renderer.render(scene,camera);
+    renderer.toneMappingExposure=THREE.MathUtils.lerp(exposure,mazeExposure,approach);renderer.setRenderTarget(null);renderer.render(scene,camera);
   }
   function markNewsSeen(){
     if(newsSeen)return;
@@ -658,6 +697,29 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     if(!label.text)label.screen.setLabel(newsIdle());
   }
   return {get scene(){return scene},get camera(){return camera},update,render,markNewsSeen,get newsUnseen(){return !newsSeen},syncArchives,syncVisitors,watchLift,liftMode,setSharedLift,engageLift,reset,resetLift,setActive,
+    get lobbyReady(){return lobbyReady},get bunkDoorOpen(){return bunk.open},
+    get inBunk(){return isBunkPosition(walker.b.x,walker.b.z)},
+    buildLobbyStep(){const build=lobbyBuilders.shift();if(!build)return false;build();return true},
+    setLobbyStatus:bunk.setStatus,
+    unlockLobby(){
+      lobbyReady=true;bunk.unlock();
+    },
+    drawLobbyWarmFrame(){
+      const view=camera.clone();view.position.set(BUNK_DOOR.x+0.72,eye,BUNK_DOOR.z);
+      view.lookAt(0,eye,3);view.updateMatrixWorld();
+      pool().rescan();lights.update(view,0.35);
+      const previous=renderer.getRenderTarget();
+      const preview=new THREE.WebGLRenderTarget(192,108);
+      try{renderer.setRenderTarget(preview);renderer.render(scene,view)}
+      finally{renderer.setRenderTarget(previous);preview.dispose()}
+    },
+    createDockModel,
+    projectDockPanel(viewCamera,model){return projectPanel(innerWidth,innerHeight,'lift',stationForm,viewCamera,model)},
+    dockPanelReach(p,yaw,pitch){
+      const dx=liftDesk.x-p.x,dy=liftDesk.y-p.eyeY,dz=liftDesk.z-p.z,dist=Math.hypot(dx,dy,dz);
+      return p.z>liftDesk.z+0.1&&dist<2.65&&
+        (dx*Math.sin(yaw)-dz*Math.cos(yaw))*Math.cos(pitch)+dy*Math.sin(pitch)>dist*0.72;
+    },
     sharedSettings(screen,display){
       sharedSettings=screen;
       sharedTexture=new THREE.CanvasTexture(display);
@@ -677,18 +739,19 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     get boarded(){return !liftAway&&onLiftPlatform(walker.b)},
     get riding(){return !!ride},
     get lightPeak(){let n=0;scene.traverseVisible(o=>{if(o.isPointLight)n++});return n},
-    primeShaft(){
-      if(ride)return;
+    compileLobby(){
       const hidden=!well.visible;
+      const bunkPreview=bunk.group.clone();
+      for(const child of [...bunkPreview.children])if(child.isLight)bunkPreview.remove(child);
+      scene.add(bunkPreview);
       well.visible=true;
       camera.updateMatrixWorld();
       pool().rescan();
-      try{renderer.compile(scene,camera)}catch(e){}
-      if(hidden)well.visible=false;
+      try{return renderer.compileAsync(scene,camera).catch(()=>renderer.compile(scene,camera))}
+      finally{scene.remove(bunkPreview);if(hidden)well.visible=false}
     },
     // compile an off-screen landing or glimpse against the shaft's lights so its first sight in a ride costs nothing
     compileObject(object){
-      if(ride)return null;
       const hidden=!well.visible;
       well.visible=true;
       camera.updateMatrixWorld();
@@ -698,14 +761,14 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       if(hidden)well.visible=false;
       return result;
     },
-    get liftMotion(){return ride&&{travel:ride.travel,extra:0,docked:ride.docked,gaps:Array.from(ride.stretch)}},
-    get hangarStats(){return hangar.stats()},
+    get liftMotion(){return ride&&{travel:ride.travel,y:cabin.position.y,extra:0,docked:ride.docked,gaps:Array.from(ride.stretch)}},
+    get hangarStats(){return hangar?.stats()},
     get aimed(){return !!focus},
     setSkyTime(t){if(skyMat&&skyMat.uniforms)skyMat.uniforms.uTime.value=t},
     get skyTime(){return skyMat&&skyMat.uniforms?skyMat.uniforms.uTime.value:0},
     get position(){return {x:walker.b.x,z:walker.b.z,y:cabin.position.y,depth:indication,docked:!!ride?.docked}},
-    get presence(){return {x:walker.b.x,y:walker.b.y,z:walker.b.z,yaw:view.yaw,station:panel,ride:ride?.group?.id,ready:!!ride?.task.ready}},
-    place(x,z,yaw=0,pitch=0){Object.assign(walker.b,{x,z,vx:0,vz:0});view.yaw=yaw;view.pitch=pitch},
+    get presence(){return {x:walker.b.x,y:walker.b.y,z:walker.b.z,yaw:view.yaw,station:panel,ride:ride?.group?.id,ready:!!ride&&(!ride.task||ride.task.arrivalReady)}},
+    place(x,z,yaw=0,pitch=0){Object.assign(walker.b,{x,z,vx:0,vz:0});bunk.place(x,z);view.yaw=yaw;view.pitch=pitch},
     look:(dx,dy)=>{
       if(study){
         studyYaw-=dx;
@@ -719,6 +782,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
       panel=id;
     },
     interact(){
+      if(!lobbyReady)return;
       if(focus){activate(focus);return}
       if(study){
         if(orreryAim&&orreryAim!==study)beginStudy(orreryAim);
@@ -730,6 +794,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,sampleF
     },
     setTrophies,
     tap(x,y){
+      if(!lobbyReady)return false;
       const hit=aim(x,y);
       if(hit){activate(hit);return true}
       raycaster.setFromCamera(pointer.set(x,y),camera);

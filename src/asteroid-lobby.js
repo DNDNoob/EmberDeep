@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {BUNK_DOOR} from './bunk-room.js';
 import {TELESCOPE_MAG} from './kepler-orrery.js';
 
 const halfWidth=20.65, front=-7.14, rear=15.12, spring=5.5, rise=5.65;
@@ -98,7 +99,9 @@ function rockFace(parent,side,z0,z1,bottom,top,seed){
       const y=THREE.MathUtils.lerp(bottom(z),top(z),v);
       const layers=Math.sin(y*5.6+z*0.63)*0.13+Math.sin(y*2.6-z*0.47)*0.17;
       const bump=layers+0.24*(hash(col+4,row+9)-0.5)+0.19*Math.sin(z*1.73+y*0.76);
-      line.push([side*(side===1?Math.min(20.84,20.69+bump):20.69+bump),y,z]);
+      const nearBunk=1-THREE.MathUtils.smoothstep(Math.abs(z-BUNK_DOOR.z),2.95,3.4);
+      const wall=side===1?Math.min(20.84,20.69+bump):THREE.MathUtils.lerp(20.69+bump,Math.min(20.86,20.69+bump),nearBunk);
+      line.push([side*wall,y,z]);
     }
     grid.push(line);
   }
@@ -282,7 +285,10 @@ function telescopePanel(parent){
 export function buildAsteroidLobby(parent){
   vault(parent);
   const floor=()=>-0.1,roof=()=>spring+0.08;
-  rockFace(parent,-1,front,rear,floor,roof,3);
+  const entryStart=BUNK_DOOR.z-BUNK_DOOR.half,entryEnd=BUNK_DOOR.z+BUNK_DOOR.half;
+  rockFace(parent,-1,front,entryStart,floor,roof,3);
+  rockFace(parent,-1,entryStart,entryEnd,()=>BUNK_DOOR.height+0.12,roof,3);
+  rockFace(parent,-1,entryEnd,rear,floor,roof,3);
   const sky=observationWindow(parent);
   telescopePanel(parent);
   rockFace(parent,1,front,-5.65,floor,roof,5);

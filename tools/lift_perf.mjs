@@ -71,7 +71,8 @@ async function scenario(ctx,srv,depth,wantSw,rep){
   pg.on('pageerror',e=>errs.push(String(e)));pg.on('console',m=>{if(m.type()==='error')errs.push(m.text())});
   await pg.addInitScript(INIT);
   await pg.goto(srv.url+'index.html');
-  await pg.waitForFunction(()=>window.__game&&window.__game.hub&&document.getElementById('loading')&&document.getElementById('loading').hidden,null,{timeout:120000});
+  await pg.waitForFunction(()=>window.__game?.hub?.lobbyReady,null,{timeout:120000});
+  await pg.evaluate(()=>window.__game.hub.place(0,10));
   // let the idle-time NPC mesh bake finish (it is cached in IndexedDB for later pages of the same context, as for a returning player)
   for(let i=0;i<300;i++){await pg.waitForTimeout(1000);if(await pg.evaluate(()=>window.__game.keeperSaved()))break}
   await pg.waitForTimeout(3000);
@@ -90,13 +91,17 @@ async function scenario(ctx,srv,depth,wantSw,rep){
       document.getElementById('liftDestination').dispatchEvent(new Event('submit',{cancelable:true}));
       const ok=G.hub.riding;if(ok)window.__lp.setPhase('ride');res(ok)},200))},[depth]);
   if(!departed){await cdp.send('Profiler.stop');await pg.close();return {skip:'could not depart',errs}}
-  // watch the ride; once docked, walk off the car into the landing (enterRun), then record 3 s of play
-  const t0=Date.now();let walked=false,arrivedAt=0;
+  // Walk through the gate once the car is docked in the playable scene.
+  const t0=Date.now();let arrivedAt=0;
   while(Date.now()-t0<400000){
-    const s=await pg.evaluate(()=>{const G=window.__game,m=G.hub.liftMotion;return {state:G.state,docked:!!(m&&m.docked)}});
-    if(s.state!=='title'){if(!arrivedAt){arrivedAt=Date.now();await pg.evaluate(()=>window.__lp.setPhase('post'))}if(Date.now()-arrivedAt>WAIT_POST)break}
-    else if(s.docked&&!walked){await pg.evaluate(()=>window.__lp.setPhase('dock'));await pg.waitForTimeout(900);
-      await pg.evaluate(()=>{const G=window.__game;G.hub.place(0,-12.3,0,0);G.keys.KeyW=true});walked=true}
+    if(!arrivedAt&&await pg.evaluate(()=>window.__game.state==='play')){
+      arrivedAt=Date.now();
+      await pg.evaluate(()=>{
+        const G=window.__game;window.__lp.setPhase('post');G.P.yaw=G.F.lift.yaw;G.keys.KeyW=true;
+        setTimeout(()=>{G.keys.KeyW=false},1600);
+      });
+    }
+    if(arrivedAt&&Date.now()-arrivedAt>WAIT_POST)break;
     await pg.waitForTimeout(40);
   }
   await pg.evaluate(()=>{window.__game.keys.KeyW=false});

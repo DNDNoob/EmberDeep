@@ -7,6 +7,20 @@
 // it is, or how to trigger it. No code names, file names, PR numbers or agent names.
 // Group small fixes into one post. Rebuild index.html afterwards (npm run build).
 export const NEWS=[
+  {date:'2026-11-26',title:'A smoother start',
+    body:'Moving around the bunk room is smoother while the entrance hall loads. The lift prepares its destination separately, so the bunk room door opens as soon as the hall is ready.'},
+  {date:'2026-11-26',title:'A bunk before the descent',
+    body:'You wake up in a small bunk room while the entrance hall gets ready. The hall door unlocks when the lobby is ready, and it opens as you approach.'},
+  {date:'2026-11-26',title:'A brighter ride',
+    body:'New ceiling lights illuminate the lift during the ride and at the landing. In multiplayer, the controls keep your chosen floor while the party gets ready to depart.'},
+  {date:'2026-11-26',title:'Step straight into the maze',
+    body:'The lift opens onto the full maze. The car and landing stay in place as you walk through the gate or turn to look back.'},
+  {date:'2026-11-26',title:'A light at the landing',
+    body:'Warm lamps mark the lift entrance, and the walkway meets the maze floor. The maze is ready to draw before the gate opens, so you can keep walking as you step off the lift.'},
+  {date:'2026-11-26',title:'The lift is waiting',
+    body:'The lift stays at the maze entrance. Walk back aboard to visit another floor or return to the lobby, then pick up your run where you left off.'},
+  {date:'2026-11-26',title:'Clear landing',
+    body:'The maze walls and details are ready when you arrive. Just keep walking to go straight from the lift into the maze.'},
   {date:'2026-11-26',title:'Smoother lift rides',
     body:'The first few floors, and everything it takes to light and draw them, are now prepared quietly in the background while you wander the lobby, so the ride down and your first steps in the maze are much less stuttery. Slower computers get their share of that quiet preparation too.'},
   {date:'2026-11-26',title:'Dance like everyone is watching',

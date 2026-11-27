@@ -24,7 +24,8 @@ async function scenario(br,srv,depth){
   pg.on('pageerror',e=>errs.push(String(e)));pg.on('console',m=>{if(m.type()==='error')errs.push(m.text())});
   await pg.addInitScript(INIT);
   await pg.goto(srv.url+'index.html');
-  await pg.waitForFunction(()=>window.__game&&window.__game.hub&&document.getElementById('loading')&&document.getElementById('loading').hidden,null,{timeout:180000});
+  await pg.waitForFunction(()=>window.__game?.hub?.lobbyReady,null,{timeout:180000});
+  await pg.evaluate(()=>window.__game.hub.place(0,10));
   // the depth the rider will pick: the lobby caches floors 1 to 5 plus this one
   await pg.evaluate(d=>{const f=document.getElementById('liftDepth');f.value=d;f.dispatchEvent(new Event('input'))},depth);
   const t0=Date.now();let ready=false,st=null;
@@ -43,12 +44,16 @@ async function scenario(br,srv,depth){
     return new Promise(res=>setTimeout(()=>{G.openStation('lift');document.getElementById('liftDepth').value=d;
       document.getElementById('liftDestination').dispatchEvent(new Event('submit',{cancelable:true}));res(G.hub.riding)},200))},depth);
   if(!departed){await ctx.close();return {fail:'could not depart'}}
-  const t1=Date.now();let walked=false,arrivedAt=0;
+  const t1=Date.now();let arrivedAt=0;
   while(Date.now()-t1<400000){
-    const s=await pg.evaluate(()=>{const G=window.__game,m=G.hub.liftMotion;return {state:G.state,docked:!!(m&&m.docked)}});
-    if(s.state!=='title'){if(!arrivedAt){arrivedAt=Date.now();await pg.evaluate(()=>{window.__lc.phase='arrive'})}if(Date.now()-arrivedAt>3000)break}
-    else if(s.docked&&!walked){await pg.evaluate(()=>{window.__lc.phase='dock'});await pg.waitForTimeout(900);
-      await pg.evaluate(()=>{const G=window.__game;G.hub.place(0,-12.3,0,0);G.keys.KeyW=true});walked=true}
+    if(!arrivedAt&&await pg.evaluate(()=>window.__game.state==='play')){
+      arrivedAt=Date.now();
+      await pg.evaluate(()=>{
+        const G=window.__game;window.__lc.phase='arrive';G.P.yaw=G.F.lift.yaw;G.keys.KeyW=true;
+        setTimeout(()=>{G.keys.KeyW=false},1600);
+      });
+    }
+    if(arrivedAt&&Date.now()-arrivedAt>3000)break;
     await pg.waitForTimeout(40);
   }
   await pg.evaluate(()=>{window.__game.keys.KeyW=false});
