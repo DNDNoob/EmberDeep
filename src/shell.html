@@ -252,6 +252,10 @@
   .shared-terminal .terminal-login.signed-in{color:#a5efc0}
   .shared-terminal .terminal-selection{color:#f6d590}
   .shared-terminal .terminal-picked{outline:2px solid #e9be65;outline-offset:3px}
+  .admin-override input{width:6em;padding:8px;color:#dbf7e8;background:#111f24;border:1px solid #517571;border-radius:3px;font:inherit}
+  .admin-override [hidden]{display:none}
+  .admin-override button{font-size:13px;padding:8px 15px}
+  .admin-override [role=status]{color:#a5efc0}
   .shared-terminal input:disabled,.shared-terminal select:disabled{opacity:.8}
   #archiveBack{position:fixed;z-index:8;top:calc(12px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);background:#322b40;color:#ffe7ca;border:1px solid #b48f77}
 </style>
@@ -382,6 +386,11 @@
     <label title="How loud your friends' voices are to you">Voices <input class="volSl" data-bus="voices" type="range" min="0" max="100" step="1" aria-label="Friends' voice volume"></label>
     <label title="How loud you are to your friends (up to 200%)">Mic <input class="volSl" data-bus="mic" type="range" min="0" max="200" step="1" aria-label="Microphone volume"></label>
   </div>
+  <form class="row admin-override">
+    <label>Admin Override <input type="password" size="5" maxlength="32" inputmode="numeric" autocomplete="off" required></label>
+    <button type="submit">Unlock</button>
+    <span role="status"></span>
+  </form>
   <div class="hint" id="diag" style="font-size:11px"></div>
   </div>
   </section>

@@ -4998,7 +4998,7 @@ function bossWin(){
   for(const q of F.shades)if(q.type===6&&q.role!=='main'){q.dead=true;q.x=q.z=-99}
   P.shards=3;wallet+=g;R.gems+=g;R.score+=1000*(B.i+1)*(1+B.cyc);store.set('wallet',wallet);
   const rare=[9,10,11,12],got=[];for(let k=0;k<3;k++){const i=rare[(Math.random()*rare.length)|0];POT.bag[i]++;got.push(INGREDIENTS[i].name)}potSaveBag();POT.hudK='';
-  if(!archiveRun){const T=bossTrophies(),e=T[D.id]||{n:0,best:0};e.n++;e.best=Math.max(e.best,R.depth);T[D.id]=e;store.set('trophies',T);hub.setTrophies?.(T)}
+  if(!archiveRun){const T=bossTrophies(),e=T[D.id]||{n:0,best:0};e.n++;e.best=Math.max(e.best,R.depth);T[D.id]=e;store.set('trophies',T);hub.setTrophies?.(T,adminOverride)}
   [523,659,784,1046].forEach((f,i)=>{tone(f,0.5,'triangle',0.12,i*0.14);tone(f/2,0.6,'sine',0.08,i*0.14)});
   wGainXp(wHeld(),80+25*B.i);
   bossCard(D.name+' is defeated!','+'+g+' gems  ·  '+got.join(', ')+'  ·  a trophy for the lobby');
@@ -6278,7 +6278,7 @@ function toTitle(){
   if(document.pointerLockElement){usingLock=false;document.exitPointerLock()}
 }
 function showBest(){
-  hub.setTrophies?.(bossTrophies());
+  hub.setTrophies?.(bossTrophies(),adminOverride);
   fillStartSel();
   const b=store.get('best',null);
   $('bestLine').textContent=(b?`Best run: depth ${b.depth}, ${b.score} points · `:'')+`Level ${plLevel()} · ${wallet} gems banked`;
@@ -7469,7 +7469,7 @@ addEventListener('keydown',e=>{
   }
   if(e.target?.matches?.('select, input')){
     const walking=activeStation&&/^Key[WASD]$/.test(e.code);
-    const editing=e.target.matches('input[type=text]:not([readonly]), input[type=number]');
+    const editing=e.target.matches('input[type=text]:not([readonly]), input[type=number], input[type=password]');
     if(!walking||editing)return;
   }
   if((state==='title'||activeStation)&&(e.code==='Tab'||e.target?.closest?.('button')&&(e.code==='Enter'||e.code==='Space')))return;
@@ -9229,6 +9229,7 @@ const archiveCatalog={
     ...Object.fromEntries(Object.entries(ROOM_MOBS).map(([id,mob])=>[id,mob.name]))}},
   glitches:{title:'Glitch Archive',entries:GLITCH_ARCHIVE}
 };
+let adminOverride=store.get('adminOverride',false)===true;
 const archive=Object.fromEntries(Object.keys(archiveCatalog).map(kind=>{
   const saved=store.get('archive.'+kind,{});
   return [kind,saved&&typeof saved==='object'&&!Array.isArray(saved)?saved:{}];
@@ -9300,6 +9301,32 @@ const settingsScreen=createSettingsScreen(board,{
   },
 });
 hub.sharedSettings(settingsScreen.screen,settingsScreen.display);
+const overrideForms=[board,settingsScreen.screen].map(screen=>screen.querySelector('.admin-override'));
+function resetOverrideForms(){
+  for(const form of overrideForms){
+    form.reset();
+    form.querySelector('button').hidden=form.querySelector('input').hidden=adminOverride;
+    form.querySelector('[role=status]').textContent=adminOverride?'Lobby collections unlocked.':'';
+  }
+}
+for(const form of overrideForms)form.addEventListener('submit',event=>{
+  event.preventDefault();
+  if(activeStation!=='settings'||adminOverride||(MP.on&&!hub.settingsInReach(hub.presence)))return;
+  const password=form.querySelector('input');
+  const accepted=password.value==='12345';
+  password.value='';
+  if(!accepted){
+    form.querySelector('[role=status]').textContent='Incorrect password.';
+    password.focus();
+    return;
+  }
+  adminOverride=true;
+  store.set('adminOverride',true);
+  resetOverrideForms();
+  refreshHub();
+  hub.setTrophies(bossTrophies(),adminOverride);
+});
+resetOverrideForms();
 
 const liftFloorLimit=()=>Math.max(40,deepest);
 const defaultLiftFloor=()=>liftResume?R.depth:URL_DEPTH||+$('startSel').value||1;
@@ -9536,9 +9563,21 @@ function rememberRoomMob(id,seed){
     look:door.look,tx:door.tx,ty:door.ty,ph:door.ph,stone:door.stone||F?.stone?.slice()
   });
 }
+// Use preview data only for missing entries, so live discoveries still supersede it.
+function archivePreview(kind,id){
+  const seed='OVERRIDE';
+  if(kind==='glitches')return {preview:true};
+  if(kind==='floors')return {seed,depth:{maze:1,cave:3,back:4,dark:9,forest:7}[id]};
+  const room=kind==='doors'?id:ROOM_MOBS[id]?.room;
+  if(room)return {seed:hashStr(seed+room),depth:1,room};
+  return {seed,depth:1,preview:true};
+}
 function refreshHub(){
   hub.syncArchives(Object.fromEntries(Object.entries(archiveCatalog).map(([kind,catalog])=>[kind,
-    Object.entries(catalog.entries).map(([id,name])=>({kind,id,name,data:archive[kind][id]}))])));
+    Object.entries(catalog.entries).map(([id,name])=>({
+      kind,id,name,data:archive[kind][id]||(adminOverride?archivePreview(kind,id):undefined),
+      discovered:!!archive[kind][id]
+    }))])),adminOverride);
 }
 function showHub(on){
   closeStation();
@@ -9561,6 +9600,7 @@ function openStation(id){
   if(document.pointerLockElement){usingLock=false;document.exitPointerLock()}
   $('stationTitle').textContent=id==='settings'?'Settings':id==='lift'?(onFloor?'Lift controls':'Descent Control'):id==='news'?'Update Log':'Field Guide';
   if(id==='news')hub.markNewsSeen();
+  if(id==='settings')resetOverrideForms();
   if(id==='lift'){
     editingLiftDepth=false;
     $('liftDepth').value=onFloor?nextLiftFloor(R.depth,liftFloorLimit()):defaultLiftFloor();
@@ -9593,6 +9633,7 @@ function closeStation(){
   hub.focusPanel(null);
   board.classList.add('hidden');
   document.body.classList.remove('hub-panel');
+  if(previous==='settings')resetOverrideForms();
   if(previous&&(board.contains(document.activeElement)||settingsScreen.screen.contains(document.activeElement)))document.activeElement.blur();
   updateSettingsScreen();
 }
@@ -10214,6 +10255,7 @@ function startArchive(kind,id,data){
         previewStamina={stam:P.stam,winded:P.winded,spikeTraps:P.spikeTraps,mooseGems:wallet};
         beginRoom(kind==='doors'?id:data.room,finishArchive,data.seed);
       }else if(kind==='mobs'){
+        if(data.preview)data=previewMobEncounter(data);
         restoreEncounter(data);
         replayMob(id,data);
       }
@@ -10222,6 +10264,19 @@ function startArchive(kind,id,data){
       throw error;
     }
   }]]);
+}
+function previewMobEncounter(data){
+  for(let ty=1;ty<F.H-1;ty++)for(let tx=1;tx<F.W-1;tx++){
+    if(!glOpen(tx,ty)||glTrapAt(tx,ty)||Math.hypot(F.exit.x-tx-0.5,F.exit.z-ty-0.5)<2)continue;
+    for(const [dx,dz] of DIRS){
+      let steps=0;
+      while(steps<4&&glOpen(tx+(steps+1)*dx,ty+(steps+1)*dz))steps++;
+      if(steps<4)continue;
+      const x=tx+0.5,z=ty+0.5,yaw=Math.atan2(dz,dx);
+      return {...data,pose:[x,z,yaw,0],mob:[x+3*dx,z+3*dz]};
+    }
+  }
+  return {...data,pose:[P.x,P.z,P.yaw,P.pitch],mob:[P.x,P.z]};
 }
 function restoreEncounter(data){
   if(data.gate&&F.door)openDoor(true);
