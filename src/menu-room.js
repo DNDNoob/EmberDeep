@@ -494,10 +494,10 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
     Object.assign(walker.b,{x:0,z:13.1,y:0,vx:0,vz:0,vy:0,jumpQ:0,bob:0});
     bunk.place(walker.b.x,walker.b.z);
     view.yaw=view.pitch=0;
-    study=null;orreryHint.textContent='';
+    study=null;orreryAim=null;orreryHint.textContent='';
   }
   // the lobby is only the active view on the title screen; elsewhere it shows no hint and ignores the orrery keys
-  function setActive(on){active=!!on;if(!active){study=null;orreryHint.textContent=''}}
+  function setActive(on){active=!!on;if(!active){study=null;orreryAim=null;orreryHint.textContent=''}}
   function syncArchives(groups){
     for(const portal of portals){
       const entries=groups[portal.id],known=entries.filter(e=>e.data).length;
@@ -566,6 +566,9 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
     studyPitch=study?studyPitch:0.28;
     studyDist=orrery.reach(id);
     study=id;
+  }
+  function pickOrrery(){
+    return active&&!ride&&orrery?.inReach(walker.b)?orrery.pick(raycaster):null;
   }
   function pose(){
     if(study){
@@ -643,6 +646,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
     }else lookStep(view,dt,input.lx,input.ly);
     if(!study){bunk.update(dt,walker.b);walker.step(dt,input,view.yaw)}
     tickLift(Math.min(elapsed,0.25));
+    if(active&&!ride)orrery?.animate(dt);
     pose();if(ride)cabin.updateMatrixWorld(true);
     if(!lobbyReady){focus=null;return}
     if(panel){
@@ -652,18 +656,19 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
     }
     focus=aim();
     raycaster.setFromCamera(pointer.set(0,0),camera);
-    orreryAim=orrery?.pick(raycaster)||null;
-    orreryHint.textContent=!active?'':study
+    orreryAim=pickOrrery();
+    const control=orreryAim&&orrery.controlLabel(orreryAim);
+    orreryHint.textContent=!active?'':control?`E: ${control}`:study
       ? `Close view of ${orrery.name(study)}. Click another body to go there. Scroll to move closer. Q walks again.`
       : orreryAim ? `E: look closer at ${orrery.name(orreryAim)}` : '';
   }
   function animateLobby(time,view){
     if(!ride)for(const hall of galleries.values())hall.animate(time,view.position);
-    orrery.animate(time);
+    orrery.animate();
     hangar.update(time||0);hangarFront.update(time||0);
     if(skyMat?.uniforms){
       skyMat.uniforms.uTime.value=time||0;
-      if(skyMat.uniforms.uBody)orrery.fillWindow(skyMat.uniforms,time||0);
+      if(skyMat.uniforms.uBody)orrery.fillWindow(skyMat.uniforms);
     }
   }
   function render(exposure,time,mazeExposure=exposure){
@@ -705,6 +710,15 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
     const label=stationLabels.news;
     if(!label.text)label.screen.setLabel(newsIdle());
   }
+  addEventListener('keydown',e=>{
+    if(!active||!study)return;
+    if(e.code==='KeyQ'||e.code==='Escape'||e.code==='Backspace')study=null;
+  });
+  addEventListener('wheel',e=>{
+    if(!active||!study)return;
+    const min=orrery.reach(study)*0.45,max=Math.max(1.6,orrery.reach(study)*8);
+    studyDist=clamp(studyDist*(e.deltaY>0?1.1:0.9),min,max);
+  },{passive:true});
   return {get scene(){return scene},get camera(){return camera},update,render,markNewsSeen,get newsUnseen(){return !newsSeen},syncArchives,syncVisitors,watchLift,liftMode,setSharedLift,engageLift,reset,resetLift,setActive,
     get lobbyReady(){return lobbyReady},get bunkDoorOpen(){return bunk.open},
     canWarmLift,
@@ -770,7 +784,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
     },
     get liftMotion(){return ride&&{travel:ride.travel,y:cabin.position.y,extra:0,docked:ride.docked,gaps:Array.from(ride.stretch)}},
     get hangarStats(){return hangar?.stats()},
-    get aimed(){return !!focus},
+    get aimed(){return !!(focus||orreryAim)},
     setSkyTime(t){if(skyMat&&skyMat.uniforms)skyMat.uniforms.uTime.value=t},
     get skyTime(){return skyMat&&skyMat.uniforms?skyMat.uniforms.uTime.value:0},
     get position(){return {x:walker.b.x,z:walker.b.z,y:cabin.position.y,depth:indication,docked:!!ride?.docked}},
@@ -791,6 +805,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
     interact(){
       if(!lobbyReady)return;
       if(focus){activate(focus);return}
+      if(orreryAim&&orrery.press(orreryAim))return;
       if(study){
         if(orreryAim&&orreryAim!==study)beginStudy(orreryAim);
         else if(!orreryAim)study=null;
@@ -805,18 +820,9 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
       const hit=aim(x,y);
       if(hit){activate(hit);return true}
       raycaster.setFromCamera(pointer.set(x,y),camera);
-      const id=orrery?.pick(raycaster);
+      const id=pickOrrery();
       if(!id)return false;
-      beginStudy(id);
+      if(!orrery.press(id))beginStudy(id);
       return true;
     }};
-  addEventListener('keydown',e=>{
-    if(!active||!study)return;
-    if(e.code==='KeyQ'||e.code==='Escape'||e.code==='Backspace')study=null;
-  });
-  addEventListener('wheel',e=>{
-    if(!active||!study)return;
-    const min=orrery.reach(study)*0.45,max=Math.max(1.6,orrery.reach(study)*8);
-    studyDist=clamp(studyDist*(e.deltaY>0?1.1:0.9),min,max);
-  },{passive:true});
 }
