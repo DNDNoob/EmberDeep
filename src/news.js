@@ -7,6 +7,8 @@
 // it is, or how to trigger it. No code names, file names, PR numbers or agent names.
 // Group small fixes into one post. Rebuild index.html afterwards (npm run build).
 export const NEWS=[
+  {date:'2026-11-27',title:'A new home for the Keeper',
+    body:'Follow the maze into the Keeper’s sanctuary. Warm up by the fire, visit the booths, and check the live wall map to see where your party is on the floor.'},
   {date:'2026-11-26',title:'Take your time with Kepler-47',
     body:'The orrery and observation window now move at a gentler pace. Try the pause, speed, and reset buttons on the orrery to control both views.'},
   {date:'2026-11-26',title:'Deeper into the woods',
