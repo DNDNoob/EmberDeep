@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {landingMazeZ,liftBackZ,liftCabinZ,liftGateZ,liftMouthHalf,liftMouthHeight,liftMouthLamp} from './lift-dock.js';
 
 const boxGeometry=new THREE.BoxGeometry();
 const boulderGeometry=new THREE.IcosahedronGeometry(1,1);
@@ -36,11 +37,41 @@ const lampMaterial=new THREE.MeshBasicMaterial({color:0xffc280});
 const floorMaterial=new THREE.MeshStandardMaterial({roughness:0.93});
 const calcite=new THREE.MeshStandardMaterial({color:0xa8b4cb,emissive:0x292d46,emissiveIntensity:0.4,roughness:0.45,metalness:0.2});
 const dimension=0.83,rows=8,columns=5;
-export const landingMazeZ=-12.58;
 
 function beam(group,material,x,y,z,w,h,d){
   const mesh=new THREE.Mesh(boxGeometry,material);
   mesh.position.set(x,y,z);mesh.scale.set(w,h,d);group.add(mesh);
+}
+
+const passageMetal=new THREE.MeshStandardMaterial({color:0x514b46,roughness:0.75,metalness:0.32});
+const bayWall=new THREE.MeshStandardMaterial({color:0x3b3740,roughness:0.78});
+export function createLiftBay(){
+  const group=new THREE.Group();
+  group.name='Lift bay';
+  for(const side of [-1,1])beam(group,bayWall,side*1.91,1.8,liftCabinZ,0.2,3.6,3.86);
+  beam(group,bayWall,0,1.7,liftBackZ+0.16,3.84,3.4,0.18);
+  beam(group,bayWall,0,3.2,liftCabinZ,3.84,0.2,3.86);
+  return group;
+}
+export function createLiftPassage(){
+  const group=new THREE.Group();
+  group.name='Lift passage';
+  // The same passage spans the deck and maze in both scenes. The returns overlap the stone and steel at each end.
+  const near=liftGateZ+0.15,far=landingMazeZ-0.07,depth=near-far,z=(near+far)/2;
+  beam(group,steel,0,-0.12,z,2.04,0.24,depth);
+  beam(group,passageMetal,0,liftMouthHeight+0.08,z,2.12,0.16,depth);
+  for(const side of [-1,1]){
+    beam(group,passageMetal,side*(liftMouthHalf+0.07),liftMouthHeight/2,z,0.14,liftMouthHeight,depth);
+    beam(group,timber,side*0.78,0.12,z,0.09,0.1,depth-0.14);
+    beam(group,steel,side*(liftMouthHalf+0.03),liftMouthHeight/2,landingMazeZ,0.15,liftMouthHeight+0.12,0.18);
+    beam(group,steel,side*0.69,liftMouthLamp.y,liftMouthLamp.z,0.23,0.16,0.18);
+    for(const face of [-1,1])beam(group,lampMaterial,side*0.69,liftMouthLamp.y,liftMouthLamp.z+face*0.081,0.15,0.075,0.035);
+    beam(group,passageMetal,side*1.43,1.62,liftGateZ,1.04,3.24,0.18);
+  }
+  beam(group,passageMetal,0,2.75,liftGateZ,1.86,1.0,0.18);
+  beam(group,steel,0,liftMouthHeight+0.02,landingMazeZ,2.12,0.16,0.2);
+  beam(group,passageMetal,0,0.008,landingMazeZ,1.82,0.018,0.21);
+  return group;
 }
 
 export function createShaftHead(){
@@ -116,6 +147,9 @@ export function createMineLanding({height,numberSign,sampleFloor}){
   lantern.position.set(-1.34,2.27,socket-0.45);
   alcove.add(lantern);
   const mazeMount=new THREE.Group();mazeMount.position.z=landingMazeZ;group.add(mazeMount);
+  const passage=createLiftPassage(),bay=createLiftBay();group.add(passage,bay);passage.visible=bay.visible=false;
+  const mouthLight=new THREE.PointLight(liftMouthLamp.color,15,6,1.25);
+  mouthLight.position.set(0,liftMouthLamp.y,liftMouthLamp.z);passage.add(mouthLight);
   // A thick rock collar from the car to the landing mouth, so the cut is not a window onto the void.
   const vestibule=new THREE.Group();
   group.add(vestibule);
@@ -166,11 +200,15 @@ export function createMineLanding({height,numberSign,sampleFloor}){
     if(cursor<stoneN+mineralN)return true;
     lastKey=key;lastFloor=workFloor;
     plaque.setLabel(workFloor?['FLOOR '+depth,workFloor.name]:['L','ENTRANCE HALL']);
-    alcove.visible=vestibule.visible=!!workFloor;
+    alcove.visible=vestibule.visible=!!workFloor&&!passage.visible;
     if(workFloor)lantern.color.setHex(workFloor.forest?0x9eeab8:workFloor.dark?0x97aaff:workFloor.back?0xe8e7a1:workFloor.kind==='cave'?0xaabeff:0xffc294);
     return true;
   }
-  return {group,update,setMaze(model){
+  return {group,update,setMaze(model,prepared=false){
+    if(passage.visible!==prepared){
+      passage.visible=bay.visible=prepared;
+      alcove.visible=vestibule.visible=!!lastFloor&&!prepared;
+    }
     if((mazeMount.children[0]||null)===model)return;
     mazeMount.clear();
     if(model){

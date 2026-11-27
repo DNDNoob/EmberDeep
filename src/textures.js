@@ -880,11 +880,11 @@ export function makeSurfaces(renderer, size, wantNormals) {
   const key = p => p ? `${p.v | 0}|${(p.seed || 0).toFixed(2)}|${(p.tint || [1, 1, 1]).map(c => c.toFixed(3)).join(',')}` : '0|0.00|1.000,1.000,1.000';
   function get(i, p) {
     const ck = i + ':' + key(p);
-    if (cache.has(ck)) {const c = cache.get(ck); c.used = true; return c}
+    if (cache.has(ck)) return cache.get(ck);
     const tn = ((p && p.tint) || [1, 1, 1]).map(c => Math.round(c * 1e4) / 1e4);
     const job = {i, v: (p && p.v) | 0, seed: Math.round((i * 17.31 + 3.7 + ((p && p.seed) || 0)) * 100) / 100, tn, A: target(true), N: wantNormals ? target(false) : null};
     if (deferred) queue.push(job); else paint(job);
-    const out = {map: job.A.texture, nrm: job.N ? job.N.texture : null, rtA: job.A, rtN: job.N, used: true};
+    const out = {map: job.A.texture, nrm: job.N ? job.N.texture : null, rtA: job.A, rtN: job.N};
     cache.set(ck, out);
     return out;
   }
@@ -908,7 +908,7 @@ export function makeSurfaces(renderer, size, wantNormals) {
     const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     return renderer.compileAsync(sc, cam).catch(() => {}).then(() => {geo.dispose(); for (const q of batch) q.ok = true});
   };
-  const sweep = () => {for (const [k, c] of cache) {if (c.used) c.used = false; else {
+  const sweep = keep => {for (const [k, c] of cache) {if (!keep.has(c.map)) {
     for (let q = queue.length - 1; q >= 0; q--) if (queue[q].A === c.rtA) queue.splice(q, 1);   // never painted: drop it from the queue too
     c.rtA.dispose(); if (c.rtN) c.rtN.dispose(); cache.delete(k)}}};
   return {get, key, sweep, pump, idle, compileQueued, defer: on => {deferred = !!on}, get pending() {return queue.length}, count: SURF.length, size: () => cache.size};

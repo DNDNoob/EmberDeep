@@ -12,7 +12,7 @@ for(const post of NEWS){
 for(let i=1;i<NEWS.length;i++)assert.ok(NEWS[i-1].date>=NEWS[i].date,'posts are newest first');
 
 const {chromium}=createRequire(import.meta.url)('playwright');
-const browser=await chromium.launch();
+const browser=await chromium.launch({executablePath:process.env.LIFT_BROWSER||undefined,args:['--use-angle=swiftshader','--enable-unsafe-swiftshader']});
 const build=new URL('../index.html',import.meta.url);
 const shots=process.env.SHOTS;
 if(shots)mkdirSync(shots,{recursive:true});
@@ -22,7 +22,7 @@ try{
   page.on('pageerror',error=>errors.push(error.message));
   await page.goto(build.href);
   await page.waitForFunction(()=>window.__game?.hub&&window.__game.state==='title');
-  await page.waitForFunction(()=>document.getElementById('loading').hidden,null,{timeout:60000});
+  await page.waitForFunction(()=>__game.hub.lobbyReady,null,{timeout:60000});
   const step=()=>page.evaluate(()=>{__game.hub.update(1/60)});
   const shot=async name=>{if(shots){await page.waitForTimeout(400);await page.screenshot({path:`${shots}/${name}.png`})}};
 
@@ -57,7 +57,7 @@ try{
 
   await page.reload();
   await page.waitForFunction(()=>window.__game?.hub);
-  await page.waitForFunction(()=>document.getElementById('loading').hidden,null,{timeout:60000});
+  await page.waitForFunction(()=>__game.hub.lobbyReady,null,{timeout:60000});
   assert.equal(await page.evaluate(()=>__game.hub.newsUnseen),false,'seen state persists');
   assert.deepEqual(errors,[]);
   console.log('Update Log terminal placement, posts, NEW marker and walk-away passed.');
