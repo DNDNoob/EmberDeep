@@ -1,6 +1,7 @@
 // node tools/stillwood_test.mjs
 import assert from 'node:assert/strict';
-import {STILL,horizForward,lookDir,placeBehind,rayHitsPond,crossedDoor,stillStep,doorSeen,waterFill,viewFov,terrainH,terrainRaw,mirrorPoint,mirrorYaw,biomeAt,rockSurface,rockPush,jumpTop,jumpReach,heightGrid,domeGrid,makeRock,STEP_MIN,placeLine,HILL,pondSpawnDue,pondSpawnAt,clearField,segDist} from '../src/stillwood.js';
+import {STILL,horizForward,lookDir,placeBehind,rayHitsPond,crossedDoor,stillStep,doorSeen,waterFill,viewFov,terrainH,terrainRaw,mirrorPoint,mirrorYaw,biomeAt,rockSurface,rockPush,jumpTop,jumpReach,heightGrid,domeGrid,makeRock,STEP_MIN,placeLine,HILL,pondSpawnDue,pondSpawnAt,cottageSpawnDue,cottageSpawnAt,clearField,segDist} from '../src/stillwood.js';
+import {cottagePush,cottageInside,cottageWorld} from '../src/stillwood-cottage.js';
 
 const pond={x:0,z:-16,r:STILL.pondR};
 const fresh=()=>({
@@ -165,6 +166,44 @@ const settle=s=>{for(let i=0;i<Math.ceil(STILL.freezeDwell/0.05)+1&&!s.pinned;i+
   const f0=pondSpawnAt({seed:7,index:3,x:0,z:0,yaw:0,ponds:[]});
   const f1=pondSpawnAt({seed:7,index:3,x:0,z:0,yaw:0,ponds:[{x:f0.x,z:f0.z,r:5.5}]});
   assert.ok(Math.hypot(f1.x-f0.x,f1.z-f0.z)>5.5+f0.r+7,'moved clear of the old pond');
+}
+// A cottage is due after 3,000 ft of walking, then every 1,000 ft after that.
+{assert.ok(Math.abs(STILL.cottageFirst-3000*0.3048)<1e-9);
+  assert.ok(Math.abs(STILL.cottageEvery-1000*0.3048)<1e-9);
+  assert.equal(cottageSpawnDue(STILL.cottageFirst-0.2,false),false);
+  assert.equal(cottageSpawnDue(STILL.cottageFirst,false),true);
+  assert.equal(cottageSpawnDue(STILL.cottageEvery-0.2,true),false);
+  assert.equal(cottageSpawnDue(STILL.cottageEvery,true),true);
+}
+// It stands ahead of the walker, facing them, and the same walk always grows the same house.
+{for(const yaw of [0,1.1,-2.2]){
+  const a=cottageSpawnAt({seed:7,index:0,x:40,z:-800,yaw,ponds:[],cottages:[]});
+  const b=cottageSpawnAt({seed:7,index:0,x:40,z:-800,yaw,ponds:[],cottages:[]});
+  assert.deepEqual(a,b);
+  const dx=a.x-40,dz=a.z+800,f=horizForward(yaw),d=Math.hypot(dx,dz);
+  assert.ok(d>20&&d<50,'distance '+d);
+  assert.ok((dx*f[0]+dz*f[1])/d>0.85,'ahead of the walker');
+  const fx=Math.sin(a.face),fz=Math.cos(a.face),px=-dx,pz=-dz,pl=Math.hypot(px,pz);
+  assert.ok((fx*px+fz*pz)/pl>0.98,'door faces the walker');
+}
+  const blocked=cottageSpawnAt({seed:7,index:0,x:40,z:-800,yaw:0,ponds:[],cottages:[]});
+  const moved=cottageSpawnAt({seed:7,index:0,x:40,z:-800,yaw:0,ponds:[{x:blocked.x,z:blocked.z,r:6}],cottages:[]});
+  assert.ok(Math.hypot(moved.x-blocked.x,moved.z-blocked.z)>8,'moved off the pond');
+}
+// A shut door stops you. An open one lets you into the room, and the walls still do not.
+{const home={x:10,z:-20,face:0,open:false,y:0};
+  const body={x:10-0.84,z:-20+0.15};
+  cottagePush(body,[home]);
+  assert.ok(Math.hypot(body.x-(10-0.84),body.z-(-20+0.7))>0.2,'shut door pushes');
+  const open={...home,open:true};
+  const into={x:10,z:-22};
+  cottagePush(into,[open]);
+  assert.ok(cottageInside(open,into.x,into.z),'open door can be walked through');
+  const wall={x:10-2.9,z:-22};
+  cottagePush(wall,[open]);
+  assert.ok(!cottageInside(open,wall.x,wall.z)||Math.abs(wall.x-(10-2.9))>0.15,'wall pushes');
+  const back=cottageWorld(open,0,-2);
+  assert.ok(cottageInside(open,back.x,back.z));
 }
 // The meadow field is seeded and in 0..1; the path distance is a segment distance.
 {const a=clearField(12.3,-4.5,7);assert.equal(a,clearField(12.3,-4.5,7));assert.ok(a>=0&&a<=1);

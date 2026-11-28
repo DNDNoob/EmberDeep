@@ -7,6 +7,8 @@
 // it is, or how to trigger it. No code names, file names, PR numbers or agent names.
 // Group small fixes into one post. Rebuild index.html afterwards (npm run build).
 export const NEWS=[
+  {date:'2026-11-28',title:'A roof among the firs',
+    body:'The still wood is not only water and trees anymore. Somewhere under the moss, a chimney has started to breathe.'},
   {date:'2026-11-28',title:'Dance like nobody is watching',
     body:'Press T in the maze to break into a dance, and press it again for the next one: six to choose from, from Disco Fever to The Robot. Everyone in your game can see your moves. Walk off to stop. Chat is on Enter now.'},
   {date:'2026-11-27',title:'Room for everyone on the Neon Run',

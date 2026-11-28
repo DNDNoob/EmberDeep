@@ -5,12 +5,14 @@ import * as THREE from 'three';
 import {MOVE,bobY,createRoomWalker,lookStep,scaleFor,crouchOffset} from './movement.js';
 import {getProp,natureMaterial} from './nature.js';
 import {createStillwoodBirds} from './stillwood-birds.js';
+import {createCottage,cottagePush,onCottagePad,cottageInside,cottageDoorWorld} from './stillwood-cottage.js';
 
 const EYE=1.6;
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
 
 export const STILL={
   behind:4.2, doorHalf:0.52, doorH:2.2, pondR:5.5, pondEvery:304.8, pondMax:3,
+  cottageFirst:3000*0.3048, cottageEvery:1000*0.3048, cottageMax:4,
   grace:0.15, glimpseTime:0.5, seeMargin:0.03, hidePad:0.3, waterY:0.045,
   vfov:72*Math.PI/180, waterReach:25, waterFill:2/9,
   freezeReach:12, freezeFill:0.4, freezeN:5, freezeSpan:0.8, freezeDwell:0.5,
@@ -232,6 +234,26 @@ export function stillStep(s,dt){
 // After the first pond, keep new ponds at least a long walk (1,000 ft) from the newest one.
 export function pondSpawnDue(px,pz,last,every=STILL.pondEvery){
   return Math.hypot(px-last.x,pz-last.z)>=every;
+}
+// The first cottage is due after 3,000 ft of path walked. Each later one is due after another 1,000 ft of path.
+export function cottageSpawnDue(walked,hasCottage,first=STILL.cottageFirst,every=STILL.cottageEvery){
+  return walked>=(hasCottage?every:first);
+}
+// Ahead of the walker, a little to one side, facing back toward them. Seeded, and turned aside from ponds and other cottages.
+export function cottageSpawnAt({seed,index,x,z,yaw,ponds=[],cottages=[]}){
+  const h1=hash2(index,71,seed),h2=hash2(index,83,seed);
+  let ang=yaw+(h2-0.5)*0.35,px=0,pz=0;
+  for(let k=0;k<8;k++){
+    const f=horizForward(ang),dist=26+10*h1,side=(h2-0.5)*8+(k%2?1:-1)*k*3;
+    const rx=-f[1],rz=f[0];
+    px=x+f[0]*dist+rx*side;pz=z+f[1]*dist+rz*side;
+    const pondHit=ponds.some(p=>Math.hypot(px-p.x,pz-p.z)<p.r+14);
+    const homeHit=cottages.some(c=>Math.hypot(px-c.x,pz-c.z)<18);
+    if(!pondHit&&!homeHit&&Math.hypot(px,pz)>18)break;
+    ang+=0.55;
+  }
+  const q=v=>Math.round(v*100)/100;
+  return {x:q(px),z:q(pz),face:q(Math.atan2(x-px,z-pz)),i:index};
 }
 // Where the next pond appears: 25-35 m ahead of the player, in a seeded direction within about 15 degrees of where they face,
 // turned aside if it would crowd an existing pond. Pure and seeded: the host's result is what guests receive.
@@ -739,9 +761,10 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     }
   }
   const slotById=Object.fromEntries(slots.map(s=>[s.id,s]));
-  let trees=[],rocks=[],deadClear=false,S=null;
+  let trees=[],rocks=[],cottages=[],deadClear=false,S=null;
   const treeR=t=>t.s.r*t.k+t.s.pad*Math.min(1.2,t.k);
-  const clearOf=(x,z)=>x*x+z*z<25||pondDist(x,z)<2.4;
+  const homeAt=(x,z)=>cottages.some(c=>onCottagePad(c,x,z));
+  const clearOf=(x,z)=>x*x+z*z<25||pondDist(x,z)<2.4||homeAt(x,z);
   function trunkAt(x,z){return trees.some(t=>(t.x-x)**2+(t.z-z)**2<(treeR(t)+0.9)**2)}
   const NEAR=low?10:15,AR=low?5:6;    // AR: chunks (16 m) generated round the player, so every prop's far distance is covered before it can be seen
   const bio=(x,z)=>{const b=biomeAt(x,z,seed),sp=sstep01((Math.hypot(x,z)-8)/16),pd=sstep01((pondDist(x,z)-2)/9),k=sp*pd;return [b.m*sp,b.d*k]};
@@ -822,12 +845,12 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
         }
         // shrubs: under the trees, thinner in the sun
         const sx=x0+(R(12)-0.5)*3,sz=z0+(R(13)-0.5)*3;
-        if(pondDist(sx,sz)>0.9&&pathDist(sx,sz)>1&&R(14)<(clearing?0.1:0.26)*(1+0.5*bd)*(low?1-0.4*bd:1)*(1-0.85*bm)&&!rockBlock(sx,sz,0.4))
+        if(pondDist(sx,sz)>0.9&&pathDist(sx,sz)>1&&!homeAt(sx,sz)&&R(14)<(clearing?0.1:0.26)*(1+0.5*bd)*(low?1-0.4*bd:1)*(1-0.85*bm)&&!rockBlock(sx,sz,0.4))
           emit('shrub',R(15),sx,0,sz,0.75+R(16)*0.8,0.75+R(17)*0.7,R(18)*6.283,{th:R(10),bd});
         // flower clumps: meadow clearings, round the ponds and beside the paths
         const fx=x0+(R(19)-0.5)*3,fz=z0+(R(20)-0.5)*3,dPf=pondDist(fx,fz),pf=pathDist(fx,fz);
         const [fm,fd]=bio(fx,fz),wf=Math.max(clearing?0.7:(dPf<6||pf<3.4)?0.45:0.04,fm*0.8)*(1-0.9*fd);
-        if(dPf>1&&pf>0.8&&R(21)<wf*(low?0.7:1)){
+        if(dPf>1&&pf>0.8&&!homeAt(fx,fz)&&R(21)<wf*(low?0.7:1)){
           const kind=R(22)<0.5?'tulip':'daisy',s=1.1+R(23)*0.8;
           emit(kind,R(24),fx,0,fz,s,s,R(25)*6.283);
           if((clearing||fm>0.5)&&R(26)<0.5+0.15*fm){const a=R(27)*6.283,s2=1+R(28)*0.7;emit(R(29)<0.5?'tulip':'daisy',R(30),fx+Math.cos(a)*1.1,0,fz+Math.sin(a)*1.1,s2,s2,R(31)*6.283);
@@ -839,7 +862,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
           const kk=g<4?80+g*6:140+g*6,gx=x0+(hr(x0,z0,seed,kk)-0.5)*3.2,gz=z0+(hr(x0,z0,seed,kk+1)-0.5)*3.2,dpg=pondDist(gx,gz);
           const inMeadow=clearField(gx,gz,seed)>CLEAR_AT-0.05;
           const wg=Math.max(inMeadow?0.95:dpg<4.5?0.85:0.3,gm*0.86)*(1-0.85*gd*(dpg<4.5?0.5:1));
-          if(dpg>0.5&&pathDist(gx,gz)>0.6&&hr(x0,z0,seed,kk+2)<wg*(low?0.55:1)){
+          if(dpg>0.5&&pathDist(gx,gz)>0.6&&!homeAt(gx,gz)&&hr(x0,z0,seed,kk+2)<wg*(low?0.55:1)){
             const s=2.4+hr(x0,z0,seed,kk+3)*1.6;
             emit('grass',hr(x0,z0,seed,kk+4),gx,0,gz,s,s*(0.8+hr(x0,z0,seed,kk+5)*0.6),hr(x0,z0,seed,kk+6)*6.283);
           }
@@ -847,7 +870,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
         // loose stones
         const qx=x0+(R(32)-0.5)*3,qz=z0+(R(33)-0.5)*3;
         const [qm,qd]=bio(qx,qz);
-        if(pondDist(qx,qz)>1.4&&pathDist(qx,qz)>1.1&&R(34)<0.075*(1+1.3*qd)*(1-0.45*qm)){
+        if(pondDist(qx,qz)>1.4&&pathDist(qx,qz)>1.1&&!homeAt(qx,qz)&&R(34)<0.075*(1+1.3*qd)*(1-0.45*qm)){
           const s=0.6+R(35)*0.9,mossy=R(36)<0.6+0.3*qd,sy=s*(0.8+R(38)*0.4);
           const rotQ=R(39)*6.283;
           emit(mossy?'mossrock':'boulder',R(37),qx,-0.2*s,qz,s,sy,rotQ,{rk:1});
@@ -987,12 +1010,13 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   const G=(x,z)=>{
     let g=H(x,z);
     for(const r of rocks){if((x-r.cx)**2+(z-r.cz)**2>r.rb*r.rb)continue;const y=rockSurface(r,x,z);if(y>g)g=y}
+    for(const c of cottages)if(cottageInside(c,x,z))g=c.y+0.14;
     return g;
   };
   S.G=G;
-  const birds=createStillwoodBirds(group,{seed,ground:G,open:(x,z)=>pondDist(x,z)>2.4&&!trunkAt(x,z)});
+  const birds=createStillwoodBirds(group,{seed,ground:G,open:(x,z)=>pondDist(x,z)>2.4&&!trunkAt(x,z)&&!homeAt(x,z)});
   S.birds=()=>birds.birds.map(b=>({k:b.kind,mode:b.mode,y:+b.y.toFixed(2)}));
-  const blockedAt=(x,z)=>trunkAt(x,z)||rocks.some(r=>(r.cx-x)**2+(r.cz-z)**2<(r.rb+0.9)**2);
+  const blockedAt=(x,z)=>trunkAt(x,z)||rocks.some(r=>(r.cx-x)**2+(r.cz-z)**2<(r.rb+0.9)**2)||homeAt(x,z);
   const walker=S.walker=createRoomWalker({o,eye:EYE,x:0,z:0,groundAt:G,snap:0.7,collide:b=>{
     for(const t of trees){
       const dx=b.x-t.x,dz=b.z-t.z,d=Math.hypot(dx,dz),m=0.32+treeR(t);
@@ -1010,6 +1034,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     }
     // last resort: still inside a stone after all that, so stand on it instead of being stuck
     for(const t of rocks){const y=rockSurface(t,b.x,b.z);if(y-b.y>0.2){b.y=y;b.vy=0;S.pops=(S.pops||0)+1}}
+    cottagePush(b,cottages);
   }});
   const b=walker.b;
   S.WK=walker;
@@ -1035,9 +1060,38 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     const list=[...ponds,np];while(list.length>STILL.pondMax)list.shift();
     setPonds(list);rebuild(Math.round(b.x/16),Math.round(b.z/16),b.vx,b.vz);
   };
+  const cottageGroups=new Map();
+  let cottageWalk=0;
+  const clearHome=(x,z)=>{
+    const cx=Math.round(x/16),cz=Math.round(z/16);
+    for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++)cache.delete((cx+dx)+','+(cz+dz));
+    dirty=true;lastAsm=0;
+    rebuild(Math.round(b.x/16),Math.round(b.z/16),b.vx,b.vz,8);
+  };
+  const dropCottage=c=>{
+    const g=cottageGroups.get(c.i);
+    if(g){group.remove(g.group);g.dispose();cottageGroups.delete(c.i)}
+  };
+  const mountCottage=spec=>{
+    spec.y=H(spec.x,spec.z);spec.open=!!spec.open;
+    const door=cottageDoorWorld(spec);spec.dx=door.x;spec.dz=door.z;
+    const home=createCottage(low);
+    home.group.position.set(spec.x,spec.y,spec.z);
+    home.group.rotation.y=spec.face;
+    group.add(home.group);
+    cottages.push(spec);cottageGroups.set(spec.i,home);
+  };
+  const setCottages=list=>{
+    for(const c of cottages)dropCottage(c);
+    cottages.length=0;
+    for(const spec of list)mountCottage(spec);
+    if(list.length)clearHome(list[list.length-1].x,list[list.length-1].z);
+  };
+  S.cottages=()=>cottages.map(c=>({...c}));
   S.snap=()=>({sd:seed,x:+b.x.toFixed(2),z:+b.z.toFixed(2),y:+b.y.toFixed(2),yaw:+S.yaw.toFixed(3),pitch:+S.pitch.toFixed(3),dx:+S.doorX.toFixed(2),dz:+S.doorZ.toFixed(2),face:+S.doorFace.toFixed(3),pin:S.pinned?1:0,
-    spent:S.spentPond,unlocked:S.unlocked,hidden:S.hidden,
-    po:ponds.map(p=>[p.x,p.z,p.r,p.fx,p.fz,p.i])});
+    spent:S.spentPond,unlocked:S.unlocked,hidden:S.hidden,cw:+cottageWalk.toFixed(1),
+    po:ponds.map(p=>[p.x,p.z,p.r,p.fx,p.fz,p.i]),
+    co:cottages.map(c=>[c.x,c.z,c.face,c.i,c.open?1:0])});
   S.apply=q=>{
     if(![q.x,q.z,q.y,q.yaw,q.pitch,q.dx,q.dz,q.face].every(Number.isFinite))return;
     S.yaw=q.yaw;S.pitch=clamp(q.pitch,-MOVE.roomPitch,MOVE.roomPitch);
@@ -1048,6 +1102,13 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
       const list=q.po.filter(a=>Array.isArray(a)&&a.length>=6&&a.slice(0,6).every(Number.isFinite)).map(a=>({x:a[0],z:a[1],r:clamp(a[2],3,8),fx:a[3],fz:a[4],i:Math.max(0,a[5]|0)}));
       const same=list.length===ponds.length&&list.every((p,k)=>p.i===ponds[k].i&&p.x===ponds[k].x&&p.z===ponds[k].z);
       if(list.length===q.po.length&&!same){setPonds(list);S.mist=list.length?2.4:0}
+    }
+    if(Number.isFinite(q.cw))cottageWalk=q.cw;
+    if(Array.isArray(q.co)&&q.co.length<=STILL.cottageMax){
+      const list=q.co.filter(a=>Array.isArray(a)&&a.length>=5&&a.slice(0,4).every(Number.isFinite)).map(a=>({x:a[0],z:a[1],face:a[2],i:Math.max(0,a[3]|0),open:!!a[4]}));
+      const same=list.length===cottages.length&&list.every((c,k)=>c.i===cottages[k].i&&c.x===cottages[k].x&&c.z===cottages[k].z);
+      if(list.length===q.co.length&&!same)setCottages(list);
+      else for(let k=0;k<list.length;k++)cottages[k].open=list[k].open;
     }
     walker.watch(0.1,q.x,q.z,clamp(q.y,-12,14));
   };
@@ -1160,6 +1221,18 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
         S.mist=2.4;
         o.tone(392,0.6,'sine',0.03,0,-90);
       }
+      cottageWalk+=distance;
+      if(cottageSpawnDue(cottageWalk,cottages.length>0)){
+        const lastHome=cottages[cottages.length-1];
+        const spec=cottageSpawnAt({seed,index:lastHome?lastHome.i+1:0,x:b.x,z:b.z,yaw:S.yaw,ponds,cottages});
+        mountCottage(spec);
+        while(cottages.length>STILL.cottageMax){
+          const old=cottages.shift();dropCottage(old);clearHome(old.x,old.z);
+        }
+        cottageWalk=0;
+        clearHome(spec.x,spec.z);
+        o.tone(220,0.7,'sine',0.02,0,-120);
+      }
       poseCam(dt);
       const sim={
         x:b.x,z:b.z,yaw:S.yaw,pitch:S.pitch,eye:cam.position.y,aspect:cam.aspect||16/9,
@@ -1200,11 +1273,15 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     UT.value=S.t;
     updatePonds(dt,b,moving);
     birds.step(dt,b.x,b.z,S.yaw);
+    for(const c of cottages){
+      if(!c.open&&Math.hypot(b.x-c.dx,b.z-c.dz)<2.4)c.open=true;
+      const home=cottageGroups.get(c.i);if(home)home.step(dt,S.t,c.open);
+    }
     // the eye follows the feet smoothly on the ground (stepping onto or off a stone does not pop) and exactly in the air
     if(A.watching)poseCam(dt);
   };
   onClear(()=>{
-    deadClear=true;birds.dispose();scene.background=prevBg;rt.dispose();mtn.geometry.dispose();mtn.material.dispose();ghostBody.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()});ghostDoor.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()});
+    deadClear=true;birds.dispose();for(const c of cottages)dropCottage(c);scene.background=prevBg;rt.dispose();mtn.geometry.dispose();mtn.material.dispose();ghostBody.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()});ghostDoor.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()});
     const gs=new Set([ground.geometry,padGeo,cupGeo,waterGeo,...Object.values(holders)]);
     for(const s of slots){gs.add(s.near.geometry);gs.add(s.farM.geometry);s.near.dispose();s.farM.dispose()}
     for(const g of gs)g.dispose();
