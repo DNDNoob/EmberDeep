@@ -104,7 +104,7 @@ export function bathroomRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
   paper.visible=false;scene.add(paper);onClear(()=>{scene.remove(paper);paper.geometry.dispose();paperMat.dispose();paperTex.dispose()});
 
   const S={t:0,yaw:0,pitch:-0.05,bloom:0.22,seed,sit:false,anim:0,said:0,G,stand:null,flush:0,redMsg:0};
-  const walker=createRoomWalker({o,eye:EYE,x:0,z:-0.65,collide:b=>{
+  const walker=S.walker=createRoomWalker({o,eye:EYE,x:0,z:-0.65,collide:b=>{
     b.x=clamp(b.x,-hw+0.25,hw-0.25);b.z=clamp(b.z,-dp+0.28,-0.28);
     const dx=b.x-T.x,dz=b.z-(T.z+0.02),d=Math.hypot(dx,dz),m=0.5;if(d<m&&d>1e-4){b.x=T.x+dx/d*m;b.z=T.z+0.02+dz/d*m}
     if(b.x>hw-0.72&&b.z<-1.05&&b.z>-1.85)b.x=hw-0.72;

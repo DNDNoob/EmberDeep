@@ -635,7 +635,7 @@ export function createTheater(env){
         b.x=clamp(b.x,-RX+RAD,RX-RAD);b.z=clamp(b.z,ZF+RAD,ZB-RAD);
       }
     };
-    const WK=createRoomWalker({o,eye:EYE,x:SPAWN.x,z:SPAWN.z,collide,groundAt:(x,z)=>FY(z),snap:0.35,ceilingAt:()=>RH-0.3-EYE,
+    const WK=S.walker=createRoomWalker({o,eye:EYE,x:SPAWN.x,z:SPAWN.z,collide,groundAt:(x,z)=>FY(z),snap:0.35,ceilingAt:()=>RH-0.3-EYE,
       sound:e=>{if(e.jumped)o.sfx('jump');if(e.landed>0.8){S.dip=Math.min(0.1,0.03+0.02*e.landed);o.sfx('step')}else if(e.step&&!A.watching)o.noise(0.07,0.03,170+(WK.b.stepPh&1)*30,1)}});
     Object.defineProperty(S,'px',{get:()=>WK.b.x,set:v=>{WK.b.x=v}});Object.defineProperty(S,'pz',{get:()=>WK.b.z,set:v=>{WK.b.z=v}});
     S.WK=WK;S.dip=0;

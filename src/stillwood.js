@@ -985,7 +985,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   };
   S.G=G;
   const blockedAt=(x,z)=>trunkAt(x,z)||rocks.some(r=>(r.cx-x)**2+(r.cz-z)**2<(r.rb+0.9)**2);
-  const walker=createRoomWalker({o,eye:EYE,x:0,z:0,groundAt:G,snap:0.7,collide:b=>{
+  const walker=S.walker=createRoomWalker({o,eye:EYE,x:0,z:0,groundAt:G,snap:0.7,collide:b=>{
     for(const t of trees){
       const dx=b.x-t.x,dz=b.z-t.z,d=Math.hypot(dx,dz),m=0.32+treeR(t);
       if(d<m&&d>1e-4){b.x=t.x+dx/d*m;b.z=t.z+dz/d*m}
@@ -1067,7 +1067,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   };
   S.refl={ms:0,tris:0,on:false,frames:0,pond:-1};S.ghosts=()=>({body:[ghostBody.visible,ghostBody.position.x,ghostBody.position.y,ghostBody.position.z],door:[ghostDoor.visible,ghostDoor.position.x,ghostDoor.position.y,ghostDoor.position.z]});
   let walkPh=0,lastWX=0,lastWZ=0,reflFlip=0,glimpse=null;
-  S.frame=()=>{
+  S.beforeRender=()=>{
     cam.updateMatrixWorld();
     // is a pond on screen? no water in view: no reflection pass at all
     pm.multiplyMatrices(cam.projectionMatrix,cam.matrixWorldInverse);frustum.setFromProjectionMatrix(pm);

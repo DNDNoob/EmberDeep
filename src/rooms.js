@@ -20,6 +20,7 @@ import {stillwoodRoom} from './stillwood.js';
 import {hamletRoom} from './hamlet.js';
 import {bathroomRoom} from './bathroom.js';
 import {MOVE,lookStep,lookBy,bobAdvance,bobY,createRoomWalker} from './movement.js';
+import {cameraViewRig,sceneCameraClearance} from './camera-view.js';
 import {spotted} from './room-mobs.js';
 import {PLANETS,binaryPolar,orbitalPosition,orbitPolar} from './kepler-system.js';
 
@@ -515,7 +516,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       aim:-1,held:-1,pb:-1,pl:0,tb:-1,started:false,lit:0,jy:0,eyeY:EYE,sink:[0,0,0,0,0],hot:[0.6,0.6,0.6,0.6,0.6]};
     const K=S.K=kilnGame(Math.random);
     // walking, sprinting and jumping come from the shared walker (src/movement.js); the hall only says what is solid
-    const WK=createRoomWalker({o,eye:EYE,x:0,z:6.2,collide:b=>collide(b)});
+    const WK=S.walker=createRoomWalker({o,eye:EYE,x:0,z:6.2,collide:b=>collide(b)});
     Object.defineProperty(S,'px',{get:()=>WK.b.x,set:v=>{WK.b.x=v}});Object.defineProperty(S,'pz',{get:()=>WK.b.z,set:v=>{WK.b.z=v}});
     cam.fov=70;cam.near=0.05;cam.far=80;
     scene.fog=new THREE.FogExp2(0x060403,0.03);
@@ -664,8 +665,18 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       return best;
     };
     const fovFor=a=>{const tv=Math.max(Math.tan(35*Math.PI/180),0.62/Math.max(0.2,a));return Math.min(100,2*Math.atan(tv)*180/Math.PI)};
-    S.tap=(nx,ny)=>{
+    S.tap=(nx,ny,viewCamera)=>{
       if(A.watching||K.over||!nf(nx)||!nf(ny))return false;
+      if(viewCamera){
+        const b=S.bp.findIndex(point=>{
+          const [x,y,z]=point;
+          if(Math.hypot(x-S.px,y-S.eyeY,z-S.pz)>REACH)return false;
+          const projected=new THREE.Vector3(x,y,z).project(viewCamera);
+          return projected.z>=-1&&projected.z<=1&&Math.hypot((nx-projected.x)*viewCamera.aspect,ny-projected.y)<0.065;
+        });
+        if(b<0)return false;
+        S.tb=b;return true;
+      }
       const sz=renderer.getSize(new THREE.Vector2()),a=sz.x/Math.max(1,sz.y),tv=Math.tan(fovFor(a)*Math.PI/360),B=basis(),d=[0,1,2].map(k=>B.f[k]+B.r[k]*nx*tv*a+B.u[k]*ny*tv),l=Math.hypot(...d);
       const b=pick(d.map(v=>v/l),SNAPT);if(b<0)return false;S.tb=b;return true;
     };
@@ -1177,7 +1188,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     const sillG=(x,z)=>S.gb>=0&&Math.abs(x)<PW&&z>SB[2]&&z<SB[3]?SILL:0;
     let holdNow=-1;
     // walking, sprinting and jumping are the shared walker (src/movement.js); this room adds its sill, ceiling, veil slowdown and sounds
-    const WK=createRoomWalker({o,eye:1.6,x:0,z:0.1,collide:()=>collide(),groundAt:sillG,speedMul:()=>1-0.65*veilK(holdNow),
+    const WK=S.walker=createRoomWalker({o,eye:1.6,x:0,z:0.1,collide:()=>collide(),groundAt:sillG,speedMul:()=>1-0.65*veilK(holdNow),
       ceilingAt:(x,z)=>(S.gb>=0&&Math.abs(x)<PW+0.1&&z>WZ-0.5&&z<WZ+0.25?PY1-0.12:(z<WZ-0.3?PH:BH)-0.15)-1.6,
       sound:e=>{
         if(e.jumped)o.sfx('jump');
@@ -1578,9 +1589,9 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     cur.fade=0;cur.in=0;
     cur.update(0,Z);
   };
-  A.abort=()=>{done=null;A.active=false;A.kind='';A.watching=false;held=false;cur=null;clear();o.hud('')};
+  A.abort=()=>{done=null;A.active=false;A.kind='';A.watching=false;held=false;cur=null;externalView=false;clear();o.hud('')};
   A.update=(dt,inp)=>{if(!cur||held)return;cur.in+=dt;cur.update(dt,A.watching?inp:gate(A.kind,inp))};
-  A.tap=(x,y)=>!!(cur&&!A.watching&&cur.tap&&cur.tap(x,y));
+  A.tap=(x,y)=>!!(cur&&!A.watching&&cur.tap&&cur.tap(x,y,externalView?displayCamera:null));
   A.untap=()=>{if(cur&&cur.untap)cur.untap()};
   A.choose=index=>!A.watching&&cur?.choose?.(index);
   A.aimed=()=>!!(cur&&cur.aimed&&cur.aimed());
@@ -1591,23 +1602,53 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
   // how black the screen overlay should be: fades in at the start, out at the end
   A.fade=()=>cur?Math.max(cur.fade||0,1-ss(0,DOOR_KINDS[A.kind]?.fadeIn||0.7,cur.in)):0;
   A.state=()=>cur;
+  const viewRig=cameraViewRig(),displayCamera=new THREE.PerspectiveCamera();
+  const cameraClearance=sceneCameraClearance(scene),crosshair=document.getElementById('roomCross');
+  let localAvatar,externalView=false;
   A.render=()=>{
     if(!cur)return;
     const sz=renderer.getSize(new THREE.Vector2()),pr=renderer.getPixelRatio();
     cam.aspect=sz.x/Math.max(1,sz.y);
     if(cur.frame)cur.frame();
     cam.updateProjectionMatrix();
-    if(composer){
-      const key=sz.x+'x'+sz.y+'@'+pr;
-      if(key!==viewKey){
-        viewKey=key;composer.setPixelRatio(pr);composer.setSize(sz.x,sz.y);
-        const px=renderer.getDrawingBufferSize(new THREE.Vector2());
-        fxaaPass.uniforms.resolution.value.set(1/Math.max(1,px.x),1/Math.max(1,px.y));
+    const walker=cur.walker,view=o.cameraView?.()||'first';
+    externalView=!!walker&&!A.watching&&A.controlMode()==='walk'&&(cur.tableMix||0)<0.01
+      &&!cur.veil?.visible&&viewRig.place(cam,view,walker.eye,cameraClearance);
+    const hand=cur.hand,showHand=hand?.visible;
+    if(externalView){
+      localAvatar??=o.createAvatar();
+      if(!localAvatar.parent)scene.add(localAvatar);
+      localAvatar.visible=false;
+      localAvatar.userData.pose(cur.t||0,walker.b,cur.yaw,cur.pitch,walker.eye);
+      if(hand)hand.visible=false;
+      displayCamera.copy(cam,false);
+    }
+    if(crosshair){
+      crosshair.style.visibility=externalView&&view==='second'?'hidden':'';
+      if(externalView&&view==='third')viewRig.aimMarker(crosshair,cam,walker.eye,cur.bp?.[cur.aim]);
+      else{crosshair.style.left='';crosshair.style.top=''}
+    }
+    try{
+      cur.beforeRender?.();
+      if(externalView)localAvatar.visible=true;
+      if(composer){
+        const key=sz.x+'x'+sz.y+'@'+pr;
+        if(key!==viewKey){
+          viewKey=key;composer.setPixelRatio(pr);composer.setSize(sz.x,sz.y);
+          const px=renderer.getDrawingBufferSize(new THREE.Vector2());
+          fxaaPass.uniforms.resolution.value.set(1/Math.max(1,px.x),1/Math.max(1,px.y));
+        }
+        bloom.strength=cur.bloom;
+        blurPass.enabled=(cur.blur||0)>0.01;if(blurPass.enabled){blurPass.uniforms.uAmt.value=cur.blur*10*pr;blurPass.uniforms.uPx.value.set(1/(sz.x*pr),1/(sz.y*pr))}
+        composer.render();
+      }else renderer.render(scene,cam);
+    }finally{
+      if(externalView){
+        localAvatar.visible=false;
+        if(hand)hand.visible=showHand;
+        viewRig.restore(cam);
       }
-      bloom.strength=cur.bloom;
-      blurPass.enabled=(cur.blur||0)>0.01;if(blurPass.enabled){blurPass.uniforms.uAmt.value=cur.blur*10*pr;blurPass.uniforms.uPx.value.set(1/(sz.x*pr),1/(sz.y*pr))}
-      composer.render();
-    }else renderer.render(scene,cam);
+    }
   };
   return A;
 }

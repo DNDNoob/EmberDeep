@@ -7,6 +7,8 @@
 // it is, or how to trigger it. No code names, file names, PR numbers or agent names.
 // Group small fixes into one post. Rebuild index.html afterwards (npm run build).
 export const NEWS=[
+  {date:'2026-11-27',title:'A new point of view',
+    body:'Try Third person to see your Delver from behind, or Second person to face them from the front. Choose Camera view in Settings or press J to switch while you play.'},
   {date:'2026-11-27',title:'Tap to sprint',
     body:'Turn on Toggle sprint in Settings to start and stop sprinting with a tap of Shift.'},
   {date:'2026-11-27',title:'Admin Override',

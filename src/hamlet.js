@@ -156,7 +156,7 @@ export function hamletRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
   const S={t:0,yaw:0,pitch:0,bloom:0.35,seed,night:false,sword:false,limbs:4,dead:false,said:0,cool:0,bite:0,vx:0,vz:0,
     mx:10,mz:-21,doorX:0,doorZ:3.35,doorFace:0};
   const inside=(x,z)=>boxes.some(c=>Math.abs(x-c.x)<c.hw&&Math.abs(z-c.z)<c.hd);
-  const walker=createRoomWalker({o,eye:EYE,x:0,z:0,collide:b=>{
+  const walker=S.walker=createRoomWalker({o,eye:EYE,x:0,z:0,collide:b=>{
     for(const c of boxes){
       const x=clamp(b.x,c.x-c.hw,c.x+c.hw),z=clamp(b.z,c.z-c.hd,c.z+c.hd);
       let dx=b.x-x,dz=b.z-z,d=Math.hypot(dx,dz);

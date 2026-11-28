@@ -17,6 +17,7 @@ import {stillwoodWarm,stillwoodWarmState} from './stillwood.js';
 import {ROOM_MOBS} from './room-mobs.js';
 import {roomMobExhibit} from './room-mob-exhibits.js';
 import {roomActions,roomControlLabel} from './room-controls.js';
+import {CAMERA_VIEWS,cameraViewRig,nextCameraView} from './camera-view.js';
 import {bakeRecipe,bakeRecipeIdle,bakeIsDone,bakeStarted,bakeExport,bakePrime,KIT_HASH} from './npc_kit.js';
 import {loadBake,saveBake,cacheStats} from './npc_cache.js';
 import {hairAtlas,ATLAS_TILES} from './npc_hair.js';
@@ -4141,7 +4142,7 @@ function potHud(){
   // the weapon's cooldown on its slot, and the crosshair while one is in hand
   const held=wHeld(),cdEl=held&&D.wl.querySelector('.w.on .cd');
   if(cdEl){const f=W.cd>0?Math.min(1,W.cd/Math.max(0.05,wStats(held).cd)):0,h=(f*100).toFixed(0)+'%';if(cdEl.style.height!==h)cdEl.style.height=h}
-  const xOn=!!held&&state==='play'&&!P.down&&!P.hug&&!FX.frozen,xh=D.xh;
+  const xOn=!!held&&state==='play'&&!P.down&&!P.hug&&!FX.frozen&&!(mazeExternalView&&cameraView==='second'),xh=D.xh;
   if(xh.style.display!==(xOn?'block':'none'))xh.style.display=xOn?'block':'none';
   if(xOn){const sh=WEAPON[held].kind==='shot',g=(sh?5:7)+12*W.swing+(W.cd>0?2:0),L=sh?7:5,key2=held+'|'+g.toFixed(1);
     if(xh.dataset.k!==key2){xh.dataset.k=key2;const q=(c,css)=>xh.querySelector(c).style.cssText=css;
@@ -4471,10 +4472,14 @@ function wDrawHand(t,ex,ey,ez,yaw,pitch){
   const id=wHeld();if(!id)return;
   const sw=Math.sin(P.bob)*0.006,up=Math.abs(Math.cos(P.bob))*0.007-Math.min(0.03,Math.max(-0.03,P.vy*0.006));
   const f={p:[ex,ey,ez],R:m3(rYaw(yaw),rZ(pitch*0.85)),lo:[0.2,0.4,0.6]};
-  const skin=[0.74,0.54,0.42,1],lea=[0.3,0.2,0.12,3],steel=[0.75,0.76,0.8,4],dark=[0.2,0.18,0.17,4],wood=[0.4,0.26,0.13,6],brass=[0.8,0.6,0.25,4];
-  const p=W.swing,e=p*p*(3-2*p);   // 1 at the start of a swing, easing to 0
+  const skin=[0.74,0.54,0.42,1],lea=[0.3,0.2,0.12,3];
   const h=[0.2,-0.16+up,-0.16+sw];
   seg(f,[0.02,-0.33+up,-0.29+sw],[h[0]-0.03,h[1]-0.02,h[2]-0.01],0.034,0.024,lea);ball(f,h,[0.024,0.022,0.024],skin);
+  wDrawHeldWeapon(t,id,f,h);
+}
+function wDrawHeldWeapon(t,id,f,h){
+  const lea=[0.3,0.2,0.12,3],steel=[0.75,0.76,0.8,4],dark=[0.2,0.18,0.17,4],wood=[0.4,0.26,0.13,6],brass=[0.8,0.6,0.25,4];
+  const p=W.swing,e=p*p*(3-2*p),up=h[1]+0.16,sw=h[2]+0.16;
   const dir=(a,b,c)=>{const l=Math.hypot(a,b,c);return [a/l,b/l,c/l]},at=(d,k)=>[h[0]+d[0]*k,h[1]+d[1]*k,h[2]+d[2]*k];
   if(id==='sword'){
     const d=dir(0.55+0.4*e,1-1.6*e,0.25+0.5*e);
@@ -5777,6 +5782,7 @@ function advanceLoading(now){
 /* ---------- strange doors (the rooms themselves are in src/rooms.js) ---------- */
 let nearDoor=null;
 const ROOMS=createRooms(renderer,{post:POST,low:Q===0,ao:Q>=2,
+  cameraView:()=>cameraView,createAvatar:buildLocalAvatar,
   say:(t,s)=>say(t,s),tone:(...a)=>tone(...a),noise:(...a)=>noise(...a),rumble:(...a)=>rumble(...a),
   hud:h=>{const el=$('roomHud');if(el.innerHTML!==h)el.innerHTML=h},
   hurtFx:()=>{const h=$('hurt');h.style.transition='none';h.style.opacity=1;requestAnimationFrame(()=>{h.style.transition='opacity .9s';h.style.opacity=0})},
@@ -6067,6 +6073,15 @@ for(const el of sprintSettings){
     for(const setting of sprintSettings)setting.checked=toggleSprint;
   });
 }
+let cameraView='first';
+const cameraViewSettings=document.querySelectorAll('.cameraView');
+function setCameraView(view){
+  cameraView=typeof view==='string'&&Object.hasOwn(CAMERA_VIEWS,view)?view:'first';
+  store.set('cameraView',cameraView);
+  for(const setting of cameraViewSettings)setting.value=cameraView;
+}
+setCameraView(store.get('cameraView','first'));
+for(const setting of cameraViewSettings)setting.addEventListener('change',()=>setCameraView(setting.value));
 $('sens').value=sens;
 $('sens').addEventListener('input',e=>{sens=+e.target.value;store.set('sens',sens);document.querySelectorAll('.sensP').forEach(o=>o.value=sens)});
 document.querySelectorAll('.sensP').forEach(el=>{el.value=sens;el.addEventListener('input',()=>{sens=+el.value;store.set('sens',sens);$('sens').value=sens;document.querySelectorAll('.sensP').forEach(o=>o.value=sens)})});
@@ -7060,6 +7075,7 @@ function buildPlayer(p,t,rev,et){
   }
   limb(U,v(0,0.225+breath,-0.1),LE,LH,0.03*S,0.027*S,0.023*S,cloak,cloak,skin,0.026*S);
   limb(U,v(0,0.225+breath,0.1),RE,W1,0.03*S,0.027*S,0.023*S,cloak,cloak,skin,0.026*S);
+  if(p.weapon)wDrawHeldWeapon(t,p.weapon,subF(U,[LH[0]-0.2,LH[1]+0.16,LH[2]+0.16]),[0.2,-0.16,-0.16]);
   const tb=[W1[0]+0.004,W1[1]-0.05,W1[2]],tt=[W1[0]+0.03,W1[1]+0.13,W1[2]];
   seg(U,tb,tt,0.011,0.013,wood);ball(U,tt,[0.02,0.018,0.02],rag,true);
   seg(U,v(0,0.27+breath,0),v(0.003,0.31+breath,0),0.027*S,0.026*S,skin);
@@ -7500,6 +7516,11 @@ addEventListener('keydown',e=>{
   if(['Tab','Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
   if(roomMode==='table'&&['Backspace','Enter','NumpadEnter','Escape'].includes(e.code))e.preventDefault();
   if(e.repeat)return;
+  if(e.code==='KeyJ'&&['title','play','room'].includes(state)){
+    setCameraView(nextCameraView(cameraView));
+    say(CAMERA_VIEWS[cameraView],1.4);
+    return;
+  }
   if(toggleSprint&&!activeStation&&['title','play','room'].includes(state)&&(e.code==='ShiftLeft'||e.code==='ShiftRight'))sprintLatched=!sprintLatched;
   keys[e.code]=true;
   initAudio();
@@ -8799,6 +8820,51 @@ const WHITE=[1,1,1],METAL=[0.6,0.62,0.68,4],SCONCE_COL=[1.0,0.5,0.18],PANEL_COL=
 // light levels, tuned by eye against the old renderer
 const LK={torch:5.6,pool:3.6,shad:3.8,amb:4,flash:9,env:0.05};
 const cabinLampColor=new THREE.Color(liftCabinLamps.color).toArray();
+const mazeView=cameraViewRig(),mazeViewDirection=new THREE.Vector3(),mazeViewEye=new THREE.Vector3();
+let mazeExternalView=false;
+function mazeCameraClearance(origin,direction,distance){
+  for(let d=0.04;d<=distance+0.04;d+=0.04){
+    const x=origin.x+direction.x*d,y=origin.y+direction.y*d,z=origin.z+direction.z*d;
+    if(y<0.08||(!F.forest&&y>CAM_TOP)||blocked(x,z))return Math.max(0,d-0.08);
+  }
+  return distance;
+}
+
+function localAvatarPose(){
+  const id=MP.on?MP.id:'me';
+  const col=MP.on?MP_COLS[hashStr(id)%MP_COLS.length]:[0.72,0.44,0.28];
+  return {id,col,rx:0,ry:0,rz:0,ryaw:0,rpitch:0,spd:0,walk:0};
+}
+
+function buildLocalAvatar(){
+  const pose=localAvatarPose();
+  const avatar=exhibitModel(time=>buildPlayer(pose,time),true);
+  avatar.name='Local player';
+  avatar.userData.cam=true;
+  // Keep the same vertex colors readable in rooms lit by custom shaders.
+  avatar.material.onBeforeCompile=shader=>{
+    shader.fragmentShader=shader.fragmentShader.replace('#include <opaque_fragment>',
+      'outgoingLight += diffuseColor.rgb * 0.08;\n#include <opaque_fragment>');
+  };
+  const animate=avatar.userData.pose;
+  avatar.userData.pose=(time,body,yaw,pitch,eye)=>{
+    pose.rpitch=pitch;
+    pose.spd=Math.hypot(body.vx,body.vz)*EYE/eye;
+    pose.walk=body.bob;
+    avatar.position.set(body.x,body.y,body.z);
+    avatar.rotation.y=Math.PI/2-yaw;
+    avatar.scale.setScalar(eye/EYE);
+    animate(time,0);
+  };
+  return avatar;
+}
+
+const mazeAvatar=()=>Object.assign(localAvatarPose(),{
+  rx:P.x,ry:P.y+(P.mounted?0.35:0),rz:P.z,ryaw:P.yaw,rpitch:P.pitch,
+  spd:Math.hypot(P.vx,P.vz),walk:P.bob,form:wofForm(),fat:FX.fat>0,pox:FX.pox>0,bob:FX.bob>0,curl:FX.curl,
+  weapon:wHeld(),mirror:R.mirror,
+});
+
 function render(t){
   resize();
   if(!F){renderer.clear();return}
@@ -8809,14 +8875,27 @@ function render(t){
   const riding=P.mounted&&!P.down&&!P.away;
   const ex=SC?SC.x:P.x, ez=SC?SC.z:P.z, ey=SC?SC.y:Math.min(CAM_TOP,EYE*(title?1:wofEye()*potEye())+(title?0:P.y+bobY(P,1)+(riding?.16:0)));
   {const cp=Math.cos(pitch);camera.position.set(ex,ey,ez);camera.lookAt(ex+cp*Math.cos(yaw),ey+Math.sin(pitch),ez+cp*Math.sin(yaw))}
+  const viewAllowed=!SC&&!title&&state!=='dead'&&!P.down&&!P.away&&!P.hug&&!GL.fall;
+  mazeExternalView=viewAllowed&&mazeView.place(camera,cameraView,EYE,mazeCameraClearance,F.forest?Infinity:CAM_TOP);
   if(FX.flyT>0&&!title){const k=Math.min(1,FX.flyT/1.2);camera.rotateZ(Math.sin(t*FX.spin)*0.5*k);camera.rotateX(Math.cos(t*FX.spin*0.7)*0.25*k)}   // tumbling through the air
   if(FX.bob>0&&!title){camera.rotateZ(Math.sin(t*2.3)*0.06);camera.rotateX(Math.sin(t*1.7)*0.03)}
   if(P.woozy>0&&!title&&!P.down){const k=Math.min(1,P.woozy/1.5);camera.rotateZ(Math.sin(t*1.6)*0.14*k);camera.rotateX(Math.sin(t*1.05)*0.05*k)}   // Granny's perfume
   if(FX.tickled>0&&!title){const k=0.025;camera.position.x+=(Math.random()-0.5)*k;camera.position.y+=(Math.random()-0.5)*k;camera.position.z+=(Math.random()-0.5)*k}
   if(pkShake>0){const k=0.05*pkShake;camera.position.x+=(Math.random()-0.5)*k;camera.position.y+=(Math.random()-0.5)*k;camera.position.z+=(Math.random()-0.5)*k;pkShake=Math.max(0,pkShake-0.03)}
   if(P.grab){const k=0.012+0.02*Math.min(1,P.grab.t);camera.position.x+=(Math.random()-0.5)*k;camera.position.y+=(Math.random()-0.5)*k;camera.position.z+=(Math.random()-0.5)*k}
+  if(POT.dom){
+    const marker=POT.dom.xh;
+    if(mazeExternalView&&cameraView==='third'&&wHeld()){
+      const range=mazeCameraClearance(mazeViewEye.set(ex,ey,ez),mazeViewDirection.set(Math.cos(pitch)*Math.cos(yaw),Math.sin(pitch),Math.cos(pitch)*Math.sin(yaw)),5);
+      // The marker follows the player's sightline at the first wall or at weapon range.
+      camera.updateMatrixWorld();
+      mazeView.aimMarker(marker,camera,Math.max(range,0.6));
+    }else{marker.style.left='';marker.style.top=''}
+  }
   const B=F.biome;
   const fwx=Math.cos(yaw),fwz=Math.sin(yaw),rx=-fwz,rz=fwx;
+  const viewing=mazeExternalView?camera.getWorldDirection(mazeViewDirection):null;
+  const vwx=viewing?.x??fwx,vwz=viewing?.z??fwz;
   const flick=1+Math.sin(t*11)*0.02+Math.sin(t*23.7)*0.015+Math.sin(t*5.3)*0.02;
   const torchR=torchRadius()*flick;
   // the torch is held low in the right hand, so shadows swing as you turn
@@ -8922,7 +9001,11 @@ function render(t){
     if(!lurk&&!n.used&&n.type!=='keeper'){const y=o.top+0.08+Math.sin(t*3+n.ph)*0.03,X=n.x+(n.ox||0),Z=n.z+(n.oz||0);spr(X,y,Z,0.08,0.08,7,1.0,0.85,0.4,1,1);spr(X,y,Z,0.32,0.32,7,1.0,0.7,0.2,0.3,1)}
   }
   wofDraw(t,ex,ey,ez,dtR);}
-  if(DC)danceSelf(t);drawMoose(t,title||!!STUDIO);drawScout(t,title||!!STUDIO);mpDrawPlayers(t,ex,ez,fwx,fwz);mimicDraw(t,ex,ez);glDraw(t,ex,ez,fwx,fwz);
+  if(mazeExternalView){
+    const q=buildPlayer(mazeAvatar(),t).torch;
+    if(P.fuel>0){spr(q[0],q[1]+0.02,q[2],0.07,0.12,11,1.0,0.6,0.2,1,1);spr(q[0],q[1],q[2],0.5,0.5,7,1.0,0.5,0.15,0.25,1)}
+  }
+  if(DC)danceSelf(t);drawMoose(t,title||!!STUDIO);drawScout(t,title||!!STUDIO);mpDrawPlayers(t,ex,ez,vwx,vwz);mimicDraw(t,ex,ez);glDraw(t,ex,ez,vwx,vwz);
   if(F.safe&&(F.safe.x-ex)**2+(F.safe.z-ez)**2<22*22){
     const fl=F.safe.fl||1,X=F.safe.x,Z=F.safe.z;
     spr(X,0.72,Z,0.42*fl,0.62*fl,11,1.0,0.55,0.16,1,1);
@@ -8932,7 +9015,7 @@ function render(t){
   }
   for(const s of F.shades){
     const d2=(s.x-ex)**2+(s.z-ez)**2;if(d2>18*18)continue;
-    if((s.x-ex)*fwx+(s.z-ez)*fwz<-1.5)continue;
+    if((s.x-ex)*vwx+(s.z-ez)*vwz<-1.5)continue;
     if(s.pv&&potMonPre(s,t))continue;
     if(s.type===2){if(s.pv)potMonPost(s,CH.n,sprList.length,t);continue}
     const pn0=CH.n,ps0=sprList.length;
@@ -8958,7 +9041,7 @@ function render(t){
   upload(lurkMesh,LURK);
   // the torch in your hand, drawn close to the eye so it never pokes through a wall
   HB.n=0;
-  if(!title&&state!=='dead'&&!P.down&&!DC){
+  if(!title&&state!=='dead'&&!P.down&&!DC&&!mazeExternalView){
     const fm=wofForm();
     TB=HB;const q=fm?buildCritter({rx:P.x,rz:P.z,ry:P.y,ryaw:yaw,rpitch:pitch,walk:P.bob,spd:Math.hypot(P.vx,P.vz),fat:FX.fat>0,pox:FX.pox>0,curl:FX.curl},t,fm,true).torch:buildHand(t,ex,ey,ez,yaw,pitch);if(!fm)wDrawHand(t,ex,ey,ez,yaw,pitch);TB=CH;
     const hk=0.3,b=HB.buf;
@@ -9031,13 +9114,14 @@ function render(t){
     spr(kx,0.4,kz,0.09,0.09,7,q[0],q[1],q[2],q[3],1);
   }
   const n=Math.min(sprList.length,MAXS);
-  for(const s of sprList)s.d=(s.x-ex)**2+(s.z-ez)**2;
+  for(const s of sprList)s.d=(s.x-camera.position.x)**2+(s.z-camera.position.z)**2;
   sprList.sort((a,b)=>b.d-a.d);
+  const invHoriz=1/Math.hypot(vwx,vwz),srx=-vwz*invHoriz,srz=vwx*invHoriz;
   let o=0;
   for(let i=0;i<n;i++){
     const s=sprList[i],hw=s.w/2,hh=s.h/2;
     const u0=(s.cell%4)/4+0.002,u1=(s.cell%4+1)/4-0.002,v0=(s.cell>>2)/4+0.002,v1=((s.cell>>2)+1)/4-0.002;
-    const xl=s.x-rx*hw,zl=s.z-rz*hw,xr=s.x+rx*hw,zr=s.z+rz*hw,yb=s.y-hh,yt=s.y+hh;
+    const xl=s.x-srx*hw,zl=s.z-srz*hw,xr=s.x+srx*hw,zr=s.z+srz*hw,yb=s.y-hh,yt=s.y+hh;
     const vv=[[xl,yb,zl,u0,v1],[xr,yb,zr,u1,v1],[xr,yt,zr,u1,v0],[xl,yb,zl,u0,v1],[xr,yt,zr,u1,v0],[xl,yt,zl,u0,v0]];
     for(const q of vv){sprData[o++]=q[0];sprData[o++]=q[1];sprData[o++]=q[2];sprData[o++]=q[3];sprData[o++]=q[4];
       sprData[o++]=s.r;sprData[o++]=s.g;sprData[o++]=s.b;sprData[o++]=s.a;sprData[o++]=s.add}
@@ -9250,6 +9334,7 @@ const archive=Object.fromEntries(Object.keys(archiveCatalog).map(kind=>{
   return [kind,saved&&typeof saved==='object'&&!Array.isArray(saved)?saved:{}];
 }));
 const hub=createMenuRoom(renderer,{sfx,asset:exhibitAsset,activate:useMenuAsset,enterLanding:startFromLanding,arriveLobby:finishLiftInLobby,mazeFov:camera.fov,
+  cameraView:()=>cameraView,createAvatar:buildLocalAvatar,
   sampleFloor:memoFloor,prepareLanding:preparedLanding,landingGlimpse,passingLook,onLeavePanel:()=>closeStation(),createVisitor:buildHubVisitor});
 const floorLift=hub.createDockModel();
 let floorLiftGate=1;
