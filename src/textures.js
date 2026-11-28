@@ -820,12 +820,14 @@ void surf(vec2 uv,out float h,out vec3 alb,out float rough,out float em){
 const FLAT = [0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1];
 
 const VS = `varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0.,1.);}`;
-const mainA = `
+// one program per surface draws both layers: MODE 0 the colour (alpha: roughness or glow), MODE 1 the height. These shaders are big and
+// slow to compile, and there are many of them, so sharing one program between the two layers halves what a new floor has to compile.
+const mainAH = `
+uniform int MODE;
 void main(){float h,rough,em;vec3 alb;surf(vUv,h,alb,rough,em);
+  if(MODE==1){gl_FragColor=vec4(sat(h),0.,0.,1.);return;}
   alb=pow(clamp(alb*TINT,0.,1.),vec3(2.2));
   gl_FragColor=vec4(alb,em>.5?.5-.5*sat(em):.5+.5*sat(rough));}`;
-const mainH = `
-void main(){float h,rough,em;vec3 alb;surf(vUv,h,alb,rough,em);gl_FragColor=vec4(sat(h),0.,0.,1.);}`;
 const FS_N = `precision highp float;varying vec2 vUv;uniform sampler2D tH;uniform vec2 px;uniform float bump;
 float H(vec2 o){return texture2D(tH,vUv+o*px).r;}
 void main(){
@@ -854,8 +856,9 @@ export function makeSurfaces(renderer, size, wantNormals) {
     return m;
   };
   const head = (i, v) => `#define VAR ${v}\nuniform float SEED;uniform vec3 TINT;\n` + LIB + SURF[i];
-  const matA = (i, v) => shader('A' + i + ':' + v, head(i, v) + mainA, {SEED: {value: 0}, TINT: {value: new THREE.Vector3(1, 1, 1)}});
-  const matH = (i, v) => shader('H' + i + ':' + v, head(i, v) + mainH, {SEED: {value: 0}, TINT: {value: new THREE.Vector3(1, 1, 1)}});
+  const matAH = (i, v) => shader('AH' + i + ':' + v, head(i, v) + mainAH, {SEED: {value: 0}, TINT: {value: new THREE.Vector3(1, 1, 1)}, MODE: {value: 0}});
+  const matA = (i, v) => {const m = matAH(i, v); m.uniforms.MODE.value = 0; return m};
+  const matH = (i, v) => {const m = matAH(i, v); m.uniforms.MODE.value = 1; return m};
   const matN = () => shader('N', FS_N, {tH: {value: null}, px: {value: new THREE.Vector2(1 / size, 1 / size)}, bump: {value: 0.1}});
   const run = (mat, rt) => {quad.material = mat; renderer.setRenderTarget(rt); quad.render(renderer)};
   const paint = job => {
@@ -902,7 +905,7 @@ export function makeSurfaces(renderer, size, wantNormals) {
   // compile the shaders the queue needs, in parallel, before painting with them
   const compileQueued = () => {
     const sc = new THREE.Scene(), geo = new THREE.PlaneGeometry(2, 2), seen = new Set();
-    for (const j of queue) for (const m of [matA(j.i, j.v), j.N ? matH(j.i, j.v) : null, j.N ? matN() : null]) if (m && !seen.has(m)) {seen.add(m); const q = new THREE.Mesh(geo, m); q.frustumCulled = false; sc.add(q)}
+    for (const j of queue) for (const m of [matAH(j.i, j.v), j.N ? matN() : null]) if (m && !seen.has(m)) {seen.add(m); const q = new THREE.Mesh(geo, m); q.frustumCulled = false; sc.add(q)}
     const batch = queue.slice();
     if (!seen.size) {for (const q of batch) q.ok = true; return Promise.resolve()}
     const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);

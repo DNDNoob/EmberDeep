@@ -12,6 +12,7 @@ import {openRoom,newRoomCode,cleanCode} from './net.js';
 import {createVoice} from './voice.js';
 import {guidePath,guideBeacon,GUIDE_RANGE} from './guide.js';
 import {createRooms,kilnGame,KILN,DOOR_KINDS} from './rooms.js';
+import {NEON_PRIZES,neonTier} from './neon-ride.js';
 import {animalHitEffects,mooseModel,scoutGooseModel,MOOSE_ACH,MOOSE_SPIKE_PRICE} from './moose-defense.js';
 import {stillwoodWarm,stillwoodWarmState} from './stillwood.js';
 import {ROOM_MOBS} from './room-mobs.js';
@@ -541,6 +542,8 @@ function genFloor(seedStr,depth,look){
   potSeedIngredients(seedStr,depth,g,W,H,safeMask,pocketMask,items,[[stx,sty],[ex,ey]],d0,bi,nCells,reserved);
   fizzPlace(seedStr,depth,g,W,H,safeMask,pocketMask,d0,shades,kind);
   if(BA)bossSpawn(BA,W,H,shades);
+  critterPlace(seedStr,depth,g,W,H,safeMask,pocketMask,d0,shades,kind);
+  trollPlace(seedStr,depth,g,W,H,safeMask,pocketMask,d0,shades,kind);   // the troll, past floor 20, now and then   // the spider (floors ending in 9) and the slugs (ending in 4)
   grannyPlace(seedStr,depth,g,W,H,safeMask,pocketMask,d0,shades,kind);   // Granny, about one floor in twenty   // the Fizzler, about one floor in ten
   const floor={W,H,g,cw,ch,kind:forest?'forest':kind==='forest'?'maze':kind,dark:kind==='dark',back:kind==='back',base:B.base,variant,litter,stone,wet:clamp(B.wet*variant.wetK,0,1),fogK:variant.fogK,ambK:variant.ambK,ambT:variant.ambT,torchT:variant.torch,tex:{v:variant.tex,seed:variant.seed,tint:variant.tint},panels,panelAt,pocketMask,phantoms,pockets,blk:0,boT:22+rng()*25,props,discs,safe,safeMask,npcs,reveal:false,door,sdoors,traps,pillars,sconces,rubble,frames:[],start:{tx:stx,ty:sty,yaw},exit:{tx:ex,ty:ey,x:ex+0.5,z:ey+0.5},items,shades,
           seen:new Uint8Array(W*H),dist:d0,bi,biome:B,...(forest?{forest:true,fo:{seed:seedStr,depth}}:{}),
@@ -593,7 +596,8 @@ function prepareMazeLighting(){
   }finally{room.dispose();pm.dispose()}
 }
 const torchLight=new THREE.PointLight(0xffffff,0,8,1.0);
-if(SHADOWS){torchLight.castShadow=true;torchLight.shadow.mapSize.set(Q>=2?1024:512,Q>=2?1024:512);torchLight.shadow.camera.near=0.04;torchLight.shadow.camera.far=9;torchLight.shadow.bias=-0.003;torchLight.shadow.normalBias=0.025;torchLight.shadow.camera.layers.enable(1)}
+// the torch's shadow cube: 768 per face at High (was 1024, ~40% fewer shadow pixels to draw six times over; PCF softening hides the difference)
+if(SHADOWS){torchLight.castShadow=true;torchLight.shadow.mapSize.set(Q>=2?768:512,Q>=2?768:512);torchLight.shadow.camera.near=0.04;torchLight.shadow.camera.far=9;torchLight.shadow.bias=-0.003;torchLight.shadow.normalBias=0.025;torchLight.shadow.camera.layers.enable(1)}
 scene.add(torchLight);
 const flashLight=new THREE.PointLight(0xd9edff,0,9,1);scene.add(flashLight);
 const poolLights=[],shadLights=[];
@@ -633,12 +637,12 @@ function worldMaterial(o){
   m.userData.panel=!!o.panel;m.userData.em=emU;
   const steps=Q>=2?12:1;
   m.onBeforeCompile=sh=>{
-    sh.uniforms.uTime=UT;sh.uniforms.uWet={value:o.wet||0};sh.uniforms.uEmK=emU;
+    sh.uniforms.uTime=UT;sh.uniforms.uWet={value:o.wet||0};sh.uniforms.uEmK=emU;sh.uniforms.uPDepth={value:o.depth};
     sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nvarying vec3 vWPos;varying vec3 vWNor;')
       .replace('#include <begin_vertex>','#include <begin_vertex>\nvWPos=position;vWNor=normal;');
     const nrmChunk=THREE.ShaderChunk.normal_fragment_maps.replace(/vNormalMapUv/g,'pUv');
     sh.fragmentShader=sh.fragmentShader
-      .replace('#include <common>','#include <common>\nvarying vec3 vWPos;varying vec3 vWNor;uniform float uTime;uniform float uWet;uniform float uEmK;'+NOISE_GLSL)
+      .replace('#include <common>','#include <common>\nvarying vec3 vWPos;varying vec3 vWNor;uniform float uTime;uniform float uWet;uniform float uEmK;uniform float uPDepth;'+NOISE_GLSL)
       .replace('#include <map_fragment>',`
   vec2 pUv=vMapUv;float wDist=distance(vWPos,cameraPosition);float pud=0.0;
   {vec3 Ng=normalize(vWNor);
@@ -647,7 +651,7 @@ function worldMaterial(o){
     ${o.panel||o.phantom?'':`if(wDist<9.0){
       vec3 Vw=(cameraPosition-vWPos)/wDist;
       vec3 vt=vec3(dot(Vw,Tw),dot(Vw,Bw),abs(dot(Vw,Ng)));
-      float sc=${o.depth.toFixed(3)}*(abs(Ng.y)>0.5?0.5:1.0)*smoothstep(9.0,6.0,wDist);
+      float sc=uPDepth*(abs(Ng.y)>0.5?0.5:1.0)*smoothstep(9.0,6.0,wDist);
       vec2 full=-vt.xy/max(vt.z,0.3)*sc;vec2 gx=dFdx(vMapUv),gy=dFdy(vMapUv);
       ${steps>1?`float lh=1.0/${steps}.0,cur=0.0,d=textureGrad(normalMap,pUv,gx,gy).a,pd=d;vec2 st=full*lh;
       for(int i=0;i<${steps};i++){if(cur>=d)break;pUv+=st;cur+=lh;pd=d;d=textureGrad(normalMap,pUv,gx,gy).a;}
@@ -665,7 +669,7 @@ function worldMaterial(o){
       .replace('#include <normal_fragment_maps>',`vec3 flatN=normal;\n${nrmChunk}\nnormal=normalize(mix(normal,flatN,pud*0.9));`)
       .replace('#include <emissivemap_fragment>',`#include <emissivemap_fragment>\n{float wEmis=wEm*uEmK;${flicker}totalEmissiveRadiance+=diffuseColor.rgb*wEmis;}`);
   };
-  m.customProgramCacheKey=()=>'w'+[o.kind,o.panel?1:0,o.phantom?1:0,o.bad?1:0,steps,o.depth].join(',');
+  m.customProgramCacheKey=()=>'w'+[o.kind,o.panel?1:0,o.phantom?1:0,o.bad?1:0,steps].join(',');   // the parallax depth is a uniform: one program serves every depth
   return m;
 }
 const worldMats=new Map();
@@ -2088,6 +2092,17 @@ const DOOR_LOOKS={
     },
     glow(D,t){return[0.6,0.8,1,0.3+0.1*Math.sin(t*2.6+D.ph)]}
   },
+  // a black door outlined in buzzing pink and blue neon tubes, a little ray gun in lime over the knob
+  neon:{
+    leaf(f,D){
+      slab(f,[0.02,0.52,0],[0.04,1.04,0.5],[0.05,0.03,0.08,6]);
+      for(const z of[-0.22,0.22])slab(f,[0.05,0.52,z],[0.012,0.96,0.016],[2.4,0.5,2.1,11]);
+      for(const y of[0.06,0.98])slab(f,[0.05,y,0],[0.012,0.016,0.46],[0.5,2.2,2.6,11]);
+      slab(f,[0.055,0.7,-0.08],[0.01,0.05,0.12],[1.4,2.4,0.4,11]);slab(f,[0.055,0.66,-0.12],[0.01,0.06,0.03],[1.4,2.4,0.4,11]);
+      doorKnob(f,[0.7,0.7,0.8,4]);
+    },
+    glow(D,t){const k=Math.sin(t*31+D.ph)>0.94?0.25:1;return[1,0.35,0.9,(0.45+0.1*Math.sin(t*3+D.ph))*k]}
+  },
 };
 const DOOR_EXPLORE_PER_MIN=150;
 const doorOrder=()=>Object.keys(DOOR_KINDS);
@@ -2562,7 +2577,7 @@ function pickTalk(){
   q.fn();if(talk)buildTalk();
 }
 function moveTalk(d){if(!talk)return;const n=talk.opts.length;talk.sel=(talk.sel+d+n)%n;buildTalk()}
-function act(flash=true){if(loading||FX.frozen)return;if(P.down){mpCycle();return}if(floorLiftInReach())openStation('lift');else if(state==='play'&&nearNpc)openTalk(nearNpc);else if(state==='play'&&nearDoor)sdoorOpen(nearDoor,true);else if(flash)useFlash()}
+function act(flash=true){if(loading||FX.frozen)return;if(P.down){mpCycle();return}if(state==='play'&&helpStart())return;if(state==='play'&&F&&F.boss&&bpUse())return;if(floorLiftInReach())openStation('lift');else if(state==='play'&&nearNpc)openTalk(nearNpc);else if(state==='play'&&nearDoor)sdoorOpen(nearDoor,true);else if(flash)useFlash()}
 // mouse: left click attacks with a weapon in hand (or talks / opens when you have none), right click flashes
 function clickL(){if(state!=='play')return;if(P.down){mpCycle();return}if(floorLiftInReach())act(false);else if(wHeld()&&!nearNpc&&!nearDoor)wAttack();else if(F&&F.boss&&!nearNpc&&!nearDoor)wPunch();else act(false)}
 function clickR(){if(state!=='play')return;if(P.down){mpCycle();return}if(!loading&&!FX.frozen)useFlash()}
@@ -2572,26 +2587,26 @@ function clickR(){if(state!=='play')return;if(P.down){mpCycle();return}if(!loadi
 // stop on it (src/wheel.js), and the outcome is read back from that final angle, so the slice under the pointer is always what happens.
 // The spin is sent to everyone ({k:'wof'}): players on this floor watch the same wheel turn, players elsewhere hear about it, and when it stops
 // every client applies the result. Outcomes the brief gives to "every user" run on every client; the ones it gives to "the user"/"the spinner"
-// (Walmart, Ad Break, Black Plague, First Thanksgiving) run on the spinner. The Tickle Monster is run by the host (or a solo player) and streamed.
-const WOF_DESC=['Go stand in line.','And now, a word from our sponsor.','Everyone is a pug for two minutes.','Everyone is a large rat for two minutes.',
+// (Walmart, Black Plague, First Thanksgiving) run on the spinner; Ad Break and the DMV take everyone in the game. The Tickle Monster is run by the host (or a solo player) and streamed.
+const WOF_DESC=['Go stand in line.','And now, a word from our sponsor. Everyone has to watch.','Everyone is a pug for two minutes.','Everyone is a large rat for two minutes.',
   'Everyone gains 200 pounds and moves ten times slower.','A coin decides. Heads: everyone gains 200 pounds.','Everyone loses this run\'s gems and supplies.',
   'Every sound is ten times louder.','A ringing in everyone\'s ears for a minute.','The spinner is a plague rat. Anyone who comes near dies slowly.',
   'He giggles. He is coming for each of you.','The spinner has smallpox. It is catching.',
-  'Take a number.','Please read and accept the updated terms.','Everyone\'s controls are reversed for a minute.','Everyone\'s head is three times bigger for two minutes.',
+  'Everyone take a number.','Please read and accept the updated terms.','Everyone\'s controls are reversed for a minute.','Everyone\'s head is three times bigger for two minutes.',
   'Every torch on the floor goes out. The shades heard that.','He has a few minutes of your time. Everyone\'s time.',
   'The spinner is a hedgehog for two minutes. Z (LB): curl up and nothing can hurt you. X (R3): roll at super speed.',
   'The spinner starts over. From the very beginning.','Everyone pull up a chair.','Take cover. Or don\'t. It won\'t help.','It loves crunchy baked goods. You look crunchy.'];
 const WOF_SCALE=0.66;   // the model is built a little large; this fits the banner under the 1.25 m ceiling
 const WOF={recent:[],party:0,plan:null,t:0,angle:0,flap:0,flapV:0,peg:0,result:-1,coin:0,mine:false,here:false,done:true,win:0,by:'',grp:null,chat:0};
-const FX={flyT:0,flyB:0,spin:0,hedge:0,curl:0,moon:0,bob:0,pitch:0,pitchDone:false,pitchLine:-1,pug:0,rat:0,last:null,plague:0,fat:0,loud:0,tin:0,dying:false,dyT:0,pox:0,poxNear:0,poxC:4,stag:0,tickled:0,frozen:null};
-const FX_TIMERS=['hedge','moon','bob','pug','rat','plague','fat','loud','tin','pox','tickled','stag'];
-const FX_DUR={hedge:120,moon:60,bob:120,form:120,fat:120,loud:30,tin:60,plague:120,pox:300,tickled:3};
+const FX={baby:0,cryT:0,flyT:0,flyB:0,spin:0,hedge:0,curl:0,moon:0,bob:0,pitch:0,pitchDone:false,pitchLine:-1,pug:0,rat:0,last:null,plague:0,fat:0,loud:0,tin:0,dying:false,dyT:0,pox:0,poxNear:0,poxC:4,stag:0,tickled:0,frozen:null};
+const FX_TIMERS=['baby','hedge','moon','bob','pug','rat','plague','fat','loud','tin','pox','tickled','stag'];
+const FX_DUR={baby:120,hedge:120,moon:60,bob:120,form:120,fat:120,loud:30,tin:60,plague:120,pox:300,tickled:3};
 let TK=null,TS=null,wofOut=null,tinNode=null,BRK=null;
 // the first-person breaks (Walmart, the ad) are their own little 3D scenes, drawn instead of the maze while they run
 const brk=()=>BRK||(BRK=createBreaks(renderer,{ui:breakUI,onBeep:k=>{if(!ac)return;if(k==='ding'){tone(880,0.5,'sine',0.12);tone(660,0.8,'sine',0.1,0.28)}else tone(2350,0.08,'square',0.06)}}));
-const wofForm=()=>FX.hedge>0?4:FX.plague>0?3:FX.pug>0&&FX.rat>0?(FX.last==='rat'?2:1):FX.rat>0?2:FX.pug>0?1:0;   // 0 you, 1 pug, 2 rat, 3 plague rat
-const wofSpeed=()=>(FX.hedge>0&&FX.curl===2?3.2:1)*(FX.fat>0?0.1:1)*(FX.tickled>0?0.3:1)*(FX.stag>0?0.35:1);
-const wofEye=()=>wofForm()===4?(FX.curl?0.3:0.38):[1,0.42,0.55,0.55][wofForm()];
+const wofForm=()=>FX.baby>0?5:FX.hedge>0?4:FX.plague>0?3:FX.pug>0&&FX.rat>0?(FX.last==='rat'?2:1):FX.rat>0?2:FX.pug>0?1:0;   // 0 you, 1 pug, 2 rat, 3 plague rat, 4 hedgehog, 5 a crawling baby
+const wofSpeed=()=>(FX.baby>0?0.5:1)*(FX.hedge>0&&FX.curl===2?3.2:1)*(FX.fat>0?0.1:1)*(FX.tickled>0?0.3:1)*(FX.stag>0?0.35:1);
+const wofEye=()=>wofForm()===4?(FX.curl?0.3:0.38):[1,0.42,0.55,0.55,0.38,0.4][wofForm()];
 const wofLive=()=>state!=='title'&&state!=='dead';
 // "The wheel waits outside the door": a player inside a door room is never touched by the wheel. Results that land meanwhile are queued
 // here and happen, in order, when they step back into the maze. World things (the Tickle Monster, a bomb) keep going but skip them.
@@ -2729,7 +2744,7 @@ function wofPersonal(r){
   if(ac){tone(392,0.32,'sawtooth',0.09,0.1,-12);tone(370,0.32,'sawtooth',0.09,0.45,-12);tone(349,0.32,'sawtooth',0.09,0.8,-12);tone(330,1.1,'sawtooth',0.09,1.15,-40)} // sad trombone
   switch(i){
     case 0:if(mine)wofScene('walmart');break;
-    case 1:if(mine)wofScene('ad');break;
+    case 1:wofScene('ad');break;   // everyone in the game sits through the ad
     case 2:FX.pug=FX_DUR.form;FX.last='pug';break;
     case 3:FX.rat=FX_DUR.form;FX.last='rat';break;
     case 4:FX.fat=FX_DUR.fat;break;
@@ -2739,13 +2754,13 @@ function wofPersonal(r){
     case 8:FX.tin=FX_DUR.tin;break;
     case 9:if(mine){FX.plague=FX_DUR.plague;FX.dying=false}break;
     case 11:if(mine){FX.pox=FX_DUR.pox;FX.poxC=3}break;
-    case 12:if(mine)wofScene('dmv');break;
+    case 12:wofScene('dmv');break;   // and everyone takes a number
     case 13:if(mine)wofScene('terms');break;
     case 14:FX.moon=FX_DUR.moon;break;
     case 15:FX.bob=FX_DUR.bob;break;
     case 16:wofLightsOut();break;
     case 18:if(mine){FX.hedge=FX_DUR.hedge;setTimeout(()=>say(touch.on?'You are a hedgehog. CURL: nothing can hurt you. ROLL: super speed.':'You are a hedgehog. Hold Z to curl up (nothing can hurt you). Hold X to roll at super speed.',6),2500)}break;
-    case 19:if(mine)wofScene('birth');break;
+    case 19:if(mine)wofScene('birth',()=>{if(!wofLive())return;FX.baby=FX_DUR.baby;FX.cryT=2;say('Congratulations, it is a baby. You can only crawl.',4)});break;
   }
 }
 // back in the maze: results that landed while you were behind a door happen now, one at a time, spaced out so breaks and banners do not overlap
@@ -2771,11 +2786,11 @@ function wofLoseAll(){
   P.flash=0;P.ward=0;P.spikeTraps=0;R.xray=0;R.guide=0;
   setTimeout(()=>say(`You lose ${g} gem${g===1?'':'s'} and ${had?'all your supplies':'nothing else, you had nothing'}.`,4),1800);
 }
-function wofScene(kind){
+function wofScene(kind,after){
   if(wofAway())return;   // never a break behind a door
   if(state==='talk')closeTalk();
   FX.frozen=kind;P.vx=P.vz=0;
-  const end=()=>{FX.frozen=null;if(wofLive()&&!touch.on&&!document.pointerLockElement)say('Click to return to the maze',4)};
+  const end=()=>{FX.frozen=null;if(after)after();if(wofLive()&&!touch.on&&!document.pointerLockElement)say('Click to return to the maze',4)};
   if((kind==='ad'||kind==='terms')&&document.pointerLockElement){usingLock=false;document.exitPointerLock()}   // free the cursor for Skip Ad and I Agree
   if(kind==='terms')termsDialog(end);
   else brk().start(kind,end);
@@ -3174,6 +3189,8 @@ function wofTick(dt){
   tkTick(dt);tsTick(dt);rrTick(dt);bombTick(dt);cgTick(dt);
   if(!away)wofReplayTick(dt);
   // the hedgehog: hold Z (pad LB, touch CURL) to curl into a ball of spines, X (pad R3, touch ROLL) to roll
+  // a baby cries now and then: a wail that wavers and falls
+  if(FX.baby>0&&!away&&!P.down){FX.cryT-=dt;if(FX.cryShow>0)FX.cryShow-=dt;if(FX.cryT<=0){FX.cryT=7+Math.random()*9;FX.cryShow=1.4;for(let i=0;i<3;i++){tone(520-i*30,0.35,'sawtooth',0.035,i*0.42,-160);tone(1040-i*60,0.3,'triangle',0.02,i*0.42,-300)}}}
   FX.curl=!away&&FX.hedge>0&&!P.down&&!FX.frozen?((keys.KeyZ||pad.curl||touch.curl)?1:(keys.KeyX||pad.roll||touch.roll)?2:0):0;
   document.body.classList.toggle('hedgehog',FX.hedge>0&&!away);if(FX.hedge>0&&!away)hedgeButtons();
   if(FX.curl===1){P.inv=Math.max(P.inv,0.25);P.vx*=0.8;P.vz*=0.8}
@@ -3212,8 +3229,9 @@ function wofTick(dt){
   if(FX.pox>0&&!P.down&&!away){FX.poxC-=dt;if(FX.poxC<=0){FX.poxC=5+Math.random()*5;cough();FX.stag=0.8}}
   // what is on you right now
   const L=[],f=wofForm();
+  if(f===5)L.push(['Baby: crawling',FX.baby]);
   if(f===4)L.push([FX.curl===1?'Hedgehog: curled up':FX.curl===2?'Hedgehog: rolling':(touch.on?'Hedgehog':'Hedgehog · Z curl · X roll'),FX.hedge]);
-  else if(f)L.push([['','Pug','Rat','Plague rat'][f],f===3?FX.plague:f===2?FX.rat:FX.pug]);
+  else if(f&&f<4)L.push([['','Pug','Rat','Plague rat'][f],f===3?FX.plague:f===2?FX.rat:FX.pug]);
   if(FX.fat>0)L.push(['+200 lbs',FX.fat]);
   if(FX.loud>0)L.push([FX.loudN>1?`Hearing aids x${FX.loudN} (${Math.pow(10,FX.loudN).toLocaleString()}x louder)`:'Hearing aids',FX.loud]);
   if(FX.tin>0)L.push(['Tinnitus',FX.tin]);
@@ -3257,6 +3275,38 @@ function wofDraw(t,ex,ey,ez,dtR){
 // the hedgehog: a spiny brown dome on a pale face with a long pointed snout. curl 1: a tight ball of spines (nothing can hurt you);
 // curl 2: the same ball, rolling. self: the first-person view (snout and paws, or a ring of spines framing the view when curled).
 const SPINES=(()=>{const L=[];for(let i=0;i<90;i++){const y=1-(i+0.5)/90*2,r=Math.sqrt(1-y*y),a=i*2.39996;L.push([Math.cos(a)*r,y,Math.sin(a)*r])}return L})();
+// the Circle of Life: born again as a baby who can only crawl. Self: your own chubby hands patting the floor at the bottom of the view,
+// one of them clutching the torch. Seen by others: a crawling baby in a onesie and a diaper, with a pacifier and a curl of hair.
+function buildBaby(p,t,self){
+  const mv=Math.min(1,(p.spd||0)/1.5),w=(p.walk||0)*1.6,sw=Math.sin(w)*mv,c=p.col||[0.62,0.32,0.2];
+  const skin=[0.95,0.74,0.62,1],cheek=[1,0.55,0.55,1],onesie=[0.55+c[0]*0.4,0.62+c[1]*0.35,0.7+c[2]*0.3,2],diaper=[0.96,0.96,0.93,2],dark=[0.05,0.04,0.04,8],wood=[0.36,0.23,0.12,6],paci=[0.4,0.75,0.95,4],hair=[0.55,0.38,0.2,5];
+  if(self){
+    skin[0]*=0.55;skin[1]*=0.55;skin[2]*=0.55;onesie[0]*=0.55;onesie[1]*=0.55;onesie[2]*=0.55;   // right by the torch: darker, or the flame washes them out
+    const H={p:[p.rx,Math.min(CAM_TOP,EYE*wofEye()+(p.ry||0)),p.rz],R:m3(rYaw(p.ryaw),rZ(clamp(p.rpitch||0,-0.9,0.9)))};
+    // the left hand pats down in front, hand over hand; the right holds the torch up and wobbles (low in the view, like the torch hand)
+    const lift=Math.max(0,Math.sin(w))*0.025*mv,reach=Math.cos(w)*0.03*mv;
+    seg(H,[0.1,-0.17,-0.13],[0.22+reach,-0.11+lift,-0.09],0.03,0.026,onesie);ball(H,[0.235+reach,-0.11+lift,-0.09],[0.03,0.021,0.027],skin,true);
+    for(let i=0;i<4;i++)ball(H,[0.262+reach,-0.113+lift,-0.105+i*0.011],0.007,skin,true);   // tiny fingers
+    const wob=Math.sin(t*5)*0.006;
+    seg(H,[0.1,-0.17,0.14],[0.2,-0.1+wob,0.1],0.03,0.026,onesie);ball(H,[0.21,-0.095+wob,0.1],0.027,skin,true);
+    const tb=[0.215,-0.1+wob,0.1],tt=[0.24,-0.01+wob,0.095];seg(H,tb,tt,0.007,0.008,wood);
+    return {torch:fpt(H,[tt[0],tt[1]+0.03,tt[2]])};
+  }
+  const bob=Math.abs(Math.cos(w))*0.012*mv,B={p:[p.rx,Math.max(0,p.ry||0)+bob,p.rz],R:rYaw(p.ryaw)};
+  ball(B,[0,0.2,0],[0.15,0.09,0.1],onesie);                                       // the body, on all fours
+  ball(B,[-0.13,0.2,0],[0.09,0.085,0.1],diaper);ball(B,[-0.16,0.24,0],0.012,[0.9,0.85,0.4,4],true);   // the diaper and its pin
+  for(const z of[-1,1]){const st=sw*z;
+    limb(B,[0.1,0.24,z*0.08],[0.13+0.04*st,0.12,z*0.1],[0.16+0.07*st,0.015,z*0.09],0.035,0.03,0.026,onesie,skin,skin,0.03);   // arms
+    limb(B,[-0.12,0.18,z*0.06],[-0.06-0.05*st,0.035,z*0.07],[-0.22-0.03*st,0.05,z*0.065],0.04,0.035,0.03,onesie,onesie,skin,0.032)}   // knees down, feet up behind
+  const H=subF(B,[0.21,0.28,0],rZ(clamp(p.rpitch||0,-0.4,0.4)*0.5+0.15));
+  ball(H,[0,0,0],0.1,skin);ball(H,[-0.02,0.08,0],[0.04,0.03,0.04],hair,true);ball(H,[0.01,0.11,0.01],[0.012,0.03,0.012],hair,true);
+  for(const z of[-1,1]){ball(H,[0.085,0.02,z*0.035],0.013,dark,true);ball(H,[0.08,-0.025,z*0.055],[0.02,0.014,0.02],cheek,true);ball(H,[0,0.0,z*0.098],[0.02,0.03,0.012],skin,true)}
+  const cry=(FX.cryShow||0)>0&&self===false&&p.id===(MP.on?MP.id:'me');
+  if(cry)ball(H,[0.095,-0.04,0],[0.006,0.022,0.026],dark,true);
+  else{ball(H,[0.1,-0.04,0],[0.012,0.018,0.018],paci,true);slab(H,[0.108,-0.04,0],[0.004,0.03,0.035],paci)}   // the pacifier
+  const tb=[0.18,0.08,0.09],tt=[0.22,0.3,0.1];seg(B,tb,tt,0.009,0.011,wood);     // the torch, in a fist
+  return {torch:fpt(B,[tt[0],tt[1]+0.02,tt[2]])};
+}
 function buildHedgehog(p,t,self){
   const curl=p.curl||0,mv=Math.min(1,(p.spd||0)/2.7),w=p.walk||0,sw=Math.sin(w*1.4)*mv;
   const spine=[0.36,0.26,0.17,5],tip=[0.86,0.8,0.66,5],belly=[0.82,0.7,0.54,5],black=[0.04,0.03,0.03,8],skinP=[0.86,0.66,0.6,1],wood=[0.36,0.23,0.12,6];
@@ -3298,6 +3348,7 @@ function buildHedgehog(p,t,self){
   return {torch:fpt(H,[tb[0],tb[1]+0.02,tb[2]])};
 }
 function buildCritter(p,t,form,self){
+  if(form===5)return buildBaby(p,t,self);
   if(form===4)return buildHedgehog(p,t,self);
   const pug=form===1,K=pug?1:1.3,mv=Math.min(1,(p.spd||0)/2.7),w=p.walk||0,sw=Math.sin(w*1.2)*mv;
   const fur=pug?[0.84,0.68,0.46,5]:form===3?[0.2,0.18,0.15,5]:[0.48,0.46,0.44,5],furD=pug?[0.7,0.54,0.34,5]:form===3?[0.13,0.12,0.1,5]:[0.36,0.34,0.33,5];
@@ -3411,7 +3462,7 @@ function beltTake(i){
   if(--q.n<=0){POT.belt.splice(i,1);if(i<POT.sel)POT.sel--;if(POT.sel>=Math.min(BELT_MAX,POT.belt.length))POT.sel=Math.max(0,Math.min(BELT_MAX,POT.belt.length)-1)}
   return id;
 }
-const canUse=()=>state==='play'&&!P.down&&!P.away&&!loading&&!FX.frozen&&!P.grab;
+const canUse=()=>state==='play'&&!P.down&&!(P.ko>0)&&!webLocked()&&!P.away&&!loading&&!FX.frozen&&!P.grab;
 function potDrink(i){
   if(i!==undefined&&i<BELT_MAX)POT.sel=i;const k=i!==undefined?i:POT.sel;
   if(!canUse())return;
@@ -3495,6 +3546,7 @@ function potLand1(m,mine,quiet){
     if(P.down&&!mine){P.down=false;P.hp=1;P.inv=2.5;P.x=c.x;P.z=c.z;onTileChange();say('Smelling salts! You are back on your feet.',3);sfx('shard')}
     if(m.rv)return;
   }
+  if(m.id===14&&!c.drink&&!mine&&P.ko>0&&Math.hypot(P.x-c.x,P.z-c.z)<SPLASH)koUp();   // and a downed one
   if(!mine&&!c.drink&&!quiet)potBurst(c.x,0.1,c.z,hex3(potInfo(m.id).col));
   if(c.drink&&!mine&&!fx.A)return;
   const you=()=>{if(BAD.has(m.id)&&ps('immune')){say('The Panacea keeps it off you',1.6);return}fx.u&&fx.u(c)};
@@ -3600,7 +3652,7 @@ const PFX={
   28:{u:()=>psSet('wlure',30),m:s=>pe(s,'wlure',30)},
   29:{u:()=>psSet('decoy',30),m:s=>pe(s,'decoy',20)},
   30:{u:()=>psSet('repel',30),m:s=>pe(s,'repel',30)},
-  31:{u:()=>psSet('hic',25),m:s=>pe(s,'hic',20)},
+  31:{u:()=>webClear(),m:s=>pe(s,'unsilk',20)},   // Web-Be-Gone
   32:{u:()=>psSet('sneeze',30),m:s=>pe(s,'sneeze',30)},
   33:{u:()=>psSet('bouncy',60),m:s=>{pe(s,'fast',15);pe(s,'lost',15)}},
   34:{u:()=>psSet('magnet',30),A:(c)=>{
@@ -4464,10 +4516,10 @@ function wGainXp(id,a){
   if(L1>L0){smithSave();[659,880,1175].forEach((f,i)=>tone(f,0.25,'triangle',0.1,i*0.09));
     say(WEAPON[id].name+' reached level '+L1+'!'+(L1===W_PATH_AT?' Visit the Blacksmith to choose its path.':L1===W_SECOND_AT?' Visit the Blacksmith: a second path, or a mutation.':''),3.2)}
 }
-const W_KILL_XP={0:12,1:20,2:8,4:18,5:16};
+const W_KILL_XP={0:12,1:20,2:8,4:18,5:16,8:4,9:80,10:22};
 const wXpFor=L=>{let x=0;for(let k=1;k<L;k++)x+=wNeed(k);return x};   // total XP to reach level L
 const wHeld=()=>SMITH.eq&&SMITH.own[SMITH.eq]?SMITH.eq:'';
-const wMaxHp=s=>s.type===6?s.hpMax||10:(s.type===1?10:s.type===2?3:s.type===4?8:s.type===5?7:6)*(1+0.06*Math.max(0,R.depth-1));
+const wMaxHp=s=>s.type===6?s.hpMax||10:s.type===10?SPI.hp(s.lv||1)*(1+0.06*Math.max(0,R.depth-1)):s.type===8?2:s.type===9?TROLL.hp*(1+0.06*Math.max(0,R.depth-1)):(s.type===1?10:s.type===2?3:s.type===4?8:s.type===5?7:6)*(1+0.06*Math.max(0,R.depth-1));
 function wCycle(){
   const L=WEAPONS.filter(w=>SMITH.own[w.id]).map(w=>w.id);if(!L.length){say('No weapons yet. The Blacksmith in the sanctuary forges them.',2.5);return}
   const i=L.indexOf(SMITH.eq);SMITH.eq=L[(i+1)%L.length];smithSave();sfx('key');say(WEAPON[SMITH.eq].name+' in hand',1.5);
@@ -4475,6 +4527,7 @@ function wCycle(){
 // ---- attacking
 function wAttack(){
   const id=wHeld();if(!id||!canUse()||potHeld()||W.cd>0||FX.curl===1)return;
+  if(FX.baby>0){if(!W.babyT||R.time-W.babyT>3){W.babyT=R.time;say('Your hands are too small to hold it.',1.6)}return}
   const w=WEAPON[id],st=wStats(id);
   W.cd=st.cd;W.n++;W.swing=1;W.swingT=Math.min(0.35,st.cd*0.8);W.kind=id;
   const dbl=st.every&&W.n%st.every===0?2:1;
@@ -4531,7 +4584,7 @@ function wApply(h,by){
   if(!(s.hpMax>0)){s.hpMax=wMaxHp(s);s.hp=s.hpMax}
   if(s.type===6){if(s.immune&&!h.ddr){if(by===potMe()&&(BS.said.imm||0)<R.time-4){BS.said.imm=R.time;say('It does not even flinch. He only respects the dance.',2.2)}return}if(!bossStruck(s))return}
   const e=s.pe||{};if(e.dodge&&Math.random()<0.5){s.hpShow=1;return}   // Lucky Clover / Phantom Step on a monster: half the blows miss
-  const dmg=+h.d*(s.markT>0?1+(s.markB||0):1)*(e.tough?0.5:1)*(e.vuln?(s.pk&&s.pk.vm||2):1)*bossVuln(s);
+  const dmg=+h.d*(s.markT>0?1+(s.markB||0):1)*(e.tough?0.5:1)*(e.vuln?(s.pk&&s.pk.vm||2):1)*bossArmor(s);
   const big=s.type===6&&s.role!=='add';   // a boss shrugs off most of a stun and cannot be shoved or pinned
   s.hp-=dmg;s.hitT=0.25;s.hpShow=4;
   if(h.st)s.stun=Math.max(s.stun,big?Math.min(+h.st,0.25):+h.st);if(s.type!==1&&s.type!==6&&h.st)s.state=0;
@@ -4553,13 +4606,15 @@ function wKill(s){
   const burning=!!s.burnD,x=s.x,z=s.z,by=s.killer,near=Math.hypot(x-P.x,z-P.z)<14;
   if(near){potBurst(x,0.5,z,s.type===2?[0.4,0.6,1]:s.type===1?[0.7,0.68,0.62]:[0.45,0.25,0.6],30,1);tone(110,0.5,'sawtooth',0.12,0,-80);noise(0.4,0.15,700,0.8)}
   s.x=s.z=-99;s.state=0;s.pe=null;s.bleed=s.burnD=null;s.markT=0;s.down=40+Math.random()*30;s.hp=0;
+  if(s.type===10){s.down=4;s.lv=(s.lv||1)+1;spiSync=1;if(near)say('The spider curls up... then skitters off into the dark. It will be back, bigger.',3.5)}   // level up, back soon
+  if(s.type===8){s.down=0;slugSplit(s)}   // one gone, two more
   if(s.ks)for(const o of potMons(x,z,1.6,false))wApply({i:F.shades.indexOf(o),d:s.ks,st:0.5,kb:0.3,dx:r3((o.x-x)/(Math.hypot(o.x-x,o.z-z)||1)),dz:r3((o.z-z)/(Math.hypot(o.x-x,o.z-z)||1))},by);
   if(s.kx&&burning)for(const o of potMons(x,z,1.4,false))wApply({i:F.shades.indexOf(o),d:s.kx,st:0.8},by);
   if(by===potMe())wReward(s.type);else if(by)mpSend({k:'wk',d:R.depth,t:s.type},by);
 }
 function wReward(type){
   wGainXp(wHeld(),W_KILL_XP[type]||10);
-  const g=type===1?3:type===2?1:type===4?4:type===5?3:2;wallet+=g;R.gems+=g;R.score+=25*R.depth;store.set('wallet',wallet);sfx('gem');
+  const g=type===9?12:type===1?3:type===2?1:type===4?4:type===5?3:2;wallet+=g;R.gems+=g;R.score+=25*R.depth;store.set('wallet',wallet);sfx('gem');
   say('Slain! +'+g+' gem'+(g>1?'s':''),1.4);
 }
 // the host's per-frame wound ticks, and monsters coming back
@@ -5014,6 +5069,437 @@ function grannyPlayerTick(dt){
   const live=state==='play'&&!P.down,o=live?Math.min(1,(P.woozy||0)/2):0;if(Math.abs((+GRAN.el.style.opacity||0)-o)>0.02)GRAN.el.style.opacity=o.toFixed(2);
   const ko=live&&P.kissT>0?Math.min(1,P.kissT):0;if(Math.abs((+GRAN.kiss.style.opacity||0)-ko)>0.02)GRAN.kiss.style.opacity=ko.toFixed(2);
 }
+/* ---------- the Silk Spinner (creature type 10), the face slugs (creature type 8), and being downed ---------- */
+// Floors ending in 9 have a spider. It is little at first, but if it catches you it starts spinning silk around you, and the silk
+// stays: the more of it, the slower you go (P.web, 0-100, shown as a meter). Only Web-Be-Gone dissolves it. At 100 you are wrapped
+// tight and cannot move at all; the spider scuttles off to make room in its larder and comes back for you. A friend who reaches you
+// first can cut you loose (back down to half). If the spider gets there first it eats you, and it gains five levels. Kill it and it
+// curls up, then comes back somewhere else a level higher: bigger, quicker, and quicker at spinning. Its level is the host's, sent
+// to everyone ({k:'spl'}); the silk on each player is that player's own, spun while a spinning spider is right beside them.
+// Floors ending in 4 have slugs. A slug that reaches you crawls up your leg and onto your face, and you cannot see. Press U (pad Y,
+// or the PEEL button) to peel one off; it lands in front of you, dazed. Kill one and two more crawl out somewhere else: the floor
+// keeps a pool of them (SLUG.pool), most waiting off the map, and a kill wakes two of them up; once those are all awake, a kill
+// makes two brand new ones. There is no limit.
+// Downed (co-op only): losing your last heart while a friend is still standing on the floor puts you down for 30 s instead of out.
+// A friend can help you up (E beside you, 2.5 s); you get up on half a heart and can only limp until you are healed to a whole one.
+// Nobody comes in time, and you are out like before (spectating until the next floor).
+const SPI={lock:100,rate:l=>7+1.6*l,speed:l=>Math.min(1.3+0.12*l,3.6),size:l=>Math.min(0.62+0.07*l,2.4),hp:l=>4+1.5*l,retreat:l=>Math.max(4,9-0.25*l),hunt:16};
+const SLUG={pool:20,start:3,hunt:10,speed:()=>Math.min(0.55+0.012*R.depth,0.95)};
+const KO={time:30,help:2.5,free:2};
+let koSkip=false,spiSync=0;
+const webLocked=()=>(P.web||0)>=SPI.lock||(P.eaten||0)>0;
+const webMul=()=>(P.ko>0?0:1)*(1-0.72*Math.min(1,(P.web||0)/SPI.lock))*(P.half?0.42:1);
+function critterPlace(seedStr,depth,g,W,H,safeMask,pocketMask,d0,shades,kind){
+  if(kind==='arena')return;
+  const spider=depth%10===9,slug=depth%10===4;if(!spider&&!slug)return;   // floors 4, 24, 44... are always the Backrooms: the slugs live there too
+  const r=mulberry32(hashStr(seedStr+'#crawl#'+depth));
+  const spots=[];for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=y*W+x;if(!g[i]&&!safeMask[i]&&!pocketMask[i]&&d0[i]>(spider?14:8))spots.push([x,y])}
+  if(!spots.length)return;
+  const mk=(type,ex)=>{const c=spots[(r()*spots.length)|0];return Object.assign({type,x:c[0]+0.5,z:c[1]+0.5,gx:c[0],gy:c[1],px:-1,py:-1,state:0,stun:0,think:0,vis:false,frozen:false,ph:r()*6.28,d:99,snd:0,ft:0,fs:0},ex)};
+  if(spider)shades.push(mk(10,{lv:1}));
+  if(slug)for(let k=0;k<SLUG.pool;k++){const o=mk(8,{});if(k>=SLUG.start){o.pool=1;o.x=o.z=-99}shades.push(o)}
+}
+const tWeb=t=>t.loc?(P.web||0):(t.p.web||0);
+function crawlWander(s,dt,sp){
+  const cx=Math.floor(s.x),cz=Math.floor(s.z);
+  if(!s.wg||Math.hypot(s.wg[0]-s.x,s.wg[1]-s.z)<0.3||s.fs<=0){
+    s.fs=7;for(let k=0;k<20;k++){const x=cx+((Math.random()*9)|0)-4,z=cz+((Math.random()*9)|0)-4;if(x>0&&z>0&&x<F.W-1&&z<F.H-1&&!F.g[z*F.W+x]&&!F.safeMask[z*F.W+x]&&!F.pocketMask[z*F.W+x]){s.wg=[x+0.5,z+0.5];break}}
+  }
+  if(s.wg){mazeStep(s,s.wg[0],s.wg[1],dt,sp);s.face=s.yaw}
+}
+// the host: the spider hunts, spins, and when someone is wrapped tight it goes off and comes back for them
+function spiderTick(s,dt,TG,MD){
+  const lv=s.lv||1,sp=SPI.speed(lv)*(s.pmul||1),nos=!!(s.pe&&s.pe.unsilk>0);
+  s.ft=(s.ft||0)-dt;s.fs=(s.fs||0)-dt;if(s.calm>0)s.calm-=dt;s.rad=0.22*SPI.size(lv);
+  const free=TG.filter(t=>!t.inSafe),locked=free.filter(t=>tWeb(t)>=SPI.lock);
+  if(s.state===3){   // off to clear a corner of its larder
+    if(s.wg)mazeStep(s,s.wg[0],s.wg[1],dt,sp);s.face=s.yaw;
+    if(s.ft<=0)s.state=4;
+  }else if(s.state===4){   // and back for its meal
+    const T=mpNearest(locked,s.x,s.z);
+    if(!T)s.state=0;
+    else{mazeStep(s,T.x,T.z,dt,sp*1.15);s.face=s.yaw;if(Math.hypot(T.x-s.x,T.z-s.z)<0.6)spiderEat(s,T)}
+  }else if(locked.length&&(s.calm||0)<=0){
+    const T=mpNearest(locked,s.x,s.z);s.state=3;s.ft=SPI.retreat(lv);s.wg=null;
+    for(let k=0;k<60;k++){const x=Math.floor(T.x)+((Math.random()*19)|0)-9,z=Math.floor(T.z)+((Math.random()*19)|0)-9,i=z*F.W+x;   // a short way off, so it is never gone long
+      if(x>0&&z>0&&x<F.W-1&&z<F.H-1&&!F.g[i]&&!F.safeMask[i]&&!F.pocketMask[i]&&Math.hypot(x+0.5-T.x,z+0.5-T.z)>5){s.wg=[x+0.5,z+0.5];break}}
+  }else{
+    const T=mpNearest(free.filter(t=>tWeb(t)<SPI.lock),s.x,s.z),cx=Math.floor(s.x),cz=Math.floor(s.z),d=MD?MD[cz*F.W+cx]:-1;
+    const eu=T?Math.hypot(T.x-s.x,T.z-s.z):99;
+    if(T&&d>=0&&d<=SPI.hunt*Math.max(potSk(T),0.15)&&(s.calm||0)<=0){
+      if(s.state===2&&(eu>1.2||nos))s.state=1;
+      else if(eu<0.55&&!nos)s.state=2;
+      else if(s.state!==2)s.state=1;
+      if(eu>(s.state===2?0.32:0.25))mazeStep(s,T.x,T.z,dt,sp*(s.state===2?1.1:1));
+      s.face=s.state===2?Math.atan2(T.z-s.z,T.x-s.x):s.yaw;
+    }else{s.state=0;crawlWander(s,dt,sp*0.55)}
+  }
+  s.gx=Math.floor(s.x);s.gy=Math.floor(s.z);s.px=-1;
+}
+function spiderEat(s,T){
+  if(T.loc)spiderEaten();else mpSend({k:'spe',d:R.depth},T.p.id);
+  s.lv=(s.lv||1)+5;s.hp=s.hpMax=wMaxHp(s);s.state=0;s.calm=10;spiSync=1;
+  if(Math.hypot(s.x-P.x,s.z-P.z)<16&&!T.loc)say('The spider feeds... and grows. It is level '+s.lv+' now.',3.5);
+}
+// the one being eaten: wrapped up for a moment, then gone
+function spiderEaten(){
+  if(P.eaten>0||P.down||state!=='play')return;
+  P.eaten=2.6;P.web=SPI.lock;P.ko=0;say('The spider wraps you up and drags you into the dark...',3);
+  if(ac){noise(1.2,0.25,1800,0.8);tone(140,1.6,'sawtooth',0.12,0,-90)}
+}
+// the host: a slug crawls at whoever is nearest, and climbs up their face when it reaches them
+function slugTick(s,dt,TG,MD){
+  const sp=SLUG.speed()*(s.pmul||1);s.fs=(s.fs||0)-dt;if(s.calm>0)s.calm-=dt;
+  const T=mpNearest(TG.filter(t=>!t.inSafe),s.x,s.z),cx=Math.floor(s.x),cz=Math.floor(s.z),d=MD?MD[cz*F.W+cx]:-1;
+  const eu=T?Math.hypot(T.x-s.x,T.z-s.z):99;
+  if(T&&d>=0&&d<=SLUG.hunt*Math.max(potSk(T),0.15)&&(s.calm||0)<=0){
+    s.state=1;if(eu>0.25)mazeStep(s,T.x,T.z,dt,sp);s.face=s.yaw;
+    if(eu<0.45&&T.inv<=0){   // no limit on how many can pile onto one face
+      const i=F.shades.indexOf(s);s.ride=1;s.rideBy=T.loc?'me':T.p.id;s.x=s.z=-99;s.state=0;
+      if(T.loc)slugOn(i);else mpSend({k:'slc',d:R.depth,i},T.p.id);
+      return;
+    }
+  }else{s.state=0;crawlWander(s,dt,sp*0.5)}
+  s.gx=Math.floor(s.x);s.gy=Math.floor(s.z);s.px=-1;
+}
+// a slug riding someone who has gone (left, fallen, off the floor) drops off where it can
+function slugRideCheck(s){
+  if(s.rideBy==='me'){if(!P.down&&(P.slugs||[]).includes(F.shades.indexOf(s)))return;s.ride=0;potFar(s,6);return}
+  const p=MP.peers.get(s.rideBy);
+  if(p&&p.run&&!p.down&&p.d===R.depth&&mpFresh(p))return;
+  s.ride=0;if(p&&Number.isFinite(p.x)&&p.d===R.depth)potPlace(s,p.x,p.z);else potFar(s,6);s.stun=2;
+}
+function slugDrop(s,x,z){
+  if(!s||s.type!==8)return;s.ride=0;s.pool=0;s.rideBy=null;potPlace(s,x,z);s.stun=Math.max(s.stun,3);s.state=0;s.calm=4;
+}
+// a slug killed: it is gone for good, and two more crawl out somewhere else
+// a new slug on the end of the list (guests add the same ones when the host says how many there are: {k:'slx'})
+function slugNew(){const q={type:8,x:-99,z:-99,gx:0,gy:0,px:-1,py:-1,state:0,stun:0,think:0,vis:false,frozen:false,ph:Math.random()*6.28,d:99,snd:0,ft:0,fs:0};F.shades.push(q);return q}
+function slugSplit(s){
+  s.pool=1;s.ride=0;s.x=s.z=-99;let n=0;
+  for(const q of F.shades){if(n>=2)break;if(q.type!==8||!q.pool||q===s)continue;q.pool=0;q.hp=q.hpMax=wMaxHp(q);q.stun=1.5;q.state=0;potFar(q,8);n++}
+  for(;n<2;n++){const q=slugNew();q.hp=q.hpMax=wMaxHp(q);q.stun=1.5;potFar(q,8)}   // no more waiting: brand new ones (there is no limit)
+  if(MP.on)mpSend({k:'slx',d:R.depth,n:F.shades.length});
+  if(Math.hypot(s.x-P.x,s.z-P.z)<16||n)say(n?'Splat! Somewhere in the dark, '+(n>1?'two more':'another')+' crawl'+(n>1?'':'s')+' out.':'Splat!',2.4);
+}
+// everyone: a slug climbs onto your face
+function slugOn(i){
+  if(!P.slugs)P.slugs=[];
+  if(P.down||state!=='play'){if(!MP.guest)slugDrop(F.shades[i],P.x,P.z);else mpSend({k:'slf',d:R.depth,i,x:r3(P.x),z:r3(P.z)},MP.hostId);return}
+  if(!P.slugs.includes(i))P.slugs.push(i);
+  say(P.slugs.length>1?'Another slug! You cannot see a thing!':'A slug crawls up your leg and onto your face! '+slugKey()+' to peel it off.',3);
+  if(ac){noise(0.5,0.18,500,0.6);tone(180,0.4,'sine',0.06,0,-60)}
+}
+const slugKey=()=>touch.on?'Tap PEEL':pad.id?'Press Y':'Press U';
+function slugPeel(){
+  if(!P.slugs||!P.slugs.length||state!=='play'||P.down)return false;
+  const i=P.slugs.pop(),x=P.x+Math.cos(P.yaw)*1.1,z=P.z+Math.sin(P.yaw)*1.1;
+  if(MP.guest)mpSend({k:'slf',d:R.depth,i,x:r3(x),z:r3(z)},MP.hostId);else slugDrop(F.shades[i],x,z);
+  if(ac){noise(0.18,0.3,900,1.5);tone(320,0.12,'sine',0.08,0,-200)}
+  say(P.slugs.length?'Peeled one off! '+P.slugs.length+' to go.':'You peel the slug off. Ugh.',1.6);
+  return true;
+}
+// Web-Be-Gone, on you
+function webClear(){
+  if(P.eaten>0)return;
+  const had=(P.web||0)>0;P.web=0;if(POT.ps.hold>0)POT.ps.hold=0;
+  say(had?'The webs fizz and dissolve away!':'Nothing sticky on you. You smell faintly of matches.',2);
+  if(had&&ac){noise(0.6,0.15,5000,1.2);tone(900,0.3,'sine',0.05,0,-500)}
+}
+// ---- downed (co-op)
+function koHelpers(){
+  if(!MP.on)return 0;let n=0;
+  for(const p of MP.peers.values())if(p.run&&!p.down&&!(p.ko>0)&&!p.away&&p.d===R.depth&&mpFresh(p))n++;
+  return n;
+}
+function koTry(){
+  if(koSkip||P.ko>0||P.eaten>0||!F||!koHelpers())return false;
+  P.ko=KO.time;P.hp=0;P.half=false;P.hug=null;P.vx=P.vz=0;if(P.slugs)P.slugs.length=0;
+  say('You are down! A friend can help you up. Hang on...',4);
+  sfx('hurt');rumble(300,1,0.8);
+  if(ac)tone(110,1.4,'sine',0.18,0,-50);
+  return true;
+}
+function koUp(){   // a friend got you up: half a heart, and a limp
+  if(!(P.ko>0))return;
+  P.ko=0;P.hp=1;P.half=true;P.inv=3;
+  say('Back on your feet... just. You can only limp until you are healed.',4);
+  if(ac){tone(440,0.2,'triangle',0.1);tone(660,0.3,'triangle',0.1,0.15)}
+}
+// helping a friend: E beside someone who is down (help them up) or wrapped tight (cut them loose), then stay close
+function helpTarget(){
+  if(!MP.on||state!=='play'||P.down||P.ko>0||webLocked())return null;
+  let best=null,bd=1.4;
+  for(const p of MP.peers.values()){
+    if(!mpShown(p)||p.down||!(p.ko>0||p.web>=SPI.lock))continue;
+    const d=Math.hypot(p.x-P.x,p.z-P.z);if(d<bd){bd=d;best=p}
+  }
+  return best;
+}
+function helpStart(){
+  const p=helpTarget();if(!p)return false;
+  P.help={id:p.id,t:0,ko:p.ko>0};say(p.ko>0?'You crouch beside '+p.name+'...':'You start cutting '+p.name+' loose...',1.5);
+  return true;
+}
+function helpTick(dt){
+  const h=P.help;if(!h)return;
+  const p=MP.peers.get(h.id);
+  if(!p||P.down||P.ko>0||state!=='play'||!mpShown(p)||Math.hypot(p.x-P.x,p.z-P.z)>1.8||!(h.ko?p.ko>0:p.web>=SPI.lock)){P.help=null;return}
+  h.t+=dt;P.vx=P.vz=0;
+  if(h.t>=(h.ko?KO.help:KO.free)){
+    P.help=null;mpSend({k:h.ko?'kup':'unweb',d:R.depth},p.id);
+    say(h.ko?'You help '+p.name+' to their feet.':'You cut '+p.name+' loose!',2.2);sfx('pick');
+  }else if(Math.random()<dt*6&&ac)noise(0.05,0.06,h.ko?600:3000,2);
+}
+function helpPrompt(){
+  const k=touch.on?'USE':pad.id?'X':'E';
+  if(P.help){const p=MP.peers.get(P.help.id),f=P.help.t/(P.help.ko?KO.help:KO.free);return (P.help.ko?'Helping ':'Cutting ')+(p?p.name:'')+(P.help.ko?' up':' loose')+'... '+Math.round(f*100)+'%'}
+  const p=helpTarget();if(!p)return '';
+  return k+': '+(p.ko>0?'help '+p.name+' up ('+Math.ceil(p.ko)+' s)':'cut '+p.name+' loose');
+}
+// ---- every client, every frame: the silk on you, the slugs on your face, being downed, and the overlays for them
+const CRAWL={};
+function crawlPlayerTick(dt){
+  if(!P.slugs)P.slugs=[];
+  if(CRAWL.f!==F){CRAWL.f=F;P.web=0;P.slugs.length=0;P.eaten=0;P.help=null}
+  if(!F)return;
+  const live=state==='play'&&!P.down;
+  if(P.down){P.web=0;P.slugs.length=0;P.ko=0;P.eaten=0;P.half=false;P.help=null}
+  if(live){
+    // being eaten
+    if(P.eaten>0){P.eaten-=dt;P.vx=P.vz=0;if(P.eaten<=0){P.eaten=0;P.web=0;say('Eaten by the spider.',4);koSkip=true;try{die()}finally{koSkip=false}return}}
+    // a spinning spider right beside you wraps you up
+    else if(!(P.ko>0)&&!P.inSafe){
+      for(const s of F.shades){if(s.type!==10||s.x<0||s.dead||s.state!==2||s.stun>0||Math.hypot(s.x-P.x,s.z-P.z)>0.85)continue;
+        const was=P.web||0;P.web=Math.min(SPI.lock,was+SPI.rate(s.lv||1)*dt*(ps('immune')?0:1));
+        if(was<1&&P.web>=1)say('A spider is spinning silk around you! Get away from it!',3);
+        if(was<SPI.lock&&P.web>=SPI.lock){say('You are wrapped tight and cannot move!'+(MP.on?' Only a friend can cut you loose.':''),4);if(ac)tone(90,1,'sawtooth',0.12,0,-30)}
+        CRAWL.spin=(CRAWL.spin||0)-dt;if(CRAWL.spin<=0&&ac){CRAWL.spin=0.22;noise(0.12,0.05,6000,3)}
+        break}
+    }
+    // downed: the clock runs down, and nobody coming means you are out
+    if(P.ko>0){P.ko-=dt;P.hp=0;P.vx=P.vz=0;if(P.ko<=0||!koHelpers()){P.ko=0;say('Nobody came in time...',3);koSkip=true;try{die()}finally{koSkip=false}return}}
+    // the limp: half a heart until something heals you
+    if(P.half&&P.hp>1){P.half=false;P.hp-=1;say('You can walk properly again.',2)}
+    if(P.half&&!P.ko){CRAWL.limp=(CRAWL.limp||0)+dt*Math.min(1,Math.hypot(P.vx,P.vz));}
+    helpTick(dt);
+  }
+  // the host tells everyone how big the spider has grown
+  if(MP.on&&!MP.guest&&live){CRAWL.splT=(CRAWL.splT||0)-dt;if(spiSync||CRAWL.splT<=0){CRAWL.splT=3;spiSync=0;
+    const a=[];F.shades.forEach((s,i)=>{if(s.type===10)a.push([i,s.lv||1])});if(a.length)mpSend({k:'spl',d:R.depth,a});
+    if(F.shades.some(q=>q.type===8))mpSend({k:'slx',d:R.depth,n:F.shades.length})}}
+  crawlHud(live);
+}
+function crawlHud(live){
+  if(!CRAWL.el){
+    const mk=(css)=>{const e=document.createElement('div');e.style.cssText='position:fixed;pointer-events:none;'+css;document.body.appendChild(e);return e};
+    CRAWL.web=mk('inset:0;z-index:3;opacity:0;background-size:cover;background-position:center');CRAWL.web.style.backgroundImage='url('+webArt()+')';
+    CRAWL.slug=mk('inset:-6%;z-index:5;opacity:0;background-size:100% 100%');CRAWL.slug.style.backgroundImage='url('+slugArt()+')';
+    CRAWL.ko=mk('inset:0;z-index:4;display:none;background:radial-gradient(ellipse at center,rgba(60,0,0,0) 30%,rgba(90,0,0,.85) 100%)');
+    CRAWL.el=mk('left:50%;bottom:120px;transform:translateX(-50%);z-index:7;text-align:center;color:#fff;text-shadow:0 2px 6px #000;font:700 15px system-ui;display:none');
+    CRAWL.el.innerHTML='<div class="ct"></div><div style="width:min(300px,70vw);height:12px;margin:5px auto 0;border:2px solid #fff;border-radius:8px;overflow:hidden;background:rgba(0,0,0,.5)"><div class="cb" style="height:100%;width:0"></div></div>';
+    if($('touch')){const b=document.createElement('div');b.id='tPeel';b.className='tbtn';b.textContent='PEEL';b.style.cssText='bottom:calc(212px + env(safe-area-inset-bottom));right:calc(160px + env(safe-area-inset-right));width:64px;height:64px;font-size:12px;display:none';
+      b.addEventListener('touchstart',e=>{e.preventDefault();e.stopPropagation();slugPeel()},{passive:false});$('touch').appendChild(b);CRAWL.peel=b}
+  }
+  const web=live?(P.web||0)/SPI.lock:0,n=live?P.slugs.length:0,ko=live&&P.ko>0;
+  const wo=Math.min(0.92,web*0.95);if(Math.abs((+CRAWL.web.style.opacity||0)-wo)>0.01)CRAWL.web.style.opacity=wo.toFixed(2);
+  const so=n?Math.min(1,0.9+0.05*n):0;if(Math.abs((+CRAWL.slug.style.opacity||0)-so)>0.01)CRAWL.slug.style.opacity=so;
+  if(n)CRAWL.slug.style.transform='translate('+(Math.sin(R.time*0.7)*1.5).toFixed(2)+'%,'+(Math.cos(R.time*0.5)*1.2+(n>1?0:9)).toFixed(2)+'%) scale('+(n>1?1.08:1)+') rotate('+(Math.sin(R.time*0.4)*3).toFixed(1)+'deg)';
+  const kd=ko?'block':'none';if(CRAWL.ko.style.display!==kd)CRAWL.ko.style.display=kd;
+  if(CRAWL.peel){const pd=n?'flex':'none';if(CRAWL.peel.style.display!==pd)CRAWL.peel.style.display=pd}
+  let txt='',f=0,col='';
+  if(ko){txt='DOWNED: '+Math.ceil(P.ko)+' s. Hang on for a friend!';f=P.ko/KO.time;col='#ff4040'}
+  else if(live&&P.eaten>0){txt='The spider has you...';f=1;col='#ffffff'}
+  else if(n){txt=n+' slug'+(n>1?'s':'')+' on your face! '+slugKey()+' to peel '+(n>1?'one':'it')+' off';f=0}
+  else if(web>0){txt=(web>=1?'WRAPPED TIGHT':'Webbed')+': '+Math.round(web*100)+'%'+(web>=1?(MP.on?'. Wait for a friend to cut you loose!':''):'. Web-Be-Gone dissolves it.');f=web;col='linear-gradient(90deg,#e8e8f0,#ffffff)'}
+  else if(live&&P.half){txt='Limping on half a heart: find healing';f=0}
+  const show=!!txt;if((CRAWL.el.style.display==='block')!==show)CRAWL.el.style.display=show?'block':'none';
+  if(show){const t=CRAWL.el.querySelector('.ct');if(t.textContent!==txt)t.textContent=txt;const b=CRAWL.el.querySelector('.cb');b.parentNode.style.display=f>0?'block':'none';b.style.width=(f*100).toFixed(0)+'%';if(col)b.style.background=col}
+}
+// the art for the overlays, painted once: silk across the view, and the underside of a slug
+function webArt(){
+  const c=document.createElement('canvas');c.width=c.height=512;const x=c.getContext('2d');x.strokeStyle='rgba(240,240,250,0.75)';x.lineCap='round';
+  for(const [cx,cy,sp] of[[0,0,1],[512,0,1],[0,512,1],[512,512,1],[256,-40,0.7],[-40,256,0.6],[552,300,0.6]]){
+    const sp0=Math.atan2(256-cy,256-cx),N=9;
+    for(let i=0;i<N;i++){const a=sp0+(i/(N-1)-0.5)*1.9*sp;x.lineWidth=1.6;x.beginPath();x.moveTo(cx,cy);x.lineTo(cx+Math.cos(a)*300,cy+Math.sin(a)*300);x.stroke()}
+    for(let r=26;r<290;r+=22+r*0.08){x.lineWidth=1;x.beginPath();for(let i=0;i<N;i++){const a=sp0+(i/(N-1)-0.5)*1.9*sp,rr=r*(1+((i*7)%3)*0.02);const px=cx+Math.cos(a)*rr,py=cy+Math.sin(a)*rr;if(i)x.quadraticCurveTo(cx+Math.cos(a-0.12)*rr*0.95,cy+Math.sin(a-0.12)*rr*0.95,px,py);else x.moveTo(px,py)}x.stroke()}
+  }
+  for(let i=0;i<40;i++){x.fillStyle='rgba(255,255,255,0.5)';x.beginPath();x.arc(Math.random()*512,Math.random()*512,1+Math.random()*1.5,0,6.28);x.fill()}
+  return c.toDataURL();
+}
+function slugArt(){
+  const c=document.createElement('canvas');c.width=c.height=256;const x=c.getContext('2d');
+  x.fillStyle='rgba(0,0,0,0)';x.fillRect(0,0,256,256);
+  const g=x.createRadialGradient(128,138,10,128,128,150);g.addColorStop(0,'#5e5428');g.addColorStop(0.6,'#3c3416');g.addColorStop(0.92,'#241e0c');g.addColorStop(1,'rgba(40,34,14,0)');
+  x.fillStyle=g;x.beginPath();x.ellipse(128,128,150,140,0,0,6.28);x.fill();
+  for(let i=0;i<26;i++){x.strokeStyle='rgba(30,26,8,'+(0.06+0.1*Math.random())+')';x.lineWidth=2+Math.random()*6;x.beginPath();const y=20+i*8.5;x.moveTo(20,y+Math.sin(i)*4);x.bezierCurveTo(90,y+10,170,y-10,236,y+Math.cos(i)*4);x.stroke()}
+  for(let i=0;i<160;i++){x.fillStyle='rgba('+(30+Math.random()*40|0)+','+(28+Math.random()*30|0)+',10,'+(0.25+Math.random()*0.35)+')';x.beginPath();x.arc(20+Math.random()*216,20+Math.random()*216,1+Math.random()*4,0,6.28);x.fill()}
+  for(let i=0;i<22;i++){x.fillStyle='rgba(230,240,200,'+(0.12+Math.random()*0.25)+')';x.beginPath();x.ellipse(30+Math.random()*196,30+Math.random()*196,2+Math.random()*9,1+Math.random()*4,Math.random()*3,0,6.28);x.fill()}
+  return c.toDataURL();
+}
+// ---- the models
+// The spider: a round dark abdomen with pale chevrons, a smaller head with eight glowing red eyes and two fangs, eight jointed legs
+// that ripple as it runs. Bigger with every level. When it spins it rears its abdomen up and silk spills from it.
+function buildSpider(s,t,ex,ez){
+  const k=SPI.size(s.lv||1),st=s.state|0,run=st===1||st===3||st===4,spin=st===2,stun=s.stun>0;
+  const gait=(s.wk=(s.wk||0)+(run?0.32:st===0?0.12:spin?0.18:0)*(stun?0:1));
+  const B={p:[s.x,0.045*k,s.z],R:rYaw(s.face||0),lo:[s.ph,0,0]},v=(x,y,z)=>[x*k,y*k,z*k];
+  const dark=[0.035,0.028,0.03,3],hair=[0.06,0.045,0.04,2],pale=[0.7,0.66,0.58,2],eye=stun?[0.3,0.1,0.1,1]:[2.2,0.25,0.15,7],fang=[0.35,0.28,0.2,4];
+  const ab=subF(B,v(-0.16,0.07+(spin?0.05:0),0),rZ(spin?-0.6:-0.15));
+  ball(ab,[0,0,0],[0.16*k,0.12*k,0.13*k],dark);
+  for(let i=0;i<3;i++)slab(ab,v(0.02-i*0.06,0.1-i*0.012,0),[0.012*k,0.005*k,(0.06-i*0.012)*k],pale);
+  ball(B,v(0,0.06,0),[0.08*k,0.06*k,0.075*k],hair);                       // the head and thorax
+  for(const z of[-1,1]){ball(B,v(0.075,0.085,z*0.022),0.013*k,eye,true);ball(B,v(0.08,0.07,z*0.04),0.01*k,eye,true);ball(B,v(0.065,0.1,z*0.012),0.008*k,eye,true);ball(B,v(0.07,0.095,z*0.035),0.007*k,eye,true);
+    seg(B,v(0.08,0.04,z*0.018),v(0.11,0.0,z*0.012),0.008*k,0.003*k,fang)}
+  for(let i=0;i<4;i++)for(const z of[-1,1]){
+    const ph=gait*3+i*1.6+(z>0?Math.PI:0),lift=run||spin?Math.max(0,Math.sin(ph))*0.05:0,sw=run?Math.cos(ph)*0.05:0;
+    const ax=0.04-i*0.035,fx=ax+0.06-i*0.06+sw,hip=v(ax,0.06,z*0.05),knee=v(ax+0.02-i*0.015,0.16+lift,z*(0.16+i*0.012)),foot=v(fx,-0.04+lift*0.5,z*(0.26+i*0.01));
+    seg(B,hip,knee,0.014*k,0.011*k,hair);seg(B,knee,foot,0.011*k,0.005*k,dark)
+  }
+  if(!stun)for(const z of[-1,1]){const p=fpt(B,v(0.08,0.08,z*0.03));spr(p[0],p[1],p[2],0.05*k,0.05*k,7,1.0,0.15,0.1,0.35,1)}
+  if(spin){const p=fpt(ab,v(-0.16,0,0));for(let i=0;i<5;i++){const a=t*7+i*1.3;spr(p[0]+Math.cos(a)*0.12,p[1]+0.1+((t*1.5+i*0.2)%1)*0.35,p[2]+Math.sin(a)*0.12,0.03,0.03,7,1,1,1,0.75,1)}}
+}
+// the slug: a long, glistening olive-brown body that ripples as it crawls, with two eye stalks waving on top
+function buildSlug(s,t,ex,ez){
+  const w=(s.wk=(s.wk||0)+(s.state===1?0.06:0.02)*(s.stun>0?0:1)),B={p:[s.x,0,s.z],R:rYaw(s.face||0),lo:[s.ph,0,0]};
+  const body=[0.2,0.17,0.07,8],belly=[0.3,0.27,0.14,2],eye=[0.03,0.03,0.03,8];
+  for(let i=0;i<6;i++){const x=0.09-i*0.04,r=0.035-Math.abs(i-1.5)*0.004,y=0.03+Math.sin(w*6-i*0.9)*0.006;ball(B,[x,y,Math.sin(w*3-i*0.6)*0.006],[0.03,r*0.9,r],body)}
+  ball(B,[0.0,0.012,0],[0.13,0.012,0.04],belly,true);
+  for(const z of[-1,1]){const tip=[0.15+Math.sin(t*2+z)*0.01,0.1+Math.sin(t*3+z*2)*0.01,z*0.025];seg(B,[0.11,0.05,z*0.012],tip,0.006,0.004,body);ball(B,tip,0.009,eye,true)}
+}
+// what the others look like: lying down when they are down, silk wrapped round them, slugs on their face
+function crawlDrawPeer(p,t){
+  const H=EYE+(p.ry||0);
+  const web=Math.min(1,(p.web||0)/SPI.lock),n=Math.round(web*14);
+  if(n){const F0={p:[p.rx,0,p.rz],R:rYaw(p.ryaw||0)},silk=[0.92,0.92,0.95,5];
+    for(let i=0;i<n;i++){const a=i*2.39,b=a+1.9+(i%3)*0.4,y0=0.15+((i*0.37)%1)*(p.ko>0?0.2:H*0.85),y1=y0+0.08+((i*0.53)%1)*0.2,r=p.ko>0?0.25:0.2;
+      seg(F0,[Math.cos(a)*r,y0,Math.sin(a)*r],[Math.cos(b)*r,y1,Math.sin(b)*r],0.008,0.008,silk)}
+    if(web>=1)ball(F0,[0,H*0.5,0],[0.22,H*0.52,0.22],[0.85,0.85,0.88,2])}
+  if(p.slugs>0&&!(p.ko>0)){const c=Math.cos(p.ryaw||0),s=Math.sin(p.ryaw||0);const B={p:[p.rx+c*0.1,H-0.03,p.rz+s*0.1],R:m3(rYaw(p.ryaw||0),rZ(1.3))};
+    for(let i=0;i<p.slugs;i++)ball(B,[(i/3|0)*0.03,0,((i%3)-1)*0.05],[0.09,0.035,0.035],[0.2,0.17,0.07,8])}
+}
+/* ---------- the Troll (creature type 9) ---------- */
+// Past floor 20, about one floor in eight (his own dice, nothing else moves). A big, slow, hunched brute with a club and a great deal of
+// health. He lumbers after you; when he is close he heaves the club up over his head (you can see it coming) and brings it down: a heart,
+// and you are knocked flying. When you are near but the way round to you is long, he stops at the wall between and beats on it, three to six
+// heavy blows, until it gives way. The hole stays, like a pickaxe hole ({k:'tpk'}).
+// The host runs him: 0 wander, 1 hunt, 2 club raised, 3 beating on a wall, 4 getting his club back.
+const TROLL={from:21,odds:0.125,speed:1.55,wander:0.6,hunt:18,smell:8,windup:0.8,recover:1.3,reach:1.5,swing:1.5,save:6,hp:40};
+function trollPlace(seedStr,depth,g,W,H,safeMask,pocketMask,d0,shades,kind){
+  if(depth<TROLL.from||kind==='back'||kind==='arena')return;
+  const r=mulberry32(hashStr(seedStr+'#troll#'+depth));if(r()>=TROLL.odds)return;
+  const spots=[];for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=y*W+x;if(!g[i]&&!safeMask[i]&&!pocketMask[i]&&d0[i]>16)spots.push([x,y])}
+  if(!spots.length)return;const c=spots[(r()*spots.length)|0];
+  shades.push({type:9,x:c[0]+0.5,z:c[1]+0.5,gx:c[0],gy:c[1],px:-1,py:-1,state:0,stun:0,think:0,vis:false,frozen:false,ph:r()*6.28,d:99,snd:0,ft:0,fs:0,rad:0.42});
+}
+// a wall next to him that would cut the way to you short by a good deal, in your direction, and that can be broken
+function trollWall(s,T,MD){
+  const W=F.W,cx=Math.floor(s.x),cz=Math.floor(s.z),dh=MD[cz*W+cx];
+  if(dh<0&&dh!==-1)return null;
+  let best=null,bd=1e9;
+  for(const [dx,dz] of DIRS){
+    const wx=cx+dx,wz=cz+dz,bx=cx+2*dx,bz=cz+2*dz;
+    if(bx<1||bz<1||bx>W-2||bz>F.H-2||F.g[wz*W+wx]!==1||F.g[bz*W+bx]!==0)continue;
+    if((T.x-s.x)*dx+(T.z-s.z)*dz<=0.3)continue;
+    const db=MD[bz*W+bx];if(db<0||(dh>=0&&db>dh-TROLL.save))continue;
+    if(pkWhy(wx,wz))continue;
+    if(db<bd){bd=db;best=[wx,wz,dx,dz]}
+  }
+  return best;
+}
+function trollTick(s,dt,TG,MD){
+  s.ft=(s.ft||0)-dt;s.fs=(s.fs||0)-dt;if(s.calm>0)s.calm-=dt;if(s.bashCd>0)s.bashCd-=dt;
+  const free=TG.filter(t=>!t.inSafe),T=mpNearest(free,s.x,s.z),cx=Math.floor(s.x),cz=Math.floor(s.z),d=MD?MD[cz*F.W+cx]:-1;
+  const eu=T?Math.hypot(T.x-s.x,T.z-s.z):99,sk=T?Math.max(potSk(T),0.15):1,sp=TROLL.speed*(s.pmul||1);
+  if(s.state===2){   // the club goes up...
+    if(T)s.face=turnTo(s.face||0,Math.atan2(T.z-s.z,T.x-s.x),2.5*dt);
+    if(s.ft<=0){   // ...and comes down
+      s.state=4;s.ft=TROLL.recover;
+      const fx=Math.cos(s.face),fz=Math.sin(s.face);let hit=false;
+      for(const t of free){const dx=t.x-s.x,dz=t.z-s.z,l=Math.hypot(dx,dz);if(l>TROLL.reach||(dx*fx+dz*fz)<l*0.3||t.inv>0||!los(s.x,s.z,t.x,t.z))continue;
+        hit=true;if(t.loc)trollClubbed(dx/(l||1),dz/(l||1));else{t.p.inv=1.6;mpSend({k:'hit',w:'club',dx:r3(dx/(l||1)),dz:r3(dz/(l||1))},t.p.id)}}
+      trollThud(s.x+fx*0.8,s.z+fz*0.8,hit?1:0.8);
+      if(hit)s.calm=2.5;
+    }
+    return;
+  }
+  if(s.state===4){if(s.ft<=0)s.state=1;return}
+  if(s.state===3){   // beating on a wall
+    const b=s.bash,i=b?b[1]*F.W+b[0]:-1;
+    if(!b||F.g[i]!==1||!T||eu>TROLL.smell*2.2*sk){s.state=1;s.bash=null;s.bashCd=3;return}
+    if(eu<TROLL.reach&&los(s.x,s.z,T.x,T.z)){s.state=1;s.bash=null;return}   // you came round to him
+    mazeStep(s,cx+0.5,cz+0.5,dt,0.8);s.face=turnTo(s.face||0,Math.atan2(b[3],b[2]),4*dt);
+    if(s.ft<=0){b[4]++;s.ft=TROLL.swing;trollThud(b[0]+0.5,b[1]+0.5,1);
+      if(b[4]>=b[5]){pkApply(b[0],b[1],false);mpSend({k:'tpk',d:R.depth,x:b[0],y:b[1]});s.bash=null;s.state=1;s.bashCd=5;
+        if(Math.hypot(b[0]+0.5-P.x,b[1]+0.5-P.z)<14)say('CRASH! The troll smashes straight through the wall!',3)}}
+    return;
+  }
+  const near=!!T&&eu<TROLL.smell*sk,hunt=!!T&&(s.calm||0)<=0&&(d>=0&&d<=TROLL.hunt*sk||near);
+  if(hunt){
+    s.state=1;
+    if(eu<1.15&&los(s.x,s.z,T.x,T.z)&&T.inv<=0){s.state=2;s.ft=TROLL.windup;s.face=Math.atan2(T.z-s.z,T.x-s.x);trollRoar(s);return}
+    if(near&&!(s.bashCd>0)&&MD&&(d<0||d>eu*2+4)){const w=trollWall(s,T,MD);
+      if(w){let n=3+((Math.random()*4)|0);if(n===s.lastN)n=n>=6?3:n+1;s.lastN=n;s.bash=[w[0],w[1],w[2],w[3],0,n];s.state=3;s.ft=TROLL.swing*0.8;return}}
+    if(eu>0.6)mazeStep(s,T.x,T.z,dt,sp);s.face=s.yaw;
+  }else{s.state=0;crawlWander(s,dt,TROLL.wander*(s.pmul||1))}
+  s.gx=Math.floor(s.x);s.gy=Math.floor(s.z);s.px=-1;
+}
+// the one he hits
+function trollClubbed(dx,dz){
+  if(P.inv>0||P.down||P.ko>0||state!=='play')return;
+  say('WHAM! The troll\'s club sends you flying!',2.5);
+  P.vx+=dx*7;P.vz+=dz*7;P.vy=2.2;P.y=Math.max(P.y,0.001);FX.stag=Math.max(FX.stag||0,1);pkShake=Math.max(pkShake,0.9);
+  hurt(null);
+}
+function trollThud(x,z,k){
+  const d=Math.hypot(x-P.x,z-P.z);if(d>16)return;const v=clamp(1-d/16,0.1,1)*k;
+  noise(0.35,0.5*v,260,0.7);tone(55,0.45,'sine',0.35*v,0,-25);pkShake=Math.max(pkShake,0.45*v);if(d<5)rumble(160,0.6*v,0.4*v);
+}
+function trollRoar(s){const d=Math.hypot(s.x-P.x,s.z-P.z);if(d>14||!ac)return;const v=1-d/14;tone(85,0.7,'sawtooth',0.14*v,0,-20);tone(62,0.8,'sawtooth',0.12*v,0.05,-15);noise(0.6,0.12*v,700,0.6)}
+// every client: his footsteps shake the floor, the club on a wall booms, and he grunts when it goes up
+function trollClientTick(dt){
+  if(!F||state!=='play')return;
+  for(const s of F.shades){
+    if(s.type!==9||s.x<0||s.dead)continue;
+    const st=s.state|0,d=Math.hypot(s.x-P.x,s.z-P.z);
+    if(MP.guest){if(st===2&&s.lastSt!==2)trollRoar(s);if(st===4&&s.lastSt===2)trollThud(s.x+Math.cos(s.face||0)*0.8,s.z+Math.sin(s.face||0)*0.8,0.8);
+      if(st===3){s.bc=(s.bc===undefined?TROLL.swing*0.8:s.bc)-dt;if(s.bc<=0){s.bc=TROLL.swing;trollThud(s.x+Math.cos(s.face||0),s.z+Math.sin(s.face||0),1)}}else s.bc=undefined}
+    s.lastSt=st;
+    if((st===1||st===0)&&s.stun<=0&&d<12){s.stepT=(s.stepT||0)-dt*(st===1?1:0.5);if(s.stepT<=0){s.stepT=0.55;const v=1-d/12;tone(48,0.18,'sine',0.22*v,0,-10);noise(0.08,0.08*v,150,1);if(d<4)pkShake=Math.max(pkShake,0.08*v)}}
+  }
+}
+// the troll: big, hunched and gray-green, with a jutting jaw, two tusks, a great lump of a nose, little yellow eyes under a heavy brow,
+// a hide loincloth, and a knotted club in his right hand: hanging when he walks, up over his head before he swings, down when he hits.
+function buildTroll(s,t,ex,ez){
+  const st=s.state|0,walk=(s.wk=(s.wk||0)+(st===1?0.055:st===0?0.03:0)*(s.stun>0?0:1)),sw=Math.sin(walk*3)*(st<=1?0.09:0);
+  const B={p:[s.x,Math.abs(Math.sin(walk*3))*0.012,s.z],R:rYaw(s.face||0),lo:[s.ph,0,0]};
+  const skin=[0.2,0.27,0.14,2],dark=[0.13,0.17,0.09,2],hide=[0.3,0.19,0.1,2],wood=[0.3,0.18,0.08,6],tusk=[0.9,0.86,0.72,4],nail=[0.2,0.18,0.14,3];
+  for(const z of[-1,1]){const k=z>0?sw:-sw;
+    seg(B,[0,0.46,z*0.13],[k*0.6+0.02,0.22,z*0.15],0.085,0.07,skin);seg(B,[k*0.6+0.02,0.22,z*0.15],[k+0.03,0.05,z*0.15],0.07,0.06,skin);
+    ball(B,[k+0.07,0.035,z*0.15],[0.1,0.04,0.075],dark,true)}
+  slab(B,[0.02,0.46,0],[0.17,0.1,0.21],hide);slab(B,[0.12,0.36,0],[0.03,0.1,0.14],hide);
+  const lean=st===2?-0.12:st===3||st===4?0.28:0.18,U=subF(B,[0,0.5,0],rZ(-lean));
+  ball(U,[0.02,0.2,0],[0.22,0.26,0.27],skin);ball(U,[0.1,0.12,0],[0.17,0.18,0.22],skin);                  // chest and belly
+  ball(U,[-0.02,0.4,0],[0.2,0.12,0.3],dark);                                                              // the hump of his shoulders
+  const H=subF(U,[0.17,0.43,0],rZ(lean*0.8-0.05));
+  ball(H,[0,0,0],[0.12,0.11,0.12],skin);slab(H,[0.06,0.05,0],[0.05,0.025,0.11],dark);                      // head and heavy brow
+  ball(H,[0.13,-0.005,0],[0.06,0.055,0.045],dark);ball(H,[0.08,-0.07,0],[0.09,0.05,0.1],skin);            // nose, jaw
+  for(const z of[-1,1]){seg(H,[0.13,-0.07,z*0.055],[0.15,-0.01,z*0.06],0.014,0.004,tusk);ball(H,[0.02,0.03,z*0.125],[0.025,0.045,0.015],dark,true)}
+  if(s.stun<=0)for(const z of[-1,1]){const p=fpt(H,[0.1,0.025,z*0.045]);spr(p[0],p[1],p[2],0.022,0.022,7,1.0,0.85,0.2,1,1)}
+  // the left arm hangs, knuckles low
+  const L0=[0.02,0.33,-0.29],L1=[0.12+(-sw)*0.5,0.0,-0.34],L2=[0.18+(-sw),-0.24,-0.33];
+  seg(U,L0,L1,0.075,0.06,skin);seg(U,L1,L2,0.06,0.055,skin);ball(U,L2,[0.07,0.06,0.06],dark,true);
+  // poses for the right arm: [arm angle, club angle] hanging, up over the shoulder (club laid back under the ceiling), and down on the blow
+  const IDLE=[-1.35,-1.65],UP=[0.7,2.9],HIT=[-0.35,-0.55],mix=(p,q,k)=>[p[0]+(q[0]-p[0])*k,p[1]+(q[1]-p[1])*k];
+  let pose=st===2?UP:st===4?HIT:IDLE;
+  if(st===3){const ph=((t%TROLL.swing)+TROLL.swing)%TROLL.swing/TROLL.swing;pose=ph<0.75?mix(HIT,UP,ph/0.75):mix(UP,HIT,(ph-0.75)/0.25)}
+  if(st===2)pose=mix(IDLE,UP,Math.min(1,(s.upK=Math.min(1,(s.upK||0)+0.12))));else s.upK=0;
+  const sh=[0.02,0.33,0.29],ang=pose[0],hand=[sh[0]+Math.cos(ang)*0.36,sh[1]+Math.sin(ang)*0.36,0.33],el=[sh[0]+Math.cos(ang-0.5)*0.19,sh[1]+Math.sin(ang-0.5)*0.19,0.33];
+  seg(U,sh,el,0.075,0.06,skin);seg(U,el,hand,0.06,0.055,skin);ball(U,hand,[0.065,0.06,0.06],dark,true);
+  const ca=pose[1],tip=[hand[0]+Math.cos(ca)*0.52,hand[1]+Math.sin(ca)*0.52,0.33];
+  seg(U,hand,tip,0.03,0.085,wood);
+  for(let i=0;i<3;i++){const f=0.6+i*0.15,p=[hand[0]+Math.cos(ca)*0.52*f,hand[1]+Math.sin(ca)*0.52*f,0.33+(i-1)*0.06];ball(U,p,0.03,nail,true)}
+}
 // Granny: a small, stooped old lady in a lavender floral dress and a pink cardigan, white hair in a bun, big glasses, pearls,
 // a handbag on one arm and a perfume atomizer in the other hand. Arms wide when she is coming for you; the atomizer up when she puffs.
 function buildGranny(s,t,ex,ez){
@@ -5078,8 +5564,8 @@ function bossSpawn(BA,W,H,shades){
   const cx=W/2,cz=H/2-1;
   shades.push(mk('main',{x:cx,z:cz,dead:false,hp,hpMax:hp,rad:D.rad,size:1,immune:D.id==='boogie'}));
   const k=1+0.6*BA.cyc;
-  if(D.id==='gloop'){for(let i=0;i<2;i++)shades.push(mk('part',{size:0.6,rad:0.45,hp:Math.round(20*k),hpMax:Math.round(20*k)}));
-    for(let i=0;i<4;i++)shades.push(mk('part',{size:0.35,rad:0.27,hp:Math.round(8*k),hpMax:Math.round(8*k)}))}
+  if(D.id==='gloop'){for(let i=0;i<2;i++)shades.push(mk('part',{size:0.6,rad:0.45,hp:Math.round(50*k),hpMax:Math.round(50*k)}));
+    for(let i=0;i<4;i++)shades.push(mk('part',{size:0.35,rad:0.27,hp:Math.round(20*k),hpMax:Math.round(20*k)}))}
   const adds=D.id==='rat'?['rat',6]:D.id==='tallow'?['candle',4]:D.id==='heart'?['ember',6]:null;
   if(adds)for(let i=0;i<adds[1];i++){const a=BADD[adds[0]];shades.push(mk('add',{kind:adds[0],rad:a.rad,hp:a.hp*k,hpMax:a.hp*k,size:1}))}
   if(D.id==='mimic')for(let i=0;i<3;i++)shades.push(mk('decoy',{rad:0.45,hp:1,hpMax:1,size:1}));
@@ -5152,11 +5638,12 @@ const bossVuln=s=>s.type===6?s.vulnK||1:1;
 function bossStart(quiet){
   if(BS.started||!F||!F.boss)return;BS.started=true;
   const m=bMain();if(m&&!MP.guest&&m.state===0)bSet(m,1,0.5);
-  if(m&&!MP.guest&&BOSSES[m.boss].id==='boogie'){const n=Math.max(1,mpTargets().length),k=1+0.75*(n-1);m.hpMax=Math.round(m.hpMax*k);m.hp=m.hpMax}   // +75% for each extra dancer
+  if(m&&!MP.guest){const n=Math.max(1,mpTargets().length),k=1+0.75*(n-1);for(const q of F.shades)if(q.type===6&&(q.role==='main'||q.role==='part')){q.hpMax=Math.round(q.hpMax*k);q.hp=q.hpMax}}   // +75% for each extra player
   if(!MP.guest&&!quiet)mpSend({k:'bst',d:R.depth});
-  const D=bDef();bossCard(D.name,D.title+(F.boss.cyc?'  ·  round '+(F.boss.cyc+1):''));
+  const D=bDef();bossCard(D.name,D.hint+(F.boss.cyc?'  ·  round '+(F.boss.cyc+1):''));
   tone(55,1.6,'sawtooth',0.18,0,-20);tone(82,1.6,'sawtooth',0.12,0.05,-25);noise(1.2,0.12,300,0.5);rumble(400,0.6,0.6);
   if(D.id!=='mime')setTimeout(()=>{if(F&&F.boss&&!BS.won)say(D.taunt,2.2)},1600);
+  {const d0=R.depth;setTimeout(()=>{if(F&&F.boss&&R.depth===d0&&!BS.won&&D.id!=='boogie')say(D.hint+'.',4)},4200)}
 }
 function bossWin(){
   if(BS.won||!F||!F.boss)return;BS.won=true;BS.hz.length=0;BS.dance=null;BS.frz=null;danceHide();
@@ -5172,7 +5659,7 @@ function bossWin(){
 }
 const bossTrophies=()=>{const t=store.get('trophies',{});return t&&typeof t==='object'&&!Array.isArray(t)?t:{}};
 // a new floor: forget the last fight
-function bossReset(){BS.dcam=null;BS.groove=100;BS.hz.length=0;BS.started=false;BS.won=false;BS.wake=0;BS.dance=null;BS.frz=null;BS.dust=0;BS.reveal=0;BS.goo=0;BS.cool=0;BS.said={};danceHide();if(BS.el)BS.el.style.display='none'}
+function bossReset(){bpReset();BS.dcam=null;BS.groove=100;BS.hz.length=0;BS.started=false;BS.won=false;BS.wake=0;BS.dance=null;BS.frz=null;BS.dust=0;BS.reveal=0;BS.goo=0;BS.cool=0;BS.said={};danceHide();if(BS.el)BS.el.style.display='none'}
 
 // ---- the host's turn for a boss creature (instead of the usual chase; after the shade loop's dead check)
 function bossTick(s,dt,TG){
@@ -5197,6 +5684,7 @@ function bossTick(s,dt,TG){
 // minions: rats nip you, candlelings snuff your torch, embers burst on you
 function addTick(s,dt,T0,T){
   const a=BADD[s.kind],sp=a.sp*bSpd(s);
+  if(s.kind==='candle'){const w=BP.props.find(p=>p.kind==='window'&&p.st===1);if(w){const g={x:w.x+w.ex*0.6,z:w.z};if(bToward(s,g,sp*1.3,dt,0)<0.5){w.st=0;w.t=0;BP.dirty=true;noise(0.2,0.15,1200,1)}return}}   // they hurry to shut an open window
   bToward(s,T,sp,dt,0);
   for(const t of T0)if(bDist(s,t)<s.rad+0.28){
     if(s.kind==='candle')bFuel(t,25,'A candleling snuffs at your torch');else bHit(t);
@@ -5210,6 +5698,8 @@ const BTICK=[
     const sp=bSpd(s);
     switch(s.state){
       case 1:{
+        const bait=ratBait(s);
+        if(bait){const d2=bToward(s,bait,2.5*sp,dt,0);if(d2<0.45){bait.st=2;bait.t=9;BP.dirty=true;bpSound('snap',bait);mpSend({k:'bfx2',w:'snap'});say('SNAP! Ratbag is caught in his own trap!',2);bSet(s,4,0.1);bossBlow(s,0.12,4.5,1.8)}break}   // he cannot resist cheese
         const d=bToward(s,T,1.9*sp,dt,s.rad+0.15);
         if(!s.sum1&&s.hp<s.hpMax*0.7||s.sum1&&!s.sum2&&s.hp<s.hpMax*0.4){if(s.sum1)s.sum2=1;else s.sum1=1;bSet(s,6,1.1);return}
         if(d<s.rad+0.75&&s.c2<=0){bSet(s,5,0.42);return}
@@ -5218,7 +5708,7 @@ const BTICK=[
       case 2:s.face=turnTo(s.face,bAim(s,T),2.6*dt);if(s.t<=0){bSet(s,3,2.6);s.hitSet={}}break;
       case 3:{const v=7.2*sp,hit=bMove(s,Math.cos(s.face)*v,Math.sin(s.face)*v,dt);
         for(const t of T0){const w=bWho(t);if(!s.hitSet[w]&&bDist(s,t)<s.rad+0.32){s.hitSet[w]=1;bHit(t)}}
-        if(hit){bSet(s,4,2.3);s.vulnK=1.6;s.vt=2.3;s.c1=3.5+Math.random()*2;bzAdd({k:'ring',x:r3(s.x),z:r3(s.z),v:3.5,max:2.2,w:0.16,hh:0.22,c:[0.6,0.5,0.4]})}
+        if(hit){bSet(s,4,2.3);s.vulnK=0.5;s.vt=2.3;s.c1=3.5+Math.random()*2;bzAdd({k:'ring',x:r3(s.x),z:r3(s.z),v:3.5,max:2.2,w:0.16,hh:0.22,c:[0.6,0.5,0.4]})}
         else if(s.t<=0){bSet(s,1);s.c1=2.5}
         break}
       case 4:if(s.t<=0)bSet(s,1);break;
@@ -5272,7 +5762,7 @@ const BTICK=[
         s.face=Math.atan2(s.vz,s.vx);
         for(const t of T0){const w=bWho(t);if(!s.hitSet[w]&&bDist(s,t)<0.62){s.hitSet[w]=1;bHit(t)}}
         if(pk){s.pT-=dt;if(s.pT<=0){s.pT=0.35;bzAdd({k:'pool',x:r3(s.x),z:r3(s.z),r:0.45,life:6,c:[0.6,0.7,0.2],fx:'goo'})}}
-        if(s.bn>=3||s.t<=0){bSet(s,5,1);s.vulnK=1.6;s.vt=1}
+        if(s.bn>=3||s.t<=0){bSet(s,5,1);s.vulnK=0.5;s.vt=1}
         break}
       case 5:if(s.t<=0)bSet(s,1);break;
       case 6:if(s.t<=0){bSet(s,1);s.c1=0.5}break;
@@ -5300,7 +5790,7 @@ const BTICK=[
     const sp=bSpd(s),dec=F.shades.filter(q=>q.type===6&&q.role==='decoy');
     switch(s.state){
       case 1:{bToward(s,T,1.6*sp,dt,1.1);
-        if(s.c3<=0&&!(s.hp>s.hpMax*0.85)){bSet(s,5,3.6);s.c3=14;mimicShuffleStart(s,dec);return}
+        if(s.c3<=0){bSet(s,5,3.6);s.c3=13;mimicShuffleStart(s,dec);return}
         if(s.c1<=0&&bDist(s,T)<3.6){bSet(s,2,0.55);s.c1=3.4}
         else if(s.c2<=0){bSet(s,4,0.5);s.c2=5}
         break}
@@ -5320,7 +5810,7 @@ const BTICK=[
         else if(s.c2<=0){bSet(s,5,0.6);s.c2=5.5}
         break}
       case 2:s.face=turnTo(s.face,bAim(s,T),3*dt);if(s.t<=0){bzAdd({k:'cone',fx:'pull',x:r3(s.x),z:r3(s.z),yaw:r3(s.face),cone:0.6,len:8,life:3.4,ow:s.rad+0.35});bSet(s,3,3.4)}break;
-      case 3:s.face=turnTo(s.face,bAim(s,T),0.9*dt);if(s.t<=0){bSet(s,4,2.8);s.vulnK=1.7;s.vt=2.8}break;
+      case 3:s.face=turnTo(s.face,bAim(s,T),0.9*dt);if(s.t<=0){bSet(s,4,2.8);s.vulnK=0.5;s.vt=2.8}break;
       case 4:if(s.t<=0)bSet(s,1);break;
       case 5:if(s.t<=0){bzAdd({k:'dust',x:r3(s.x),z:r3(s.z),r:3.4,life:0.5});for(let i=0;i<8;i++)bShot(s,i/8*6.283+Math.random()*0.3,{sp:4,r:0.1,c:[0.7,0.6,0.5],y:0.3,life:2.5});bSet(s,1)}break;
     }
@@ -5362,7 +5852,7 @@ const BTICK=[
       case 2:s.face=turnTo(s.face,bAim(s,T),3*dt);if(s.t<=0){for(const t of T0.length>1?T0:[T,T,T]){const a=bAim(s,t)+(Math.random()-0.5)*0.7;
         bzAdd({k:'roll',x:r3(s.x+Math.cos(a)*0.6),z:r3(s.z+Math.sin(a)*0.6),vx:r3(Math.cos(a)*3.4*sp),vz:r3(Math.sin(a)*3.4*sp),r:0.27,life:6})}bSet(s,1)}break;
       case 3:if(s.t<=0){for(const t of T0)for(let k=0;k<2;k++){const a=Math.random()*6.283,r=k*1.2;bzAdd({k:'mark',x:r3(clamp(t.x+Math.cos(a)*r,1.5,F.W-1.5)),z:r3(clamp(t.z+Math.sin(a)*r,1.5,F.H-1.5)),r:0.7,delay:1.2+k*0.25,c:[0.9,0.75,0.4]})}bSet(s,1)}break;
-      case 4:if(s.t<=0){const dur=0.9*s.hour+1.2;bzAdd({k:'freeze',life:dur,n:s.hour});bSet(s,5,dur);s.vulnK=2;s.vt=dur}break;
+      case 4:if(s.t<=0){const dur=0.9*s.hour+1.2;bzAdd({k:'freeze',life:dur,n:s.hour});bSet(s,5,dur);s.vulnK=0.5;s.vt=dur}break;
       case 5:if(s.t<=0)bSet(s,1);break;
     }
   },
@@ -5401,18 +5891,211 @@ function mimicShuffle(s,dec,dt){
 }
 function mimicReveal(s,dec){
   for(const q of dec)if(!q.dead){q.killer=null;bossKill(q)}
-  s.vulnK=2;s.vt=0.6;bSet(s,1);s.c1=1.5;s.found=false;
+  const hit=s.found;bSet(s,1);s.c1=1.5;s.found=false;if(hit)bossBlow(s,0.14,4,1.8);
 }
 // a blow lands on a boss creature (the host, from wApply): the Mimic's decoys and its hiding
 function bossStruck(s){
   if(s.role==='decoy'){if(!s.dead){const D=F.shades.find(q=>q.type===6&&q.role==='main');s.killer=null;const x=s.x,z=s.z;bossKill(s);
     if(D)for(let i=0;i<5;i++)bShot({x,z,rad:0.2},bAim({x,z},mpNearest(mpTargets(),x,z)||{x:x+1,z})+(i-2)*0.3,{sp:4,r:0.09,c:[1,0.8,0.25],y:0.35,life:2.5})}return false}
-  if(s.role==='main'&&BOSSES[s.boss].id==='mimic'&&s.state===6){s.found=true;s.vulnK=2;s.vt=0.6}
+  if(s.role==='main'&&BOSSES[s.boss].id==='mimic'&&s.state===6)s.found=true;
   return true;
 }
 
+// ---- every boss has a trick (its "schtick"): props in the arena to use against it, and carried things (cheese, bowling balls).
+// Weapons only scratch a guarded boss (BOSSES[i].armor); working the trick lands a heavy blow (bossBlow) and leaves it stunned and
+// open for a few seconds. The host owns the props and the pickups: players ask with {k:'bpa'}, the host applies it and streams the
+// whole lot back ({k:'bsx'}) when anything changes, and once a second anyway.
+const BP={props:[],items:[],nid:0,dirty:false,syncT:0,near:null,carry:null,spawnT:3};
+const bMeId=()=>MP.on?MP.id:'me';
+// fixed spots in the 17 x 17 arena (center 8.5, 7.5): [kind, x, z, extra]
+const BPROPS={
+  rat:()=>[['trap',3.5,7.5],['trap',13.5,7.5],['trap',8.5,3.2],['trap',8.5,12.2]],
+  gloop:()=>[['lamp',6.4,5.3],['lamp',10.6,5.3],['lamp',6.4,10.2],['lamp',10.6,10.2]],
+  dill:()=>[['barrel',2.1,4.2,[1,0.6]],['barrel',14.9,4.2,[-1,0.6]],['barrel',2.1,11.2,[1,-0.6]],['barrel',14.9,11.2,[-1,-0.6]]],
+  tallow:()=>[['window',1.08,4.8,1],['window',1.08,10.4,1],['window',15.92,4.8,-1],['window',15.92,10.4,-1]],
+  mime:()=>[['gong',8.5,11.2],['horn',1.35,7.5,1],['horn',15.65,7.5,-1]],
+  cuckoo:()=>[['crank',1.3,8.2,1],['crank',15.7,8.2,-1],['crank',8.5,1.3,0]],
+  heart:()=>[['grate',5.2,5.2,0],['grate',11.8,5.2,1],['grate',5.2,10.2,2],['grate',11.8,10.2,3],['lever',1.35,5.2,0],['lever',15.65,5.2,1],['lever',1.35,10.2,2],['lever',15.65,10.2,3]],
+};
+const BPLABEL={trap:p=>BP.carry==='cheese'&&p.st===0?'bait the trap with cheese':p.st===1?'the trap is baited':p.st===2?'the trap is sprung':'(bring cheese)',
+  lamp:p=>p.st===1?'the lamp is lit':p.cd>0?'the lamp is cooling':'switch on the heat lamp',barrel:p=>p.st?'the barrel is empty':'tip the brine barrel',
+  window:p=>p.st?'the window is open':'throw open the window',gong:p=>p.cd>0?'the gong still rings':'strike the gong',horn:p=>p.cd>0?'the horn is spent':'blow the air horn',
+  crank:p=>'wind the crank ('+Math.round(p.w*100)+'%)',lever:p=>p.cd>0?'the floodgate is resetting':'open the floodgate',grate:()=>''};
+function bpReset(){
+  BP.props.length=0;BP.items.length=0;BP.carry=null;BP.near=null;BP.spawnT=3;BP.dirty=false;
+  if(!F||!F.boss)return;const f=BPROPS[BOSSES[F.boss.i].id];if(!f)return;
+  f(F.W,F.H).forEach((q,i)=>BP.props.push({i,kind:q[0],x:q[1],z:q[2],ex:q[3],st:0,t:0,cd:0,w:0,used:0}));
+}
+// the host: one heavy blow from the trick, then a few seconds stunned and wide open
+// after a trick lands the boss is wary for a while: the same trick will not work on it again until it lets its guard down
+const BOSS_REC=cyc=>22+4*Math.min(cyc,5);
+const bWary=s=>!!s&&s.rec>0;
+function bossBlow(s,frac,vt,k){
+  frac=Math.max(frac,0.1);vt=Math.min(vt,4);k=1;   // every trick is worth about a tenth of the boss, and opens it for a few seconds at full damage
+  if(MP.guest||!s||s.dead||s.rec>0)return;
+  const cyc=F.boss.cyc;s.rec=BOSS_REC(cyc);s.hp-=frac*s.hpMax/(1+0.25*cyc);s.hitT=0.35;s.hpShow=5;
+  s.stun=Math.max(s.stun,vt);s.vt=vt;s.vulnK=k||1.6;
+  if(Math.hypot(s.x-P.x,s.z-P.z)<14){tone(90,0.5,'sawtooth',0.18,0,-50);noise(0.4,0.2,600,0.6);bShake(0.5,s.x,s.z)}
+  potBurst(s.x,0.6,s.z,hex3(BOSSES[s.boss].col),40,1.5);
+  if(s.hp<=0)wKill(s);
+}
+// how much of a weapon's blow gets through: the boss's armor, unless something has opened it up
+function bossArmor(s){
+  if(s.type!==6||s.role==='add'||s.role==='decoy')return 1;
+  if(s.vt>0)return s.vulnK||1.6;
+  return BOSSES[s.boss].armor??1;
+}
+// a player uses a prop (the host decides; who = the player's id, at)
+function bpAct(i,who,at){
+  const p=BP.props[i];if(!p||!F||!F.boss||BS.won)return;const m=bMain();if(!m)return;
+  if(at&&Math.hypot(at.x-p.x,at.z-p.z)>1.5)return;
+  const held=BP.items.find(q=>q.holder===who);
+  switch(p.kind){
+    case 'trap':if(p.st===0&&held&&held.kind==='cheese'){BP.items.splice(BP.items.indexOf(held),1);p.st=1;bpSound('bait',p)}break;
+    case 'lamp':if(p.st===0&&p.cd<=0){p.st=1;p.t=9;bpSound('lamp',p)}break;
+    case 'barrel':if(p.st===0){p.st=1;p.t=20;const d=p.ex,l=Math.hypot(d[0],d[1]);bzAdd({k:'pool',x:r3(p.x+d[0]/l*1.6),z:r3(p.z+d[1]/l*1.6),r:1.15,life:16,c:[0.45,0.62,0.18],fx:'goo',brine:1});bpSound('barrel',p)}break;
+    case 'window':if(p.st===0){p.st=1;p.t=9;p.used=0;bpSound('window',p)}break;
+    case 'gong':case 'horn':if(p.cd<=0&&!bWary(m)){p.cd=p.kind==='gong'?9:12;bpSound(p.kind,p);
+      if(Math.hypot(m.x-p.x,m.z-p.z)<(p.kind==='gong'?4.6:3.8)){bossBlow(m,0.11,4.5,2);mpSend({k:'bfx2',w:'shock'});BP.shock=R.time}}break;
+    case 'crank':p.w=Math.min(1,p.w+0.34);bpSound('crank',p);break;
+    case 'lever':if(p.cd<=0){p.cd=7;const g=BP.props.find(q=>q.kind==='grate'&&q.ex===p.ex);if(g){g.t=0.9;g.st=1;bpSound('lever',p)}}break;
+  }
+  BP.dirty=true;
+}
+// a player picks up a carried thing
+function bpTake(id,who){const it=BP.items.find(q=>q.id===id);if(!it||it.holder||BP.items.some(q=>q.holder===who))return;it.holder=who;BP.dirty=true}
+function bpSound(k,p){
+  const d=Math.hypot(p.x-P.x,p.z-P.z);if(d>16)return;const v=1-d/16;
+  if(k==='bait'){tone(660,0.1,'triangle',0.06*v);tone(880,0.1,'triangle',0.05*v,0.08)}
+  else if(k==='snap'){noise(0.12,0.4*v,2200,1);tone(70,0.4,'square',0.2*v,0,-40)}
+  else if(k==='lamp'){tone(120,0.6,'sawtooth',0.04*v,0,30);noise(0.1,0.1*v,4000,2)}
+  else if(k==='barrel'){noise(0.8,0.18*v,700,0.6);tone(90,0.3,'sine',0.12*v)}
+  else if(k==='window'){noise(0.25,0.2*v,1200,1);noise(2,0.08*v,500,0.4,0.2)}
+  else if(k==='gong'){for(const f of[110,165,221,277])tone(f,3,'sine',0.12*v);noise(0.5,0.15*v,300,0.5)}
+  else if(k==='horn'){tone(415,1.4,'sawtooth',0.18*v);tone(466,1.4,'sawtooth',0.14*v)}
+  else if(k==='crank'){for(let i=0;i<4;i++)noise(0.04,0.12*v,2600,3,i*0.08)}
+  else if(k==='lever'){tone(160,0.2,'square',0.1*v);noise(0.3,0.12*v,900,1,0.1)}
+}
+// the host's turn for the props: timers, spawns, and what each trick does to the boss
+function bpHost(dt,TG){
+  const m=bMain(),id=BOSSES[F.boss.i].id;if(!m||BS.won)return;
+  for(const p of BP.props){if(p.cd>0)p.cd-=dt;if(p.t>0){p.t-=dt;if(p.t<=0)bpExpire(p)}}
+  for(const q of F.shades)if(q.type===6&&q.rec>0)q.rec-=dt;
+  // pickups: cheese for the rat, bowling balls for the vacuum
+  const kind=id==='rat'?'cheese':id==='vac'?'ball':null;
+  if(kind&&BS.started){BP.spawnT-=dt;if(BP.spawnT<=0&&BP.items.length<(kind==='cheese'?3:2)){BP.spawnT=kind==='cheese'?5:7;
+    for(let k=0;k<20;k++){const x=2+Math.random()*(F.W-4),z=2+Math.random()*(F.H-4);if(Math.hypot(x-m.x,z-m.z)>3.5&&!F.pillars.some(q=>Math.hypot(q[0]-x,q[1]-z)<0.6)){BP.items.push({id:++BP.nid,kind,x:r2(x),z:r2(z),holder:''});BP.dirty=true;break}}}}
+  // the gloop: a slime that lands under a lit lamp bakes into a brittle crust
+  if(id==='gloop')for(const s of F.shades){if(s.type!==6||s.dead||s.x<0||s.stun>0||s.rec>0||(s.state!==3))continue;
+    for(const p of BP.props)if(p.kind==='lamp'&&p.st===1&&Math.hypot(s.x-p.x,s.z-p.z)<1.7){bossBlow(s,0.2,4,1);break}}
+  // the dill: brine on the floor soaks him soft (rolling through it, or walking)
+  if(id==='dill'&&m.stun<=0&&!bWary(m)&&!(m.soakT>0)){for(const h of BS.hz)if(h.brine&&Math.hypot(m.x-h.x,m.z-h.z)<h.r+0.3){m.soakT=8;bossBlow(m,0.1,5,1.8);if(m.state===4)bSet(m,5,0.5);break}}
+  if(m.soakT>0)m.soakT-=dt;
+  // Mother Tallow: standing in a draft from an open window blows her flame out
+  if(id==='tallow'&&!bWary(m))for(const p of BP.props)if(p.kind==='window'&&p.st===1&&!p.used&&inDraft(p,m.x,m.z)){p.used=1;bossBlow(m,0.12,5,1.8);break}
+  // the clock: all three cranks wound at once stops it dead
+  if(id==='cuckoo'){for(const p of BP.props)if(p.kind==='crank'){if(p.w>=0.99&&!p.held){p.held=1;p.t=25}if(p.w>0&&!(p.t>0)){p.held=0;p.w=Math.max(0,p.w-0.04*dt)}}   // a fully wound crank holds for 25 s, then slips
+    const cr=BP.props.filter(p=>p.kind==='crank');if(cr.length&&cr.every(p=>p.w>=0.99)&&m.stun<=0&&!bWary(m)){for(const p of cr){p.w=0;p.t=0;p.held=0}bossBlow(m,0.13,7,2);BP.dirty=true}}
+  // the heart: a geyser from a grate it hovers over quenches it black
+  if(id==='heart'&&!bWary(m))for(const g of BP.props)if(g.kind==='grate'&&g.st===2&&!g.used&&Math.hypot(m.x-g.x,m.z-g.z)<1.5){g.used=1;bossBlow(m,0.12,6,2)}
+  // the vacuum: a bowling ball held in his suction is ripped away and jams the hose
+  if(id==='vac'&&m.state===3&&!bWary(m))for(const t of TG){const it=BP.items.find(q=>q.holder===bWho(t));if(!it)continue;
+    const a=Math.atan2(t.z-m.z,t.x-m.x),d=Math.hypot(t.x-m.x,t.z-m.z);
+    if(d<8&&Math.abs(angD(m.face,a))<0.6){BP.items.splice(BP.items.indexOf(it),1);m.clogs=(m.clogs|0)+1;BP.dirty=true;
+      bossBlow(m,m.clogs%3===0?0.22:0.1,m.clogs%3===0?4:3,1);bSet(m,4,0.1);if(m.clogs%3===0){bzAdd({k:'dust',x:r3(m.x),z:r3(m.z),r:4,life:0.5});mpSend({k:'bfx2',w:'burst'});bpBurst()}else{mpSend({k:'bfx2',w:'clog'});bpClog()}}}
+  BP.syncT-=dt;if(MP.on&&(BP.dirty||BP.syncT<=0)){BP.syncT=1;BP.dirty=false;
+    mpSend({k:'bsx',d:R.depth,r:r2(m.rec>0?m.rec:0),p:BP.props.map(p=>[p.st,r2(p.t),r2(p.cd),r2(p.w)]),it:BP.items.map(q=>[q.id,q.kind,q.x,q.z,q.holder])})}
+}
+function bpExpire(p){
+  if(p.kind==='lamp'){p.st=0;p.cd=10}
+  else if(p.kind==='barrel')p.st=0;
+  else if(p.kind==='window')p.st=0;
+  else if(p.kind==='trap'&&p.st===2)p.st=0;
+  else if(p.kind==='grate'){if(p.st===1){p.st=2;p.t=1.6;p.used=0;bpGeyser(p)}else p.st=0}
+  BP.dirty=true;
+}
+function bpGeyser(p){const d=Math.hypot(p.x-P.x,p.z-P.z);if(d<16){noise(1.4,0.25*(1-d/16),900,0.5);tone(60,0.6,'sine',0.1*(1-d/16))}}
+function bpClog(){if(Math.hypot(bMain().x-P.x,bMain().z-P.z)<16){tone(300,0.15,'square',0.12,0,-200);tone(160,0.6,'sawtooth',0.1,0.15,-90);say('CLONK! The ball jams his hose!',1.6)}}
+function bpBurst(){noise(0.8,0.35,400,0.5);tone(50,0.8,'sine',0.3);say('His bag BURSTS!',2)}
+// a window's draft: a strip of wind straight across the room from it
+function inDraft(p,x,z){const dx=(x-p.x)*p.ex;return dx>0&&dx<7.5&&Math.abs(z-p.z)<1}
+// the rat's nose: the nearest baited trap, if any
+const ratBait=s=>{if(s.rec>0)return null;let b=null,bd=1e9;for(const p of BP.props)if(p.kind==='trap'&&p.st===1){const d=Math.hypot(p.x-s.x,p.z-s.z);if(d<bd){bd=d;b=p}}return b};
+// ---- everyone: pick-ups by walking over them, the prompt, and the prop under your hand
+function bpClient(dt){
+  if(!F||!F.boss||!BP.props.length&&!BP.items.length){BP.near=null;BP.carry=null;return}
+  const me=bMeId(),mine=BP.items.find(q=>q.holder===me);BP.carry=mine?mine.kind:null;
+  if(!MP.guest)bpHost(dt,mpTargets().filter(t=>!t.inSafe));else{const b=bMain();if(b&&b.rec>0)b.rec-=dt}
+  if(state!=='play'||P.down){BP.near=null;return}
+  if(!BP.carry)for(const it of BP.items)if(!it.holder&&Math.hypot(it.x-P.x,it.z-P.z)<0.55){
+    if(MP.guest)mpSend({k:'bpa',d:R.depth,it:it.id},MP.hostId);else bpTake(it.id,me);
+    it.holder=me;say(it.kind==='cheese'?'You pick up a wedge of cheese. Something down here loves cheese.':'You heft a bowling ball. It is very heavy.',2.2);sfx('pick');break}
+  let best=null,bd=1.25;for(const p of BP.props){if(p.kind==='grate')continue;const d=Math.hypot(p.x-P.x,p.z-P.z);if(d<bd){bd=d;best=p}}
+  BP.near=best;
+  // the wind from an open window snuffs your torch too
+  for(const p of BP.props)if(p.kind==='window'&&p.st===1&&inDraft(p,P.x,P.z)){P.fuel=Math.max(0,P.fuel-9*dt);break}
+}
+function bpUse(){
+  const p=BP.near;if(!p)return false;
+  if(MP.guest)mpSend({k:'bpa',d:R.depth,i:p.i},MP.hostId);else bpAct(p.i,bMeId(),{x:P.x,z:P.z});
+  return true;
+}
+const bpPrompt=()=>{const p=BP.near;if(!p)return BP.carry?'Carrying '+(BP.carry==='cheese'?'a wedge of cheese':'a bowling ball'):'';const b=bMain(),w=bWary(b)?'  ('+BOSSES[b.boss].name+' is wary for '+Math.ceil(b.rec)+' s)':'';const l=BPLABEL[p.kind](p);return l?(touch.on?'USE':pad.id?'X':'E')+': '+l+w:''};
+// the guest's copy of the props and pickups
+function bpApply(m){
+  if(!Array.isArray(m.p)||!Array.isArray(m.it))return;
+  {const b=bMain();if(b)b.rec=Math.max(0,+m.r||0)}
+  m.p.forEach((q,i)=>{const p=BP.props[i];if(p&&Array.isArray(q)){const was=p.st;p.st=q[0]|0;p.t=+q[1]||0;p.cd=+q[2]||0;p.w=+q[3]||0;if(p.kind==='grate'&&was!==2&&p.st===2)bpGeyser(p);if(p.kind==='trap'&&was===1&&p.st===2)bpSound('snap',p)}});
+  BP.items=m.it.filter(Array.isArray).slice(0,8).map(q=>({id:q[0]|0,kind:q[1]==='ball'?'ball':'cheese',x:+q[2]||0,z:+q[3]||0,holder:String(q[4]||'')}));
+}
+// ---- drawing the props and the pickups
+function bpDraw(t){
+  if(!F||!F.boss)return;const flat={p:[0,0,0],R:ID3,lo:ZERO3},wood=[0.45,0.3,0.15,6],iron=[0.32,0.32,0.34,4],brass=[1,0.75,0.3,4],m=bMain();
+  for(const p of BP.props){const f={p:[p.x,0,p.z],R:ID3,lo:ZERO3};
+    switch(p.kind){
+      case 'trap':{slab(f,[0,0.03,0],[0.42,0.03,0.26],wood);for(const z of[-0.2,0.2])seg(f,[-0.3,0.07,z],[0.3,0.07,z],0.012,0.012,iron);
+        const a=p.st===2?0:1.2,B=subF(f,[0,0.07,0],rZ(-a));seg(B,[0,0,-0.22],[0.36,0,-0.22],0.012,0.012,iron);seg(B,[0,0,0.22],[0.36,0,0.22],0.012,0.012,iron);seg(B,[0.36,0,-0.22],[0.36,0,0.22],0.014,0.014,iron);
+        if(p.st===1){slab(f,[0.05,0.1,0],[0.07,0.04,0.09],[1.3,1.05,0.3,7],rYaw(0.4));spr(p.x,0.25,p.z,0.4,0.4,7,1,0.85,0.3,0.35+0.2*Math.sin(t*5),1)}
+        if(p.st===0&&BP.carry==='cheese')spr(p.x,0.35,p.z,0.25,0.25,7,1,0.9,0.4,0.4+0.3*Math.sin(t*6),1);break}
+      case 'lamp':{seg(f,[0,0,0],[0,1.1,0],0.03,0.025,iron);slab(f,[0,1.12,0],[0.18,0.05,0.18],iron);slab(f,[0.05,0.9,0],[0.03,0.06,0.05],p.st?[0.2,1.5,0.3,7]:[1.5,0.2,0.1,7]);
+        if(p.st===1){ball(flat,[p.x,0.012,p.z],[1.7,0.004,1.7],[1.4,0.7,0.15,7],true);spr(p.x,1.05,p.z,0.9,0.9,7,1,0.6,0.15,0.8,1);for(let i=0;i<5;i++){const k=(t*0.8+i/5)%1;spr(p.x+Math.sin(i*2.3)*1.2,0.1+k*0.8,p.z+Math.cos(i*1.7)*1.2,0.15,0.15,7,1,0.5,0.2,0.4*(1-k),1)}}
+        else slab(f,[0,1.08,0],[0.12,0.01,0.12],[0.3,0.2,0.15,8]);break}
+      case 'barrel':{const d=p.ex;if(p.st){const B={p:[p.x,0.22,p.z],R:rYaw(Math.atan2(d[1],d[0]))};seg(B,[-0.3,0,0],[0.3,0,0],0.22,0.22,wood);for(const x of[-0.2,0.2])seg(B,[x-0.02,0,0],[x+0.02,0,0],0.23,0.23,iron)}
+        else{seg(f,[0,0,0],[0,0.6,0],0.24,0.24,wood);for(const y of[0.12,0.48])seg(f,[0,y-0.02,0],[0,y+0.02,0],0.25,0.25,iron);slab(f,[0,0.61,0],[0.2,0.01,0.2],[0.4,0.55,0.15,8])}break}
+      case 'window':{const W2={p:[p.x,1.3,p.z],R:rYaw(p.ex>0?0:Math.PI)};slab(W2,[0,0,0],[0.04,0.45,0.55],[0.35,0.22,0.12,6]);
+        const o=p.st?1.3:0;for(const z of[-1,1]){const S={p:fpt(W2,[0.04,0,z*0.5]),R:m3(W2.R,rYaw(z*o))};slab(S,[0.02,0,-z*0.25],[0.02,0.42,0.24],[0.5,0.32,0.18,6])}
+        if(p.st){slab(W2,[0.01,0,0],[0.02,0.4,0.48],[1.2,1.3,1.5,7]);for(let i=0;i<10;i++){const k=(t*1.3+i/10)%1;spr(p.x+p.ex*k*7.5,0.4+Math.sin(i*1.7+t)*0.4,p.z+Math.sin(i*3.1)*0.8,0.3,0.12,7,0.85,0.9,1,0.25*(1-k),0)}}
+        else slab(W2,[0.03,0,0],[0.01,0.4,0.48],[0.05,0.05,0.08,8]);break}
+      case 'gong':{const G={p:[p.x,0,p.z],R:rYaw(Math.PI/2)};for(const z of[-0.55,0.55])seg(G,[0,0,z],[0,1.1,z],0.035,0.03,wood);seg(G,[0,1.1,-0.6],[0,1.1,0.6],0.035,0.035,wood);
+        const sw=p.cd>6?Math.sin(t*14)*0.12*(p.cd-6)/3:0;seg(G,[-0.02+sw,0.6,0],[0.02+sw,0.6,0],0.42,0.42,[1.1,0.8,0.3,4]);break}
+      case 'horn':{const Hn={p:[p.x,1.0,p.z],R:rYaw(p.ex>0?0:Math.PI)};slab(Hn,[-0.08,0,0],[0.06,0.12,0.1],[0.8,0.1,0.1,4]);seg(Hn,[-0.02,0.05,0],[0.3,0.12,0],0.04,0.14,[0.9,0.85,0.8,4]);break}
+      case 'crank':{const C={p:[p.x,0.85,p.z],R:rYaw(p.ex>0?0:p.ex<0?Math.PI:Math.PI/2)};slab(C,[-0.05,0,0],[0.08,0.22,0.22],iron);
+        const a=p.w*12+t*0.2;seg(C,[0.03,0,0],[0.12,0,0],0.02,0.02,iron);const h=[0.12,Math.sin(a)*0.15,Math.cos(a)*0.15];seg(C,[0.12,0,0],h,0.015,0.015,iron);seg(C,h,[0.2,h[1],h[2]],0.02,0.02,wood);
+        slab(C,[0.035,0.3,0],[0.01,0.03,0.2],[0.05,0.05,0.05,8]);slab(C,[0.04,0.3,-0.2+0.2*p.w],[0.01,0.025,0.2*p.w+0.001],p.w>=0.99?[0.3,2,0.4,7]:[2,1.4,0.2,7]);break}
+      case 'grate':{slab(f,[0,0.008,0],[0.6,0.008,0.6],[0.1,0.1,0.11,4]);for(let i=-2;i<=2;i++)slab(f,[i*0.24,0.018,0],[0.02,0.006,0.58],iron);
+        if(p.st===1)for(let i=0;i<6;i++)spr(p.x+Math.sin(i*2+t*9)*0.3,0.05,p.z+Math.cos(i*3+t*7)*0.3,0.15,0.1,7,0.6,0.8,1,0.6,1);
+        if(p.st===2)for(let i=0;i<24;i++){const k=((t*2+i/24)%1);spr(p.x+Math.sin(i*2.4)*0.35*k,k*1.2,p.z+Math.cos(i*2.4)*0.35*k,0.25,0.35,7,0.7,0.85,1,0.7*(1-k*0.5),0)}
+        const L=BP.props.find(q=>q.kind==='lever'&&q.ex===p.ex);if(L)seg(flat,[L.x,0.02,L.z],[p.x,0.02,p.z],0.03,0.03,[0.25,0.3,0.35,4]);break}
+      case 'lever':{const Lv={p:[p.x,0.6,p.z],R:rYaw(p.x<F.W/2?0:Math.PI)};slab(Lv,[-0.04,0,0],[0.05,0.2,0.14],iron);const a=p.cd>0?-0.9:0.9;
+        const hdl=[0.05+Math.sin(Math.abs(a))*0.25*0.4,Math.cos(a)*0.25,0];seg(Lv,[0.02,0,0],hdl,0.018,0.018,iron);ball(Lv,hdl,0.04,[1.6,0.2,0.1,7],true);break}
+    }
+  }
+  for(const it of BP.items){
+    let x=it.x,z=it.z,y=0.08;
+    if(it.holder){if(it.holder===bMeId())continue;const pp=MP.peers.get(it.holder);if(!pp||pp.rx===undefined)continue;x=pp.rx+Math.cos(pp.ryaw)*0.3;z=pp.rz+Math.sin(pp.ryaw)*0.3;y=0.55}
+    const f={p:[x,y+(it.holder?0:Math.sin(t*3+it.id)*0.02),z],R:rYaw(t*0.6+it.id),lo:ZERO3};
+    if(it.kind==='cheese'){slab(f,[0,0.04,0],[0.12,0.04,0.08],[1.25,1.0,0.3,7],rYaw(0.4));for(let i=0;i<3;i++)ball(f,[-0.04+i*0.04,0.08,0.03-i*0.02],0.015,[0.6,0.45,0.1,8],true);spr(x,y+0.15,z,0.35,0.35,7,1,0.85,0.3,0.3,1)}
+    else{ball(f,[0,0.11,0],0.11,[0.08,0.06,0.2,4]);for(const q of[[0.07,0.17,0.02],[0.08,0.15,-0.04],[0.09,0.12,0.03]])ball(f,q,0.015,[0.01,0.01,0.01,8],true)}
+  }
+  // what you carry, held up at the bottom of the view
+  if(BP.carry&&!danceCam()){const cp=Math.cos(P.pitch),fx=Math.cos(P.yaw)*cp,fz=Math.sin(P.yaw)*cp,rx=-Math.sin(P.yaw),rz=Math.cos(P.yaw),e=EYE*wofEye()+P.y;
+    const x=P.x+fx*0.35+rx*-0.12,z=P.z+fz*0.35+rz*-0.12,y=e-0.2+Math.sin(P.pitch)*0.35,f={p:[x,y,z],R:rYaw(P.yaw),lo:ZERO3};
+    if(BP.carry==='cheese')slab(f,[0,0,0],[0.06,0.025,0.045],[1.25,1.0,0.3,7],rYaw(0.5));else ball(f,[0,0,0],0.07,[0.08,0.06,0.2,4])}
+}
 // ---- everyone, every frame: hazards, auras, the fight's music and its screens
 function bossClientTick(dt){
+  bpClient(dt);
+  {const mm=bMain();if(mm&&mm.x>0&&BOSSES[mm.boss].id==='mimic'&&mm.state===6&&Math.hypot(mm.x-P.x,mm.z-P.z)<9){BS.wz=(BS.wz||0)-dt;if(BS.wz<=0){BS.wz=2.62;noise(0.6,0.035,500,2);tone(110,0.5,'sine',0.02,0,-20)}}}   // the real chest wheezes as it breathes
   if(!F||!F.boss){if(BS.el&&BS.el.style.display!=='none')BS.el.style.display='none';return}
   const me=bMe(),live=state==='play'&&!P.down&&!P.away;
   for(const s of F.shades)if(s.type===6){
@@ -5654,7 +6337,7 @@ function danceSelf(t){
   const id=MP.on?MP.id:'me',m=bMain();
   if(m)P.yaw=turnTo(P.yaw,Math.atan2(m.z-P.z,m.x-P.x),0.2);   // you face your partner
   BS.self=BS.self||{};Object.assign(BS.self,{id,col:localPlayerColor(),look:playerLook,rx:P.x,rz:P.z,ry:P.y,ryaw:P.yaw,rpitch:0,spd:0,walk:0,
-    dz:BS.move||{lane:-1,t:R.time-1},fat:FX.fat>0,pox:FX.pox>0});
+    dz:BS.move||{lane:-1,t:R.time-1},fat:FX.fat>0,pox:FX.pox>0,baby:FX.baby>0});
   const q=buildPlayer(BS.self,t).torch;
   if(P.fuel>0){spr(q[0],q[1]+0.02,q[2],0.07,0.12,11,1.0,0.6,0.2,1,1);spr(q[0],q[1],q[2],0.5,0.5,7,1.0,0.5,0.15,0.25,1)}
 }
@@ -5751,20 +6434,21 @@ const BDRAW=[
     else if(st===5){const p=clamp(ag/0.9,0,1);y=Math.sin(p*Math.PI)*0.75;sq=1.2}
     else if(st===1||st===4){sq=0.8+0.2*Math.cos(t*14)}
     else if(st===3){const p=clamp(ag/0.3,0,1);sq=0.65+0.35*p}
-    const r=0.62*z,B={p:[s.x,y,s.z],R:rYaw(s.face||0),lo:[s.ph,0,0]},g=[0.18,0.62,0.12,8];
+    const crust=s.stun>0,r=0.62*z,B={p:[s.x,y,s.z],R:rYaw(s.face||0),lo:[s.ph,0,0]},g=crust?[0.42,0.32,0.18,6]:[0.18,0.62,0.12,8];   // baked under a lamp: a cracked brown crust
     ball(B,[0,r*0.75*sq,0],[r/Math.sqrt(sq),r*0.75*sq,r/Math.sqrt(sq)],g);
-    ball(B,[0,r*0.75*sq,0],[r*0.55,r*0.5*sq,r*0.55],[0.3,1.1,0.2,7]);
+    if(crust)for(let i=0;i<8;i++){const a=i*0.8;slab(B,[Math.cos(a)*r*0.8,r*(0.5+0.3*Math.sin(i*1.7)),Math.sin(a)*r*0.8],[0.01,r*0.25,0.006],[0.12,0.08,0.04,8],rYaw(a))}
+    else ball(B,[0,r*0.75*sq,0],[r*0.55,r*0.5*sq,r*0.55],[0.3,1.1,0.2,7]);
     for(const q of[-1,1]){const e=fpt(B,[r*0.6,r*1.05*sq,q*r*0.3]);ball({p:e,R:B.R},[0,0,0],0.11*z+0.02,[0.95,0.95,0.9,8],true);ball({p:e,R:B.R},[0.07*z+0.01,0,0],0.05*z+0.01,[0.02,0.02,0.02,8],true)}
     for(let i=0;i<3;i++){const k=(t*0.5+i/3+s.ph)%1,q=fpt(B,[Math.cos(i*2)*r*0.4,r*(0.2+k*1.1)*sq,Math.sin(i*2)*r*0.4]);spr(q[0],q[1],q[2],0.05*z+0.02,0.05*z+0.02,7,0.6,1,0.5,0.7*(1-k),1)}
     if(s.role==='main'&&st===4)spr(s.x,0.5,s.z,1.8,1.8,7,0.3,1,0.2,0.3,1);
   },
   // the Big Dill: a tall cucumber in sunglasses, with stubby vine arms; lying down to roll; darker and lumpier once pickled
   (s,t,ag)=>{
-    const pk=!!s.frozen,st=s.state|0,g=pk?[0.2,0.28,0.06,8]:[0.12,0.38,0.1,8],gl=pk?[0.32,0.42,0.12,8]:[0.35,0.65,0.25,8],dk=[0.03,0.03,0.04,4];
+    const pk=!!s.frozen||s.stun>0,st=s.state|0,g=s.stun>0?[0.3,0.32,0.08,8]:pk?[0.2,0.28,0.06,8]:[0.12,0.38,0.1,8],gl=pk?[0.32,0.42,0.12,8]:[0.35,0.65,0.25,8],dk=[0.03,0.03,0.04,4];
     let B;
     if(st===4||st===5&&ag<0.5||st===3&&ag>0.4){const roll=st===4?(s.wk=(s.wk||0)+0.3):0;B={p:[s.x,0.24,s.z],R:m3(m3(rYaw(s.face||0),rX(Math.PI/2)),rYaw(roll)),lo:[s.ph,0,0]};
       B.p=[s.x-Math.sin(s.face||0)*0.5,0.24,s.z+Math.cos(s.face||0)*0.5]}
-    else{const w=st===1?Math.sin(t*6)*0.06:st===2?-0.15:st===6?Math.sin(t*20)*0.1:0;B=fr(s,0,rZ(w))}
+    else{const w=s.stun>0?-0.35+Math.sin(t*2)*0.05:st===1?Math.sin(t*6)*0.06:st===2?-0.15:st===6?Math.sin(t*20)*0.1:0;B=fr(s,0,rZ(w))}   // soggy: limp, leaning over
     seg(B,[0,0.08,0],[0,0.95,0],0.2,0.19,g);ball(B,[0,0.95,0],[0.19,0.12,0.19],g);ball(B,[0,0.08,0],[0.2,0.08,0.2],g);
     for(let i=0;i<6;i++){const a=i/6*6.283;seg(B,[Math.cos(a)*0.19,0.12,Math.sin(a)*0.19],[Math.cos(a)*0.18,0.92,Math.sin(a)*0.18],0.022,0.02,gl)}
     for(let i=0;i<(pk?26:14);i++){const a=i*2.4,h=0.15+((i*0.37)%1)*0.75;ball(B,[Math.cos(a)*0.2,h,Math.sin(a)*0.2],pk?0.035:0.022,gl,true)}
@@ -5785,7 +6469,8 @@ const BDRAW=[
     for(const z of[-1,1]){const up=st===4?0.25:0.05;seg(B,[0,h-0.25,z*0.27],[0.2,h-0.3+up,z*0.4],0.05,0.04,wax);ball(B,[0.2,h-0.3+up,z*0.4],0.05,wax,true)}
     seg(B,[0,h+0.04,0],[0,h+0.1,0],0.01,0.01,dk);
     const top=fpt(B,[0,h+0.16,0]),fl=st===3?0.4:st===2?0.6:1+Math.sin(t*11)*0.1;
-    spr(top[0],top[1]+0.03*fl,top[2],0.09*fl,0.18*fl,11,1,0.62,0.22,1,1);spr(top[0],top[1],top[2],0.6,0.6,7,1,0.55,0.15,0.25*fl,1);
+    if(s.stun>0)for(let i=0;i<5;i++){const k=(t*0.7+i/5)%1;spr(top[0]+Math.sin(i*2+t)*0.05,top[1]+k*0.5,top[2],0.08+k*0.15,0.08+k*0.15,7,0.6,0.6,0.62,0.35*(1-k),0)}   // blown out: a curl of smoke
+    else{spr(top[0],top[1]+0.03*fl,top[2],0.09*fl,0.18*fl,11,1,0.62,0.22,1,1);spr(top[0],top[1],top[2],0.6,0.6,7,1,0.55,0.15,0.25*fl,1)}
     if(st===3)for(let i=0;i<10;i++){const k=((t*2.5+i/10)%1),a=(s.face||0)+(Math.sin(i*5.3)*0.5);spr(s.x+Math.cos(a)*k*5.5,0.6+Math.sin(i*3)*0.2,s.z+Math.sin(a)*k*5.5,0.15+k*0.3,0.15+k*0.3,7,0.8,0.8,0.85,0.25*(1-k),0)}
   },
   // the Grand Mimic: a treasure chest with a mouth full of teeth and a very long tongue; shut, it looks like any other chest
@@ -5807,6 +6492,8 @@ const BDRAW=[
   },
   // the Mime: white face, black beret, striped shirt; every move a pantomime
   (s,t,ag)=>{
+    if(!(s.stun>0)&&Math.hypot(s.x-P.x,s.z-P.z)>1.7&&!danceCam()){   // he is miming that he is not there: only a faint chalky shimmer gives him away
+      for(let i=0;i<7;i++){const a=t*1.3+i*0.9,y=0.15+((i*0.37+t*0.2)%1)*0.95;spr(s.x+Math.cos(a)*0.18,y,s.z+Math.sin(a)*0.18,0.06,0.06,7,0.9,0.9,0.95,0.22,1)}return}
     const st=s.state|0,wh=[0.95,0.95,0.93,8],bk=[0.04,0.04,0.05,2],gl=[0.98,0.98,0.98,2],red=[0.8,0.05,0.1,8];
     const tip=st===1?Math.abs(Math.sin(t*5))*0.04:0,lean=st===4?-0.25:st===8?0.25:0;
     const B=fr(s,tip,rZ(lean),1.05),U=subF(B,[0,0.46,0]);
@@ -5831,7 +6518,7 @@ const BDRAW=[
     slab(B,[0,0.62,0],[0.17,0.38,0.26],wd);slab(B,[0.17,0.62,0],[0.01,0.34,0.22],wl);
     for(const z of[-1,1])slab(B,[0,1.05,z*0.13],[0.21,0.015,0.17],wl,rX(z*-0.62));
     seg(B,[0.17,0.68,0],[0.2,0.68,0],0.15,0.15,cr);
-    const hr=t*0.15,mn=t*1.8;slab(B,[0.205,0.68+Math.cos(hr)*0.05,Math.sin(hr)*0.05],[0.005,0.06,0.01],dk,rX(-hr));slab(B,[0.205,0.68+Math.cos(mn)*0.07,Math.sin(mn)*0.07],[0.005,0.09,0.006],dk,rX(-mn));
+    const hr=s.stun>0?1:t*0.15,mn=s.stun>0?4:t*1.8;slab(B,[0.205,0.68+Math.cos(hr)*0.05,Math.sin(hr)*0.05],[0.005,0.06,0.01],dk,rX(-hr));slab(B,[0.205,0.68+Math.cos(mn)*0.07,Math.sin(mn)*0.07],[0.005,0.09,0.006],dk,rX(-mn));
     for(const z of[-1,1]){ball(B,[0.2,0.75,z*0.06],[0.01,0.025,0.02],dk,true);slab(B,[0.2,0.79,z*0.06],[0.005,0.006,0.03],dk,rX(z*0.5))}
     const open=st===4?Math.min(1,ag/0.4):st===5?1:0;
     slab(B,[0.18,0.93,0],[0.01,0.06,0.05],dk);
@@ -5839,7 +6526,7 @@ const BDRAW=[
       const Bd=subF(B,[0.18+out,0.93,0]);ball(Bd,[0,0,0],[0.05,0.045,0.04],[1.4,1.1,0.2,7],true);seg(Bd,[0.04,0.005,0],[0.09,0,0],0.015,0.002,[1.6,0.6,0.1,7]);ball(Bd,[0.03,0.02,0.02],0.008,dk,true)}
     else slab(B,[0.19,0.93,0],[0.005,0.06,0.05],wl);
     // the pendulum blade sweeps in front (the host works out the same swing for the hits)
-    const pa=Math.sin(R.time*2.4)*0.9,P0=fpt(B,[0.2,0.4,0]);
+    const pa=s.stun>0?0:Math.sin(R.time*2.4)*0.9,P0=fpt(B,[0.2,0.4,0]);   // stopped dead: the pendulum hangs still
     const P1=[s.x+Math.cos((s.face||0)+pa)*1.25,0.35,s.z+Math.sin((s.face||0)+pa)*1.25];
     seg({p:[0,0,0],R:ID3},P0,P1,0.012,0.012,br);ball({p:P1,R:rYaw(-((s.face||0)+pa))},[0,0,0],[0.03,0.12,0.12],[0.85,0.85,0.9,4]);
     for(const z of[-1,1]){seg(B,[0.1,0.24,z*0.08],[0.1,0.05+Math.sin(t+z)*0.03,z*0.08],0.004,0.004,dk);ball(B,[0.1,0.04+Math.sin(t+z)*0.03,z*0.08],[0.03,0.06,0.03],wd,true)}
@@ -5847,7 +6534,8 @@ const BDRAW=[
   // the Ember Heart: a great beating heart of coal and embers, chained in the air, with one burning eye
   (s,t,ag)=>{
     const p2=!!s.frozen,bt=(t*(p2?2:1.6))%1,pulse=bt<0.12?bt/0.12:bt<0.3?1-(bt-0.12)/0.18*0.6:0.4*(1-(bt-0.3)/0.7),k=1+0.08*pulse+(s.state===2?0.06:0);
-    const y=0.62+Math.sin(t*0.9)*0.04,B={p:[s.x,y,s.z],R:rYaw(s.face||0).map(q=>q*k),lo:[s.ph,0,0]},coal=[0.12,0.05,0.04,8],hot=[1.6+1.2*pulse,0.45+0.3*pulse,0.06,7];
+    const y=0.62+Math.sin(t*0.9)*0.04,B={p:[s.x,y,s.z],R:rYaw(s.face||0).map(q=>q*k),lo:[s.ph,0,0]},coal=[0.12,0.05,0.04,8],hot=s.stun>0?[0.1,0.09,0.09,8]:[1.6+1.2*pulse,0.45+0.3*pulse,0.06,7];
+    if(s.stun>0)for(let i=0;i<8;i++){const q=(t*0.9+i/8)%1;spr(s.x+Math.sin(i*2.1)*0.35,y+0.2+q*0.6,s.z+Math.cos(i*1.3)*0.35,0.2+q*0.4,0.2+q*0.4,7,0.75,0.75,0.78,0.35*(1-q),0)}   // quenched: black and steaming
     ball(B,[0,0,0],[0.42,0.38,0.42],coal);for(const z of[-1,1])ball(B,[0,0.18,z*0.2],[0.3,0.25,0.26],coal);seg(B,[0,-0.15,0],[0,-0.5,0],0.3,0.02,coal);
     for(let i=0;i<14;i++){const a=i*2.39,h=(i*0.37)%1*0.7-0.35;slab(B,[Math.cos(a)*0.41*(1-Math.abs(h)*0.6),h,Math.sin(a)*0.41*(1-Math.abs(h)*0.6)],[0.012,0.08,0.012],hot,m3(rYaw(-a),rX(i)))}
     ball(B,[0.38,0.05,0],[0.05,0.12,0.12],[1.4,1.1,0.5,7]);ball(B,[0.41,0.05,0],[0.02,0.08,0.03],[0.02,0.01,0,8],true);
@@ -5862,7 +6550,8 @@ function mimicModel(s,t,ag){
   const hop=!shut&&st===1?Math.abs(Math.sin(t*6+s.ph))*0.1:0;
   const B=fr(s,hop,rZ(0),1.2);
   slab(B,[0,0.16,0],[0.24,0.16,0.33],wd);for(const z of[-0.22,0,0.22])slab(B,[0,0.16,z],[0.245,0.165,0.02],gold);
-  const lid=shut?0:st===2||st===3?1.2:st===4?0.9:0.35+0.25*Math.abs(Math.sin(t*3));
+  const breath=s.role==='main'&&(st===5||st===6)?Math.max(0,Math.sin(t*2.4))**6*0.09:0;   // the real one breathes: its lid lifts a crack now and then
+  const lid=shut?breath:st===2||st===3?1.2:st===4?0.9:0.35+0.25*Math.abs(Math.sin(t*3));
   const L=subF(B,[-0.24,0.32,0],rZ(lid));
   slab(L,[0.24,0.05,0],[0.24,0.05,0.33],wd);seg(L,[0.24,0.1,-0.33],[0.24,0.1,0.33],0.24,0.24,wd);
   for(const z of[-0.22,0,0.22])slab(L,[0.24,0.06,z],[0.25,0.06,0.02],gold);slab(L,[0.49,0.0,0],[0.02,0.04,0.04],gold);
@@ -5875,7 +6564,7 @@ function mimicModel(s,t,ag){
 }
 // the hazards
 function bzDraw(t,ex,ez){
-  if(!F||!F.boss)return;const flat={p:[0,0,0],R:ID3,lo:ZERO3};
+  if(!F||!F.boss)return;bpDraw(t);const flat={p:[0,0,0],R:ID3,lo:ZERO3};
   for(const h of BS.hz){
     if((h.x-ex)**2+(h.z-ez)**2>18*18&&h.k!=='wall'&&h.k!=='pwall')continue;const c=h.c||[1,0.5,0.2];
     switch(h.k){
@@ -5903,6 +6592,7 @@ function bossLights(lights,ex,ez){
   if(!F||!F.boss)return;
   for(const s of F.shades){if(s.type!==6||s.x<0||(s.role!=='main'&&s.role!=='part'))continue;const d=(s.x-ex)**2+(s.z-ez)**2,c=hex3(BOSSES[s.boss].col),k=BOSSES[s.boss].id==='tallow'||BOSSES[s.boss].id==='heart'?0.5:0.9,l=Math.sqrt(d)||1,o=Math.min(l*0.6,(s.rad||0.4)+0.7);
     lights.push([d-8,s.x+(ex-s.x)/l*o,0.75,s.z+(ez-s.z)/l*o,c,k,5])/* lit from your side, so its face shows */}
+  for(const p of BP.props){const d=(p.x-ex)**2+(p.z-ez)**2;if(d>140)continue;if(p.kind==='lamp'&&p.st===1)lights.push([d-4,p.x,1.0,p.z,[1,0.6,0.2],1.6,3.5]);else if(p.kind==='window'&&p.st===1)lights.push([d,p.x+p.ex*0.5,1.3,p.z,[0.7,0.8,1],1.2,4])}
   for(const h of BS.hz)if(h.k==='shot'&&h.sz>=1){const d=(h.x-ex)**2+(h.z-ez)**2;if(d<60)lights.push([d+2,h.x,h.y,h.z,h.c,0.7,2])}
 }
 
@@ -6152,6 +6842,20 @@ function roomEnd(res){
     if(!res.reds)achieve('bathroomGentle','A gentle touch','Got clean in the bathroom without a single red wipe');
     if(P.hp<maxHp())P.hp++;
     say(P.hp<maxHp()?'You feel lighter. +1 heart.':'You feel lighter.',3);sfx('door');
+    return;
+  }
+  if(res.why==='neonride'){
+    // the prize: every tier up the board is a better one (NEON_PRIZES)
+    const t=neonTier(Math.max(0,res.score|0)),q=NEON_PRIZES[t],got=[];
+    if(q.gems){wallet+=q.gems;R.gems+=q.gems;store.set('wallet',wallet);got.push(q.gems+' gems')}
+    if(q.flash){P.flash+=q.flash;got.push(q.flash+' flash bombs')}
+    if(q.ward&&!P.ward){P.ward=1;got.push('a ward stone')}
+    if(q.potion){const pool=POTIONS.filter(p=>p&&p.tier===q.potion&&!p.debuff);if(pool.length){const p=pool[(Math.random()*pool.length)|0];beltAdd(p.id);got.push(p.name)}}
+    if(q.heart){R.hpBonus=(R.hpBonus|0)+1;P.hp=maxHp();got.push('+1 heart for this run')}
+    achieve('neonride','Keep your arms inside the cart','Rode the Neon Run to the prize counter');
+    if(t===NEON_PRIZES.length-1)achieve('neonrideTop','Galactic sharpshooter','Won the Golden Saucer on the Neon Run');
+    if(res.friendly>0&&t>=3)achieve('neonrideOops','Friendly fire','Won a good prize on the Neon Run anyway, after shooting an astronaut');
+    say('Prize: '+q.name+'! '+got.join(', ')+'.',5);sfx('shard');
     return;
   }
   if(res.why==='stillwood'){
@@ -6519,6 +7223,7 @@ let toastTimer=0;
 function say(t,secs){const el=$('toast');el.textContent=t;el.style.opacity=1;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.style.opacity=0,(secs||2.5)*1000)}
 
 function die(){
+  if(MP.on&&!MP.wiping&&state==='play'&&!archiveRun&&koTry())return;   // co-op: down, not out, while a friend can still come
   if(archiveRun){state='dead';queueMicrotask(finishArchive);return}
   if(loading)closeLoading();
   if(activeStation)closeStation();
@@ -6549,6 +7254,7 @@ function descend(n,why){
   loadFloorWithProgress('Descending to depth '+depth,R.seed,depth,floor=>{
     P.fuel=Math.min(100,P.fuel+25);lowFuelSaid=false;
     if(P.down){P.down=false;P.hp=maxHp();P.fuel=Math.max(P.fuel,50);P.inv=2;say('You rise again',2)}
+    if(P.ko>0){P.ko=0;P.half=false;P.hp=maxHp();P.inv=2;say('You rise again',2)}
     installFloor(depth,floor);
     rememberFloor();
     $('fade').style.transition='';$('fade').style.opacity=0;
@@ -6726,6 +7432,7 @@ function setBlk(v){
   }
 }
 function hurt(s){
+  if(P.ko>0||P.eaten>0)return;   // down, or already the spider's: nothing more can hurt you
   if(wHurt(s))return;
   if(potHurt(s))return;
   if(P.ward){P.ward=0;P.inv=1.6;if(s){s.stun=2.5;s.calm=9;s.state=0}sfx('seal');say('Your ward stone shatters',2);return}
@@ -6979,7 +7686,7 @@ function mpRecv(m,from){
       p.hub=null;
       if(m.look!==p.look)p.look=normalizeAppearance(m.look);
       p.positionAt=performance.now();
-      p.d=m.d;p.x=+a[0];p.z=+a[1];p.y=+a[2];p.yaw=+a[3];p.pitch=+a[4];p.fu=+a[5];p.down=!!(a[6]&1);p.safe=!!(a[6]&2);p.run=!!(a[6]&4);p.away=!!(a[6]&8);p.mounted=!!(a[6]&16);p.unseen=!!(a[6]&32);p.hp=a[7];p.form=a[6]>>6&3;p.fat=!!(a[6]&256);p.pox=!!(a[6]&512);p.frz=!!(a[6]&1024);p.bob=!!(a[6]&2048);p.hedge=!!(a[6]&4096);p.curl=a[6]&8192?1:a[6]&16384?2:0;p.mirror=!!(a[6]&32768);p.crouched=!!(a[6]&65536);p.pf=a[8]|0;
+      p.d=m.d;p.x=+a[0];p.z=+a[1];p.y=+a[2];p.yaw=+a[3];p.pitch=+a[4];p.fu=+a[5];p.down=!!(a[6]&1);p.safe=!!(a[6]&2);p.run=!!(a[6]&4);p.away=!!(a[6]&8);p.mounted=!!(a[6]&16);p.unseen=!!(a[6]&32);p.hp=a[7];p.form=a[6]>>6&3;p.fat=!!(a[6]&256);p.pox=!!(a[6]&512);p.frz=!!(a[6]&1024);p.bob=!!(a[6]&2048);p.hedge=!!(a[6]&4096);p.curl=a[6]&8192?1:a[6]&16384?2:0;p.mirror=!!(a[6]&32768);p.crouched=!!(a[6]&65536);p.baby=!!(a[6]&131072);p.pf=a[8]|0;p.web=+a[9]||0;p.ko=+a[10]||0;p.slugs=a[11]|0;
       if(p.rx===undefined||p.rd!==p.d||Math.hypot(p.x-p.rx,p.z-p.rz)>3){p.rx=p.x;p.rz=p.z;p.ry=p.y;p.ryaw=p.yaw;p.rpitch=p.pitch;p.rd=p.d}
       break;}
     case 'm':{
@@ -7020,7 +7727,17 @@ function mpRecv(m,from){
       break;
     case 'wh':{if(!MP.host||!inRun||!here||!Array.isArray(m.h))break;for(const h of m.h.slice(0,24))if(h&&Number.isInteger(h.i)&&Number.isFinite(+h.d)&&+h.d<50)wApply(h,from);break}
     case 'gw':{if(fromHost&&inRun&&here)grannyWoozy();break}
+    case 'slx':{if(fromHost&&inRun&&here&&F.shades.some(q=>q.type===8)){const n=Math.min(m.n|0,F.shades.length+400);while(F.shades.length<n)slugNew()}break}
+    case 'spe':{if(fromHost&&inRun&&here)spiderEaten();break}
+    case 'spl':{if(fromHost&&inRun&&here&&Array.isArray(m.a))for(const q of m.a){const s=Array.isArray(q)&&F.shades[q[0]|0];if(s&&s.type===10)s.lv=clamp(q[1]|0,1,99)}break}
+    case 'slc':{if(fromHost&&inRun&&here&&F.shades[m.i|0]&&F.shades[m.i|0].type===8)slugOn(m.i|0);break}
+    case 'slf':{if(MP.host&&inRun&&here){const s=F.shades[m.i|0];if(s&&s.type===8&&s.ride&&s.rideBy===from&&Number.isFinite(+m.x)&&Number.isFinite(+m.z))slugDrop(s,+m.x,+m.z)}break}
+    case 'kup':{if(inRun&&here&&P.ko>0&&Number.isFinite(p.x)&&Math.hypot(p.x-P.x,p.z-P.z)<3)koUp();break}
+    case 'unweb':{if(inRun&&here&&webLocked()&&!(P.eaten>0)&&Number.isFinite(p.x)&&Math.hypot(p.x-P.x,p.z-P.z)<3){P.web=50;say((p.name||'A friend')+' cuts you loose! The silk still clings, though.',3);sfx('pick')}break}
     case 'bz':{if(fromHost&&inRun&&here&&F.boss&&m.h&&typeof m.h==='object'){const h={...m.h,t:0};if(!BS.hz.some(q=>q.id===h.id))BS.hz.push(h)}break}
+    case 'bsx':{if(fromHost&&inRun&&here&&F.boss)bpApply(m);break}
+    case 'bpa':{if(!MP.guest&&inRun&&here&&F.boss&&p){if(m.it!==undefined)bpTake(m.it|0,from);else bpAct(m.i|0,from,{x:p.x,z:p.z})}break}
+    case 'bfx2':{if(fromHost&&inRun&&here){if(m.w==='snap')say('SNAP! Ratbag is caught in his own trap!',2);else if(m.w==='clog')bpClog();else if(m.w==='burst')bpBurst();else if(m.w==='shock')BP.shock=R.time}break}
     case 'bdm':{if(inRun&&here&&p){p.dz={lane:clamp(m.l|0,0,3),t:R.time}}break}
     case 'bst':{if(fromHost&&inRun&&here)bossStart(true);break}
     case 'bd':{if(fromHost&&inRun&&here)bossWin();break}
@@ -7056,6 +7773,10 @@ function mpRecv(m,from){
       if(!inRun||!here||p.down||state==='trans')return;
       if(pkApply(m.x,m.y,false)){say(p.name+' broke through a wall',2.5);mpSys(p.name+' broke through a wall')}
       break;
+    case 'tpk':
+      if(!fromHost||!inRun||!here||state==='trans')return;
+      if(pkApply(m.x,m.y,false)&&Math.hypot(m.x+0.5-P.x,m.y+0.5-P.z)<14)say('CRASH! The troll smashes straight through the wall!',3);
+      break;
     case 'pks':
       if(!fromHost||!inRun||!here||!Array.isArray(m.t))return;
       for(const q of m.t.slice(0,64))if(Array.isArray(q))pkApply(q[0],q[1],true);
@@ -7066,6 +7787,7 @@ function mpRecv(m,from){
       if(!fromHost||!inRun||P.down||P.away||state==='trans')return;
       if(m.w==='drain'){P.fuel=Math.max(0,P.fuel-22);sfx('drain');say('A wisp drinks your flame',2)}
       else if(m.w==='chill'){P.chill=3.5;P.inv=1.6;sfx('drain');rumble(180,0.5,0.3);say('The shade chills you. Deeper down, its touch wounds.',2.6)}
+      else if(m.w==='club'){if(P.inv<=0)trollClubbed(clamp(+m.dx||0,-1,1),clamp(+m.dz||0,-1,1))}
       else if(P.inv<=0)hurt(null);
       break;
     case 'chat':{const t=String(m.t||'').slice(0,200);if(t){chatLine(p.name,p.hex,t);if(!chatOpen&&state==='play')sfx('pick')}break}
@@ -7099,9 +7821,9 @@ const playerInArchiveCover=()=>inArchiveAlcove(P.x,P.z,P.y,P.crouched);
 const underForestRoots=(x,z,y,crouched)=>!!F.forestRoutes&&forestCover(F.forestRoutes,x,z,y,crouched);
 function mpTargets(){
   const T=[];
-  if(!P.down)T.push({x:P.x,z:P.z,y:P.y,yaw:P.yaw,fuel:P.fuel,inSafe:P.inSafe||F.archive&&P.y>.84||playerInArchiveCover()||underForestRoots(P.x,P.z,P.y,P.crouched)||P.away||!!FX.frozen||potSafeAt(P.x,P.z),inv:P.inv,loc:true,mirror:R.mirror,tx:P.tx,ty:P.ty,pf:potFlags()});
+  if(!P.down&&!(P.ko>0)&&!(P.eaten>0))T.push({x:P.x,z:P.z,y:P.y,yaw:P.yaw,fuel:P.fuel,inSafe:P.inSafe||F.archive&&P.y>.84||playerInArchiveCover()||underForestRoots(P.x,P.z,P.y,P.crouched)||P.away||!!FX.frozen||potSafeAt(P.x,P.z),inv:P.inv,loc:true,mirror:R.mirror,tx:P.tx,ty:P.ty,pf:potFlags()});
   if(MP.host)for(const p of MP.peers.values())
-    if(p.run&&!p.down&&p.d===R.depth&&p.x!==undefined&&mpFresh(p))T.push({x:p.x,z:p.z,y:p.y,yaw:p.yaw,fuel:p.fu,inSafe:p.safe||F.archive&&p.y>.84||inArchiveAlcove(p.x,p.z,p.y,p.crouched)||underForestRoots(p.x,p.z,p.y,p.crouched)||potSafeAt(p.x,p.z),inv:p.inv,loc:false,mirror:!!p.mirror,p,tx:Math.floor(p.x),ty:Math.floor(p.z),pf:p.pf|0});
+    if(p.run&&!p.down&&!(p.ko>0)&&p.d===R.depth&&p.x!==undefined&&mpFresh(p))T.push({x:p.x,z:p.z,y:p.y,yaw:p.yaw,fuel:p.fu,inSafe:p.safe||F.archive&&p.y>.84||inArchiveAlcove(p.x,p.z,p.y,p.crouched)||underForestRoots(p.x,p.z,p.y,p.crouched)||potSafeAt(p.x,p.z),inv:p.inv,loc:false,mirror:!!p.mirror,p,tx:Math.floor(p.x),ty:Math.floor(p.z),pf:p.pf|0});
   return T;
 }
 // path distance from every tile to the nearest player
@@ -7146,8 +7868,8 @@ function mpSpectate(){
 }
 function mpCycle(){const L=mpAlive();if(L.length<2)return;const i=L.findIndex(p=>p.id===MP.follow);MP.follow=L[(i+1)%L.length].id}
 // flags packed into a[6] of the per-frame position message: 1 down, 2 safe, 4 run, 8 away, 16 mounted, 32 unseen,
-// 64+128 wheel form, 256 fat, 512 pox, 1024 frozen, 2048 bobblehead, 4096 hedgehog, 8192/16384 curl (1 / 2), 32768 mirror on the back of the head, 65536 crouched
-const mpPosFlags=()=>(P.down?1:0)|(P.inSafe||P.away||FX.frozen?2:0)|4|(P.away?8:0)|(P.mounted?16:0)|(P.unseen?32:0)|((wofForm()<4?wofForm():0)<<6)|(FX.fat>0?256:0)|(FX.pox>0?512:0)|(FX.frozen?1024:0)|(FX.bob>0?2048:0)|(FX.hedge>0?4096:0)|(FX.curl===1?8192:FX.curl===2?16384:0)|(R.mirror?32768:0)|(P.crouched?65536:0);
+// 64+128 wheel form, 256 fat, 512 pox, 1024 frozen, 2048 bobblehead, 4096 hedgehog, 8192/16384 curl (1 / 2), 32768 mirror on the back of the head, 65536 crouched, 131072 a baby
+const mpPosFlags=()=>(P.down?1:0)|(P.inSafe||P.away||FX.frozen?2:0)|4|(P.away?8:0)|(P.mounted?16:0)|(P.unseen?32:0)|((wofForm()<4?wofForm():0)<<6)|(FX.fat>0?256:0)|(FX.pox>0?512:0)|(FX.frozen?1024:0)|(FX.bob>0?2048:0)|(FX.hedge>0?4096:0)|(FX.curl===1?8192:FX.curl===2?16384:0)|(R.mirror?32768:0)|(P.crouched?65536:0)|(FX.baby>0?131072:0);
 const mpFresh=p=>performance.now()-(p.seen||0)<15000;
 const mpShown=p=>MP.on&&p.run&&!p.away&&!p.unseen&&p.d===R.depth&&p.rx!==undefined&&state!=='title'&&mpFresh(p);
 function sanctuaryPeers(floor){
@@ -7171,7 +7893,7 @@ function sendHubPresence(to){
   mpSend({k:'hub',a:[r3(x),r3(y),r3(z),r3(wrapA(yaw))],station,ride,ready,deepest,look:playerLook},to);
 }
 function sendRunPresence(to){
-  mpSend({k:'p',d:R.depth,a:[r3(P.x),r3(P.z),r3(P.y),r3(P.yaw),r3(P.pitch),Math.round(P.fuel),mpPosFlags(),P.hp,potFlags()],look:playerLook},to);
+  mpSend({k:'p',d:R.depth,a:[r3(P.x),r3(P.z),r3(P.y),r3(P.yaw),r3(P.pitch),Math.round(P.fuel),mpPosFlags(),P.hp,potFlags(),Math.round(P.web||0),P.ko>0?Math.ceil(P.ko):0,(P.slugs||[]).length],look:playerLook},to);
 }
 function mpTick(raw){
   if(!MP.on)return;
@@ -7266,6 +7988,7 @@ function playerHead(H,look,skin,cloak,cloakD,blink){
 
 // friends drawn in the maze, built from the same jointed parts as everyone else
 function buildPlayer(p,t,rev,et){
+  if(p.baby&&!rev)return buildBaby(p,t,false);
   if(p.hedge&&!rev)return buildHedgehog(p,t,false);
   if(p.form&&!rev)return buildCritter(p,t,p.form,false);
   rev=rev||0;et=et||0;
@@ -7276,6 +7999,7 @@ function buildPlayer(p,t,rev,et){
   const crouch=rev?0:p.crouchBlend||0,hipY=.45-.31*crouch;
   const mv=Math.min(1,p.spd/2.7),w=p.walk,sw=Math.sin(w)*mv,bob=Math.abs(Math.cos(w))*0.018*mv,breath=Math.sin(t*1.7+ph)*0.004;
   const B={p:[p.rx,Math.max(0,p.ry),p.rz],R:rYaw(p.ryaw)};
+  if(p.ko>0&&!rev){B.p[1]=0.06;B.R=m3(B.R,rZ(1.45))}   // down: flat on their back
   // the dance-off: a groove while the round lasts, and a move for each arrow hit (lane 0 left, 1 down, 2 up, 3 right)
   const dz=p.dz&&R.time-p.dz.t<0.55?p.dz:null,dk=dz?Math.sin(Math.min(1,(R.time-dz.t)/0.55)*Math.PI)**0.6:0,dl=dz?dz.lane:-1,dancing=p.dz&&R.time-p.dz.t<3;
   if(dancing){B.p[1]+=Math.abs(Math.sin(R.time*7+ph))*0.02+(dl===2?0.07*dk:dl===1?-0.05*dk:0);B.R=m3(B.R,rX((dl===0?-0.22:dl===3?0.22:0)*dk+Math.sin(R.time*3.5+ph)*0.06))}
@@ -7343,7 +8067,7 @@ function mpDrawPlayers(t,ex,ez,fwx,fwz){
     const rp=p.glRep&&p.glRep.h[Math.floor(p.glRep.i)],sv=rp&&[p.rx,p.rz,p.ryaw,p.ry];
     if(rp){p.rx=rp[0];p.rz=rp[1];p.ryaw=rp[2];p.ry=rp[3]}
     if(p.mounted)p.ry+=.35;
-    const q=buildPlayer(p,t).torch;
+    const q=buildPlayer(p,t).torch;crawlDrawPeer(p,t);
     if(p.mounted)p.ry-=.35;
     if(rp){p.rx=sv[0];p.rz=sv[1];p.ryaw=sv[2];p.ry=sv[3]}
     if(p.fu>0){const k=0.55+0.45*Math.sqrt(p.fu/100),fl=1+Math.sin(t*13+p.walk)*0.08+Math.sin(t*29.3)*0.06;
@@ -7757,6 +8481,7 @@ addEventListener('keydown',e=>{
     if(e.code==='Space')P.jumpQ=MOVE.jumpBuffer;
     if(e.code==='KeyE')act(false);
     if(e.code==='KeyY')wCycle();
+    if(e.code==='KeyU')slugPeel();
     if(e.code==='KeyQ')usePick();
     if(e.code==='KeyR')useMoose();
     if(e.code==='KeyG')useMoose(true);
@@ -7995,7 +8720,7 @@ function pollPad(){
       if(performance.now()-pad.crouchStart<180)useMoose(true);
       pad.crouchStart=undefined;
     }
-    if(hit(3))mapBig=!mapBig;
+    if(hit(3)&&!slugPeel())mapBig=!mapBig;
     if(hit(9))pause();
     if(hit(14)){if(POT.belt.length)potSel(-1);else setBright(bright-0.15)}
     if(hit(15)){if(POT.belt.length)potSel(1);else setBright(bright+0.15)}
@@ -8147,7 +8872,7 @@ function watcher(s,dt,pfx,pfz){
 }
 /* ---------- update ---------- */
 // speed modifiers shared by the maze and the rooms: the cold slows you, boots speed you up
-const moveMul=()=>(P.chill>0?0.55:1)*((P.woozy||0)>0?0.7:1)*((P.fizz||0)>0.3?0.8:1)*(1+0.06*(up.boots|0))*wofSpeed()*potSpeed()*bossMoveMul();
+const moveMul=()=>(P.chill>0?0.55:1)*((P.woozy||0)>0?0.7:1)*((P.fizz||0)>0.3?0.8:1)*(1+0.06*(up.boots|0))*wofSpeed()*potSpeed()*bossMoveMul()*webMul();
 const potPhase=(x,z)=>x<0.6||z<0.6||x>F.W-0.6||z>F.H-0.6;
 // A sprint clip does not pop you through. You are caught in the stone, the air goes, then you are shoved out.
 let wallClip=null;
@@ -8196,7 +8921,7 @@ function update(dt){
   R.time+=dt;xrayTick(dt);guideTick(dt);mooseLureTick(dt);scoutTick(dt);
   // in a shared game the world keeps going while you pause or talk, but you stand still
   if(P.grab)mimicGrabTick(dt);
-  const ctl=state==='play'&&!P.grab&&!GL.fall&&!(GL.rb&&!GL.rb.fwd)&&!FX.frozen&&FX.curl!==1&&!potHeld()&&!P.hug&&!BS.dance&&!danceFight();
+  const ctl=state==='play'&&!P.grab&&!GL.fall&&!(GL.rb&&!GL.rb.fwd)&&!FX.frozen&&FX.curl!==1&&!potHeld()&&!P.hug&&!BS.dance&&!danceFight()&&!(P.ko>0)&&!webLocked()&&!P.help;
   if(P.down)mpSpectate();
   else{
   // look and move: the shared movement system (src/movement.js), the same one the rooms use
@@ -8222,7 +8947,7 @@ function update(dt){
   const slideBlock=sceneryBlock?(x,z)=>blocked(x,z)||sceneryBlock(x,z):blocked;
   const crouch=ctl&&!P.mounted&&(keys.ControlLeft||keys.ControlRight||keys.KeyX&&!FX.hedge||pad.crouch||touch.crouch);
   const ev=stepMove(P,dt,{fwd,str,fx:Math.cos(P.yaw),fz:Math.sin(P.yaw),ctl,crouch,
-    jump:FX.fat<=0&&potJump()>0&&(keys.Space||pad.jump||touch.jump),sprint:fury||keyboardSprint()||pad.sprint||Math.hypot(touch.mx,touch.my)>0.94},
+    jump:FX.fat<=0&&!(FX.baby>0)&&potJump()>0&&(keys.Space||pad.jump||touch.jump),sprint:!(FX.baby>0)&&!P.half&&!((P.web||0)>=50)&&(fury||keyboardSprint()||pad.sprint||Math.hypot(touch.mx,touch.my)>0.94)},
     {scale:1,speedMul:moveMul()*(P.mounted?1.25:1)*(wading?.49:1),lungs:up.lungs|0,blocked:walkBlock,groundAt,snap:F.archive?0.115:0,
       canStand:headroom?()=>P.y+ARCHIVE_BODY<=headroom(P.x,P.z):null,
       ceilingAt:headroom?(x,z)=>headroom(x,z)-height():null});
@@ -8270,7 +8995,7 @@ function update(dt){
     nearNpc=best;nearDoor=nd;
     const lift=floorLiftInReach();
     if(state==='play'){
-      const action=lift?'USE':best?'TALK':nd?'OPEN':'FLASH';
+      const action=helpTarget()?'HELP':lift?'USE':best?'TALK':nd?'OPEN':'FLASH';
       if($('tFlash').textContent!==action)$('tFlash').textContent=action;
     }
     const pt=!best&&!nd&&state==='play'&&P.pick>0&&!P.down&&!P.away&&!P.grab?pkAim():null;
@@ -8278,7 +9003,7 @@ function update(dt){
     const low=!P.crouched&&(F.archive&&archiveLowOpening(F.archive,P.x,P.z,P.y,P.yaw)||
       F.forestRoutes&&forestRootAt(F.forestRoutes,P.x+Math.cos(P.yaw)*.39,P.z+Math.sin(P.yaw)*.39,PR));
     const crouchHint=touch.on?'Hold Crouch':pad.id?'Hold D-pad ↓ to crouch':'Hold X to crouch';
-    if(state!=='room')setText('prompt',playerInArchiveCover()?(P.z>=2?'Hidden under the reading desk':'Hidden in the alcove'):inRoots?'Hidden under the roots':low?crouchHint:lift?(touch.on?'USE':pad.id?'X':'E')+': use lift controls':best?(touch.on?'TALK':pad.id?'X':'E')+': speak with '+NPC[best.type].name:nd?(touch.on?'OPEN':pad.id?'X':'E')+': open the strange door':pt?pt.ok?(touch.on?'PICK':pad.id?'RB':'Q')+': break through this wall':'This wall will not break':'');}
+    if(state!=='room')setText('prompt',helpPrompt()||(F.boss&&!best&&!nd&&!lift&&bpPrompt()?bpPrompt():playerInArchiveCover()?(P.z>=2?'Hidden under the reading desk':'Hidden in the alcove'):inRoots?'Hidden under the roots':low?crouchHint:lift?(touch.on?'USE':pad.id?'X':'E')+': use lift controls':best?(touch.on?'TALK':pad.id?'X':'E')+': speak with '+NPC[best.type].name:nd?(touch.on?'OPEN':pad.id?'X':'E')+': open the strange door':pt?pt.ok?(touch.on?'PICK':pad.id?'RB':'Q')+': break through this wall':'This wall will not break':''));}
   if(P.fuel<20&&!lowFuelSaid){lowFuelSaid=true;say(P.fuel<=0?'Your torch is out':'Your torch is guttering. Find oil.',3)}
   if(P.inv>0)P.inv-=dt;
   if(P.chill>0){P.chill-=dt;$('chill').style.opacity=clamp(P.chill/1.2,0,1)}else if(P.chill<0||P.chill===0&&$('chill').style.opacity!=='0'){P.chill=0;$('chill').style.opacity='0'}
@@ -8316,7 +9041,7 @@ function update(dt){
   } // end of the living player's turn
   wofTick(dt);if(state==='dead')return;
   potTick(dt);if(state==='dead')return;
-  wTick(dt);if(!MP.guest)wMonTick(dt);bossClientTick(dt);if(state==='dead')return;fizzPlayerTick(dt);grannyPlayerTick(dt);grannyVoiceTick(dt);
+  wTick(dt);if(!MP.guest)wMonTick(dt);bossClientTick(dt);if(state==='dead')return;fizzPlayerTick(dt);grannyPlayerTick(dt);crawlPlayerTick(dt);trollClientTick(dt);grannyVoiceTick(dt);
   // the humming rooms: lights that fail, knocking in the walls, a map that will not hold
   if(F.back){
     if(!MP.guest){
@@ -8356,10 +9081,14 @@ function update(dt){
       continue;
     }
     if(s.type===6){if(s.role==='add'&&potMon(s,dt,TG,MD))continue;bossTick(s,dt,TG);if(state==='dead')return;continue}
+    if(s.type===8&&(s.pool||s.ride)){if(s.ride)slugRideCheck(s);s.x=s.z=-99;continue}
     if(potMon(s,dt,TG,MD)){s.gx=Math.floor(s.x);s.gy=Math.floor(s.z);s.px=-1;continue}
     if(s.stun>0){s.stun-=dt;if(s.type>=4&&s.state>1)s.state=1;continue}
     if(s.type===4){fizzTick(s,dt,TG,MD);continue}
     if(s.type===5){grannyTick(s,dt,TG,MD);continue}
+    if(s.type===10){spiderTick(s,dt,TG,MD);continue}
+    if(s.type===8){slugTick(s,dt,TG,MD);continue}
+    if(s.type===9){trollTick(s,dt,TG,MD);continue}
     if(followMoose(s,dt,s.type===1?3.15:2.95)){s.frozen=false;continue}
     const librarian=s.type===LIBRARIAN;
     const targets=librarian?archiveTargets:TG,distances=librarian?archiveDist:MD;
@@ -8982,7 +9711,7 @@ function glLoopEnd(){if(!GL.loop)return;for(const q of F.panels)q.dead=false;GL.
 
 /* ---------- render ---------- */
 let rs=1,rsCeil=1,fAcc=0,fN=0,goodSecs=0,lastRaise=-99,clock=0,fpsShown=0;
-let composer=null,fxaaPass=null,bloomPass=null,gtaoPass=null,viewKey='';
+let composer=null,fxaaPass=null,bloomPass=null,gtaoPass=null,viewKey='',torchShadowAt=-1;
 const charMesh=paintedMesh(CH.buf,true,0.012),decorMesh=paintedMesh(DEC.buf,false,0);
 const LURK={buf:new Float32Array(13*24000),n:0,cap:24000};
 const lurkMesh=paintedMesh(LURK.buf,true,0.012);
@@ -9053,6 +9782,15 @@ if(POST){
     // creatures and NPCs stay out of the ambient-occlusion pass: their thin, layered parts read as deep crevices and the pass
     // darkened whole fronts of them (the Fizzler's label went black at high quality)
     gtaoPass.overrideVisibility=function(){ov();sprMesh.visible=false;charMesh.visible=false};
+    // Ambient occlusion was the single biggest cost of a maze frame: a second full-resolution pass over the whole scene for normals and
+    // depth, the AO itself, a denoise, then a full-screen copy of the picture just to multiply the AO onto it. Now its buffers are half
+    // the size (a quarter of the pixels; AO is soft anyway and the denoise hides the difference), and it multiplies straight onto the
+    // picture already there instead of copying it first.
+    {const size0=gtaoPass.setSize.bind(gtaoPass),render0=gtaoPass.render.bind(gtaoPass);
+      gtaoPass.output=GTAOPass.OUTPUT.Off;gtaoPass.needsSwap=false;
+      gtaoPass.setSize=(w,h)=>size0(Math.max(1,Math.ceil(w/2)),Math.max(1,Math.ceil(h/2)));
+      gtaoPass.render=(r,write,read,dt,mask)=>{render0(r,write,read,dt,mask);const m=gtaoPass.blendMaterial;
+        m.uniforms.intensity.value=gtaoPass.blendIntensity;m.uniforms.tDiffuse.value=gtaoPass.pdRenderTarget.texture;gtaoPass.renderPass(r,m,read)}}
     composer.addPass(gtaoPass);
   }
   bloomPass=new UnrealBloomPass(new THREE.Vector2(4,4),0.5,0.55,1.0);composer.addPass(bloomPass);
@@ -9100,6 +9838,8 @@ function render(t){
   {const cp=Math.cos(pitch);camera.position.set(ex,ey,ez);camera.lookAt(ex+cp*Math.cos(yaw),ey+Math.sin(pitch),ez+cp*Math.sin(yaw))}
   if(FX.flyT>0&&!title){const k=Math.min(1,FX.flyT/1.2);camera.rotateZ(Math.sin(t*FX.spin)*0.5*k);camera.rotateX(Math.cos(t*FX.spin*0.7)*0.25*k)}   // tumbling through the air
   if(FX.bob>0&&!title){camera.rotateZ(Math.sin(t*2.3)*0.06);camera.rotateX(Math.sin(t*1.7)*0.03)}
+  if(P.ko>0&&!title&&!P.down){camera.position.y-=EYE*0.72;camera.rotateZ(0.5)}
+  if(P.half&&!(P.ko>0)&&!title&&!P.down)camera.position.y-=Math.max(0,Math.sin((CRAWL.limp||0)*6))*0.06;   // the limp   // down: on the floor, the world on its side
   if(P.woozy>0&&!title&&!P.down){const k=Math.min(1,P.woozy/1.5);camera.rotateZ(Math.sin(t*1.6)*0.14*k);camera.rotateX(Math.sin(t*1.05)*0.05*k)}   // Granny's perfume
   if(FX.tickled>0&&!title){const k=0.025;camera.position.x+=(Math.random()-0.5)*k;camera.position.y+=(Math.random()-0.5)*k;camera.position.z+=(Math.random()-0.5)*k}
   if(pkShake>0){const k=0.05*pkShake;camera.position.x+=(Math.random()-0.5)*k;camera.position.y+=(Math.random()-0.5)*k;camera.position.z+=(Math.random()-0.5)*k;pkShake=Math.max(0,pkShake-0.03)}
@@ -9127,6 +9867,11 @@ function render(t){
     scene.fog.color.setRGB(L.fog[0],L.fog[1],L.fog[2]);
     if(scene.environment)scene.environmentIntensity=F.dark?0.01:F.back?0.3*pl:F.forest?0.012:LK.env;}
   torchLight.position.set(L.tx,L.ty,L.tz);
+  // The torch's shadow is a cube map: six extra passes over the scene. Redrawing it up to ~45 times a second instead of every frame
+  // halves that at 60 fps or more and changes nothing you can see (at 30 fps it is still every frame). Anything else that draws the
+  // scene (warm-ups, the landing frame) keeps the normal every-frame update.
+  const torchShadowDue=t-torchShadowAt>=0.021||t<torchShadowAt;if(torchShadowDue)torchShadowAt=t;
+  torchLight.shadow.autoUpdate=torchShadowDue;
   {const tt=F.torchT||[1,1,1];torchLight.color.setRGB(B.torch[0]*tt[0],B.torch[1]*tt[1],B.torch[2]*tt[2])}
   torchLight.distance=torchR*1.2;
   torchLight.intensity=LK.torch*flick*(0.3+0.7*torchR/7.6)*(F.back?0.5:1);
@@ -9250,6 +9995,9 @@ function render(t){
     else if(s.type===4)buildFizz(s,t,ex,ez);
     else if(s.type===5)buildGranny(s,t,ex,ez);
     else if(s.type===LIBRARIAN)buildLibrarian(s,t);
+    else if(s.type===10)buildSpider(s,t,ex,ez);
+    else if(s.type===8)buildSlug(s,t,ex,ez);
+    else if(s.type===9)buildTroll(s,t,ex,ez);
     else if(s.type===1)buildStalker(s,t,ex,ez);
     else{
       const o=buildShade(s,t,ex,ez);
@@ -9367,6 +10115,7 @@ function render(t){
     else board.style.visibility='hidden';
   }
   if(composer)composer.render();else renderer.render(scene,camera);
+  torchLight.shadow.autoUpdate=true;
 }
 
 /* ---------- self-check: is the picture actually there? ---------- */
@@ -9391,7 +10140,7 @@ function drawHUD(){
   setText('depthLine',GL.hudOv.depthLine||'Depth '+R.depth);
   setText('scoreLine','Score '+R.score);
   setText('seedLine','Seed '+R.seed);
-  setHTML('hearts','♥'.repeat(Math.max(0,P.hp))+'<i>'+'♥'.repeat(Math.max(0,maxHp()-Math.max(0,P.hp)))+'</i>');
+  {const full=Math.max(0,P.hp-(P.half?1:0)),half=P.half&&P.hp>0?1:0;setHTML('hearts','♥'.repeat(full)+(half?'<b class="half">♥</b>':'')+'<i>'+'♥'.repeat(Math.max(0,maxHp()-full-half))+'</i>')}
   setW('fuelFill',P.fuel);setW('stamFill',P.stam);
   setText('shards',GL.hudOv.shards||'◆ '+P.shards+' / 3 shards');
   setText('flashes','✦ '+P.flash+' flash'+(P.flash===1?'':'es')+(P.pick>0?'   ⛏ '+P.pick:'')+(wHeld()?'   ⚔ '+WEAPON[wHeld()].name:''));
@@ -9447,7 +10196,7 @@ function drawMap(){
   }
   if(F.safe&&F.seen[F.safe.ty*F.W+F.safe.tx+1])dot(F.safe.x,F.safe.z,Math.max(2.5,ts*0.3),'#ff8a2a');
   for(const n of F.npcs)if(F.seen[Math.floor(n.z)*F.W+Math.floor(n.x)]){c.fillStyle=n.type==='lurk'&&n.aggro?'#ff2a4a':n.type==='keeper'?'#ffe0a0':'#8ff0d0';c.fillRect(ox+n.x*ts-2.5,oy+n.z*ts-2.5,5,5)}
-  for(const s of F.shades)if(s.vis||s.x>0&&(potSeen(s)||s.type===6))dot(s.x,s.z,Math.max(3,ts*0.4),s.type===1?'#e6e0d2':s.type===2?'#5aa8ff':s.type===4?'#c0732a':s.type===5?'#ff8ad0':s.type===6?(s.role==='add'?'#ff9060':BOSSES[s.boss].col):s.state===1?'#ff2a4a':'#a07cff');
+  for(const s of F.shades)if(s.vis||s.x>0&&(potSeen(s)||s.type===6))dot(s.x,s.z,Math.max(3,ts*0.4),s.type===1?'#e6e0d2':s.type===2?'#5aa8ff':s.type===4?'#c0732a':s.type===5?'#ff8ad0':s.type===10?'#e8e4f0':s.type===8?'#a89a50':s.type===9?'#7f9a5a':s.type===6?(s.role==='add'?'#ff9060':BOSSES[s.boss].col):s.state===1?'#ff2a4a':'#a07cff');
   for(const p of MP.peers.values()){if(!mpShown(p))continue;
     c.save();c.translate(ox+p.rx*ts,oy+p.rz*ts);c.rotate(p.ryaw);c.fillStyle=p.down?'#777':p.hex;
     c.beginPath();c.moveTo(5,0);c.lineTo(-3.5,3.5);c.lineTo(-1.5,0);c.lineTo(-3.5,-3.5);c.closePath();c.fill();c.restore()}
@@ -9501,7 +10250,9 @@ function step(now){
     else if(!hub.riding)hub.watchLift(null);
     // Leave the locked room's input and draw on the animation frame. The lobby gets one step in a separate idle callback.
     if(!hub.lobbyReady)scheduleLobbyWarm();
-    else if(hub.canWarmLift())scheduleLiftWarm();
+    else if(!hub.canWarmLift())liftWarmSince=0;
+    else{if(!liftWarmSince)liftWarmSince=now;   // the first steps into the lobby stay smooth: walking only warms after a few seconds there
+      if(now-liftWarmLast>(activeStation?400:hub.warmStill()?0:now-liftWarmSince<3000?1e9:250))scheduleLiftWarm()}   // flat out while you stand still, now and then while you walk, and only a trickle (no heavy steps) while a panel is open
     hub.syncVisitors(MP.on?[...MP.peers.values()].filter(p=>p.hub&&now-p.hub.at<15000):[],dt,now/1000);
     updateSettingsScreen();
     $('hubCross').classList.toggle('ready',hub.aimed);
@@ -9531,7 +10282,7 @@ function frameBody(now){
         if(warm){
           lobbyWarmFrame=null;
           warm(exposure,time);
-        }else if(PIPE.draw&&hub.canWarmLift())pipeDraw();
+        }else if(PIPE.draw&&hub.warmStill()&&!activeStation)pipeDraw();   // the one heavy warm-up frame waits for a moment you stand still
         hub.render(exposure,time,mazeExposure());
         if(warm&&!window.__norender)selfCheck();
       }
@@ -10132,6 +10883,10 @@ function prepareLanding(seed,depth){
   const task={floor:null,model:null,mesh:null,decor:null,decorN:0,own:true,installed:false,progress:0,ready:false,arrivalReady:false,
     advance(){
       if(task.ready||waiting)return;
+      const wl=window.__warmLog,ws=wl&&performance.now(),st0=stage;
+      try{task.step()}finally{if(wl)wl.push(['landing '+depth+' stage '+st0,performance.now()-ws])}
+    },
+    step(){
       if(stage===0){
         task.floor=liftFloor(seed,depth);task.own=!task.floor.forest;
         landingOf.set(task.floor,task);task.progress=0.15;stage++;
@@ -10155,6 +10910,10 @@ function prepareLanding(seed,depth){
       else if(stage===6){task.progress=1;task.ready=true;stage++}
     },
     warmArrival(){
+      const wl=window.__warmLog,ws=wl&&performance.now();
+      try{return task.arrive()}finally{if(wl)wl.push(['arrival '+depth,performance.now()-ws])}
+    },
+    arrive(){
       if(task.arrivalReady||!task.ready)return task.arrivalReady;
       if(PIPE.pre.length){PIPE.pre.shift()();return false}
       if(!shadersRequested){
@@ -10184,9 +10943,9 @@ function prepareLanding(seed,depth){
   };
   return task;
 }
-// Landings built ahead of time for the lift, keyed by seed and depth: floors 1 to 5 plus the selected floor.
+// Landings built ahead of time for the lift, keyed by seed and depth: the selected floor, then floor 1.
 // A landing is handed out once and never reused, since a run mutates its floor.
-const LIFT_CACHE_MAX=6;
+const LIFT_CACHE_MAX=2;   // the selected floor and floor 1: building six ahead tripled the background work (and its shaders) for floors rarely taken
 const liftCache=new Map(),glimpseCompiled=new Set();
 let liftCacheAt=0,liftCompiling=0;
 // the seed a lift ride uses while the seed field is blank; a new one is rolled once a run starts from it, so each ride is a new maze
@@ -10198,7 +10957,7 @@ function selectedLiftDepth(){
 }
 function liftWanted(){
   const sel=selectedLiftDepth(),max=+$('liftDepth').max,out=[sel];
-  for(let d=1;d<=5;d++)if(d!==sel&&!(max>=1&&d>max))out.push(d);
+  if(sel!==1)out.push(1);
   return out.slice(0,LIFT_CACHE_MAX);
 }
 function liftEntry(seed,depth){
@@ -10252,15 +11011,20 @@ function liftCachePump(){
   }
   return false;
 }
-let liftWarmScheduled=false;
+let liftWarmScheduled=false,liftWarmLast=0,liftWarmSince=0;
 function scheduleLiftWarm(){
   if(liftWarmScheduled||PIPE.draw)return;
   liftWarmScheduled=true;
   afterLiftFrame(()=>{
     liftWarmScheduled=false;
     if(state!=='title'||loading||!hub.canWarmLift())return;
+    liftWarmLast=performance.now();
+    const wl=window.__warmLog;let ws=wl&&performance.now();
     SURFS.idle();
-    if(!liftCachePump())pipeWarmPump();
+    if(wl){wl.push(['surfs idle',performance.now()-ws]);ws=performance.now()}
+    const r=liftCachePump();
+    if(wl){wl.push(['lift pump',performance.now()-ws]);ws=performance.now()}
+    if(!r&&!activeStation){pipeWarmPump();if(wl)wl.push(['pipe pump',performance.now()-ws])}
   });
 }
 /* ---------- warm the in-game render pipeline in the lobby ---------- */
@@ -10380,6 +11144,10 @@ function pipeWarmPump(){
 }
 // one real frame of the game scene through the composer, inside a lobby frame that the hub paints over straight after
 function pipeDraw(){
+  const wl=window.__warmLog,ws=wl&&performance.now();
+  try{pipeDraw0()}finally{if(wl)wl.push(['pipe draw',performance.now()-ws])}
+}
+function pipeDraw0(){
   PIPE.draw=false;
   if(state!=='title'||hub.riding||loading){PIPE.busy=false;return}
   try{
@@ -10407,7 +11175,7 @@ function scheduleLobbyWarm(){
   lobbyWarmScheduled=true;
   const run=()=>{
     lobbyWarmScheduled=false;
-    if(state==='title'&&!loading)advanceLobbyWarm();
+    if(state==='title'&&!loading){const wl=window.__warmLog,ws=wl&&performance.now(),lab=lobbyWarmStatus;advanceLobbyWarm();if(wl)wl.push(['lobby '+lab,performance.now()-ws])}
   };
   if(window.requestIdleCallback)window.requestIdleCallback(run,{timeout:120});
   else setTimeout(run,0);
@@ -10724,6 +11492,6 @@ function gripProbe(ts,talking){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='
   for(const t of ts){buildNpc(n,t,P.x,0.7,P.z,0.016);res.push({t,...GRIP_DBG})}talk=save;return res}
 function benchNpc(iters){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='keeper');const e=[P.x,0.7,P.z];buildNpc(n,1,e[0],e[1],e[2],0.016);let t0=performance.now();
   for(let i=0;i<iters;i++){CH.n=0;buildNpc(n,1+i*0.016,e[0],e[1],e[2],0.016)}return (performance.now()-t0)/iters}
-window.__game={pipelineWarm:pipeWarmState,liftCache:()=>[...liftCache.values()].map(e=>({seed:e.seed,depth:e.depth,ready:e.task.ready,compiled:e.compiled})),stillwoodWarmState,stillwoodWarm,doorSeed,wofQ:WOQ,tkTargets,rrStart,wofClear,wofTick,mpPosFlags,wof:WOF,fx:FX,get tk(){return TK},get bomb(){return BOMB},get rr(){return RR},set rr(v){RR=v},rrAct,get ts(){return TS},get brk(){return BRK},set tk(v){TK=v},get cg(){return CG},set cg(v){CG=v},departFromLift,wofSpinStart,wofResolve,wofBegin,planSpin,pickSlice,sliceAt,spinAngle,NEWS,openStation,get activeStation(){return activeStation},hub,get lobbyPaused(){return lobbyPaused},get roomPaused(){return roomPaused},simLockLost(){if(document.pointerLockElement){document.exitPointerLock();return}usingLock=true;document.dispatchEvent(new Event("pointerlockchange"))},music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch,patYell,initAudio,fizzTick,fizzMe,FIZZ,grannyTick,grannyWoozy,grannyGrab,grannyMash,GRAN,smith:SMITH,W,wAttack,sprList,wApply,wStats,wHeld,wCycle,clickL,clickR,WEAPONS,pot:POT,PFX,potLand,potDrink,potThrow,beltAdd,potBrew,potMon,potTouch,POTIONS,INGREDIENTS,brew,brewAny,potInfo,ps,potHud,wLevelOf,wRanks,wChoice,wGainXp,wXpFor,wReward,smithTalk,BS,BOSSES,bossAt,danceKey,danceChart,bossStart,bossWin,bossTrophies,bMain,wPunch};
+window.__game={pipelineWarm:pipeWarmState,perf:{get composer(){return composer},torchLight,poolLights,shadLights,get gtao(){return gtaoPass},get bloom(){return bloomPass},get fxaa(){return fxaaPass},get rs(){return rs},set rs(v){rs=v;viewKey=''}},wMaxHp,TROLL,trollTick,trollWall,canUse,SPI,SLUG,KO,spiderTick,slugTick,slugPeel,slugOn,koTry,koUp,helpStart,webClear,webMul,crawlPlayerTick,get crawl(){return CRAWL},liftCache:()=>[...liftCache.values()].map(e=>({seed:e.seed,depth:e.depth,ready:e.task.ready,compiled:e.compiled})),stillwoodWarmState,stillwoodWarm,doorSeed,wofQ:WOQ,tkTargets,rrStart,wofClear,wofTick,mpPosFlags,wof:WOF,fx:FX,get tk(){return TK},get bomb(){return BOMB},get rr(){return RR},set rr(v){RR=v},rrAct,get ts(){return TS},get brk(){return BRK},set tk(v){TK=v},get cg(){return CG},set cg(v){CG=v},departFromLift,wofSpinStart,wofResolve,wofBegin,wofScene,planSpin,pickSlice,sliceAt,spinAngle,NEWS,openStation,get activeStation(){return activeStation},hub,get lobbyPaused(){return lobbyPaused},get roomPaused(){return roomPaused},simLockLost(){if(document.pointerLockElement){document.exitPointerLock();return}usingLock=true;document.dispatchEvent(new Event("pointerlockchange"))},music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch,patYell,initAudio,fizzTick,fizzMe,FIZZ,grannyTick,grannyWoozy,grannyGrab,grannyMash,GRAN,smith:SMITH,W,wAttack,sprList,wApply,wStats,wHeld,wCycle,clickL,clickR,WEAPONS,pot:POT,PFX,potLand,potDrink,potThrow,beltAdd,potBrew,potMon,potTouch,POTIONS,INGREDIENTS,brew,brewAny,potInfo,ps,potHud,wLevelOf,wRanks,wChoice,wGainXp,wXpFor,wReward,smithTalk,BS,BOSSES,bossAt,danceKey,danceChart,bossStart,bossWin,bossTrophies,bMain,wPunch,BP,bpAct,bpUse,bossArmor};
 lobbyWarm=prepareLobby();
 requestAnimationFrame(frame);

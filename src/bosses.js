@@ -3,29 +3,31 @@
 // gems and rare ingredients, and puts its trophy in the lobby for good. The fights themselves live in game.js; this file holds what
 // they are, and the pure parts (which boss is where, how a cycle scales it, the dance charts) so they can be tested on their own.
 export const BOSSES = [
-  {id: 'rat', name: 'King Ratbag', title: 'Lord of the Sewers', arena: 'The Sewer Throne', bi: 6, hp: 70, rad: 0.55, gems: 25, col: '#9a8270',
+  {id: 'rat', hint: 'Lure him into his own traps with cheese', armor: 0.05, name: 'King Ratbag', title: 'Lord of the Sewers', arena: 'The Sewer Throne', bi: 6, hp: 280, rad: 0.55, gems: 25, col: '#9a8270',
     intro: 'Something enormous is gnawing on the dark.', taunt: 'SQUEEEEAK!'},
-  {id: 'boogie', name: 'The Boogie Man', title: 'He only respects the dance', arena: 'The Disco Pit', bi: 7, hp: 420, rad: 0.4, gems: 30, col: '#ff4fd8',
+  {id: 'boogie', hint: 'He only respects the dance', armor: 1, name: 'The Boogie Man', title: 'He only respects the dance', arena: 'The Disco Pit', bi: 7, hp: 420, rad: 0.4, gems: 30, col: '#ff4fd8',
     intro: 'A disco ball turns in the dark. Somebody is waiting for a partner.', taunt: 'DANCE OFF!'},
-  {id: 'gloop', name: 'The Gloop', title: 'It splits when it is hurt', arena: 'The Ooze Pit', bi: 1, hp: 50, rad: 0.7, gems: 35, col: '#6ee05a',
+  {id: 'gloop', hint: 'Bake it under the heat lamps, then smash the crust', armor: 0.05, name: 'The Gloop', title: 'It splits when it is hurt', arena: 'The Ooze Pit', bi: 1, hp: 120, rad: 0.7, gems: 35, col: '#6ee05a',
     intro: 'The floor is wet, and the wet is moving.', taunt: 'BLORP.'},
-  {id: 'dill', name: 'The Big Dill', title: 'Cool as a cucumber', arena: 'The Cold Frame', bi: 2, hp: 90, rad: 0.42, gems: 40, col: '#4fa83a',
+  {id: 'dill', hint: 'Tip the brine barrels and pickle him soft', armor: 0.05, name: 'The Big Dill', title: 'Cool as a cucumber', arena: 'The Cold Frame', bi: 2, hp: 300, rad: 0.42, gems: 40, col: '#4fa83a',
     intro: 'It is very cold in here, and it smells of vinegar.', taunt: 'Stay frosty.'},
-  {id: 'tallow', name: 'Mother Tallow', title: 'She blows out every flame', arena: 'The Wax Chapel', bi: 5, hp: 100, rad: 0.45, gems: 45, col: '#f0d9a0',
+  {id: 'tallow', hint: 'Throw open the windows and let the wind in', armor: 0.05, name: 'Mother Tallow', title: 'She blows out every flame', arena: 'The Wax Chapel', bi: 5, hp: 320, rad: 0.45, gems: 45, col: '#f0d9a0',
     intro: 'Hush now. Hush. Let mother put out the light.', taunt: 'Shhhhhh...'},
-  {id: 'mimic', name: 'The Grand Mimic', title: 'Not every chest is a chest', arena: 'The Counting House', bi: 0, hp: 100, rad: 0.45, gems: 60, col: '#d9a441',
+  {id: 'mimic', hint: 'Find the one that breathes', armor: 0.05, name: 'The Grand Mimic', title: 'Not every chest is a chest', arena: 'The Counting House', bi: 0, hp: 320, rad: 0.45, gems: 60, col: '#d9a441',
     intro: 'Treasure! Heaps of it. Look how still it sits.', taunt: 'CHOMP CHOMP CHOMP'},
-  {id: 'vac', name: 'Sir Suckalot', title: 'He picks up everything', arena: 'The Showroom', bi: 4, hp: 110, rad: 0.42, gems: 55, col: '#c0392b',
+  {id: 'vac', hint: 'Feed him something he cannot swallow', armor: 0.05, name: 'Sir Suckalot', title: 'He picks up everything', arena: 'The Showroom', bi: 4, hp: 330, rad: 0.42, gems: 55, col: '#c0392b',
     intro: 'Somewhere a motor whines, louder and louder.', taunt: 'VRRRRRRRMMMMMM'},
-  {id: 'mime', name: 'The Mime', title: 'Not a sound', arena: 'The Silent Stage', bi: 0, hp: 120, rad: 0.32, gems: 60, col: '#f2f2f2',
+  {id: 'mime', hint: 'Make some noise', armor: 0.05, name: 'The Mime', title: 'Not a sound', arena: 'The Silent Stage', bi: 0, hp: 340, rad: 0.32, gems: 60, col: '#f2f2f2',
     intro: '...', taunt: '...'},
-  {id: 'cuckoo', name: 'The Cuckoo Clock', title: 'Do not move when it strikes', arena: 'The Clockworks', bi: 6, hp: 130, rad: 0.55, gems: 70, col: '#8a5a2b',
+  {id: 'cuckoo', hint: 'Wind all three cranks and stop the clock', armor: 0.05, name: 'The Cuckoo Clock', title: 'Do not move when it strikes', arena: 'The Clockworks', bi: 6, hp: 360, rad: 0.55, gems: 70, col: '#8a5a2b',
     intro: 'Tick. Tock. Tick. Tock. Freeze when it calls.', taunt: 'CUCKOO!'},
-  {id: 'heart', name: 'The Ember Heart', title: 'The burning heart of the deep', arena: 'The Heart of the Deep', bi: 3, hp: 200, rad: 0.62, gems: 100, col: '#ff6a1a',
+  {id: 'heart', hint: 'Lure it over a grate and open the floodgate', armor: 0.05, name: 'The Ember Heart', title: 'The burning heart of the deep', arena: 'The Heart of the Deep', bi: 3, hp: 450, rad: 0.62, gems: 100, col: '#ff6a1a',
     intro: 'The whole deep is beating, like a drum, like a heart.', taunt: 'BA-BOOM.'},
 ];
 // the Boogie Man's 420 (more with more players): only your half of each round hurts him, and rounds 1 and 2 hold at most 84 + 168 damage
 // even hitting every arrow perfectly, so he always lasts into round 3, and usually to round 4
+// armor: what share of a weapon's damage gets through while the boss is guarded (5%). Every boss has its own trick (its hint): working it
+// lands a heavy blow and leaves the boss open for a few seconds, when weapons hit hard. Weapons alone barely scratch it.
 export const BOSS = Object.fromEntries(BOSSES.map((b, i) => [b.id, {...b, i}]));
 
 // which boss guards a depth: floors 5, 10, 15 ... (bosses 1-10), then round again. cyc counts the times round (0 the first time).

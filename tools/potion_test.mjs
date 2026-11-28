@@ -1,6 +1,6 @@
 // node tools/potion_test.mjs [--shots DIR] [--q low|medium|high]
 // Checks the Brewer and the potions in a built index.html: the recipe book (124 potions, 4 tiers, buffs and debuffs, each tier from the one below),
-// the Brewer and his cauldron beside the Keeper, ingredients in the maze, brewing from the menu, and every potion drunk and thrown
+// the Brewer and his cauldron in the Keeper's sanctuary, ingredients in the maze, brewing from the menu, and every potion drunk and thrown
 // (on a player and on monsters) without errors, with spot checks that the effects do what they say. --shots saves screenshots.
 import {createRequire} from 'node:module';
 import {pathToFileURL, fileURLToPath} from 'node:url';
@@ -73,7 +73,7 @@ const br = await pg.evaluate(() => {
   return {seed, has: !!n, dk: Math.hypot(n.x - k.x, n.z - k.z), dw: Math.hypot(c.cx - w.x, c.cz - w.z), inSafe: F.safeMask[ci] === 1 && F.safeMask[bi] === 1, open: F.g[ci] === 0 && F.g[bi] === 0, cd: Math.hypot(c.cx - n.x, c.cz - n.z)};
 });
 check(br.has, 'the Brewer stands in the sanctuary');
-check(br.dk < 1.7, 'he stands beside the Keeper (' + br.dk.toFixed(2) + ' m)');
+check(br.dk < 3.6, 'he shares the sanctuary with the Keeper (' + br.dk.toFixed(2) + ' m)');   // the Keeper has his own corner of it now
 check(br.dw > 1.2, 'his cauldron is clear of the wheel (' + br.dw.toFixed(2) + ' m)');
 check(br.inSafe && br.open, 'the Brewer and his cauldron are inside the sanctuary, on open floor');
 check(br.cd > 0.3 && br.cd < 0.6, 'the cauldron is at his side');

@@ -28,7 +28,7 @@ const spawn = await pg.evaluate(() => {
   const g = window.__game;let n = 0, has = 0, det = true, far = true;
   for (let k = 0; k < 800; k++) { const seed = 'GR' + k, d = 1 + (k % 12), F = g.genFloor(seed, d); if (F.back) continue; n++;
     const f = F.shades.filter(s => s.type === 5);
-    if (f.length) { has++; if (F.dist[Math.floor(f[0].z) * F.W + Math.floor(f[0].x)] <= 12) far = false; }
+    if (f.length) { has++; { const dd = F.dist[Math.floor(f[0].z) * F.W + Math.floor(f[0].x)]; if (dd >= 0 && dd <= 12) far = false; /* -1: behind the locked gate, which is far enough */ } }
     if (JSON.stringify(f) !== JSON.stringify(g.genFloor(seed, d).shades.filter(s => s.type === 5))) det = false; }
   return {n, has, det, far};
 });
