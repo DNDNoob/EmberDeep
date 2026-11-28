@@ -46,10 +46,10 @@ export const VARIANTS=[
    V('dustbound',{tex:0,fogK:1.24,ambK:.91,tint:[1.03,.94,.81]}),
    V('amber stacks',{tex:0,tint:[1.09,.98,.85],torch:[1.03,.91,.76]}),
    V('faded turquoise',{tex:0,tint:[.87,1,1.02],ambT:[.82,1,1.08]})],
-  [V('weathered stone',{tex:0,tint:[.85,.89,.94]}),
-   V('rain-darkened',{tex:0,tint:[.75,.84,.9],fogK:1.12}),
-   V('pale limestone',{tex:0,tint:[.96,.98,1.02]}),
-   V('moss at the windows',{tex:0,tint:[.84,.94,.89],ambT:[.9,1.04,.98]})],
+  [V('weathered stone',{tex:0,tint:[.92,.90,.88]}),
+   V('rain-darkened',{tex:0,tint:[.79,.78,.77],fogK:1.12}),
+   V('pale limestone',{tex:0,tint:[1.04,1.02,1.00]}),
+   V('slate-gray',{tex:0,tint:[.83,.84,.86]})],
 ];
 // four named variants of this biome, plus a small continuous per-floor jitter (colour, light, noise seed) so even the same variant never repeats exactly
 export function pickVariant(rng,bi,force){

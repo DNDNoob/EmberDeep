@@ -29,7 +29,8 @@ import {createBabyFace,createFallVoid} from './babyface.js';
 import {pickVariant,VARIANTS} from './variants.js';
 import {ARCHIVE_DEPTH,ARCHIVE_CEILING,ARCHIVE_CORRIDOR,ARCHIVE_BODY,BALCONY_Y,LIBRARIAN,isArchiveDepth,carveArchive,archiveGround,archiveBlocked,archiveHeadroom,archiveMobBlocked,archiveLowOpening,archiveHidden,drawArchive,drawLibrarian} from './forgotten-archive.js';
 import {CASTLE_DEPTH,CASTLE_CEILING,CASTLE_GALLERY,isCastleDepth,carveCastle,castleGround,castleBlocked,castleHeadroom,
-  castleHatchAt,startCastleHatch,castleWindowWall,drawCastleArchitecture,drawCastleDetails,drawCastleHatches,createCastleValley} from './abandoned-castle.js';
+  castleHatchAt,startCastleHatch,castleWindowWall,drawCastleArchitecture,drawCastleDetails,drawCastleHatches,createCastleValley,
+  castleLadderNear,stepCastleLadder,castleTunnelAt,drawCastlePerimeterWall} from './abandoned-castle.js';
 import {createForest,CORE_H,warmForest} from './forest.js';
 import {carveForestRoutes,creekBanks,forestGround,forestSubmerged,forestRootAt,forestRootTile,forestCover,forestBlocked,
   ROOT_CLEARANCE,drawCreekTerrain,drawForestGround,drawForestRoutes} from './forest-routes.js';
@@ -115,7 +116,7 @@ const BIOMES=[
   {base:23,name:'The Glimmer Veins',  wall:[0.8,0.85,1.05], floor:[0.8,0.85,1.0],  ceil:[0.6,0.65,0.85], torch:[0.98,0.86,0.72], amb:[0.012,0.016,0.03], stone:[0.28,0.3,0.36], spec:[0.4,0.45,0.25], wet:0.35},
   {base:26,name:'The Dark Forest',   wall:[0.7,0.9,0.7],  floor:[0.8,0.85,0.75], ceil:[0,0,0],        torch:[1.0,0.76,0.46], amb:[0.005,0.012,0.009], stone:[0.3,0.28,0.24], spec:[0.05,0.16,0.04], wet:0.45},
   {base:0,name:'Forgotten Archive',wall:[1.24,1.02,0.72],floor:[1.06,0.9,0.68],ceil:[0.86,0.77,0.61],torch:[1,0.81,0.57],amb:[0.072,0.055,0.038],stone:[0.58,0.42,0.28],spec:[0.11,0.12,0.04],wet:0},
-  {base:0,name:'Abandoned Castle',wall:[0.88,0.99,1.1],floor:[0.76,0.86,0.91],ceil:[0.74,0.78,0.87],torch:[1,0.77,0.48],amb:[0.047,0.061,0.076],stone:[0.38,0.43,0.46],spec:[0.09,0.11,0.12],wet:0.06},
+  {base:0,name:'Abandoned Castle',grayStone:true,wall:[1.02,0.99,0.95],floor:[0.90,0.87,0.83],ceil:[0.78,0.75,0.72],torch:[1,0.95,0.87],amb:[0.073,0.070,0.065],stone:[0.43,0.41,0.39],spec:[0.11,0.10,0.09],wet:0.06},
 ];
 const ITEM={
   shard:{cell:0,col:[0.35,0.9,1.0], size:0.36},
@@ -279,7 +280,7 @@ function genFloor(seedStr,depth,look){
     }
     if(sc.length){const c=sc[ri(sc.length)];safe={tx:c[0],ty:c[1]}}
   }else{
-    const rx=ri(cw-1),ry=landmark?5+ri(ch-6):ri(ch-1);
+    const rx=ri(cw-1),ry=castle?8+ri(ch-9):archive?5+ri(ch-6):ri(ch-1);
     for(let y=ry*2+1;y<=ry*2+3;y++)for(let x=rx*2+1;x<=rx*2+3;x++)g[idx(x,y)]=0;
     safe={tx:rx*2+2,ty:ry*2+2};
   }
@@ -577,7 +578,15 @@ function genFloor(seedStr,depth,look){
   }
   if(castle){
     floor.castle=castle;
-    Object.assign(items.find(it=>it.type==='shard'),{x:17.43,z:1.88,tx:17,ty:1,y:CASTLE_GALLERY});
+    floor.tex.gray=B.grayStone;
+    const [north,south]=items.filter(it=>it.type==='shard');
+    Object.assign(north,{x:17.43,z:1.88,tx:17,ty:1,y:CASTLE_GALLERY});
+    const {x,z}=castle.tunnels.far;
+    Object.assign(south,{x,z,tx:Math.floor(x),ty:Math.floor(z),y:CASTLE_GALLERY});
+    items.push({type:'oil',x:17.18,z:12.72,tx:17,ty:12,y:CASTLE_GALLERY,got:false,ph:2.9});
+    for(const [x,z] of [[22.5,8],[28.5,20.5],[16.2,32.5],[34.5,32.5]]){
+      items.push({type:'oil',x,z,tx:Math.floor(x),ty:Math.floor(z),y:CASTLE_GALLERY,got:false,ph:x+z});
+    }
   }
   if(sanctuaryEntrance){
     attachSanctuary(floor,sanctuaryEntrance);
@@ -638,7 +647,8 @@ function worldMaterial(o){
   const mapChunk=THREE.ShaderChunk.map_fragment.replace(/vMapUv/g,'pUv')+'\nfloat wEm=clamp(1.0-2.0*sampledDiffuseColor.a,0.0,1.0);float wRough=clamp(2.0*sampledDiffuseColor.a-1.0,0.0,1.0);diffuseColor.a=1.0;\n';
   const flicker=o.bad?'{float ph=floor(vWPos.x)*1.7+floor(vWPos.z)*2.3;if(sin(uTime*31.0+ph)+sin(uTime*47.7+ph*2.0)<0.4)wEmis*=0.08;}':'';
   if(Q===0){
-    const m=new THREE.MeshLambertMaterial({map:tex?tex.map:null,color:SAFE?(o.kind===1?0x6a655c:o.kind===3?0x80501e:0x6b6b6b):0xffffff,side:THREE.DoubleSide});
+    const fallback=o.tex?.gray?(o.kind===1?0x585b60:0x666a70):(o.kind===1?0x6a655c:o.kind===3?0x80501e:0x6b6b6b);
+    const m=new THREE.MeshLambertMaterial({map:tex?tex.map:null,color:SAFE?fallback:0xffffff,side:THREE.DoubleSide});
     m.userData.panel=!!o.panel;m.userData.em=emU;
     if(tex)m.onBeforeCompile=sh=>{
       sh.uniforms.uTime=UT;sh.uniforms.uEmK=emU;
@@ -1001,6 +1011,7 @@ function buildMesh(F,preview=false){
   if(F.start&&!F.lift&&!archiveRun)F.lift=mountLiftDock(F,bfs(g,W,H,F.start.tx,F.start.ty));
   const dock=F.lift;
   const quad=(p,n,uv,layer)=>{for(const i of[0,1,2,0,2,3])v.push(p[i][0],p[i][1],p[i][2],n[0],n[1],n[2],uv[i][0],uv[i][1],layer)};
+  const wallQuad=F.castle?(p,n,uv,layer)=>drawCastlePerimeterWall(F.castle,quad,p,n,uv,layer):quad;
   const wall=(x,y)=>x<0||y<0||x>=W||y>=H?!(dock&&x===dock.tx-dock.fx&&y===dock.tz-dock.fz):g[y*W+x]===1;
   const fr=F.forest,room=F.safe?.room;
   const topAt=(x,z)=>room&&F.safeMask[z*W+x]&&z>=room.front?SANCTUARY_HEIGHT:
@@ -1030,9 +1041,9 @@ function buildMesh(F,preview=false){
         quad([[x,bottom,edge],[x+1,bottom,edge],[x+1,top,edge],[x,top,edge]],[0,0,dock.fz],uv,0);
       }
     }
-    if(wall(x+1,y))quad([[x+1,0,y],[x+1,0,y+1],[x+1,top,y+1],[x+1,top,y]],[-1,0,0],[[y,1],[y+1,1],[y+1,uvTop],[y,uvTop]],pk);
-    if(wall(x-1,y))quad([[x,0,y],[x,0,y+1],[x,top,y+1],[x,top,y]],[1,0,0],[[y,1],[y+1,1],[y+1,uvTop],[y,uvTop]],pk);
-    if(wall(x,y+1))quad([[x,0,y+1],[x+1,0,y+1],[x+1,top,y+1],[x,top,y+1]],[0,0,-1],[[x,1],[x+1,1],[x+1,uvTop],[x,uvTop]],pk);
+    if(wall(x+1,y))wallQuad([[x+1,0,y],[x+1,0,y+1],[x+1,top,y+1],[x+1,top,y]],[-1,0,0],[[y,1],[y+1,1],[y+1,uvTop],[y,uvTop]],pk);
+    if(wall(x-1,y))wallQuad([[x,0,y],[x,0,y+1],[x,top,y+1],[x,top,y]],[1,0,0],[[y,1],[y+1,1],[y+1,uvTop],[y,uvTop]],pk);
+    if(wall(x,y+1))wallQuad([[x,0,y+1],[x+1,0,y+1],[x+1,top,y+1],[x,top,y+1]],[0,0,-1],[[x,1],[x+1,1],[x+1,uvTop],[x,uvTop]],pk);
     if(F.archive||F.castle){
       for(const [dx,dz] of DIRS){
         if(x+dx<0||x+dx>=W||y+dz<0||y+dz>=H||wall(x+dx,y+dz))continue;
@@ -1041,17 +1052,17 @@ function buildMesh(F,preview=false){
         const uv=[[0,1-lower/uvHeight],[1,1-lower/uvHeight],[1,uvTop],[0,uvTop]];
         if(dx){
           const edge=x+(dx>0?1:0);
-          quad([[edge,lower,y],[edge,lower,y+1],[edge,top,y+1],[edge,top,y]],[-dx,0,0],uv,0);
+          wallQuad([[edge,lower,y],[edge,lower,y+1],[edge,top,y+1],[edge,top,y]],[-dx,0,0],uv,0);
         }else{
           const edge=y+(dz>0?1:0);
-          quad([[x,lower,edge],[x+1,lower,edge],[x+1,top,edge],[x,top,edge]],[0,0,-dz],uv,0);
+          wallQuad([[x,lower,edge],[x+1,lower,edge],[x+1,top,edge],[x,top,edge]],[0,0,-dz],uv,0);
         }
       }
     }
     if(wall(x,y-1)||tall&&y===room.front&&!F.archive){
       const bottom=wall(x,y-1)?0:Y;
       if(y===1&&F.castle?.windows.some(window=>window.tx===x))castleWindowWall(quad,x,y,top,pk);
-      else quad([[x,bottom,y],[x+1,bottom,y],[x+1,top,y],[x,top,y]],[0,0,1],[[x,1-bottom/uvHeight],[x+1,1-bottom/uvHeight],[x+1,uvTop],[x,uvTop]],pk);
+      else wallQuad([[x,bottom,y],[x+1,bottom,y],[x+1,top,y],[x,top,y]],[0,0,1],[[x,1-bottom/uvHeight],[x+1,1-bottom/uvHeight],[x+1,uvTop],[x,uvTop]],pk);
     }
   }
   if(F.forestRoutes)drawCreekTerrain(F.forestRoutes.creek,quad);
@@ -4020,7 +4031,7 @@ function potTick(dt){
 function potEnded(k){
   if(k==='titan')P.hp=Math.min(P.hp,maxHp());
   if(k==='hold'){if(POT.wake==='heal'){POT.wake='';P.hp=maxHp();say('You wake up whole',2);sfx('pick')}POT.holdK=''}
-  if(k==='phase'&&solidAt(P.x,P.z)){   // shoved out of the wall to the nearest floor
+  if(k==='phase'&&solidAt(P.x,P.z)&&!(aboveCastleGround()&&castleTunnelAt(F.castle,P.x,P.z))){   // shoved out of the wall to the nearest floor
     let bx=Math.floor(P.x),bz=Math.floor(P.z),bd=1e9;
     for(let r=1;r<8&&bd===1e9;r++)for(let dz=-r;dz<=r;dz++)for(let dx=-r;dx<=r;dx++){const x=Math.floor(P.x)+dx,z=Math.floor(P.z)+dz;if(x<0||z<0||x>=F.W||z>=F.H||F.g[z*F.W+x])continue;const d=dx*dx+dz*dz;if(d<bd){bd=d;bx=x;bz=z}}
     P.x=bx+0.5;P.z=bz+0.5;onTileChange();say('The wall pushes you out',2);
@@ -7309,6 +7320,8 @@ function solidAt(x,z){
 let panelLvl=1;
 function torchRadius(fu){const mine=fu===undefined&&state!=='title';if(fu===undefined)fu=state==='title'?100:P.fuel;return (1.6+6.0*Math.sqrt(Math.max(0,fu)/100))*(F.dark?0.5:1)*(F.back?0.45:1)*(mine?potTorch():1)}
 function blocked(x,z){return solidAt(x-PR,z-PR)||solidAt(x+PR,z-PR)||solidAt(x-PR,z+PR)||solidAt(x+PR,z+PR)||BS.hz.length>0&&bossWallAt(x,z)}
+const aboveCastleGround=(feet=P.y)=>!!F?.castle&&feet>=CASTLE_GALLERY-.118;
+const castleFloorBlocked=(x,z,feet)=>!(aboveCastleGround(feet)&&castleTunnelAt(F.castle,x,z))&&blocked(x,z);
 function mazeCell(x,z){
   if(!F||x<0||z<0||x>=F.W||z>=F.H)return 2;
   if(F.door&&F.door.tx===x&&F.door.ty===z)return 2;
@@ -7340,7 +7353,7 @@ function installFloor(depth,nextFloor,prepared=false,landing=null){
   if(F.npcs&&F.npcs.some(q=>q.type==='keeper'))keeperWarm();
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
   enterDoorFloor(nextFloor,depth);
-  P.y=0;P.vy=0;P.vx=0;P.vz=0;P.clipRunup=0;P.crouched=false;P.crouchBlend=0;P.inWater=false;P.keys=0;P.jumpQ=0;P.inSafe=false;P.unseen=false;nearNpc=nearDoor=null;
+  P.y=0;P.vy=0;P.vx=0;P.vz=0;P.clipRunup=0;P.castleLadder=null;P.crouched=false;P.crouchBlend=0;P.inWater=false;P.keys=0;P.jumpQ=0;P.inSafe=false;P.unseen=false;nearNpc=nearDoor=null;
   const visit=liftVisits.get(depth);
   if(visit?.floor===F){
     P.shards=visit.shards;P.keys=visit.keys;
@@ -9328,7 +9341,6 @@ function update(dt){
   const str=moon*(ctl?(keys.KeyD?1:0)-(keys.KeyA?1:0)+pad.mx+touch.mx:0);
   const fury=ctl&&ps('fury');if(fury&&Math.abs(fwd)<0.2&&Math.abs(str)<0.2)fwd=1;   // Fury Brew: you cannot stop running
   const J0=MOVE.jumpV,G0=MOVE.gravity,pvx=P.vx,pvz=P.vz;MOVE.jumpV=J0*potJump();MOVE.gravity=G0*potGrav();
-  const normalBlock=ps('phase')?potPhase:blocked;
   const routes=F.forestRoutes,castle=F.castle;
   if(ctl&&P.vy<=0)triggerCastleHatch(P.x,P.y,P.z);
   const groundAt=castle?(x,z)=>castleGround(castle,x,z,P.y,R.time):F.archive?(x,z)=>archiveGround(F.archive,x,z,P.y):
@@ -9340,10 +9352,12 @@ function update(dt){
     routes?(x,z)=>forestBlocked(routes,x,z,P.y,height(),PR):null;
   const wading=routes&&forestSubmerged(routes,P.x,P.z,P.y);
   const walkBlock=sceneryBlock?(x,z)=>normalBlock(x,z)||sceneryBlock(x,z):normalBlock;
-  const slideBlock=sceneryBlock?(x,z)=>blocked(x,z)||sceneryBlock(x,z):blocked;
+  const slideBlock=sceneryBlock?(x,z)=>floorBlocked(x,z)||sceneryBlock(x,z):blocked;
   const crouch=ctl&&!P.mounted&&(keys.ControlLeft||keys.ControlRight||keys.KeyX&&!FX.hedge||pad.crouch||touch.crouch);
   const beforeX=P.x,beforeZ=P.z;
-  const ev=stepMove(P,dt,{fwd,str,fx:Math.cos(P.yaw),fz:Math.sin(P.yaw),ctl,crouch,
+  const fx=Math.cos(P.yaw),fz=Math.sin(P.yaw),moveScale=Math.max(1,Math.hypot(fwd,str)),beforeY=P.y;
+  const climbing=castle&&!P.mounted&&stepCastleLadder(castle,P,dt,(fx*fwd-fz*str)/moveScale,(fz*fwd+fx*str)/moveScale);
+  const ev=climbing?{step:Math.floor(beforeY/.23)!==Math.floor(P.y/.23)}:stepMove(P,dt,{fwd,str,fx,fz,ctl,crouch,
     jump:FX.fat<=0&&!(FX.baby>0)&&potJump()>0&&(keys.Space||pad.jump||touch.jump),sprint:!(FX.baby>0)&&!P.half&&!((P.web||0)>=50)&&(fury||keyboardSprint()||pad.sprint||Math.hypot(touch.mx,touch.my)>0.94)},
     {scale:1,speedMul:moveMul()*(P.mounted?1.25:1)*(wading?.49:1),lungs:up.lungs|0,blocked:walkBlock,groundAt,snap:castle?0.118:F.archive?0.115:0,
       canStand:headroom?()=>P.y+ARCHIVE_BODY<=headroom(P.x,P.z):null,
@@ -9351,10 +9365,12 @@ function update(dt){
   MOVE.jumpV=J0;MOVE.gravity=G0;
   if(!F.archive&&!castle&&P.y>0.62&&(potGrav()<1||potJump()>1)){P.y=0.62;if(P.vy>0)P.vy=0}
   if(ps('slick')&&ev.ground){const k=Math.min(1,1.4*dt),nvx=pvx+(P.vx-pvx)*k,nvz=pvz+(P.vz-pvz)*k,cx=P.x+(nvx-P.vx)*dt,cz=P.z+(nvz-P.vz)*dt;if(!slideBlock(cx,P.z))P.x=cx;if(!slideBlock(P.x,cz))P.z=cz;P.vx=nvx;P.vz=nvz}
-  if(POT.slv){const q=POT.slv;q.t-=dt;const nx=P.x+q.vx*dt,nz=P.z+q.vz*dt;if(!slideBlock(nx,P.z))P.x=nx;if(!slideBlock(P.x,nz))P.z=nz;q.vx*=0.9;q.vz*=0.9;if(q.t<=0)POT.slv=null}
+  if(POT.slv){const q=POT.slv;q.t-=dt;const nx=P.x+q.vx*dt,nz=P.z+q.vz*dt;if(!climbing&&!slideBlock(nx,P.z))P.x=nx;if(!climbing&&!slideBlock(P.x,nz))P.z=nz;q.vx*=0.9;q.vz*=0.9;if(q.t<=0)POT.slv=null}
   if(ev.jumped)sfx('jump');
   const inWater=routes&&forestSubmerged(routes,P.x,P.z,P.y);
   if(inWater&&!P.inWater&&!ps('hush'))noise(.17,.12,690,.62);
+  const floorBlocked=castle?(x,z)=>castleFloorBlocked(x,z,P.y):blocked;
+  const normalBlock=ps('phase')?potPhase:floorBlocked;
   P.inWater=!!inWater;
   if((ev.landed>0||ev.step)&&!ps('hush')){if(inWater)noise(.12,.09,810,.65);else sfx('step');if(ps('loud'))tone(55,0.12,'sine',0.25)}
   const canClip=ctl&&ev.ground&&ev.sprint&&!P.chill&&!P.mounted&&!F.archive&&!F.castle&&!F.forestRoutes?.reserved(P.tx,P.ty);
@@ -9381,27 +9397,35 @@ function update(dt){
   if(activeStation==='lift'&&!aboardFloorLift())closeStation();
   // torch
   // sanctuary: the brazier feeds the torch and nothing hunts you here
-  {const inS=F.safeMask[P.ty*F.W+P.tx]===1;
+  {const inS=!upstairs&&F.safeMask[P.ty*F.W+P.tx]===1;
     if(inS!==P.inSafe){P.inSafe=inS;if(inS){say('A sanctuary. Nothing can follow you here.',3);sfx('descend')}}
     if(inS){P.fuel=Math.min(100,P.fuel+9*dt);P.stam=Math.min(100,P.stam+25*dt);P.chill=Math.min(P.chill,0.3);lowFuelSaid=false}
     else if(!F.back)P.fuel=Math.max(0,P.fuel-0.85*(1-0.15*(up.lamp|0))*dt);}
   // who is close enough to talk to
   {let best=null,bd=1.45;
-    for(const n of F.npcs){if(n.type==='lurk'||n.fall)continue;const d=Math.hypot(n.x-P.x,n.z-P.z);if(d<bd&&los(P.x,P.z,n.x,n.z)){bd=d;best=n}}
+    if(!upstairs)for(const n of F.npcs){if(n.type==='lurk'||n.fall)continue;const d=Math.hypot(n.x-P.x,n.z-P.z);if(d<bd&&los(P.x,P.z,n.x,n.z)){bd=d;best=n}}
     let nd=null;
-    if(!best&&ctl){let dd=0.72;for(const D of F.sdoors){if(D.used)continue;const d=Math.hypot(D.x-P.x,D.z-P.z);if(d<dd&&(D.x-P.x)*Math.cos(P.yaw)+(D.z-P.z)*Math.sin(P.yaw)>d*0.45){dd=d;nd=D}}}
+    if(!upstairs&&!best&&ctl){let dd=0.72;for(const D of F.sdoors){if(D.used)continue;const d=Math.hypot(D.x-P.x,D.z-P.z);if(d<dd&&(D.x-P.x)*Math.cos(P.yaw)+(D.z-P.z)*Math.sin(P.yaw)>d*0.45){dd=d;nd=D}}}
     nearNpc=best;nearDoor=nd;
     const lift=floorLiftInReach();
     if(state==='play'){
       const action=helpTarget()?'HELP':lift?'USE':best?'TALK':nd?'OPEN':'FLASH';
       if($('tFlash').textContent!==action)$('tFlash').textContent=action;
+  const upstairs=aboveCastleGround();
+  if(!upstairs){
     }
     const pt=!best&&!nd&&state==='play'&&P.pick>0&&!P.down&&!P.away&&!P.grab?pkAim():null;
     const inRoots=underForestRoots(P.x,P.z,P.y,P.crouched);
     const low=!P.crouched&&(F.archive&&archiveLowOpening(F.archive,P.x,P.z,P.y,P.yaw)||
       F.forestRoutes&&forestRootAt(F.forestRoutes,P.x+Math.cos(P.yaw)*.39,P.z+Math.sin(P.yaw)*.39,PR));
     const crouchHint=touch.on?'Hold Crouch':pad.id?'Hold D-pad ↓ to crouch':'Hold X to crouch';
-    if(state!=='room')setText('prompt',helpPrompt()||(F.boss&&!best&&!nd&&!lift&&bpPrompt()?bpPrompt():playerInArchiveCover()?(P.z>=2?'Hidden under the reading desk':'Hidden in the alcove'):inRoots?'Hidden under the roots':low?crouchHint:lift?(touch.on?'USE':pad.id?'X':'E')+': use lift controls':best?(touch.on?'TALK':pad.id?'X':'E')+': speak with '+NPC[best.type].name:nd?(touch.on?'OPEN':pad.id?'X':'E')+': open the strange door':pt?pt.ok?(touch.on?'PICK':pad.id?'RB':'Q')+': break through this wall':'This wall will not break':''));}
+  }
+    let ladderHint='';
+    if(F.castle&&!P.mounted){
+      if(P.castleLadder)ladderHint='Toward the rungs: climb up · Away: climb down';
+      else if(castleLadderNear(F.castle,P))ladderHint=P.y<.13?'Move into the ladder to climb up':'Move into the opening to climb down';
+    }
+    if(state!=='room')setText('prompt',helpPrompt()||ladderHint||(F.boss&&!best&&!nd&&!lift&&bpPrompt()?bpPrompt():playerInArchiveCover()?(P.z>=2?'Hidden under the reading desk':'Hidden in the alcove'):inRoots?'Hidden under the roots':low?crouchHint:lift?(touch.on?'USE':pad.id?'X':'E')+': use lift controls':best?(touch.on?'TALK':pad.id?'X':'E')+': speak with '+NPC[best.type].name:nd?(touch.on?'OPEN':pad.id?'X':'E')+': open the strange door':pt?pt.ok?(touch.on?'PICK':pad.id?'RB':'Q')+': break through this wall':'This wall will not break':''));}
   if(P.fuel<20&&!lowFuelSaid){lowFuelSaid=true;say(P.fuel<=0?'Your torch is out':'Your torch is guttering. Find oil.',3)}
   if(P.inv>0)P.inv-=dt;
   if(P.chill>0){P.chill-=dt;$('chill').style.opacity=clamp(P.chill/1.2,0,1)}else if(P.chill<0||P.chill===0&&$('chill').style.opacity!=='0'){P.chill=0;$('chill').style.opacity='0'}
@@ -9414,14 +9438,14 @@ function update(dt){
   }
   // exit
   sealMsgT-=dt;
-  if(Math.hypot(F.exit.x-P.x,F.exit.z-P.z)<0.42&&P.y>-0.2){
+  if(!upstairs&&Math.hypot(F.exit.x-P.x,F.exit.z-P.z)<0.42&&P.y>-0.2){
     if(P.shards>=3){mpSend({k:'down',d:R.depth+1});descend();return}
     if(sealMsgT<=0&&F.boss){sealMsgT=3;say(`The seal holds while ${BOSSES[F.boss.i].name} lives.`,2.5);sfx('seal')}
     else if(sealMsgT<=0){sealMsgT=3;const n=3-P.shards;say(`The seal holds. ${n} shard${n>1?'s':''} to go.`,2.5);sfx('seal')}
   }
   // locked gate
   doorMsgT-=dt;
-  if(F.door){
+  if(!upstairs&&F.door){
     const ddx=F.door.tx+0.5-P.x,ddz=F.door.ty+0.5-P.z;
     if(ddx*ddx+ddz*ddz<0.92*0.92){
       if(P.keys>0){openDoor(false);mpSend({k:'door',d:R.depth})}
@@ -10235,7 +10259,7 @@ function mazeCameraClearance(origin,direction,distance){
   for(let d=0.04;d<=distance+0.04;d+=0.04){
     const x=origin.x+direction.x*d,y=origin.y+direction.y*d,z=origin.z+direction.z*d;
     const ground=F.forestRoutes?forestGround(F.forestRoutes,x,z,y):0;
-    if(y<ground+0.08||y>mazeCameraCeiling(x,y,z)+1e-6||blocked(x,z)||
+    if(y<ground+0.08||y>mazeCameraCeiling(x,y,z)+1e-6||castleFloorBlocked(x,z,y)||
       F.castle&&castleBlocked(F.castle,x,z,y-0.07,0.14,0.08)||
       F.archive&&archiveBlocked(F.archive,x,z,y-0.07,0.14,0.08,false)||
       F.forestRoutes&&forestBlocked(F.forestRoutes,x,z,y-0.07,0.14,0.08))return Math.max(0,d-0.08);
@@ -10361,11 +10385,11 @@ function render(t){
   }
   for(const l of F.archive?.lamps||F.castle?.lamps||[]){
     const d=(l.x-ex)**2+(l.z-ez)**2;
-    if(d<125)lights.push([d-8,l.x,l.y-0.11,l.z,[1.0,0.69,0.37],2.2,6]);
+    if(d<125)lights.push([d-8,l.x,l.y-0.11,l.z,F.castle?[1,.94,.85]:[1.0,.69,.37],2.2,6]);
   }
   if(F.castle)for(const {x} of F.castle.windows){
     const d=(x-ex)**2+(1.25-ez)**2;
-    if(d<64)lights.push([d-6,x,3.12,1.22,[.48,.73,1],.82,4.1]);
+    if(d<64)lights.push([d-6,x,3.12,1.22,[.72,.82,1],.82,4.1]);
   }
   if(F.lift&&floorLift.model.visible){
     const {x,z,fx,fz}=F.lift,ahead=(landingMazeZ-liftMouthLamp.z)*liftScale;
@@ -10393,7 +10417,7 @@ function render(t){
   for(const q of F.pockets){const d=(q.x-ex)**2+(q.z-ez)**2;if(d<140)lights.push([d,q.x,1.0,q.z,PANEL_COL,q.found?1.1:0.55,2.3])}
   for(const q of F.sconces){const d=(q.lx-ex)**2+(q.lz-ez)**2;if(d<200){
     const fl=1+Math.sin(t*9+q.ph)*0.07+Math.sin(t*17.3+q.ph*2)*0.05;q.fl=fl;
-    lights.push([d-6,q.lx,F.forest?0.68:0.9,q.lz,SCONCE_COL,1.25*fl,4.6,'s'+q.lx+','+q.lz])}}
+    lights.push([d-6,q.lx,F.forest?0.68:0.9,q.lz,F.castle?B.torch:SCONCE_COL,1.25*fl,4.6,'s'+q.lx+','+q.lz])}}
   if(F.safe){const d=(F.safe.x-ex)**2+(F.safe.z-ez)**2;if(d<400){
     const fl=1+Math.sin(t*8.3)*0.08+Math.sin(t*19.1)*0.05;F.safe.fl=fl;
     lights.push([d-30,F.safe.x,0.85,F.safe.z,[1.0,0.56,0.2],2.3*fl,7.5,'safe'])}}
@@ -10657,7 +10681,10 @@ function drawMap(){
   const c=mctx;c.setTransform(dpr,0,0,dpr,0,0);
   c.clearRect(0,0,size,size);c.fillStyle='rgba(8,6,10,'+(mapBig?0.9:0.7)+')';c.fillRect(0,0,size,size);
   let ts,ox,oy;
-  if(mapBig){ts=size/Math.max(F.W,F.H);ox=(size-F.W*ts)/2;oy=(size-F.H*ts)/2}
+  if(mapBig&&upper){
+    const {x0,x1,z0,z1}=castle.upperBounds;
+    ts=(size-76)/Math.max(x1-x0,z1-z0);ox=size/2-(x0+x1)*ts/2;oy=size/2-(z0+z1)*ts/2;
+  }else if(mapBig){ts=size/Math.max(F.W,F.H);ox=(size-F.W*ts)/2;oy=(size-F.H*ts)/2}
   else{ts=touch.on?7:9;ox=size/2-P.x*ts;oy=size/2-P.z*ts}
   const x0=Math.max(0,Math.floor(-ox/ts)),x1=Math.min(F.W-1,Math.ceil((size-ox)/ts));
   const y0=Math.max(0,Math.floor(-oy/ts)),y1=Math.min(F.H-1,Math.ceil((size-oy)/ts));
@@ -10671,21 +10698,65 @@ function drawMap(){
   for(const D of F.sdoors)if(F.seen[D.ty*F.W+D.tx]){c.fillStyle=D.used?'#4a4038':'#c58bff';c.fillRect(ox+(D.tx+0.5+D.dx*0.5)*ts-ts*0.25,oy+(D.ty+0.5+D.dz*0.5)*ts-ts*0.25,ts*0.5,ts*0.5)}
   c.fillStyle='#c0392b';
   for(const tr of F.traps)if(F.seen[tr.ty*F.W+tr.tx])c.fillRect(ox+(tr.tx+0.3)*ts,oy+(tr.ty+0.3)*ts,ts*0.4,ts*0.4);
-  const dot=(x,z,r,col)=>{c.fillStyle=col;c.beginPath();c.arc(ox+x*ts,oy+z*ts,r,0,7);c.fill()};
   if(F.lift&&F.seen[F.lift.tz*F.W+F.lift.tx]){
     c.fillStyle='#79dcca';
+function drawCastleUpperMap(c,castle,ts,ox,oy,dot){
+  if(!P.down){
+    const px=Math.floor(P.x),pz=Math.floor(P.z);
+    for(let dz=-2;dz<=2;dz++)for(let dx=-2;dx<=2;dx++){
+      if(dx*dx+dz*dz>6)continue;
+      const i=(pz+dz)*F.W+px+dx;
+      if(castle.mapTiles.has(i))castle.upperSeen.add(i);
+    }
+  }
+  c.fillStyle='#627986';
+  for(const i of castle.upperSeen)for(const tile of castle.mapTiles.get(i)){
+    c.fillRect(ox+tile.x0*ts,oy+tile.z0*ts,(tile.x1-tile.x0)*ts+.45,(tile.z1-tile.z0)*ts+.45);
+  }
+  for(const it of F.items){
+    if(it.got||!(it.y>1.30)||!castle.upperSeen.has(it.ty*F.W+it.tx)&&!(F.reveal&&it.type==='shard'))continue;
+    dot(it.x,it.z,it.type==='shard'?Math.max(3,ts*.4):Math.max(1.6,ts*.22),it.type==='shard'?'#7fe9ff':'#ff9a2e');
+  }
+}
+function drawCastleMapMarkers(c,castle,upper,ts,ox,oy,size){
+  c.save();
+  c.textBaseline='middle';c.textAlign='center';
+  c.fillStyle='#f4d197';c.font='bold '+Math.max(9,ts*.87)+'px monospace';
+  const marker=(x,z,symbol,color)=>{
+    const i=Math.floor(z)*F.W+Math.floor(x);
+    if(upper?castle.upperSeen.has(i):F.seen[i]){
+      c.fillStyle=color;c.fillText(symbol,ox+x*ts,oy+z*ts);
+    }
+  };
+  for(const stair of castle.stairs)marker(upper?stair.landingX+.45:stair.x,stair.z,'↕','#f4d197');
+  for(const ladder of castle.ladders)marker(ladder.x-ladder.nx*.28,ladder.z-ladder.nz*.28,'≡','#8ee3d2');
+  c.fillStyle='#111b21';c.fillRect(5,5,upper?90:98,18);
+  c.fillStyle='#e8d9b7';c.font='11px monospace';c.textAlign='left';
+  c.fillText(upper?'UPPER FLOOR':'GROUND FLOOR',10,14);
+  if(mapBig){
+    c.fillStyle='#f4d197';c.fillText('↕ Stairs',12,size-14);
+    c.fillStyle='#8ee3d2';c.fillText('≡ Ladder',79,size-14);
+  }
+  c.restore();
+}
     c.fillRect(ox+(F.lift.tx+0.23)*ts,oy+(F.lift.tz+0.23)*ts,ts*0.54,ts*0.54);
   }
   if(F.seen[F.exit.ty*F.W+F.exit.tx]||F.reveal){c.fillStyle=P.shards>=3?'#5dff9a':'#ff4a3a';c.fillRect(ox+F.exit.tx*ts,oy+F.exit.ty*ts,ts,ts)}
   for(const it of F.items){
-    if(it.got||(!F.seen[it.ty*F.W+it.tx]&&!(F.reveal&&it.type==='shard')&&!(it.type==='gem'&&ps('gems'))))continue;
+    if(it.got||castle&&it.y>1.30||(!F.seen[it.ty*F.W+it.tx]&&!(F.reveal&&it.type==='shard')&&!(it.type==='gem'&&ps('gems'))))continue;
     if(it.type==='ingr'){const g=INGREDIENTS[it.ing].col;dot(it.x,it.z,Math.max(1.6,ts*0.2),'rgb('+g.map(v=>Math.round(Math.min(1,v)*255)).join(',')+')');continue}
     dot(it.x,it.z,(it.type==='shard'||it.type==='key')?Math.max(3,ts*0.4):Math.max(1.6,ts*0.22),it.type==='shard'?'#7fe9ff':it.type==='key'?'#ffd35a':it.type==='oil'?'#ff9a2e':it.type==='gem'?'#ffd84a':it.type==='heart'?'#ff5a6a':'#ffffff');
+  const castle=F.castle,upper=!!castle&&P.y>1.30;
   }
   if(F.safe&&F.seen[F.safe.ty*F.W+F.safe.tx+1])dot(F.safe.x,F.safe.z,Math.max(2.5,ts*0.3),'#ff8a2a');
   for(const n of F.npcs)if(F.seen[Math.floor(n.z)*F.W+Math.floor(n.x)]){c.fillStyle=n.type==='lurk'&&n.aggro?'#ff2a4a':n.type==='keeper'?'#ffe0a0':'#8ff0d0';c.fillRect(ox+n.x*ts-2.5,oy+n.z*ts-2.5,5,5)}
   for(const s of F.shades)if(s.vis||s.x>0&&(potSeen(s)||s.type===6))dot(s.x,s.z,Math.max(3,ts*0.4),s.type===1?'#e6e0d2':s.type===2?'#5aa8ff':s.type===4?'#c0732a':s.type===5?'#ff8ad0':s.type===10?'#e8e4f0':s.type===8?'#a89a50':s.type===9?'#7f9a5a':s.type===6?(s.role==='add'?'#ff9060':BOSSES[s.boss].col):s.state===1?'#ff2a4a':'#a07cff');
-  for(const p of MP.peers.values()){if(!mpShown(p))continue;
+  }
+  if(castle)drawCastleMapMarkers(c,castle,upper,ts,ox,oy,size);
+  for(const p of MP.peers.values()){if(!mpShown(p)||castle&&upper!==(p.ry>1.30))continue;
+  const dot=(x,z,r,col)=>{c.fillStyle=col;c.beginPath();c.arc(ox+x*ts,oy+z*ts,r,0,7);c.fill()};
+  if(upper)drawCastleUpperMap(c,castle,ts,ox,oy,dot);
+  else{
     c.save();c.translate(ox+p.rx*ts,oy+p.rz*ts);c.rotate(p.ryaw);c.fillStyle=p.down?'#777':p.hex;
     c.beginPath();c.moveTo(5,0);c.lineTo(-3.5,3.5);c.lineTo(-1.5,0);c.lineTo(-3.5,-3.5);c.closePath();c.fill();c.restore()}
   if(!P.down){
@@ -10834,7 +10905,7 @@ function floorLiftPose(player=P){
 }
 function aboardFloorLift(player=P){
   const p=floorLiftPose(player);
-  return !!p&&!archiveRun&&!player.down&&!player.away&&!player.mounted&&onLiftPlatform(p);
+  return !!p&&!archiveRun&&!player.down&&!player.away&&!player.mounted&&!aboveCastleGround(player.y)&&onLiftPlatform(p);
 }
 function floorLiftInReach(){
   if(state!=='play'||!aboardFloorLift())return false;
@@ -11344,8 +11415,9 @@ function buildGlimpseProto(depth,turn){
   for(let y=1;y<=2;y++)for(let x=1;x<=3;x++)g[y*W+x]=0;
   g[3*W+2]=0;g[4*W+2]=0;
   if(turn===0)g[4*W+1]=0;else if(turn===2)g[4*W+3]=0;
-  const look={...passingLook(depth),W,H,g,forest,
-    tex:{v:0,seed:0,tint:[1,1,1]},
+  const appearance=passingLook(depth);
+  const look={...appearance,W,H,g,forest,
+    tex:{v:0,seed:0,tint:[1,1,1],gray:appearance.biome.grayStone},
     panelAt:new Uint8Array(W*H),pocketMask:new Uint8Array(W*H),phantoms:[],door:null,frames:[]};
   // its textures are queued, not painted here: SURFS.idle() paints them in later frames, once their shaders are compiled in parallel
   SURFS.defer(true);let proto;try{proto=buildMesh(look,true)}finally{SURFS.defer(false)}
@@ -11919,7 +11991,7 @@ function restoreEncounter(data){
   F.blk=data.blackout||0;
   F.shades=[];
   const [x,z,yaw,pitch]=data.pose;
-  if(!blocked(x,z)){
+  if(!castleFloorBlocked(x,z,data.y||0)){
     Object.assign(P,{x,z,yaw,pitch});
     if(F.archive||F.castle){
       P.y=F.castle?castleGround(F.castle,x,z,data.y||0,R.time):archiveGround(F.archive,x,z,data.y||0);

@@ -7,6 +7,8 @@
 // it is, or how to trigger it. No code names, file names, PR numbers or agent names.
 // Group small fixes into one post. Rebuild index.html afterwards (npm run build).
 export const NEWS=[
+  {date:'2026-11-28',title:'More ways through the castle',
+    body:'Spiral stairs and ladders link the Abandoned Castle to a whole upper maze of bridges, side rooms, and enclosed tunnels. Warm gray stone and soft lantern light run through both floors.'},
   {date:'2026-11-28',title:'Through the door together',
     body:'Strange doors now have room for the whole party. Invite friends from the same maze floor, then explore together or take turns at the controls.'},
   {date:'2026-11-28',title:'A castle in the mist',
