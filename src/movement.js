@@ -5,6 +5,7 @@
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
 export const MOVE={
   eye:0.62,                    // the maze eye height the numbers below belong to
+  crouchSpeed:0.54, crouchEye:0.61,
   walk:2.7, sprint:4.3,        // ground speed
   sprintAirMul:1.18, airMin:2.7, airControl:7,   // in the air you keep the speed you left the ground with and steer toward it
   jumpV:3.5, gravity:11, jumpBuffer:0.15,        // jump launch speed, gravity, how long an early jump press is remembered
@@ -25,7 +26,8 @@ export function bobAdvance(b,dist,scale){
   return false;
 }
 // the vertical head bob, in world units
-export const bobY=(b,scale)=>Math.sin(b.bob*2)*MOVE.bobAmp*(scale||1);
+export const bobY=(b,scale)=>Math.sin(b.bob*2)*MOVE.bobAmp*(scale||1)*(1-(b.crouchBlend||0)*0.6);
+export const crouchOffset=(b,eye)=>(b.crouchBlend||0)*eye*(1-MOVE.crouchEye);
 
 // Shared look: keyboard/pad turn (turn is -1..1 already including the pad stick) and pad pitch. lim is a +- number or [lo,hi].
 const lims=l=>Array.isArray(l)?l:[-l,l];
@@ -42,26 +44,34 @@ export function lookBy(o,dyaw,dpitch,lim){
 // One step of a body. it = {fwd,str} local axes (-1..1), {fx,fz} the world direction "forward" points,
 // {jump,sprint} held buttons, {ctl:false} to forbid starting a jump (the maze uses this while a menu or grab has you).
 // w = {scale, speedMul, sta (object with stam/winded, default the body), lungs, blocked(x,z) per-axis (maze),
+//      canStand(b) checks overhead clearance before the body stands;
 //      collide(b) push-out after the move (rooms), snap (max drop followed on stairs/slopes, rooms only), groundAt(x,z), ceilingAt(x,z) (max body height)}.
 // Returns {jumped, landed (impact speed in maze units, 0 if none), step, moving, sprint, speed, ground}.
 export function stepMove(b,dt,it,w){
   const sc=w.scale||1,ev={jumped:false,landed:0,step:false,moving:false,sprint:false,speed:0,ground:false};
+  b.crouched=!!it.crouch||!!(b.crouched&&w.canStand&&!w.canStand(b));
+  const blend=b.crouchBlend||0;
+  if(blend||b.crouched){
+    b.crouchBlend=blend+(Number(b.crouched)-blend)*Math.min(1,dt*17);
+    if(b.crouchBlend<0.001)b.crouchBlend=0;
+  }
   let fwd=it.fwd||0,str=it.str||0;
   const mag=Math.hypot(fwd,str);if(mag>1){fwd/=mag;str/=mag}
   const moving=mag>0.05,g0=w.groundAt?w.groundAt(b.x,b.z):0,ground=b.y<=g0;
   if(ground&&b.y<g0)b.y=g0;
   const sta=w.sta||b,S=MOVE.stamina;
-  const wantSprint=!!it.sprint&&moving&&!sta.winded;
+  const wantSprint=!!it.sprint&&moving&&!sta.winded&&!b.crouched;
   if(ground){
     if(wantSprint){sta.stam-=S.drain*(1-S.lungs*(w.lungs|0))*dt;if(sta.stam<=0){sta.stam=0;sta.winded=true}}
     else{sta.stam=Math.min(S.max,sta.stam+S.regen*dt);if(sta.winded&&sta.stam>=S.winded)sta.winded=false}
   }
-  const speed=(wantSprint?MOVE.sprint:MOVE.walk)*sc*(w.speedMul===undefined?1:w.speedMul);
+  const speed=(wantSprint?MOVE.sprint:MOVE.walk)*sc*(w.speedMul===undefined?1:w.speedMul)*(b.crouched?MOVE.crouchSpeed:1);
   const dxn=it.fx*fwd-it.fz*str,dzn=it.fz*fwd+it.fx*str;
   if(ground){b.vx=dxn*speed;b.vz=dzn*speed}
   else if(moving){const k=Math.min(1,MOVE.airControl*dt);b.vx+=(dxn*b.airSpeed-b.vx)*k;b.vz+=(dzn*b.airSpeed-b.vz)*k}
   if(b.jumpQ>0)b.jumpQ-=dt;
-  if(ground&&it.ctl!==false&&(b.jumpQ>0||it.jump)){
+  if(b.crouched)b.jumpQ=0;
+  if(ground&&!b.crouched&&it.ctl!==false&&(b.jumpQ>0||it.jump)){
     b.jumpQ=0;b.vy=MOVE.jumpV*sc;b.y=g0+0.0001*sc;
     b.airSpeed=Math.max(speed*(wantSprint?MOVE.sprintAirMul:1),MOVE.airMin*sc);ev.jumped=true;
   }
@@ -109,7 +119,7 @@ export function noclipDest({x,z,hitVX=0,hitVZ=0,sprint,fullSpeed,roll,chance=0.0
 
 // The default walker for a room, so a new room gets the full maze movement in a few lines:
 //   const W=createRoomWalker({o,eye:1.6,x:0,z:5,collide:b=>{...push b.x/b.z out of walls...}});
-//   each frame:  lookStep(S,dt,inp.lx,inp.ly);  const ev=W.step(dt,inp,S.yaw);   camera height = eye + W.b.y + bobY(W.b,W.scale)
+//   each frame:  lookStep(S,dt,inp.lx,inp.ly);  const ev=W.step(dt,inp,S.yaw);   camera height = eye + W.b.y + bobY(W.b,W.scale) - crouchOffset(W.b,eye)
 // c: o (the room options, for the shared stamina and sounds), eye, x, z, collide(b), groundAt(x,z), ceilingAt(x,z),
 //    speedMul() extra slowdown (a room's own effects), sound(ev) to replace the default jump/step/landing sounds.
 // Stamina, boots, lungs and chill come from the game through o.sta, o.speedMul() and o.lungs(), the same as in the maze.
@@ -117,12 +127,12 @@ const num=v=>typeof v==='number'&&isFinite(v)?clamp(v,-1,1):0;
 export function createRoomWalker(c){
   const o=c.o||{},sc=scaleFor(c.eye),b=newBody({x:c.x||0,z:c.z||0});
   const W={b,eye:c.eye,scale:sc,ev:null,pj:false};
-  const world={scale:sc,snap:c.snap,sta:o.sta||b,collide:c.collide?()=>c.collide(b):null,groundAt:c.groundAt,ceilingAt:c.ceilingAt};
+  const world={scale:sc,snap:c.snap,sta:o.sta||b,collide:c.collide?()=>c.collide(b):null,groundAt:c.groundAt,ceilingAt:c.ceilingAt,canStand:c.canStand};
   const sound=c.sound||(e=>{if(!o.sfx)return;if(e.jumped)o.sfx('jump');else if(e.landed>0.8||e.step)o.sfx('step')});
   W.step=(dt,inp,yaw)=>{
     const mx=num(inp.mx),my=num(inp.my);
     world.speedMul=(o.speedMul?o.speedMul():1)*(c.speedMul?c.speedMul():1);world.lungs=o.lungs?o.lungs():0;
-    const it={fwd:-my,str:mx,fx:Math.sin(yaw),fz:-Math.cos(yaw),jump:!!inp.jump,sprint:!!inp.sprint};
+    const it={fwd:-my,str:mx,fx:Math.sin(yaw),fz:-Math.cos(yaw),jump:!!inp.jump,sprint:!!inp.sprint,crouch:!!inp.crouch};
     if(it.jump&&!W.pj&&!(W.ev&&W.ev.ground))b.jumpQ=MOVE.jumpBuffer;W.pj=it.jump;
     // small slices, so even a long frame at room speed cannot step through a thin wall
     const n=Math.max(1,Math.ceil(dt/0.04)),tot={jumped:false,landed:0,step:false,moving:false,sprint:false,speed:0,ground:true};

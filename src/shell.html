@@ -24,7 +24,7 @@
   #roomHud small{font-size:13px;color:#cdbfae}
   #roomHud [data-room-choice]{display:block;margin:6px auto 0;padding:7px 14px;max-width:88vw;pointer-events:auto;border:1px solid #6b5a48;border-radius:6px;background:#211b18f0;color:#e0d1c0;font:inherit;cursor:pointer}
   #roomHud [data-room-choice][aria-pressed="true"],#roomHud [data-room-choice]:focus-visible{border-color:#ffe0a8;background:#624326;color:#fff2d6}
-  body.room-look-only #tFlash,body.room-look-only #tJump,body.room-cinematic #touch,body.room-no-use #tFlash,body.room-choice #tFlash{display:none!important}
+  body.room-look-only #tFlash,body.room-look-only #tJump,body.room-look-only #tCrouch,body.room-choice #tCrouch,body.moose-table #tCrouch,body.room-cinematic #touch,body.room-no-use #tFlash,body.room-choice #tFlash{display:none!important}
   #moosePanel{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:clamp(10px,2.7vh,22px) 12px;box-sizing:border-box;pointer-events:none;z-index:7;color:#ecf4ed;text-align:center}
   .moose-info,.moose-console{width:min(100%,690px);box-sizing:border-box;background:rgba(13,24,29,.93);border:1px solid #536b62;border-radius:12px}
   .moose-info{width:min(100%,520px);padding:9px 16px 10px}
@@ -70,6 +70,7 @@
   #bl{position:absolute;left:22px;bottom:20px;width:270px}
   #hearts{font-size:26px;letter-spacing:4px;color:#ff5a5a;margin-bottom:6px}
   #hearts i{font-style:normal;color:#4a3030}
+  #hearts b.half{font-weight:inherit;background:linear-gradient(90deg,#ff5a5a 50%,#4a3030 50%);-webkit-background-clip:text;background-clip:text;color:transparent}
   .bar{height:10px;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.18);border-radius:6px;overflow:hidden;margin:5px 0 2px}
   .bar>div{height:100%;width:100%;border-radius:6px}
   #fuelFill{background:linear-gradient(90deg,#b5480f,#ffb347)}
@@ -175,6 +176,9 @@
     display:flex;align-items:center;justify-content:center;font-size:12px;letter-spacing:.1em;font-weight:600;text-shadow:0 1px 3px #000}
   .tbtn.on{background:rgba(255,190,110,.4)}
   #tJump{right:calc(24px + env(safe-area-inset-right));bottom:calc(30px + env(safe-area-inset-bottom));width:86px;height:86px}
+  #tCrouch{right:calc(30px + env(safe-area-inset-right));bottom:calc(122px + env(safe-area-inset-bottom));width:52px;height:52px;font-size:9px}
+  body.hasmoose #tCrouch{bottom:calc(212px + env(safe-area-inset-bottom))}
+  body.touch.hub-room #tCrouch{bottom:84px;right:26px}
   #tFlash{right:calc(124px + env(safe-area-inset-right));bottom:calc(22px + env(safe-area-inset-bottom));width:66px;height:66px}
   #tPick{right:calc(124px + env(safe-area-inset-right));bottom:calc(96px + env(safe-area-inset-bottom));width:52px;height:52px;font-size:11px}
   body:not(.haspick) #tPick{display:none}
@@ -298,6 +302,7 @@
   <div id="tPause" class="tbtn">II</div>
   <div id="tFlash" class="tbtn">FLASH</div>
   <div id="tJump" class="tbtn">JUMP</div>
+  <div id="tCrouch" class="tbtn">CROUCH</div>
   <div id="tPick" class="tbtn">PICK</div>
   <div id="tMoose" class="tbtn">RIDE</div>
   <div id="tLure" class="tbtn">LURE</div>
@@ -340,6 +345,7 @@
     <b>Mouse or ← →</b><span>Look around</span>
     <b>Shift</b><span>Sprint (uses stamina)</span>
     <b>J</b><span>Switch camera view</span>
+    <b>X / Ctrl</b><span>Hold to crouch and fit under low openings</span>
     <b>Space</b><span>Jump. Hold it to keep hopping; a running jump goes farther</span>
     <b>Left click</b><span>Attack with the weapon in your hand (hold to keep swinging). With no weapon, or near a friend or a strange door: talk / open</span>
     <b>Right click</b><span>Flash bomb: stuns nearby creatures</span>

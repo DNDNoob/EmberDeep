@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import {MOVE,bobY,createRoomWalker,lookStep} from './movement.js';
+import {MOVE,bobY,createRoomWalker,lookStep,crouchOffset} from './movement.js';
 
 const EYE=1.6, PORTAL_Z=-18, TURN=4.1, SCREAM=4.65, VANISH=6.45;
 const clamp=THREE.MathUtils.clamp;
@@ -216,7 +216,7 @@ export function monolithRoom({group,cam,o,A,finish,rand,seed}){
     revealPath(t,smooth(t,VANISH,VANISH+.8));
     if(!A.watching)o.hud(t>=VANISH?'<small>'+o.hint('monoliths')+'</small>':
       t>=SCREAM?'<small>[The stone faces scream.]</small>':t>=TURN?'':t>.4?'<small>[Voices in an unfamiliar language.]</small>':'');
-    cam.position.set(b.x,EYE+b.y+bobY(b,walker.scale),b.z);
+    cam.position.set(b.x,EYE+b.y+bobY(b,walker.scale)-crouchOffset(b,EYE),b.z);
     cam.rotation.set(S.pitch,-S.yaw,0,'YXZ');
   };
   return S;

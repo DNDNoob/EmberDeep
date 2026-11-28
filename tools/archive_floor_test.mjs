@@ -1,0 +1,133 @@
+// Run after npm run build. LIFT_BROWSER can point to an installed Chromium browser.
+import {createRequire} from 'node:module';
+const {chromium}=createRequire(import.meta.url)('playwright');
+const browser=await chromium.launch({executablePath:process.env.LIFT_BROWSER||undefined,args:['--use-angle=swiftshader','--enable-unsafe-swiftshader','--ignore-gpu-blocklist']});
+try {
+  const page=await browser.newPage({viewport:{width:1440,height:900}});
+  const errors=[];
+  page.on('pageerror',e=>errors.push(String(e)));
+  await page.addInitScript(()=>{window.__norender=true;localStorage.setItem('emberdeep.quality',JSON.stringify('medium'));});
+  await page.goto(new URL('../index.html?depth=14',import.meta.url).href);
+  await page.waitForFunction(()=>window.__game?.genFloor);
+  const result=await page.evaluate(()=>{
+    const G=window.__game;
+    const fail=msg=>{throw new Error(msg)};
+    const layouts=new Set();
+    for(let i=0;i<36;i++){
+      const seed='ARCHIVE'+i, depth=[14,26,38][i%3], f=G.genFloor(seed,depth), a=f.archive;
+      if(f.kind!=='archive'||f.name!=='Forgotten Archive'||a.alcoves.length!==3||f.shades.filter(s=>s.type===7).length!==1)fail('bad generation '+seed);
+      const layout=JSON.stringify([a.split,a.alcoves,a.blocks]);
+      const repeat=G.genFloor(seed,depth).archive;
+      if(layout!==JSON.stringify([repeat.split,repeat.alcoves,repeat.blocks]))fail('non-deterministic layout');
+      layouts.add(layout);
+      const grid=f.g.slice();
+      if(f.door)grid[f.door.ty*f.W+f.door.tx]=0;
+      const d=G.bfs(grid,f.W,f.H,f.start.tx,f.start.ty);
+      if(d[f.exit.ty*f.W+f.exit.tx]<0||f.items.some(q=>q.type==='shard'&&d[q.ty*f.W+q.tx]<0))fail('unreachable progression '+seed);
+      if(a.alcoves.some(q=>d[f.W+q.tx]<0))fail('unreachable alcove '+seed);
+      const y=a.split;
+      if(grid[y*f.W+8]!==0||grid[(y-1)*f.W+8]!==1||grid[(y+1)*f.W+8]!==1)fail('invalid jump passage');
+    }
+    if(layouts.size<4)fail('insufficient gallery variations');
+    G.startRun('ARCHIVE0',14,true);
+    if(G.R.depth!==14||G.F.kind!=='archive')fail('depth entry');
+    const {F,P,keys}=G, a=F.archive;
+    const place=(x,z,yaw)=>{Object.assign(P,{x,y:0,z,yaw,pitch:0,crouched:false,crouchBlend:0,vx:0,vz:0,vy:0,hp:3,inv:0});G.onTileChange()};
+    const mob=F.shades.find(s=>s.type===7);
+    F.shades=[mob];
+    mob.stun=20;
+    const tick=(n)=>{for(let i=0;i<n;i++)G.update(1/120)};
+    const walk=(n)=>{keys.KeyW=true;tick(n);keys.KeyW=false};
+    const jump=()=>{keys.Space=true;tick(1);keys.Space=false};
+    const north=a.stairs[0];
+    place(north.x-.18,north.z+north.w/2,0);
+    walk(231);
+    if(P.x<6.15||Math.abs(P.y-1.6)>.01)fail('could not ascend to balcony '+JSON.stringify([P.x,P.y]));
+    const south=a.stairs[1];
+    place(south.x-.18,south.z+south.w/2,0);
+    walk(222);
+    if(P.x<6.0||Math.abs(P.y-1.6)>.01)fail('could not ascend south staircase');
+
+    const upper=(x,z,yaw)=>{place(x,z,yaw);P.y=1.6};
+    upper(7.22,4.12,Math.PI/2);
+    walk(51);
+    if(P.y>1.4)fail('walking across the gap did not drop the player');
+    upper(7.22,4.12,Math.PI/2);
+    keys.KeyW=true;jump();tick(80);keys.KeyW=false;
+    if(P.z<5.55||Math.abs(P.y-1.6)>.06)fail('could not jump across the balcony gap '+JSON.stringify([P.z,P.y]));
+
+    upper(5.6,4.12,Math.PI/2);
+    walk(56);
+    if(P.z>4.5||P.z<4.44)fail('could walk through fallen upper shelf '+P.z);
+    keys.KeyW=true;jump();tick(80);keys.KeyW=false;
+    if(P.z<5.55||Math.abs(P.y-1.6)>.06)fail('could not climb over fallen upper shelf '+JSON.stringify([P.z,P.y]));
+
+    place(7.55,a.aisle,0);
+    walk(150);
+    if(P.x>8.17||P.x<8.13||P.y>.03)fail('walked through lower shelf '+JSON.stringify([P.x,P.y]));
+    keys.KeyW=true;jump();tick(80);keys.KeyW=false;
+    if(P.x<9.1||P.y>.02)fail('could not clear lower shelf '+JSON.stringify([P.x,P.y]));
+
+    place(7.34,a.crawlRow+.5,0);
+    walk(90);
+    if(P.x>=7.82||P.crouched)fail('could enter low opening while standing '+P.x);
+    keys.KeyX=true;walk(62);keys.KeyX=false;
+    if(P.x<=8.28||P.x>=8.8||!P.crouched)fail('could not enter low opening crouched '+P.x);
+    jump();tick(12);
+    if(!P.crouched||P.y!==0)fail('could stand or jump inside the low opening');
+    walk(110);
+    if(P.x<9.47||P.crouched)fail('did not restore standing after crawl '+JSON.stringify([P.x,P.crouched]));
+
+    const n=a.nook;
+    place((n.x0+n.x1)/2,n.z1+.38,-Math.PI/2);
+    keys.KeyX=true;walk(76);keys.KeyX=false;tick(1);
+    if(!P.crouched||!document.getElementById('prompt').textContent.includes('reading desk'))fail('did not hide under reading desk');
+    const alcove=a.alcoves[1];
+    place(alcove.x,2.43,-Math.PI/2);
+    Object.assign(mob,{x:alcove.x,z:3.22,gx:alcove.tx,gy:3,stun:0,state:0,think:0,face:Math.PI/2});
+    tick(1);
+    if(mob.state!==1)fail('Librarian failed to pursue');
+    mob.stun=2;
+    keys.KeyW=true;tick(48);keys.KeyW=false;
+    if(P.z>=1.69||!document.getElementById('prompt').textContent.includes('Hidden'))fail('failed to enter alcove '+P.z);
+    Object.assign(mob,{x:alcove.x,z:2.15,gx:alcove.tx,gy:2,stun:0,state:1,think:0});
+    tick(12);
+    if(mob.state!==0||P.hp!==3)fail('Librarian continued attacking');
+    keys.KeyS=true;tick(46);keys.KeyS=false;
+    if(P.z<2.15||document.getElementById('prompt').textContent.includes('Hidden'))fail('failed to exit alcove '+P.z);
+    place(alcove.x,1.47,Math.PI/2);
+    G.MP.host=true;
+    const guestPosition=z=>G.mpRecv({k:'p',d:14,a:[alcove.x,z,0,0,0,100,4,3,0]},'guest');
+    guestPosition(2.4);
+    Object.assign(mob,{x:alcove.x,z:3.31,gx:alcove.tx,gy:3,stun:0,state:0,think:0,calm:0});
+    tick(1);
+    if(mob.state!==1)fail('Librarian failed to pursue an exposed guest');
+    guestPosition(1.47);
+    tick(1);
+    if(mob.state!==0)fail('Librarian failed to drop pursuit of a hidden guest');
+    G.MP.host=false;G.MP.peers.clear();
+    G.startRun('CROUCH',1,true);
+    Object.assign(G.P,{yaw:0,inv:10});
+    G.resize();G.render(2);
+    const standing=G.camera.position.y;
+    G.keys.ControlLeft=true;tick(40);G.render(2);
+    if(!G.P.crouched||G.camera.position.y>standing-.29)fail('could not crouch on an ordinary floor');
+    G.keys.ControlLeft=false;tick(40);G.render(2);
+    if(G.P.crouched||G.camera.position.y<standing-.02)fail('could not stand on an ordinary floor');
+    const room=G.ROOMS;
+    room.start('bathroom',()=>{},7);
+    const eye=room.cam.position.y;
+    G.keys.KeyX=true;
+    for(let i=0;i<40;i++)room.update(1/120,G.roomInput());
+    if(room.cam.position.y>eye-.35)fail('could not crouch in a walkable strange-door room');
+    G.keys.KeyX=false;
+    room.abort();
+    const discovered=JSON.parse(localStorage.getItem('emberdeep.archive.mobs'));
+    if(discovered?.librarian?.depth!==14)fail('Librarian was not recorded in the Mob Archive');
+    return `${layouts.size} gallery layouts across depths 14, 26 and 38. Two stairs, balcony gap, fallen shelves, crouch routes, hiding and guest targeting passed.`;
+  });
+  console.log(result);
+  if(errors.length)throw new Error(errors.join('\n'));
+} finally {
+  await browser.close();
+}

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import {bobY, createRoomWalker, lookBy, lookStep} from './movement.js';
+import {bobY, createRoomWalker, lookBy, lookStep,crouchOffset} from './movement.js';
 import {cameraViewRig,sceneCameraClearance} from './camera-view.js';
 import {createArchiveHall, worldSign} from './archive-hall.js';
 import {buildAsteroidLobby,TELESCOPE_PANEL} from './asteroid-lobby.js';
@@ -25,12 +25,12 @@ const screenWidth=900,screenHeight=596;
 const clamp=THREE.MathUtils.clamp;
 export const onLiftPlatform=({x,z})=>Math.abs(x)<1.66&&z<wallZ-0.3&&z>liftGateZ;
 
-export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveLobby,mazeFov,sampleFloor,prepareLanding,landingGlimpse,passingLook,onLeavePanel,createVisitor,cameraView=()=> 'first',createAvatar}){
+export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveLobby,mazeFov,sampleFloor,prepareLanding,landingGlimpse,passingLook,onLeavePanel,createVisitor,appearance,cameraView=()=> 'first',createAvatar}){
   const scene=new THREE.Scene();
   scene.background=new THREE.Color(0x14121d);
   scene.fog=new THREE.Fog(0x17151f,24,64);
   const lobby=new THREE.Group();scene.add(lobby);
-  const bunk=createBunkRoom(sfx),bunkScene=new THREE.Scene();
+  const bunk=createBunkRoom(sfx,appearance),bunkScene=new THREE.Scene();
   bunkScene.background=scene.background;
   bunkScene.add(bunk.group,new THREE.HemisphereLight(0xddd5f9,0x877075,1.22));
   let lobbyReady=false,bunkAttached=false,hangar,hangarFront,skyMat;
@@ -61,6 +61,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
   try{newsSeen=localStorage.getItem(newsKey)===newsStamp}catch{}
   const newsIdle=()=>['Update Log',(newsSeen?'LATEST':'NEW')+'  /  '+NEWS[0].title];
   let active=true,study=null,studyYaw=0,studyPitch=0.28,studyDist=0.3,orreryAim=null;
+  let bunkAim=null;
   const orreryHint=document.createElement('div');
   orreryHint.style.cssText='position:fixed;left:0;right:0;bottom:22px;text-align:center;color:#ffe4bd;font:15px "Segoe UI",sans-serif;text-shadow:0 2px 6px #000;pointer-events:none;z-index:6';
   document.body.appendChild(orreryHint);
@@ -284,10 +285,11 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
     });
   }
   const liftDesk={x:1.09,y:1.45,z:-9.93,w:1.15,h:0.83};
-  function canWarmLift(){
-    const {x,z,vx,vz}=walker.b;
-    return lobbyReady&&!ride&&Math.hypot(x-liftDesk.x,z-liftDesk.z)<8&&Math.hypot(vx,vz)<0.1;
-  }
+  // The lift's floors are built and its shaders compiled in the background from the moment the lobby is ready, wherever you are
+  // (it used to wait until you stood still beside the lift desk, which put all of that work right where you wanted to use the panel).
+  // canWarmLift: the lobby is free for background work at all; warmStill: you are standing still, for the few steps that cost a frame.
+  function canWarmLift(){return lobbyReady&&!ride&&!isBunkPosition(walker.b.x,walker.b.z)}   // not from the bunk room: it is its own little scene
+  function warmStill(){const {vx,vz}=walker.b;return lobbyReady&&!ride&&Math.hypot(vx,vz)<0.1}
   terminals.lift=liftDesk;
   box(cabin,iron,liftDesk.x,0.51,liftDesk.z-0.16,0.76,1.04,0.37);
   box(cabin,iron,liftDesk.x,liftDesk.y,liftDesk.z-0.13,liftDesk.w+0.15,liftDesk.h+0.16,0.23);
@@ -499,10 +501,10 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
     Object.assign(walker.b,{x:0,z:13.1,y:0,vx:0,vz:0,vy:0,jumpQ:0,bob:0});
     bunk.place(walker.b.x,walker.b.z);
     view.yaw=view.pitch=0;
-    study=null;orreryAim=null;orreryHint.textContent='';
+    study=null;orreryAim=bunkAim=null;orreryHint.textContent='';
   }
   // the lobby is only the active view on the title screen; elsewhere it shows no hint and ignores the orrery keys
-  function setActive(on){active=!!on;if(!active){study=null;orreryAim=null;orreryHint.textContent=''}}
+  function setActive(on){active=!!on;if(!active){study=null;orreryAim=bunkAim=null;bunk.highlight(null);orreryHint.textContent=''}}
   function syncArchives(groups,override=false){
     for(const portal of portals){
       const entries=groups[portal.id],known=entries.filter(e=>e.data).length;
@@ -589,7 +591,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
     }
     if(camera.near!==0.06){camera.near=0.06;camera.updateProjectionMatrix()}
     const {x,y,z}=walker.b;
-    camera.position.set(x,eye+y+bobY(walker.b,walker.scale)+(ride?cabin.position.y:0),z);
+    camera.position.set(x,eye+y+bobY(walker.b,walker.scale)-crouchOffset(walker.b,eye)+(ride?cabin.position.y:0),z);
     camera.rotation.set(view.pitch,-view.yaw,0,'YXZ');camera.updateMatrixWorld();
   }
   function watchLift(motion){
@@ -618,10 +620,16 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
       const parent=(ride||p.ride)?cabin:isBunkPosition(p.x,p.z)?(bunkAttached?scene:bunkScene):lobby;
       seen.add(peer.id);
       let visitor=visitors.get(peer.id);
+      if(visitor&&visitor.look!==peer.look){
+        visitor.model.removeFromParent();visitor.model.geometry.dispose();visitor.model.material.dispose();
+        const model=createVisitor(peer);
+        model.position.copy(visitor.model.position);model.rotation.copy(visitor.model.rotation);parent.add(model);
+        Object.assign(visitor,{model,look:peer.look,frame:-1});
+      }
       if(!visitor){
         const model=createVisitor(peer);
         model.position.set(p.x,p.y,p.z);parent.add(model);
-        visitor={model,yaw:peer.hub.yaw,pace:0,frame:-1};visitors.set(peer.id,visitor);
+        visitor={model,look:peer.look,yaw:peer.hub.yaw,pace:0,frame:-1};visitors.set(peer.id,visitor);
       }
       const {model}=visitor,k=Math.min(1,dt*13);
       if(model.parent!==parent){parent.add(model);model.position.set(p.x,p.y,p.z)}
@@ -655,7 +663,14 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
     tickLift(Math.min(elapsed,0.25));
     if(active&&!ride)orrery?.animate(dt);
     pose();if(ride)cabin.updateMatrixWorld(true);
-    if(!lobbyReady){focus=null;return}
+    raycaster.setFromCamera(pointer.set(0,0),camera);
+    bunkAim=active&&!ride?bunk.aim(raycaster,walker.b):null;
+    bunk.highlight(bunkAim);
+    if(!lobbyReady||isBunkPosition(walker.b.x,walker.b.z)){
+      focus=orreryAim=null;
+      orreryHint.textContent=bunkAim?'E · '+bunkAim.label:'';
+      return;
+    }
     if(panel){
       const desk=terminals[panel];
       if(panel==='lift'&&!onLiftPlatform(walker.b)||(desk.f||1)*(walker.b.z-desk.z)<=0.08||
@@ -679,7 +694,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
     }
   }
   function placeCamera(renderScene,time){
-    externalView=!study&&viewRig.place(camera,cameraView(),eye,renderScene===bunkScene?bunkClearance:lobbyClearance);
+    externalView=!study&&viewRig.place(camera,cameraView(),eye-crouchOffset(walker.b,eye),renderScene===bunkScene?bunkClearance:lobbyClearance);
     if(!externalView)return;
     displayCamera.copy(camera,false);
     avatar??=createAvatar();
@@ -749,7 +764,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
   },{passive:true});
   return {get scene(){return scene},get camera(){return camera},update,render,markNewsSeen,get newsUnseen(){return !newsSeen},syncArchives,syncVisitors,watchLift,liftMode,setSharedLift,engageLift,reset,resetLift,setActive,
     get lobbyReady(){return lobbyReady},get bunkDoorOpen(){return bunk.open},
-    canWarmLift,
+    canWarmLift,warmStill,
     buildLobbyStep(){const build=lobbyBuilders.shift();if(!build)return false;build();return true},
     setLobbyStatus:bunk.setStatus,
     unlockLobby(){
@@ -812,7 +827,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
     },
     get liftMotion(){return ride&&{travel:ride.travel,y:cabin.position.y,extra:0,docked:ride.docked,gaps:Array.from(ride.stretch)}},
     get hangarStats(){return hangar?.stats()},
-    get aimed(){return !!(focus||orreryAim)},
+    get aimed(){return !!(focus||orreryAim||bunkAim)},
     setSkyTime(t){if(skyMat&&skyMat.uniforms)skyMat.uniforms.uTime.value=t},
     get skyTime(){return skyMat&&skyMat.uniforms?skyMat.uniforms.uTime.value:0},
     get position(){return {x:walker.b.x,z:walker.b.z,y:cabin.position.y,depth:indication,docked:!!ride?.docked}},
@@ -831,6 +846,10 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
       panel=id;
     },
     interact(){
+      pose();
+      raycaster.setFromCamera(pointer.set(0,0),camera);
+      const vanityHit=active&&!ride&&bunk.aim(raycaster,walker.b);
+      if(vanityHit){bunk.use(vanityHit);return}
       if(!lobbyReady)return;
       if(focus){activate(focus);return}
       if(orreryAim&&orrery.press(orreryAim))return;
@@ -844,8 +863,12 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
     },
     setTrophies,
     tap(x,y){
-      if(!lobbyReady)return false;
+      pose();
       const aimCamera=externalView&&!study?displayCamera:camera;
+      raycaster.setFromCamera(pointer.set(x,y),aimCamera);
+      const vanityHit=active&&!ride&&bunk.aim(raycaster,walker.b);
+      if(vanityHit){bunk.use(vanityHit);return true}
+      if(!lobbyReady)return false;
       const hit=aim(x,y,aimCamera);
       if(hit){activate(hit);return true}
       raycaster.setFromCamera(pointer.set(x,y),aimCamera);

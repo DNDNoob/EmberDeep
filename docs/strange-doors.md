@@ -169,6 +169,9 @@ temporary `table`, `choice`, or `read` focus.
 - The still wood is ordinary walking. The first pool appears after walking
   1,000 feet and gives one glimpse of the way back. Look into a different
   pool to pin the door, then walk back through it.
+- The Neon Run is a seated ride. The cart moves by itself; look with the mouse,
+  right stick or drag, and use Interact (E, click, X, Fire) to shoot, held to
+  keep firing. At the prize counter, Interact steps you out through the exit.
 - The little village is ordinary walking. Villagers run the paths until the
   sun sets and a thing comes out. A chest in the square holds an obsidian-glass
   sword. Each hit takes one limb. Kill it, then walk back through the door

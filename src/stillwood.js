@@ -2,8 +2,9 @@
 // The first pool shows the way back for a moment. Another pool can pin the door in place.
 // Once pinned, it stays put while you see the reflection or the door itself.
 import * as THREE from 'three';
-import {MOVE,bobY,createRoomWalker,lookStep,scaleFor} from './movement.js';
+import {MOVE,bobY,createRoomWalker,lookStep,scaleFor,crouchOffset} from './movement.js';
 import {getProp,natureMaterial} from './nature.js';
+import {createStillwoodBirds} from './stillwood-birds.js';
 
 const EYE=1.6;
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
@@ -337,6 +338,11 @@ function bakeSpec(seed){
   const fam=bakeFam(seed),spec={};
   for(const p of PROPS)for(let i=0;i<p.n;i++)spec[p.kind+i]={bake:p.bake||p.kind,pseed:fam+i+1,opts:Object.assign({sliceMs:5},p.opts)};
   return spec;
+}
+// The maze shares these exact bakes with the room, including their palette and cache keys.
+export function stillwoodProp(id,seed=0){
+  const {bake,pseed,opts}=bakeSpec(seed)[id];
+  return getProp(bake,pseed,opts);
 }
 // Bake a room's whole prop set ahead of time, one prop at a time in idle slices. Props depend only on seed%3, so it is shared per family and safe to call again.
 const WARM=new Map();
@@ -984,6 +990,8 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     return g;
   };
   S.G=G;
+  const birds=createStillwoodBirds(group,{seed,ground:G,open:(x,z)=>pondDist(x,z)>2.4&&!trunkAt(x,z)});
+  S.birds=()=>birds.birds.map(b=>({k:b.kind,mode:b.mode,y:+b.y.toFixed(2)}));
   const blockedAt=(x,z)=>trunkAt(x,z)||rocks.some(r=>(r.cx-x)**2+(r.cz-z)**2<(r.rb+0.9)**2);
   const walker=S.walker=createRoomWalker({o,eye:EYE,x:0,z:0,groundAt:G,snap:0.7,collide:b=>{
     for(const t of trees){
@@ -1125,7 +1133,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
   // the camera pose this frame will render with; the door's visibility is decided from exactly this pose
   const poseCam=dt=>{
     if(camY===null||b.y>G(b.x,b.z)+0.05||Math.abs(b.y-camY)>3)camY=b.y;else camY+=(b.y-camY)*Math.min(1,dt*16);
-    cam.position.set(b.x,EYE+camY+bobY(b,walker.scale),b.z);
+    cam.position.set(b.x,EYE+camY+bobY(b,walker.scale)-crouchOffset(b,EYE),b.z);
     cam.rotation.set(S.pitch,-S.yaw,0,'YXZ');
   };
   // safety net: if the forest is not baked yet, hold the room behind a black fade (up to HOLD_MAX s) so it never opens on stand-ins
@@ -1191,11 +1199,12 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     mtn.position.set(cam.position.x,cam.position.y-1,cam.position.z);
     UT.value=S.t;
     updatePonds(dt,b,moving);
+    birds.step(dt,b.x,b.z,S.yaw);
     // the eye follows the feet smoothly on the ground (stepping onto or off a stone does not pop) and exactly in the air
     if(A.watching)poseCam(dt);
   };
   onClear(()=>{
-    deadClear=true;scene.background=prevBg;rt.dispose();mtn.geometry.dispose();mtn.material.dispose();ghostBody.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()});ghostDoor.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()});
+    deadClear=true;birds.dispose();scene.background=prevBg;rt.dispose();mtn.geometry.dispose();mtn.material.dispose();ghostBody.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()});ghostDoor.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()});
     const gs=new Set([ground.geometry,padGeo,cupGeo,waterGeo,...Object.values(holders)]);
     for(const s of slots){gs.add(s.near.geometry);gs.add(s.farM.geometry);s.near.dispose();s.farM.dispose()}
     for(const g of gs)g.dispose();

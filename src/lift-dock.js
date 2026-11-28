@@ -15,7 +15,9 @@ export function mountLiftDock(floor,distances){
   const sealed=i=>g[i]===0&&distances[i]<0;
   let best=null;
   for(const [fx,fz] of [[1,0],[-1,0],[0,1],[0,-1]]){
-    const width=fx?H:W,length=fx?W:H;
+    // The bottom edge belongs to the sanctuary approach on these floors.
+    if(floor.mazeH&&fz<0)continue;
+    const width=fx?(floor.mazeH||H):W,length=fx?W:H;
     for(let side=1;side<width-1;side++){
       const tx=fx?(fx>0?0:W-1):side,tz=fz?(fz>0?0:H-1):side;
       const cells=[];

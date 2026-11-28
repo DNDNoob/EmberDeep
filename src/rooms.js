@@ -4,6 +4,7 @@
 //   fall    there is no floor behind the door
 //   mirror  you stand behind a one-way mirror, watching a parlor; something comes in and then looks back at you
 //   bathroom  a locked bathroom: wipe (gently) until the paper comes back white, then you may leave (src/bathroom.js)
+//   neonride  a neon dark ride: a cart rolls you past wooden alien cutouts to shoot; the score buys a prize at the end (src/neon-ride.js)
 // Each room owns its own scene. See docs/strange-doors.md for the authoring workflow.
 import * as THREE from 'three';
 import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
@@ -19,8 +20,9 @@ import {mooseDefenseRoom} from './moose-defense.js';
 import {stillwoodRoom} from './stillwood.js';
 import {hamletRoom} from './hamlet.js';
 import {bathroomRoom} from './bathroom.js';
-import {MOVE,lookStep,lookBy,bobAdvance,bobY,createRoomWalker} from './movement.js';
 import {cameraViewRig,sceneCameraClearance} from './camera-view.js';
+import {neonRideRoom} from './neon-ride.js';
+import {MOVE,lookStep,lookBy,bobAdvance,bobY,createRoomWalker,crouchOffset} from './movement.js';
 import {spotted} from './room-mobs.js';
 import {PLANETS,binaryPolar,orbitalPosition,orbitPolar} from './kepler-system.js';
 
@@ -36,6 +38,7 @@ export const DOOR_KINDS={
   stillwood:{name:'a door into the still wood',look:'stillwood',touchUse:false,infinite:true},
   hamlet:{name:'a door into a little village',look:'hamlet'},
   bathroom:{name:'the bathroom',look:'bathroom',action:'USE'},   // wipe until the paper comes back white; the door stays locked until then
+  neonride:{name:'the Neon Run',look:'neon',action:'FIRE',fadeIn:1.2},   // a dark ride: shoot the wooden aliens from the cart, win a prize
 };
 const modeOf=k=>DOOR_KINDS[k]?.mode||'walk';
 
@@ -716,7 +719,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       const B=basis();S.aim=K.over||WK.inAir()?-1:pick(B.f,SNAP);
     };
     // the eye follows the jump and the footstep bob; a watcher gets the same bob from how far the view really moved
-    const view=()=>{S.eyeY=EYE+S.jy+bobY(WK.b,WK.scale)};
+    const view=()=>{S.eyeY=EYE+S.jy+bobY(WK.b,WK.scale)-crouchOffset(WK.b,EYE)};
     const watchView=dt=>{
       const wr=a=>((a+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;
       if(!S.hasPose||Math.hypot(S.tx-S.vx,S.tz-S.vz)>4){S.vx=S.tx;S.vz=S.tz;S.vyaw=S.tyaw;S.vpitch=S.tpitch;S.hasPose=true;return}
@@ -1197,7 +1200,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       }});
     Object.defineProperty(S,'px',{get:()=>WK.b.x,set:v=>{WK.b.x=v}});Object.defineProperty(S,'pz',{get:()=>WK.b.z,set:v=>{WK.b.z=v}});Object.defineProperty(S,'jy',{get:()=>WK.b.y,set:v=>{WK.b.y=v}});
     // the eye: standing height, the jump, the footstep bob, and a dip when you land
-    const view=dt=>{S.dip*=Math.exp(-dt*11);S.eyeY=1.6+bobY(WK.b,WK.scale)+S.jy-S.dip};
+    const view=dt=>{S.dip*=Math.exp(-dt*11);S.eyeY=1.6+bobY(WK.b,WK.scale)+S.jy-crouchOffset(WK.b,1.6)-S.dip};
     const walk=(dt,inp,hold,ok)=>{
       holdNow=hold;
       // not while it breaks through, not when you spray it: you stand still (and a jump already begun keeps going)
@@ -1552,13 +1555,14 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     return S;
   }
 
-  const theater=createTheater({renderer,scene,cam,o,A,canvasTex,glow,clamp,ss,lerp,nf,rnd,getGroup:()=>group,onClear:fn=>clearHooks.push(fn),finish:r=>finish(r),createRoomWalker,MOVE,lookStep,bobAdvance,bobY});
+  const theater=createTheater({renderer,scene,cam,o,A,canvasTex,glow,clamp,ss,lerp,nf,rnd,getGroup:()=>group,onClear:fn=>clearHooks.push(fn),finish:r=>finish(r),createRoomWalker,MOVE,lookStep,bobAdvance,bobY,crouchOffset});
   const monoliths=(seed=7)=>monolithRoom({group,cam,o,A,finish,rand:rng32(seed),seed});
   const moose=()=>mooseDefenseRoom({group,scene,cam,o,A,finish,onClear:fn=>clearHooks.push(fn)});
   const stillwood=(seed=7)=>stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear:fn=>clearHooks.push(fn),seed});
   const hamlet=(seed=7)=>hamletRoom({group,scene,cam,o,A,finish,onClear:fn=>clearHooks.push(fn),seed});
   const bathroom=(seed=7)=>bathroomRoom({group,scene,cam,o,A,finish,onClear:fn=>clearHooks.push(fn),seed});
-  const KINDS={galaxy,fall,kiln,mirror,theater,monoliths,moose,stillwood,hamlet,bathroom};
+  const neonride=(seed=7)=>neonRideRoom({group,scene,cam,o,A,finish,onClear:fn=>clearHooks.push(fn),seed});
+  const KINDS={galaxy,fall,kiln,mirror,theater,monoliths,moose,stillwood,hamlet,bathroom,neonride};
   for(const kind of Object.keys(DOOR_KINDS))if(!Object.hasOwn(KINDS,kind))throw new Error('Missing room factory for '+kind);
   A.mode=modeOf;
   A.controlMode=()=>cur?.controlMode?.()||modeOf(A.kind);
@@ -1613,7 +1617,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     cam.updateProjectionMatrix();
     const walker=cur.walker,view=o.cameraView?.()||'first';
     externalView=!!walker&&!A.watching&&A.controlMode()==='walk'&&(cur.tableMix||0)<0.01
-      &&!cur.veil?.visible&&viewRig.place(cam,view,walker.eye,cameraClearance);
+      &&!cur.veil?.visible&&viewRig.place(cam,view,walker.eye-crouchOffset(walker.b,walker.eye),cameraClearance);
     const hand=cur.hand,showHand=hand?.visible;
     if(externalView){
       localAvatar??=o.createAvatar();
