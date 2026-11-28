@@ -7,6 +7,12 @@
 // it is, or how to trigger it. No code names, file names, PR numbers or agent names.
 // Group small fixes into one post. Rebuild index.html afterwards (npm run build).
 export const NEWS=[
+  {date:'2026-11-28',title:'Dance like nobody is watching',
+    body:'Press T in the maze to break into a dance, and press it again for the next one: six to choose from, from Disco Fever to The Robot. Everyone in your game can see your moves. Walk off to stop. Chat is on Enter now.'},
+  {date:'2026-11-27',title:'Room for everyone on the Neon Run',
+    body:'Open that humming door in a shared game and the whole party gets pulled onto the ride with you, one cart each in a little train. Every rider shoots for their own score and their own prize, and the board at the end shows who had the steadiest aim.'},
+  {date:'2026-11-27',title:'A smoother lobby and lift',
+    body:'The lobby no longer stutters while you walk around it, and the lift no longer freezes on the way down, even if you jump straight in. The deeper floors are now readied in small pieces while you stand still, and nothing is built on the spot mid-ride.'},
   {date:'2026-11-27',title:'A new point of view',
     body:'Try Third person to see your Delver from behind, or Second person to face them from the front. Choose Camera view in Settings or press J to switch while you play.'},
   {date:'2026-11-27',title:'A door that hums',

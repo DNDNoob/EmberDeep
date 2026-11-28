@@ -13,6 +13,7 @@ import {createVoice} from './voice.js';
 import {guidePath,guideBeacon,GUIDE_RANGE} from './guide.js';
 import {createRooms,kilnGame,KILN,DOOR_KINDS} from './rooms.js';
 import {NEON_PRIZES,neonTier} from './neon-ride.js';
+import {EMOTES,emotePose,BPM as EMOTE_BPM} from './emotes.js';
 import {animalHitEffects,mooseModel,scoutGooseModel,MOOSE_ACH,MOOSE_SPIKE_PRICE} from './moose-defense.js';
 import {stillwoodWarm,stillwoodWarmState} from './stillwood.js';
 import {ROOM_MOBS} from './room-mobs.js';
@@ -2578,10 +2579,10 @@ function pickTalk(){
   q.fn();if(talk)buildTalk();
 }
 function moveTalk(d){if(!talk)return;const n=talk.opts.length;talk.sel=(talk.sel+d+n)%n;buildTalk()}
-function act(flash=true){if(loading||FX.frozen)return;if(P.down){mpCycle();return}if(state==='play'&&helpStart())return;if(state==='play'&&F&&F.boss&&bpUse())return;if(floorLiftInReach())openStation('lift');else if(state==='play'&&nearNpc)openTalk(nearNpc);else if(state==='play'&&nearDoor)sdoorOpen(nearDoor,true);else if(flash)useFlash()}
+function act(flash=true){if(loading||FX.frozen)return;emoteStop();if(P.down){mpCycle();return}if(state==='play'&&helpStart())return;if(state==='play'&&F&&F.boss&&bpUse())return;if(floorLiftInReach())openStation('lift');else if(state==='play'&&nearNpc)openTalk(nearNpc);else if(state==='play'&&nearDoor)sdoorOpen(nearDoor,true);else if(flash)useFlash()}
 // mouse: left click attacks with a weapon in hand (or talks / opens when you have none), right click flashes
-function clickL(){if(state!=='play')return;if(P.down){mpCycle();return}if(floorLiftInReach())act(false);else if(wHeld()&&!nearNpc&&!nearDoor)wAttack();else if(F&&F.boss&&!nearNpc&&!nearDoor)wPunch();else act(false)}
-function clickR(){if(state!=='play')return;if(P.down){mpCycle();return}if(!loading&&!FX.frozen)useFlash()}
+function clickL(){if(state!=='play')return;emoteStop();if(P.down){mpCycle();return}if(floorLiftInReach())act(false);else if(wHeld()&&!nearNpc&&!nearDoor)wAttack();else if(F&&F.boss&&!nearNpc&&!nearDoor)wPunch();else act(false)}
+function clickR(){if(state!=='play')return;emoteStop();if(P.down){mpCycle();return}if(!loading&&!FX.frozen)useFlash()}
 
 /* ---------- the Wheel of Misfortune ---------- */
 // Pat Sajak stands beside the wheel in every sanctuary. A spin costs 10 gems. The result is drawn when the spin starts and the disc is planned to
@@ -4357,7 +4358,7 @@ function potHud(){
   // the weapon's cooldown on its slot, and the crosshair while one is in hand
   const held=wHeld(),cdEl=held&&D.wl.querySelector('.w.on .cd');
   if(cdEl){const f=W.cd>0?Math.min(1,W.cd/Math.max(0.05,wStats(held).cd)):0,h=(f*100).toFixed(0)+'%';if(cdEl.style.height!==h)cdEl.style.height=h}
-  const xOn=!!held&&state==='play'&&!P.down&&!P.hug&&!FX.frozen&&!(mazeExternalView&&cameraView==='second'),xh=D.xh;
+  const xOn=!!held&&state==='play'&&!P.down&&!P.hug&&!FX.frozen&&!(mazeExternalView&&(cameraView==='second'||EMO.id!=null)),xh=D.xh;
   if(xh.style.display!==(xOn?'block':'none'))xh.style.display=xOn?'block':'none';
   if(xOn){const sh=WEAPON[held].kind==='shot',g=(sh?5:7)+12*W.swing+(W.cd>0?2:0),L=sh?7:5,key2=held+'|'+g.toFixed(1);
     if(xh.dataset.k!==key2){xh.dataset.k=key2;const q=(c,css)=>xh.querySelector(c).style.cssText=css;
@@ -5074,6 +5075,39 @@ function grannyPlayerTick(dt){
   const live=state==='play'&&!P.down,o=live?Math.min(1,(P.woozy||0)/2):0;if(Math.abs((+GRAN.el.style.opacity||0)-o)>0.02)GRAN.el.style.opacity=o.toFixed(2);
   const ko=live&&P.kissT>0?Math.min(1,P.kissT):0;if(Math.abs((+GRAN.kiss.style.opacity||0)-ko)>0.02)GRAN.kiss.style.opacity=ko.toFixed(2);
 }
+/* ---------- dance emotes (src/emotes.js) ---------- */
+// T starts a dance, T again moves on to the next one; walking, jumping, using, attacking or anything that takes you out of play stops it.
+// In first person the camera swings round to face you while you dance. Everyone in the game sees it ({k:'emo'}), and you hear a beat.
+const EMO={id:null,t0:0,last:-1,beat:-1,btn:null};
+function emoteNext(){
+  if(state!=='play'||P.down||P.ko>0||P.away||P.eaten>0||FX.frozen||P.hug||P.grab||P.mounted||FX.baby>0||FX.hedge>0||wofForm()||webLocked())return false;
+  const id=EMO.id==null?(EMO.last+1)%EMOTES.length:(EMO.id+1)%EMOTES.length;
+  EMO.id=id;EMO.last=id;EMO.t0=R.time;EMO.beat=-1;
+  say(EMOTES[id].name+'  ·  '+(touch.on?'DANCE':'T')+' for the next one, move to stop',2.2);
+  mpSend({k:'emo',e:id});
+  return true;
+}
+function emoteStop(){
+  if(EMO.id==null)return;
+  EMO.id=null;mpSend({k:'emo',e:-1});
+}
+function emoteTick(dt){
+  if(EMO.btn)EMO.btn.classList.toggle('on',EMO.id!=null);
+  if(EMO.id==null)return;
+  if(state!=='play'||P.down||P.ko>0||P.away||P.eaten>0||FX.frozen||P.hug||P.grab||Math.hypot(P.vx,P.vz)>0.25||P.y>0.03||webLocked()){emoteStop();return}
+  // the beat: a kick on every beat, a hat between, and a little bass line that changes with the dance
+  const b=Math.floor((R.time-EMO.t0)*EMOTE_BPM/60*2);
+  if(b!==EMO.beat&&ac){EMO.beat=b;const on=b%2===0,bars=[[55,55,65,49],[49,49,73,49],[62,62,55,69],[55,82,65,73],[73,65,55,49],[65,73,82,73]][EMO.id];
+    if(on){tone(60,0.18,'sine',0.12,0,-40);tone(bars[(b/2|0)%4],0.22,'sawtooth',0.03,0,-10)}else noise(0.04,0.03,7000,2)}
+}
+function emoteButton(){
+  if(EMO.btn||!$('touch'))return;
+  const b=document.createElement('div');b.id='tDance';b.className='tbtn';b.textContent='DANCE';
+  b.style.cssText='bottom:calc(282px + env(safe-area-inset-bottom));right:calc(24px + env(safe-area-inset-right));width:60px;height:60px;font-size:11px';
+  b.addEventListener('touchstart',e=>{e.preventDefault();e.stopPropagation();emoteNext()},{passive:false});
+  $('touch').appendChild(b);EMO.btn=b;
+}
+emoteButton();
 /* ---------- the Silk Spinner (creature type 10), the face slugs (creature type 8), and being downed ---------- */
 // Floors ending in 9 have a spider. It is little at first, but if it catches you it starts spinning silk around you, and the silk
 // stays: the more of it, the slower you go (P.web, 0-100, shown as a meter). Only Web-Be-Gone dissolves it. At 100 you are wrapped
@@ -6647,6 +6681,7 @@ const ROOMS=createRooms(renderer,{post:POST,low:Q===0,ao:Q>=2,
   damage:()=>{if(!P.ward&&P.hp<=1&&!(up.wind&&!R.wind))return true;hurt(null);return false},
   hearts:()=>'♥'.repeat(Math.max(0,P.hp))+'<span style="opacity:.4">'+'♥'.repeat(Math.max(0,maxHp()-P.hp))+'</span>',
   gems:n=>{wallet+=n;R.gems+=n;store.set('wallet',wallet)},sfx:n=>sfx(n),
+  neon:{party:()=>NR.party,send:m=>mpSend(m),peers:()=>NR.peers,take:()=>NR.events.splice(0)},
   mooseSpikes:()=>P.spikeTraps,useMooseSpike:()=>{if(P.spikeTraps<1)return false;P.spikeTraps--;return true},
   mooseGems:()=>previewStamina?.mooseGems??wallet,
   mooseTableFocus:on=>{
@@ -6717,8 +6752,39 @@ function sdoorOpen(D,showProgress=false){
   const seed=doorSeed(D);
   remember('doors',D.kind,{seed,depth:R.depth,look:doorLookOf(D),tx:D.tx,ty:D.ty,ph:D.ph,stone:F.stone.slice()});
   if(!showProgress)buildStatic(F);
+  if(D.kind==='neonride')nrPullAll(seed);
   beginRoom(D.kind,roomEnd,seed,showProgress);
   if(DOOR_KINDS[D.kind]?.infinite)achieve('infinite',ACH_DEFS.infinite.title,ACH_DEFS.infinite.desc);
+}
+// ---- the Neon Run is a party ride: whoever opens its door pulls every other player in the run (on any floor) in with them. They ride
+// one train of carts in the order of the list the opener sends ({k:'nrPull'}), each with their own blaster, score and prize. Riders
+// tell each other where they aim and their score five times a second ({k:'nrSt'}), and send their shots and the cutouts they knock down
+// ({k:'nrShot'}, {k:'nrHit'}); the room (src/neon-ride.js) reads all that through o.neon. Anyone who cannot come just then (dead, down,
+// behind another door, in a cut scene) is left out, and their seat stays an empty cart.
+const NR={party:null,peers:new Map(),events:[]};
+function nrPullAll(seed){
+  NR.party=null;NR.peers.clear();NR.events.length=0;
+  if(!MP.on)return;
+  const seats=[{id:MP.id,name:myName(),col:localPlayerColor()}];
+  for(const p of MP.peers.values())if(p.run&&!p.down&&!p.away&&!(p.ko>0)&&mpFresh(p)&&seats.length<8)seats.push({id:p.id,name:p.name,col:p.col});
+  if(seats.length<2)return;
+  NR.party={seats,me:0};
+  mpSend({k:'nrPull',sd:seed>>>0,seats,by:myName()});
+  mpSys(myName()+' pulled everyone onto the Neon Run');
+}
+function nrPulled(m,p){
+  if(!Array.isArray(m.seats))return;
+  const seats=m.seats.slice(0,8).filter(q=>q&&typeof q.id==='string').map(q=>({id:q.id,name:String(q.name||'Rider').slice(0,16),col:Array.isArray(q.col)?q.col.slice(0,3).map(v=>clamp(+v||0,0,1)):[0.5,0.8,1]}));
+  const me=seats.findIndex(q=>q.id===MP.id);
+  if(me<0||state==='room'||state==='dead'||loading||P.down||P.ko>0||P.eaten>0||FX.frozen||P.hug||P.grab||RR)return;
+  if(state==='pause')$('pause').classList.add('hidden');
+  roomPauseHide(false);
+  if(state==='talk'){$('talk').classList.add('hidden');talk=null}
+  if(activeStation)closeStation();
+  state='play';NR.party={seats,me};NR.peers.clear();NR.events.length=0;
+  clearPrompt();RW=null;document.body.classList.remove('rwatch');
+  say((p.name||'Someone')+' pulled you onto the Neon Run!',3.5);
+  beginRoom('neonride',roomEnd,(+m.sd||7)>>>0);
 }
 function beginRoom(kind,onEnd,seed,showProgress=false){
   const door=DOOR_KINDS[kind]||{};
@@ -6753,6 +6819,7 @@ function roomLeave(){
   ROOMS.abort();roomClose();
 }
 function roomClose(){
+  NR.party=null;NR.peers.clear();NR.events.length=0;
   if(previewStamina){
     const {stam,winded,spikeTraps}=previewStamina;
     Object.assign(P,{stam,winded,spikeTraps});previewStamina=null;
@@ -7093,7 +7160,7 @@ function warmPost(){
 }
 // paint the queued wall textures a couple per frame (their shaders compiled in parallel first)
 function paintSurfaces(){
-  return SURFS.compileQueued().then(()=>new Promise(res=>{const step=()=>{if(SURFS.pump(2))requestAnimationFrame(step);else res()};step()}));
+  return SURFS.compileQueued().then(()=>new Promise(res=>{const step=()=>{if(SURFS.pump(12))requestAnimationFrame(step);else res()};step()}));   // behind a loading bar: a few surfaces a frame (each is painted in strips)
 }
 function warmFloor(){
   if(!F||state==='title')return null;
@@ -7742,6 +7809,10 @@ function mpRecv(m,from){
       break;
     case 'wh':{if(!MP.host||!inRun||!here||!Array.isArray(m.h))break;for(const h of m.h.slice(0,24))if(h&&Number.isInteger(h.i)&&Number.isFinite(+h.d)&&+h.d<50)wApply(h,from);break}
     case 'gw':{if(fromHost&&inRun&&here)grannyWoozy();break}
+    case 'nrPull':{if(inRun)nrPulled(m,p);break}
+    case 'emo':{const e=m.e|0;p.emote=e>=0&&e<EMOTES.length?{id:e,t0:R.time}:null;break}
+    case 'nrSt':{if(NR.party&&NR.party.seats.some(q=>q.id===from))NR.peers.set(from,{y:clamp(+m.y||0,-4,4),p:clamp(+m.p||0,-2,2),sc:m.sc|0,e:m.e?1:0});break}
+    case 'nrShot':case 'nrHit':{if(NR.party&&state==='room'&&ROOMS.kind==='neonride'&&NR.party.seats.some(q=>q.id===from)){NR.events.push({k:m.k,id:m.id|0,to:Array.isArray(m.to)?m.to.slice(0,3).map(Number):null,by:from});if(NR.events.length>200)NR.events.shift()}break}
     case 'slx':{if(fromHost&&inRun&&here&&F.shades.some(q=>q.type===8)){const n=Math.min(m.n|0,F.shades.length+400);while(F.shades.length<n)slugNew()}break}
     case 'spe':{if(fromHost&&inRun&&here)spiderEaten();break}
     case 'spl':{if(fromHost&&inRun&&here&&Array.isArray(m.a))for(const q of m.a){const s=Array.isArray(q)&&F.shades[q[0]|0];if(s&&s.type===10)s.lv=clamp(q[1]|0,1,99)}break}
@@ -8011,15 +8082,17 @@ function buildPlayer(p,t,rev,et){
   const cloak=[c[0]*0.72,c[1]*0.72,c[2]*0.72,2],cloakD=[c[0]*0.42,c[1]*0.42,c[2]*0.42,2];
   const leg=[0.22,0.17,0.13,2],boot=[0.3,0.19,0.1,3],belt=[0.3,0.17,0.08,3],skin=appearanceColor(look,appearanceField.skin),wood=[0.36,0.23,0.12,6],rag=[0.13,0.1,0.08,2];
   const S=AV,v=(x,y,z)=>[x*S,y*S,z*S],ph=hashStr(p.id)%100;
-  const crouch=rev?0:p.crouchBlend||0,hipY=.45-.31*crouch;
+  const em=!rev&&p.emote&&!(p.ko>0)&&!(p.spd>0.6)?emotePose(p.emote.id,R.time-p.emote.t0):null;   // dancing (src/emotes.js)
+  const crouch=rev?0:Math.max(p.crouchBlend||0,em?em.crouch:0),hipY=.45-.31*crouch;
   const mv=Math.min(1,p.spd/2.7),w=p.walk,sw=Math.sin(w)*mv,bob=Math.abs(Math.cos(w))*0.018*mv,breath=Math.sin(t*1.7+ph)*0.004;
   const B={p:[p.rx,Math.max(0,p.ry),p.rz],R:rYaw(p.ryaw)};
   if(p.ko>0&&!rev){B.p[1]=0.06;B.R=m3(B.R,rZ(1.45))}   // down: flat on their back
+  if(em){B.p[1]+=em.lift;B.R=m3(B.R,m3(rYaw(em.turn),m3(rX(em.lean),rZ(-em.bend))))}
   // the dance-off: a groove while the round lasts, and a move for each arrow hit (lane 0 left, 1 down, 2 up, 3 right)
   const dz=p.dz&&R.time-p.dz.t<0.55?p.dz:null,dk=dz?Math.sin(Math.min(1,(R.time-dz.t)/0.55)*Math.PI)**0.6:0,dl=dz?dz.lane:-1,dancing=p.dz&&R.time-p.dz.t<3;
   if(dancing){B.p[1]+=Math.abs(Math.sin(R.time*7+ph))*0.02+(dl===2?0.07*dk:dl===1?-0.05*dk:0);B.R=m3(B.R,rX((dl===0?-0.22:dl===3?0.22:0)*dk+Math.sin(R.time*3.5+ph)*0.06))}
   for(const z of[-1,1]){
-    const st=sw*z;
+    const st=em?em.legs[z>0?1:0]:sw*z;
     const hip=v(0,hipY,z*.052),knee=v(.012+.09*st+.125*crouch,.25+.03*Math.max(0,st)-.11*crouch,z*.058),ank=v(.17*st,.05+.06*Math.max(0,-st),z*.062);
     seg(B,hip,knee,0.047*S,0.038*S,leg);ball(B,knee,0.04*S,leg,true);seg(B,knee,ank,0.04*S,0.03*S,boot);
     ball(B,[ank[0]+0.03,ank[1]-0.02,ank[2]],[0.062*S,0.03*S,0.036*S],boot,true);
@@ -8035,6 +8108,7 @@ function buildPlayer(p,t,rev,et){
   const la=-sw*0.09;
   const mix=(a,b,k)=>a.map((q,i)=>q+(b[i]-q)*k);
   let LH=v(0.02+la,0.01,-0.115),LE=v(-0.01+la*0.6,0.11+breath,-0.135),W1=v(0.16,0.17+breath,0.12),RE=v(0.05,0.11+breath,0.15);
+  if(em){const elb=(sh,h,zs)=>[(sh[0]+h[0])/2+0.03*S,(sh[1]+h[1])/2-0.03*S,(sh[2]+h[2])/2+zs*0.04*S];LH=v(...em.L);W1=v(...em.R);LE=elb(v(0,0.225,-0.1),LH,-1);RE=elb(v(0,0.225,0.1),W1,1)}
   if(dz){
     const L2=dl===0?v(0.02,0.4,-0.34):dl===2?v(0.03,0.52,-0.12):dl===1?v(0.16,0.12,-0.1):v(0.04,0.2,-0.2);
     const R2=dl===3?v(0.02,0.4,0.34):dl===2?v(0.03,0.52,0.12):dl===1?v(0.18,0.12,0.1):v(0.04,0.2,0.2);
@@ -8046,7 +8120,7 @@ function buildPlayer(p,t,rev,et){
   const tb=[W1[0]+0.004,W1[1]-0.05,W1[2]],tt=[W1[0]+0.03,W1[1]+0.13,W1[2]];
   seg(U,tb,tt,0.011,0.013,wood);ball(U,tt,[0.02,0.018,0.02],rag,true);
   seg(U,v(0,0.27+breath,0),v(0.003,0.31+breath,0),0.027*S,0.026*S,skin);
-  const H=subF(U,v(0.003-0.03*rev,0.305+breath+0.02*rev,0),rev?m3(rZ(rev*1.05),rX(rev*0.35+Math.sin(t*23)*0.04*rev)):rZ(clamp(p.rpitch,-0.6,0.6)*0.7));
+  const H=subF(U,v(0.003-0.03*rev,0.305+breath+0.02*rev,0),rev?m3(rZ(rev*1.05),rX(rev*0.35+Math.sin(t*23)*0.04*rev)):m3(rZ(clamp(p.rpitch,-0.6,0.6)*0.7),rYaw(em&&em.head||0)));
   const bk=p.bob?3:1,HS={p:H.p,R:H.R.map(q=>q*S*bk)};   // Bobblehead: the head grows from the neck and wobbles
   if(p.bob){const w=m3(rZ(Math.sin(t*6+ph)*0.25),rX(Math.sin(t*4.3+ph)*0.2));HS.R=m3(HS.R,w)}
   playerHead(HS,look,skin,cloak,cloakD,((t*0.23+ph*0.01)%1)<0.035?0.12:1);
@@ -8512,7 +8586,8 @@ addEventListener('keydown',e=>{
     if(e.code==='KeyI')invOpen();
     if(e.code==='KeyB')potThrow();
     if(e.code==='Escape'||e.code==='KeyP')pause();
-    if((e.code==='Enter'||e.code==='NumpadEnter'||e.code==='KeyT')&&MP.on){e.preventDefault();chatOpenBox()}
+    if(e.code==='KeyT')emoteNext();   // dance (chat is on Enter)
+    if((e.code==='Enter'||e.code==='NumpadEnter')&&MP.on){e.preventDefault();chatOpenBox()}
   }else if(state==='room'){
     if((e.code==='KeyT'||roomMode!=='table'&&(e.code==='Enter'||e.code==='NumpadEnter'))&&MP.on){e.preventDefault();chatOpenBox()}
   }else if(state==='talk'&&talk&&talk.inv)invKey(e);
@@ -9062,7 +9137,7 @@ function update(dt){
   } // end of the living player's turn
   wofTick(dt);if(state==='dead')return;
   potTick(dt);if(state==='dead')return;
-  wTick(dt);if(!MP.guest)wMonTick(dt);bossClientTick(dt);if(state==='dead')return;fizzPlayerTick(dt);grannyPlayerTick(dt);crawlPlayerTick(dt);trollClientTick(dt);grannyVoiceTick(dt);
+  wTick(dt);if(!MP.guest)wMonTick(dt);bossClientTick(dt);if(state==='dead')return;fizzPlayerTick(dt);grannyPlayerTick(dt);crawlPlayerTick(dt);trollClientTick(dt);emoteTick(dt);grannyVoiceTick(dt);
   // the humming rooms: lights that fail, knocking in the walls, a map that will not hold
   if(F.back){
     if(!MP.guest){
@@ -9900,7 +9975,7 @@ function buildLocalAvatar(){
 const mazeAvatar=()=>Object.assign(localAvatarPose(),{
   rx:P.x,ry:P.y+(P.mounted?0.35:0),rz:P.z,ryaw:P.yaw,rpitch:P.pitch,
   spd:Math.hypot(P.vx,P.vz),walk:P.bob,form:wofForm(),fat:FX.fat>0,pox:FX.pox>0,bob:FX.bob>0,curl:FX.curl,
-  weapon:wHeld(),mirror:R.mirror,crouchBlend:P.crouchBlend,baby:FX.baby>0,
+  weapon:wHeld(),mirror:R.mirror,crouchBlend:P.crouchBlend,baby:FX.baby>0,emote:EMO.id!=null?{id:EMO.id,t0:EMO.t0}:null,
 });
 
 function render(t){
@@ -9916,7 +9991,8 @@ function render(t){
   sanctuaryDisplay.update(F,R.depth,!title&&!STUDIO,ex,ez,t,sanctuaryPeers);
   {const cp=Math.cos(pitch);camera.position.set(ex,ey,ez);camera.lookAt(ex+cp*Math.cos(yaw),ey+Math.sin(pitch),ez+cp*Math.sin(yaw))}
   const viewAllowed=!SC&&!title&&state!=='dead'&&!P.down&&!P.away&&!P.hug&&!P.ko&&!P.eaten&&!GL.fall;
-  mazeExternalView=viewAllowed&&cameraView!=='first'&&mazeView.place(camera,cameraView,EYE-crouchOffset(P,EYE),
+  const viewNow=cameraView==='first'&&EMO.id!=null?'second':cameraView;   // a dance in first person turns the camera round to watch it
+  mazeExternalView=viewAllowed&&viewNow!=='first'&&mazeView.place(camera,viewNow,EYE-crouchOffset(P,EYE),
     mazeCameraClearance,mazeCameraCeiling(ex,ey,ez));
   if(FX.flyT>0&&!title){const k=Math.min(1,FX.flyT/1.2);camera.rotateZ(Math.sin(t*FX.spin)*0.5*k);camera.rotateX(Math.cos(t*FX.spin*0.7)*0.25*k)}   // tumbling through the air
   if(FX.bob>0&&!title){camera.rotateZ(Math.sin(t*2.3)*0.06);camera.rotateX(Math.sin(t*1.7)*0.03)}
@@ -10348,9 +10424,11 @@ function step(now){
     else if(!hub.riding)hub.watchLift(null);
     // Leave the locked room's input and draw on the animation frame. The lobby gets one step in a separate idle callback.
     if(!hub.lobbyReady)scheduleLobbyWarm();
-    else if(!hub.canWarmLift())liftWarmSince=0;
-    else{if(!liftWarmSince)liftWarmSince=now;   // the first steps into the lobby stay smooth: walking only warms after a few seconds there
-      if(now-liftWarmLast>(activeStation?400:hub.warmStill()?0:now-liftWarmSince<3000?1e9:250))scheduleLiftWarm()}   // flat out while you stand still, now and then while you walk, and only a trickle (no heavy steps) while a panel is open
+    else if(!hub.canWarmLift()||!hub.warmStill())liftWarmSince=0;
+    // The lift's floors are prepared only while you stand still in the lobby (outside the bunk room), after a moment, a small step per
+    // frame, and as a slow trickle while the lift panel is open. Never while you walk: every step costs GPU time, and doing them as
+    // you moved made the whole lobby stutter.
+    else{if(!liftWarmSince)liftWarmSince=now;if(now-liftWarmSince>600&&now-liftWarmLast>(activeStation?300:0))scheduleLiftWarm()}
     hub.syncVisitors(MP.on?[...MP.peers.values()].filter(p=>p.hub&&now-p.hub.at<15000):[],dt,now/1000);
     updateSettingsScreen();
     $('hubCross').classList.toggle('ready',hub.aimed);
@@ -10363,9 +10441,13 @@ function frame(now){
   try{frameBody(now)}catch(error){console.error(error)}
   requestAnimationFrame(frame);
 }
+// how much background work a frame can take: a few strips of surface painting when frames are coming quickly, one when they are not
+let frameEma=1/60;
+const workBudget=()=>frameEma<0.018?4:frameEma<0.026?2:1;
 function frameBody(now){
   advanceLoading(now);
   const raw=step(now);
+  if(raw>0&&raw<0.5)frameEma+=(raw-frameEma)*0.1;
   resize();   // size the canvas and the composer from the very first frame, not after the loading screen (a late first resize stalls on everything queued)
   if(loading&&loading.index<loading.stages.length)return;
   mpVoiceTick(Math.min(raw,0.1));chatTick();
@@ -10949,6 +11031,9 @@ function buildGlimpseProto(depth,turn){
   proto.rotation.y=angle;proto.scale.setScalar(k);
   proto.position.set(-k*(Math.cos(angle)*ex+Math.sin(angle)*ez),0,-k*(-Math.sin(angle)*ex+Math.cos(angle)*ez));
   proto.userData.floor=look;
+  // compiled in the background before it is ever shown: a glimpse drawn with a fresh material compiled it in the middle of the ride
+  proto.userData.ready=false;
+  {const p=hub.compileObject(proto),ok=()=>{proto.userData.ready=true};if(p&&p.then)p.then(ok,ok);else ok()}
   glimpseProto.set(surf,proto);
   return proto;
 }
@@ -10960,6 +11045,7 @@ function landingGlimpse(seed,depth,build=true){
   const turn=hashStr(seed+'#mouth'+depth)%3;
   if(!build&&!glimpseProto.has(glimpseSurf(depth,turn)))return null;
   const proto=buildGlimpseProto(depth,turn);
+  if(proto.userData.ready===false)return null;   // still compiling: the car waits a moment rather than stall on it
   const group=new THREE.Group();
   group.name='Passing floor';group.add(proto.clone());group.userData.floor=proto.userData.floor;
   glimpseCache.set(key,group);
@@ -11000,7 +11086,7 @@ function prepareLanding(seed,depth){
       }
       else if(stage===2){task.model=landingView(task.floor,task.mesh);task.progress=0.4;stage++}
       else if(stage===3){task.progress=0.45;wait(SURFS.compileQueued())}
-      else if(stage===4){if(!SURFS.pump(1))stage++;task.progress=Math.max(task.progress,0.5+0.2*(1-SURFS.pending/12))}
+      else if(stage===4){if(!SURFS.pump(workBudget()))stage++;task.progress=Math.max(task.progress,0.5+0.2*(1-SURFS.pending/12))}
       else if(stage===5){
         buildStatic(task.floor);buildSdf(task.floor);
         task.decorN=DEC.n;task.decor=DEC.buf.slice(0,DEC.n*13);
@@ -11116,10 +11202,10 @@ function scheduleLiftWarm(){
   liftWarmScheduled=true;
   afterLiftFrame(()=>{
     liftWarmScheduled=false;
-    if(state!=='title'||loading||!hub.canWarmLift())return;
+    if(state!=='title'||loading||!hub.canWarmLift()||!hub.warmStill())return;
     liftWarmLast=performance.now();
     const wl=window.__warmLog;let ws=wl&&performance.now();
-    SURFS.idle();
+    SURFS.idle(workBudget());
     if(wl){wl.push(['surfs idle',performance.now()-ws]);ws=performance.now()}
     const r=liftCachePump();
     if(wl){wl.push(['lift pump',performance.now()-ws]);ws=performance.now()}
@@ -11232,7 +11318,7 @@ function pipeWarmPump(){
   if(PIPE.busy)return true;
   if(!renderer.compileAsync)return false;
   // things the first frames of a floor would otherwise build on the spot, one per idle frame
-  if(PIPE.pre.length){PIPE.pre.shift()();return true}
+  if(PIPE.pre.length){const wl=window.__warmLog,ws=wl&&performance.now(),f=PIPE.pre.shift();f();if(wl)wl.push(['pipe pre '+(f.name||'?'),performance.now()-ws]);return true}
   const tasks=pipeTasks();
   if(!tasks.length&&PIPE.fx)return false;
   // wait until the first landing is built: its surfaces are what the first frames will need
@@ -11262,6 +11348,9 @@ function* prepareLobby(){
   while(hub.buildLobbyStep())yield ['FURNISHING LOBBY',0.25];
   yield ['PREPARING ARCHIVES',0.5,refreshHub];
   yield ['LIGHTING THE LOBBY',0.75,()=>hub.compileLobby()];
+  // the maze's own one-off set-up (its reflections, the wheel, the falling scene) is done here, behind the bunk room, instead of on the
+  // lift ride, where it stalled the car
+  while(PIPE.pre.length)yield ['LIGHTING THE DEEP',0.85,PIPE.pre.shift()];
   // Draw to the same framebuffer as the lobby, then paint the locked bunk room over it in that frame.
   yield ['FINISHING LOBBY',0.97,()=>new Promise((resolve,reject)=>{
     lobbyWarmFrame=(exposure,time)=>{
@@ -11600,6 +11689,6 @@ function gripProbe(ts,talking){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='
   for(const t of ts){buildNpc(n,t,P.x,0.7,P.z,0.016);res.push({t,...GRIP_DBG})}talk=save;return res}
 function benchNpc(iters){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='keeper');const e=[P.x,0.7,P.z];buildNpc(n,1,e[0],e[1],e[2],0.016);let t0=performance.now();
   for(let i=0;i<iters;i++){CH.n=0;buildNpc(n,1+i*0.016,e[0],e[1],e[2],0.016)}return (performance.now()-t0)/iters}
-window.__game={pipelineWarm:pipeWarmState,perf:{get composer(){return composer},torchLight,poolLights,shadLights,get gtao(){return gtaoPass},get bloom(){return bloomPass},get fxaa(){return fxaaPass},get rs(){return rs},set rs(v){rs=v;viewKey=''}},wMaxHp,TROLL,trollTick,trollWall,canUse,SPI,SLUG,KO,spiderTick,slugTick,slugPeel,slugOn,koTry,koUp,helpStart,webClear,webMul,crawlPlayerTick,get crawl(){return CRAWL},liftCache:()=>[...liftCache.values()].map(e=>({seed:e.seed,depth:e.depth,ready:e.task.ready,compiled:e.compiled})),stillwoodWarmState,stillwoodWarm,doorSeed,wofQ:WOQ,tkTargets,rrStart,wofClear,wofTick,mpPosFlags,wof:WOF,fx:FX,get tk(){return TK},get bomb(){return BOMB},get rr(){return RR},set rr(v){RR=v},rrAct,get ts(){return TS},get brk(){return BRK},set tk(v){TK=v},get cg(){return CG},set cg(v){CG=v},departFromLift,wofSpinStart,wofResolve,wofBegin,wofScene,planSpin,pickSlice,sliceAt,spinAngle,NEWS,openStation,get activeStation(){return activeStation},hub,get lobbyPaused(){return lobbyPaused},get roomPaused(){return roomPaused},simLockLost(){if(document.pointerLockElement){document.exitPointerLock();return}usingLock=true;document.dispatchEvent(new Event("pointerlockchange"))},music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch,patYell,initAudio,fizzTick,fizzMe,FIZZ,grannyTick,grannyWoozy,grannyGrab,grannyMash,GRAN,smith:SMITH,W,wAttack,sprList,wApply,wStats,wHeld,wCycle,clickL,clickR,WEAPONS,pot:POT,PFX,potLand,potDrink,potThrow,beltAdd,potBrew,potMon,potTouch,POTIONS,INGREDIENTS,brew,brewAny,potInfo,ps,potHud,wLevelOf,wRanks,wChoice,wGainXp,wXpFor,wReward,smithTalk,BS,BOSSES,bossAt,danceKey,danceChart,bossStart,bossWin,bossTrophies,bMain,wPunch,BP,bpAct,bpUse,bossArmor};
+window.__game={pipelineWarm:pipeWarmState,EMO,emoteNext,emoteStop,NR,nrPulled,perf:{get composer(){return composer},torchLight,poolLights,shadLights,get gtao(){return gtaoPass},get bloom(){return bloomPass},get fxaa(){return fxaaPass},get rs(){return rs},set rs(v){rs=v;viewKey=''}},wMaxHp,TROLL,trollTick,trollWall,canUse,SPI,SLUG,KO,spiderTick,slugTick,slugPeel,slugOn,koTry,koUp,helpStart,webClear,webMul,crawlPlayerTick,get crawl(){return CRAWL},liftCache:()=>[...liftCache.values()].map(e=>({seed:e.seed,depth:e.depth,ready:e.task.ready,compiled:e.compiled})),stillwoodWarmState,stillwoodWarm,doorSeed,wofQ:WOQ,tkTargets,rrStart,wofClear,wofTick,mpPosFlags,wof:WOF,fx:FX,get tk(){return TK},get bomb(){return BOMB},get rr(){return RR},set rr(v){RR=v},rrAct,get ts(){return TS},get brk(){return BRK},set tk(v){TK=v},get cg(){return CG},set cg(v){CG=v},departFromLift,wofSpinStart,wofResolve,wofBegin,wofScene,planSpin,pickSlice,sliceAt,spinAngle,NEWS,openStation,get activeStation(){return activeStation},hub,get lobbyPaused(){return lobbyPaused},get roomPaused(){return roomPaused},simLockLost(){if(document.pointerLockElement){document.exitPointerLock();return}usingLock=true;document.dispatchEvent(new Event("pointerlockchange"))},music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch,patYell,initAudio,fizzTick,fizzMe,FIZZ,grannyTick,grannyWoozy,grannyGrab,grannyMash,GRAN,smith:SMITH,W,wAttack,sprList,wApply,wStats,wHeld,wCycle,clickL,clickR,WEAPONS,pot:POT,PFX,potLand,potDrink,potThrow,beltAdd,potBrew,potMon,potTouch,POTIONS,INGREDIENTS,brew,brewAny,potInfo,ps,potHud,wLevelOf,wRanks,wChoice,wGainXp,wXpFor,wReward,smithTalk,BS,BOSSES,bossAt,danceKey,danceChart,bossStart,bossWin,bossTrophies,bMain,wPunch,BP,bpAct,bpUse,bossArmor};
 lobbyWarm=prepareLobby();
 requestAnimationFrame(frame);
