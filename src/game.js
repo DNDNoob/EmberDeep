@@ -9342,6 +9342,8 @@ function update(dt){
   const fury=ctl&&ps('fury');if(fury&&Math.abs(fwd)<0.2&&Math.abs(str)<0.2)fwd=1;   // Fury Brew: you cannot stop running
   const J0=MOVE.jumpV,G0=MOVE.gravity,pvx=P.vx,pvz=P.vz;MOVE.jumpV=J0*potJump();MOVE.gravity=G0*potGrav();
   const routes=F.forestRoutes,castle=F.castle;
+  const floorBlocked=castle?(x,z)=>castleFloorBlocked(x,z,P.y):blocked;
+  const normalBlock=ps('phase')?potPhase:floorBlocked;
   if(ctl&&P.vy<=0)triggerCastleHatch(P.x,P.y,P.z);
   const groundAt=castle?(x,z)=>castleGround(castle,x,z,P.y,R.time):F.archive?(x,z)=>archiveGround(F.archive,x,z,P.y):
     routes?(x,z)=>forestGround(routes,x,z,P.y):undefined;
@@ -9369,8 +9371,6 @@ function update(dt){
   if(ev.jumped)sfx('jump');
   const inWater=routes&&forestSubmerged(routes,P.x,P.z,P.y);
   if(inWater&&!P.inWater&&!ps('hush'))noise(.17,.12,690,.62);
-  const floorBlocked=castle?(x,z)=>castleFloorBlocked(x,z,P.y):blocked;
-  const normalBlock=ps('phase')?potPhase:floorBlocked;
   P.inWater=!!inWater;
   if((ev.landed>0||ev.step)&&!ps('hush')){if(inWater)noise(.12,.09,810,.65);else sfx('step');if(ps('loud'))tone(55,0.12,'sine',0.25)}
   const canClip=ctl&&ev.ground&&ev.sprint&&!P.chill&&!P.mounted&&!F.archive&&!F.castle&&!F.forestRoutes?.reserved(P.tx,P.ty);
@@ -9386,12 +9386,15 @@ function update(dt){
   // A held or latched sprint cannot rearm against the wall. Only actual travel does.
   P.clipRunup=canClip&&!impact?Math.min(1,(P.clipRunup||0)+Math.hypot(P.x-beforeX,P.z-beforeZ)):0;
   }
+  const upstairs=aboveCastleGround();
+  if(!upstairs){
   for(const q of F.pillars){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=0.2+PR;if(dd<m&&dd>1e-4){P.x=q[0]+ddx/dd*m;P.z=q[1]+ddz/dd*m}}
   if(F.safe){const ddx=P.x-F.safe.x,ddz=P.z-F.safe.z,dd=Math.hypot(ddx,ddz),m=0.3+PR;if(dd<m&&dd>1e-4){P.x=F.safe.x+ddx/dd*m;P.z=F.safe.z+ddz/dd*m}}
   for(const q of F.discs){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=q[2]+PR;if(dd<m&&dd>1e-4){const nx2=q[0]+ddx/dd*m,nz2=q[1]+ddz/dd*m;if(!blocked(nx2,nz2)){P.x=nx2;P.z=nz2}}}
   potCollide();smithCollide();
   if(F.safe&&F.safe.wheel)for(const q of F.safe.wheel.discs){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=q[2]+PR;if(dd<m&&dd>1e-4){const nx2=q[0]+ddx/dd*m,nz2=q[1]+ddz/dd*m;if(!blocked(nx2,nz2)){P.x=nx2;P.z=nz2}}}
   for(const n of F.npcs){if(n.fall)continue;const X=n.x+(n.ox||0),Z=n.z+(n.oz||0),ddx=P.x-X,ddz=P.z-Z,dd=Math.hypot(ddx,ddz),m=0.16+PR;if(dd<m&&dd>1e-4){const nx2=X+ddx/dd*m,nz2=Z+ddz/dd*m;if(!blocked(nx2,nz2)){P.x=nx2;P.z=nz2}}}
+  }
   if(wallClip){P.x=wallClip.hx;P.z=wallClip.hz;P.vx=P.vz=P.vy=0;P.y=0}
   if(Math.floor(P.x)!==P.tx||Math.floor(P.z)!==P.ty)onTileChange();
   if(activeStation==='lift'&&!aboardFloorLift())closeStation();
@@ -9411,15 +9414,12 @@ function update(dt){
     if(state==='play'){
       const action=helpTarget()?'HELP':lift?'USE':best?'TALK':nd?'OPEN':'FLASH';
       if($('tFlash').textContent!==action)$('tFlash').textContent=action;
-  const upstairs=aboveCastleGround();
-  if(!upstairs){
     }
     const pt=!best&&!nd&&state==='play'&&P.pick>0&&!P.down&&!P.away&&!P.grab?pkAim():null;
     const inRoots=underForestRoots(P.x,P.z,P.y,P.crouched);
     const low=!P.crouched&&(F.archive&&archiveLowOpening(F.archive,P.x,P.z,P.y,P.yaw)||
       F.forestRoutes&&forestRootAt(F.forestRoutes,P.x+Math.cos(P.yaw)*.39,P.z+Math.sin(P.yaw)*.39,PR));
     const crouchHint=touch.on?'Hold Crouch':pad.id?'Hold D-pad ↓ to crouch':'Hold X to crouch';
-  }
     let ladderHint='';
     if(F.castle&&!P.mounted){
       if(P.castleLadder)ladderHint='Toward the rungs: climb up · Away: climb down';
@@ -10673,33 +10673,6 @@ function drawHUD(){
   setText('fps',fpsShown?Math.round(fpsShown)+' fps · '+Math.round(rs*100)+'% res':'');
 }
 const mapCv=$('map'),mctx=mapCv.getContext('2d');let mapMode='';
-function drawMap(){
-  const dpr=Math.min(window.devicePixelRatio||1,2);
-  const size=mapBig?Math.round(Math.min(innerHeight*0.82,innerWidth*(touch.on?0.9:0.6),760)):(touch.on?130:190);
-  const mode=size+':'+dpr;
-  if(mode!==mapMode){mapMode=mode;mapCv.width=mapCv.height=Math.round(size*dpr);mapCv.style.width=mapCv.style.height=size+'px';mapCv.classList.toggle('big',mapBig)}
-  const c=mctx;c.setTransform(dpr,0,0,dpr,0,0);
-  c.clearRect(0,0,size,size);c.fillStyle='rgba(8,6,10,'+(mapBig?0.9:0.7)+')';c.fillRect(0,0,size,size);
-  let ts,ox,oy;
-  if(mapBig&&upper){
-    const {x0,x1,z0,z1}=castle.upperBounds;
-    ts=(size-76)/Math.max(x1-x0,z1-z0);ox=size/2-(x0+x1)*ts/2;oy=size/2-(z0+z1)*ts/2;
-  }else if(mapBig){ts=size/Math.max(F.W,F.H);ox=(size-F.W*ts)/2;oy=(size-F.H*ts)/2}
-  else{ts=touch.on?7:9;ox=size/2-P.x*ts;oy=size/2-P.z*ts}
-  const x0=Math.max(0,Math.floor(-ox/ts)),x1=Math.min(F.W-1,Math.ceil((size-ox)/ts));
-  const y0=Math.max(0,Math.floor(-oy/ts)),y1=Math.min(F.H-1,Math.ceil((size-oy)/ts));
-  for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){
-    const i=y*F.W+x;
-    if(!F.seen[i])continue;
-    c.fillStyle=F.safeMask[i]?'#c79a4e':F.scout?.mapped[i]?'#40696d':'#7d7263';
-    c.fillRect(ox+x*ts,oy+y*ts,ts+0.5,ts+0.5);
-  }
-  if(F.door){const D=F.door,W2=F.W;if(F.seen[D.ty*W2+D.tx-1]||F.seen[D.ty*W2+D.tx+1]||F.seen[(D.ty-1)*W2+D.tx]||F.seen[(D.ty+1)*W2+D.tx]){c.fillStyle='#b5762a';c.fillRect(ox+D.tx*ts,oy+D.ty*ts,ts,ts)}}
-  for(const D of F.sdoors)if(F.seen[D.ty*F.W+D.tx]){c.fillStyle=D.used?'#4a4038':'#c58bff';c.fillRect(ox+(D.tx+0.5+D.dx*0.5)*ts-ts*0.25,oy+(D.ty+0.5+D.dz*0.5)*ts-ts*0.25,ts*0.5,ts*0.5)}
-  c.fillStyle='#c0392b';
-  for(const tr of F.traps)if(F.seen[tr.ty*F.W+tr.tx])c.fillRect(ox+(tr.tx+0.3)*ts,oy+(tr.ty+0.3)*ts,ts*0.4,ts*0.4);
-  if(F.lift&&F.seen[F.lift.tz*F.W+F.lift.tx]){
-    c.fillStyle='#79dcca';
 function drawCastleUpperMap(c,castle,ts,ox,oy,dot){
   if(!P.down){
     const px=Math.floor(P.x),pz=Math.floor(P.z);
@@ -10739,6 +10712,37 @@ function drawCastleMapMarkers(c,castle,upper,ts,ox,oy,size){
   }
   c.restore();
 }
+function drawMap(){
+  const dpr=Math.min(window.devicePixelRatio||1,2);
+  const size=mapBig?Math.round(Math.min(innerHeight*0.82,innerWidth*(touch.on?0.9:0.6),760)):(touch.on?130:190);
+  const mode=size+':'+dpr;
+  if(mode!==mapMode){mapMode=mode;mapCv.width=mapCv.height=Math.round(size*dpr);mapCv.style.width=mapCv.style.height=size+'px';mapCv.classList.toggle('big',mapBig)}
+  const c=mctx;c.setTransform(dpr,0,0,dpr,0,0);
+  c.clearRect(0,0,size,size);c.fillStyle='rgba(8,6,10,'+(mapBig?0.9:0.7)+')';c.fillRect(0,0,size,size);
+  const castle=F.castle,upper=!!castle&&P.y>1.30;
+  let ts,ox,oy;
+  if(mapBig&&upper){
+    const {x0,x1,z0,z1}=castle.upperBounds;
+    ts=(size-76)/Math.max(x1-x0,z1-z0);ox=size/2-(x0+x1)*ts/2;oy=size/2-(z0+z1)*ts/2;
+  }else if(mapBig){ts=size/Math.max(F.W,F.H);ox=(size-F.W*ts)/2;oy=(size-F.H*ts)/2}
+  else{ts=touch.on?7:9;ox=size/2-P.x*ts;oy=size/2-P.z*ts}
+  const x0=Math.max(0,Math.floor(-ox/ts)),x1=Math.min(F.W-1,Math.ceil((size-ox)/ts));
+  const y0=Math.max(0,Math.floor(-oy/ts)),y1=Math.min(F.H-1,Math.ceil((size-oy)/ts));
+  const dot=(x,z,r,col)=>{c.fillStyle=col;c.beginPath();c.arc(ox+x*ts,oy+z*ts,r,0,7);c.fill()};
+  if(upper)drawCastleUpperMap(c,castle,ts,ox,oy,dot);
+  else{
+  for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){
+    const i=y*F.W+x;
+    if(!F.seen[i])continue;
+    c.fillStyle=F.safeMask[i]?'#c79a4e':F.scout?.mapped[i]?'#40696d':'#7d7263';
+    c.fillRect(ox+x*ts,oy+y*ts,ts+0.5,ts+0.5);
+  }
+  if(F.door){const D=F.door,W2=F.W;if(F.seen[D.ty*W2+D.tx-1]||F.seen[D.ty*W2+D.tx+1]||F.seen[(D.ty-1)*W2+D.tx]||F.seen[(D.ty+1)*W2+D.tx]){c.fillStyle='#b5762a';c.fillRect(ox+D.tx*ts,oy+D.ty*ts,ts,ts)}}
+  for(const D of F.sdoors)if(F.seen[D.ty*F.W+D.tx]){c.fillStyle=D.used?'#4a4038':'#c58bff';c.fillRect(ox+(D.tx+0.5+D.dx*0.5)*ts-ts*0.25,oy+(D.ty+0.5+D.dz*0.5)*ts-ts*0.25,ts*0.5,ts*0.5)}
+  c.fillStyle='#c0392b';
+  for(const tr of F.traps)if(F.seen[tr.ty*F.W+tr.tx])c.fillRect(ox+(tr.tx+0.3)*ts,oy+(tr.ty+0.3)*ts,ts*0.4,ts*0.4);
+  if(F.lift&&F.seen[F.lift.tz*F.W+F.lift.tx]){
+    c.fillStyle='#79dcca';
     c.fillRect(ox+(F.lift.tx+0.23)*ts,oy+(F.lift.tz+0.23)*ts,ts*0.54,ts*0.54);
   }
   if(F.seen[F.exit.ty*F.W+F.exit.tx]||F.reveal){c.fillStyle=P.shards>=3?'#5dff9a':'#ff4a3a';c.fillRect(ox+F.exit.tx*ts,oy+F.exit.ty*ts,ts,ts)}
@@ -10746,7 +10750,6 @@ function drawCastleMapMarkers(c,castle,upper,ts,ox,oy,size){
     if(it.got||castle&&it.y>1.30||(!F.seen[it.ty*F.W+it.tx]&&!(F.reveal&&it.type==='shard')&&!(it.type==='gem'&&ps('gems'))))continue;
     if(it.type==='ingr'){const g=INGREDIENTS[it.ing].col;dot(it.x,it.z,Math.max(1.6,ts*0.2),'rgb('+g.map(v=>Math.round(Math.min(1,v)*255)).join(',')+')');continue}
     dot(it.x,it.z,(it.type==='shard'||it.type==='key')?Math.max(3,ts*0.4):Math.max(1.6,ts*0.22),it.type==='shard'?'#7fe9ff':it.type==='key'?'#ffd35a':it.type==='oil'?'#ff9a2e':it.type==='gem'?'#ffd84a':it.type==='heart'?'#ff5a6a':'#ffffff');
-  const castle=F.castle,upper=!!castle&&P.y>1.30;
   }
   if(F.safe&&F.seen[F.safe.ty*F.W+F.safe.tx+1])dot(F.safe.x,F.safe.z,Math.max(2.5,ts*0.3),'#ff8a2a');
   for(const n of F.npcs)if(F.seen[Math.floor(n.z)*F.W+Math.floor(n.x)]){c.fillStyle=n.type==='lurk'&&n.aggro?'#ff2a4a':n.type==='keeper'?'#ffe0a0':'#8ff0d0';c.fillRect(ox+n.x*ts-2.5,oy+n.z*ts-2.5,5,5)}
@@ -10754,9 +10757,6 @@ function drawCastleMapMarkers(c,castle,upper,ts,ox,oy,size){
   }
   if(castle)drawCastleMapMarkers(c,castle,upper,ts,ox,oy,size);
   for(const p of MP.peers.values()){if(!mpShown(p)||castle&&upper!==(p.ry>1.30))continue;
-  const dot=(x,z,r,col)=>{c.fillStyle=col;c.beginPath();c.arc(ox+x*ts,oy+z*ts,r,0,7);c.fill()};
-  if(upper)drawCastleUpperMap(c,castle,ts,ox,oy,dot);
-  else{
     c.save();c.translate(ox+p.rx*ts,oy+p.rz*ts);c.rotate(p.ryaw);c.fillStyle=p.down?'#777':p.hex;
     c.beginPath();c.moveTo(5,0);c.lineTo(-3.5,3.5);c.lineTo(-1.5,0);c.lineTo(-3.5,-3.5);c.closePath();c.fill();c.restore()}
   if(!P.down){
