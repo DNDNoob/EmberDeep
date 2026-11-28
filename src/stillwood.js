@@ -1014,7 +1014,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     return g;
   };
   S.G=G;
-  const birds=createStillwoodBirds(group,{seed,ground:G,open:(x,z)=>pondDist(x,z)>2.4&&!trunkAt(x,z)&&!homeAt(x,z)});
+  const birds=createStillwoodBirds(group,{seed,low,ground:G,open:(x,z)=>pondDist(x,z)>2.4&&!trunkAt(x,z)&&!homeAt(x,z)});
   S.birds=()=>birds.birds.map(b=>({k:b.kind,mode:b.mode,y:+b.y.toFixed(2)}));
   const blockedAt=(x,z)=>trunkAt(x,z)||rocks.some(r=>(r.cx-x)**2+(r.cz-z)**2<(r.rb+0.9)**2)||homeAt(x,z);
   const walker=S.walker=createRoomWalker({o,eye:EYE,x:0,z:0,groundAt:G,snap:0.7,collide:b=>{

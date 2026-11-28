@@ -1,10 +1,11 @@
 // Swallows, swifts and a kite over the still wood. They wander, then sit on the grass.
-import * as THREE from 'three';
+// The body is the signed-distance bird from the close-up study, not a stand-in of spheres.
+import {createSdfBird} from './stillwood-bird-sdf.js';
 
 const KINDS=[
-  {id:'swallow',scale:0.36,speed:8.4,flap:4.8,cruise:5.4,fork:0.55,back:0x2a446e,belly:0xefe2cc,throat:0xc24a28,wing:0x141c30,beak:0x1a120e},
-  {id:'swift',scale:0.32,speed:11.2,flap:8.2,cruise:6.6,fork:0.18,back:0x241c1a,belly:0x3a322c,throat:0x8d7a64,wing:0x100e0c,beak:0x161210},
-  {id:'kite',scale:0.78,speed:4.6,flap:1.45,cruise:8.2,fork:0.42,back:0x8a4a22,belly:0xc9a06c,throat:0xe8dcc4,wing:0x4a2814,beak:0xd4a040},
+  {id:'swallow',scale:0.42,speed:8.4,flap:4.8,cruise:5.4},
+  {id:'swift',scale:0.38,speed:11.2,flap:8.2,cruise:6.6},
+  {id:'kite',scale:0.72,speed:4.6,flap:1.45,cruise:8.2},
 ];
 const MIX=[0,0,0,0,1,1,1,2,2];
 
@@ -86,63 +87,31 @@ export function stepBird(b,dt,ctx){
 
 export function stepFlock(birds,dt,ctx){for(const b of birds)stepBird(b,dt,ctx);return birds}
 
-const geos={};
-function geo(name,build){return geos[name]||(geos[name]=build())}
-function birdMesh(kind){
-  const lambert=c=>new THREE.MeshLambertMaterial({color:c});
-  const root=new THREE.Group();root.scale.setScalar(kind.scale);
-  const body=new THREE.Mesh(geo('body',()=>new THREE.SphereGeometry(0.16,8,6)),lambert(kind.back));
-  body.scale.set(0.7,0.62,1.35);body.position.y=0.16;root.add(body);
-  const breast=new THREE.Mesh(geo('breast',()=>new THREE.SphereGeometry(0.1,7,5)),lambert(kind.belly));
-  breast.scale.set(0.85,0.7,1.1);breast.position.set(0,0.13,0.08);root.add(breast);
-  const head=new THREE.Mesh(geo('head',()=>new THREE.SphereGeometry(0.07,7,5)),lambert(kind.throat));
-  head.position.set(0,0.24,0.2);root.add(head);
-  const beak=new THREE.Mesh(geo('beak',()=>{const g=new THREE.ConeGeometry(0.025,0.11,5);g.rotateX(Math.PI/2);return g}),lambert(kind.beak));
-  beak.position.set(0,0.23,0.3);root.add(beak);
-  const wingM=lambert(kind.wing);
-  const wL=new THREE.Mesh(wingGeo(-1),wingM),wR=new THREE.Mesh(wingGeo(1),wingM);
-  wL.position.set(-0.08,0.18,0.02);wR.position.set(0.08,0.18,0.02);
-  root.add(wL,wR);
-  const tailG=geo('tail',()=>new THREE.BoxGeometry(0.045,0.012,0.34));
-  const tailM=lambert(kind.back);
-  const tL=new THREE.Mesh(tailG,tailM),tR=new THREE.Mesh(tailG,tailM);
-  tL.position.set(-0.03,0.14,-0.16);tR.position.set(0.03,0.14,-0.16);
-  tL.rotation.y=kind.fork;tR.rotation.y=-kind.fork;
-  root.add(tL,tR);
-  root.userData.wings=[wL,wR];
-  return root;
-}
-
-// Wing boxes are built once; translating the shared geometry would stack. Build per side instead.
-function wingGeo(sign){
-  const key=sign<0?'wingL':'wingR';
-  return geo(key,()=>{const g=new THREE.BoxGeometry(0.62,0.018,0.2);g.translate(sign*0.31,0,0);return g});
-}
-
-export function createStillwoodBirds(group,{seed=1,ground,open}={}){
+export function createStillwoodBirds(group,{seed=1,ground,open,low=false}={}){
   const birds=MIX.map((_,i)=>spawnBird(i,seed));
   const meshes=birds.map(b=>{
-    const m=birdMesh(KINDS[b.kind]);
+    const m=createSdfBird(KINDS[b.kind],low);
     group.add(m);return m;
   });
   const ctx={x:0,z:0,yaw:0,ground:ground||(()=>0),open};
+  let time=0;
   return {
     birds,
     step(dt,x,z,yaw=0){
       ctx.x=x;ctx.z=z;ctx.yaw=yaw;
+      time+=dt;
       let left=Math.min(Math.max(dt,0),0.1);
       while(left>1e-4){const h=Math.min(0.05,left);stepFlock(birds,h,ctx);left-=h}
       for(let i=0;i<birds.length;i++){
-        const b=birds[i],m=meshes[i],flap=Math.sin(b.phase*Math.PI*2)*0.9*(1-b.fold);
-        const [wL,wR]=m.userData.wings;
-        m.position.set(b.x,b.y,b.z);
-        m.rotation.set(b.mode==='land'?0.28*(1-b.fold):b.mode==='perch'?0.12:-0.06,b.yaw,b.bank,'YXZ');
-        wL.rotation.z=-flap-0.18;wR.rotation.z=flap+0.18;
-        wL.rotation.x=wR.rotation.x=0.85*b.fold;
+        const b=birds[i],m=meshes[i],k=KINDS[b.kind];
+        const pitch=b.mode==='land'?0.34*(1-b.fold*0.35):b.mode==='perch'?0.06:-0.08;
+        m.position.set(b.x,b.y+k.scale*0.16,b.z);
+        m.rotation.set(pitch,Math.PI-b.yaw,-b.bank,'YXZ');
+        m.userData.pose(b,time);
       }
     },
     dispose(){
-      for(const m of meshes){group.remove(m);m.traverse(o=>{if(o.material)o.material.dispose()})}
+      for(const m of meshes){group.remove(m);m.material.dispose()}
     },
   };
 }
