@@ -860,21 +860,39 @@ export function makeSurfaces(renderer, size, wantNormals) {
   const matA = (i, v) => {const m = matAH(i, v); m.uniforms.MODE.value = 0; return m};
   const matH = (i, v) => {const m = matAH(i, v); m.uniforms.MODE.value = 1; return m};
   const matN = () => shader('N', FS_N, {tH: {value: null}, px: {value: new THREE.Vector2(1 / size, 1 / size)}, bump: {value: 0.1}});
-  const run = (mat, rt) => {quad.material = mat; renderer.setRenderTarget(rt); quad.render(renderer)};
-  const paint = job => {
+  // A surface is painted in horizontal strips, one strip per step (the colour layer, then the height, then the normals worked out from
+  // the height): each of these shaders is heavy, and painting a whole 1024 x 1024 layer in one go took long enough on a laptop's GPU to
+  // drop frames in the lobby and the lift. A strip is an eighth of a layer at High (the render target's scissor keeps the GPU to it).
+  const STRIPS = Math.max(1, Math.round(size / 128));
+  const run = (mat, rt, k) => {
+    quad.material = mat;
+    const h = Math.ceil(size / STRIPS);rt.scissor.set(0, k * h, size, h);rt.scissorTest = true;
+    renderer.setRenderTarget(rt); quad.render(renderer);rt.scissorTest = false;
+  };
+  // one strip of a job; true once the whole surface is painted
+  const paintStep = job => {
     const prev = renderer.getRenderTarget(), tm = renderer.toneMapping;
     renderer.toneMapping = THREE.NoToneMapping;
     const {i, v, seed, tn} = job, set = m => {m.uniforms.SEED.value = seed; m.uniforms.TINT.value.set(tn[0], tn[1], tn[2]); return m};
-    run(set(matA(i, v)), job.A);
-    if (job.N) {
-      const Hh = new THREE.WebGLRenderTarget(size, size, {type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping});
-      run(set(matH(i, v)), Hh);
-      const n = matN();n.uniforms.tH.value = Hh.texture;n.uniforms.bump.value = FLAT[i] ? 0.05 : 0.1;   // floors and ceilings stretch one tile over two metres, walls over one
-      run(n, job.N);
-      n.uniforms.tH.value = null;Hh.dispose();
-    }
-    renderer.toneMapping = tm; renderer.setRenderTarget(prev);
+    const st = job.st || (job.st = {phase: 0, k: 0});
+    try {
+      if (st.phase === 0) run(set(matA(i, v)), job.A, st.k);
+      else if (st.phase === 1) {
+        job.Hh ??= new THREE.WebGLRenderTarget(size, size, {type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping});
+        run(set(matH(i, v)), job.Hh, st.k);
+      } else {
+        const n = matN();n.uniforms.tH.value = job.Hh.texture;n.uniforms.bump.value = FLAT[i] ? 0.05 : 0.1;   // floors and ceilings stretch one tile over two metres, walls over one
+        run(n, job.N, st.k);n.uniforms.tH.value = null;
+      }
+    } finally {renderer.toneMapping = tm; renderer.setRenderTarget(prev)}
+    if (++st.k < STRIPS) return false;
+    st.k = 0;st.phase++;
+    if (st.phase === 1 && !job.N) st.phase = 3;
+    if (st.phase < 3) return false;
+    if (job.Hh) {job.Hh.dispose();job.Hh = null}
+    return true;
   };
+  const paint = job => {while (!paintStep(job));};
   // Deferred mode: get() hands back the surface's textures at once (render targets, so materials can be built with them) and queues
   // the painting; pump() paints the queue a few at a time, so a floor can be built across many frames (the lift ride, a loading bar).
   let deferred = false;
@@ -891,28 +909,43 @@ export function makeSurfaces(renderer, size, wantNormals) {
     cache.set(ck, out);
     return out;
   }
-  const pump = (n = 1) => {while (n-- > 0 && queue.length) paint(queue.shift()); return queue.length};
+  // n strips from the front of the queue
+  let compiling = null;
+  // n strips, only of surfaces whose shaders are already compiled (painting with an uncompiled one would compile it on the spot, which
+  // froze the lift); anything newly queued gets its parallel compile started instead
+  const pump = (n = 1) => {
+    for (let k = 0; k < n; k++) {const j = queue.findIndex(q => q.ok); if (j < 0) break; if (paintStep(queue[j])) queue.splice(j, 1)}
+    if (!compiling && queue.some(q => !q.ok)) {compiling = compileQueued().then(() => {compiling = null})}
+    return queue.length;
+  };
   // in the background: paint only what has had its shaders compiled in parallel (never compile in the middle of a frame), and
   // start the next parallel compile for anything newly queued. One job a frame at most, so a ride past many landings stays smooth.
-  let compiling = null;
-  const idle = () => {
+  const idle = (n = 1) => {
     if (!queue.length) return 0;
-    const j = queue.findIndex(q => q.ok);
-    if (j >= 0) paint(queue.splice(j, 1)[0]);
+    for (let k = 0; k < n; k++) {const j = queue.findIndex(q => q.ok); if (j < 0) break; if (paintStep(queue[j])) queue.splice(j, 1)}   // n strips a step
     if (!compiling && queue.some(q => !q.ok)) {compiling = compileQueued().then(() => {compiling = null})}
     return queue.length;
   };
   // compile the shaders the queue needs, in parallel, before painting with them
+  // Compile the shaders the queue needs, in parallel, before painting with them. Each against the kind of target it will draw into:
+  // the colour layer into an sRGB target, the height and the normals into linear ones (the output encoding is part of the program, so
+  // compiling them all against the screen left the height and normal programs to compile on the spot, in the middle of the lift ride).
+  const dummies = {s: target(true), l: new THREE.WebGLRenderTarget(1, 1, {type: THREE.HalfFloatType, depthBuffer: false})};
+  dummies.s.setSize(1, 1);
   const compileQueued = () => {
-    const sc = new THREE.Scene(), geo = new THREE.PlaneGeometry(2, 2), seen = new Set();
-    for (const j of queue) for (const m of [matAH(j.i, j.v), j.N ? matN() : null]) if (m && !seen.has(m)) {seen.add(m); const q = new THREE.Mesh(geo, m); q.frustumCulled = false; sc.add(q)}
+    const geo = new THREE.PlaneGeometry(2, 2), sc = {s: new THREE.Scene(), l: new THREE.Scene()}, seen = {s: new Set(), l: new Set()};
+    const add = (k, m) => {if (!m || seen[k].has(m)) return; seen[k].add(m); const q = new THREE.Mesh(geo, m); q.frustumCulled = false; sc[k].add(q)};
+    for (const j of queue) {add('s', matAH(j.i, j.v)); if (j.N) {add('l', matAH(j.i, j.v)); add('l', matN())}}
     const batch = queue.slice();
-    if (!seen.size) {for (const q of batch) q.ok = true; return Promise.resolve()}
-    const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-    return renderer.compileAsync(sc, cam).catch(() => {}).then(() => {geo.dispose(); for (const q of batch) q.ok = true});
+    if (!seen.s.size && !seen.l.size) {for (const q of batch) q.ok = true; return Promise.resolve()}
+    const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1), prev = renderer.getRenderTarget(), ps = [];
+    try {
+      for (const k of ['s', 'l']) if (seen[k].size) {renderer.setRenderTarget(dummies[k]); ps.push(renderer.compileAsync(sc[k], cam).catch(() => {}))}
+    } finally {renderer.setRenderTarget(prev)}
+    return Promise.all(ps).then(() => {geo.dispose(); for (const q of batch) q.ok = true});
   };
   const sweep = keep => {for (const [k, c] of cache) {if (!keep.has(c.map)) {
-    for (let q = queue.length - 1; q >= 0; q--) if (queue[q].A === c.rtA) queue.splice(q, 1);   // never painted: drop it from the queue too
+    for (let q = queue.length - 1; q >= 0; q--) if (queue[q].A === c.rtA) {if (queue[q].Hh) queue[q].Hh.dispose(); queue.splice(q, 1)}   // never painted: drop it from the queue too
     c.rtA.dispose(); if (c.rtN) c.rtN.dispose(); cache.delete(k)}}};
   return {get, key, sweep, pump, idle, compileQueued, defer: on => {deferred = !!on}, get pending() {return queue.length}, count: SURF.length, size: () => cache.size};
 }

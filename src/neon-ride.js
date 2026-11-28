@@ -6,10 +6,14 @@
 // better the score, the better the prize (NEON_PRIZES), and Use steps you out through the exit beside it.
 // Everything is drawn from math at load time (canvas art for the cutouts and signs), and the course comes from the visit's seed, so a
 // watcher rebuilds the same ride and follows the rider's snapshots (where the cart is, where they look, the score, what they hit).
+// In a shared game, whoever opens the door pulls everyone else in with them (game.js sends the party and its seat order): the carts
+// run as one train, NEON.gap apart, each rider in their own seat with their own blaster and their own score. A cutout shot down by
+// anyone falls for everyone (first come, first scored), riders see each other's carts, aim and bolts, and the prize counter keeps a
+// board of everyone's scores. o.neon carries the messages: party(), send(m), peers() (their aim and score) and take() (their events).
 import * as THREE from 'three';
 import {MOVE,lookStep} from './movement.js';
 
-export const NEON={speed:3.3,start:3,eye:1.22,barrier:2.05,popAhead:13,stayBehind:2.5,cooldown:0.2,hold:0.3,steps:24,step:9};
+export const NEON={gap:2.7,speed:3.3,start:3,eye:1.22,barrier:2.05,popAhead:13,stayBehind:2.5,cooldown:0.2,hold:0.3,steps:24,step:9};
 // the prizes, from the least to the best: the highest one whose score you reach is yours
 export const NEON_PRIZES=[
   {min:0,name:'Glow Sticker',gems:3},
@@ -167,8 +171,8 @@ export function neonRideRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
     const beam=new THREE.Mesh(own(new THREE.ConeGeometry(2.2,4.2,24,1,true)),own(new THREE.MeshBasicMaterial({color:0x6affb0,transparent:true,opacity:0.12,side:THREE.DoubleSide,depthWrite:false,toneMapped:false})));beam.position.y=-2.2;ufo.add(beam);
     spin.push([ufo,0.25]);ufoBulbs=bulbs}
   // the cart: a low tub with neon trim, a padded safety bar in front of you, and a scoreboard on the dash
-  const cart=new THREE.Group();group.add(cart);
-  {const body=std(0x1a0a2a,0.4,0.3),trim=basic(0xff3ad6);
+  const makeCart=(trimCol=0xff3ad6)=>{const cart=new THREE.Group();group.add(cart);
+  {const body=std(0x1a0a2a,0.4,0.3),trim=basic(trimCol);
     const tub=new THREE.Mesh(own(new THREE.BoxGeometry(1.25,0.55,1.7)),body);tub.position.set(0,0.42,0.15);cart.add(tub);
     const nose=new THREE.Mesh(own(new THREE.CylinderGeometry(0.62,0.62,0.55,20,1,false,-Math.PI/2,Math.PI)),body);nose.rotation.y=Math.PI;nose.position.set(0,0.42,-0.7);cart.add(nose);
     for(const s of[-1,1]){const t=new THREE.Mesh(own(new THREE.BoxGeometry(0.04,0.04,1.75)),trim);t.position.set(s*0.63,0.71,0.15);cart.add(t)}
@@ -176,6 +180,25 @@ export function neonRideRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
     const pad=new THREE.Mesh(own(new THREE.CylinderGeometry(0.085,0.085,0.6,14)),std(0x6a1a5a,0.9));pad.rotation.z=Math.PI/2;pad.position.set(0,0.92,-0.36);cart.add(pad);
     for(const s of[-1,1]){const arm=new THREE.Mesh(own(new THREE.BoxGeometry(0.05,0.3,0.05)),std(0x2a2a36,0.5,0.6));arm.position.set(s*0.52,0.78,-0.36);cart.add(arm)}
     for(const s of[-1,1])for(const z of[-0.45,0.75]){const w=new THREE.Mesh(own(new THREE.CylinderGeometry(0.13,0.13,0.08,14)),std(0x0a0a0a,0.6));w.rotation.z=Math.PI/2;w.position.set(s*0.6,0.14,z);cart.add(w)}}
+  return cart};
+  const cart=makeCart();
+  // the rest of the train: a cart for each other rider, with a glowing figure in their colour that turns to aim, and their name over it
+  const party=o.neon?.party?.()||null,me=party?Math.max(0,party.me|0):0,riders=party?party.seats.length:1;
+  const others=[];
+  if(party)party.seats.forEach((q,k)=>{if(k===me)return;
+    const col=new THREE.Color().setRGB(...(q.col||[0.5,0.8,1])),c=makeCart(col.getHex());
+    const fig=new THREE.Group();fig.position.set(0,0.2,-0.05);c.add(fig);   // seated low, so their head stays under your line of sight
+    const suit=own(new THREE.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:0.18,roughness:0.75}));
+    const body=new THREE.Mesh(own(new THREE.CapsuleGeometry(0.17,0.3,6,12)),suit);body.position.y=0.45;fig.add(body);
+    const head=new THREE.Mesh(own(new THREE.SphereGeometry(0.13,16,12)),suit);head.position.y=0.86;fig.add(head);
+    const visor=new THREE.Mesh(own(new THREE.BoxGeometry(0.2,0.06,0.04)),basic(0xffffff));visor.position.set(0,0.88,-0.12);fig.add(visor);
+    const aim=new THREE.Group();aim.position.set(0.16,0.62,0);fig.add(aim);
+    const gunM=new THREE.Mesh(own(new THREE.CylinderGeometry(0.03,0.035,0.3,10)),std(0x6a6a82,0.3,0.75));gunM.rotation.x=Math.PI/2;gunM.position.z=-0.18;aim.add(gunM);
+    const tip=new THREE.Object3D();tip.position.z=-0.34;aim.add(tip);
+    const tag=new THREE.Sprite(own(new THREE.SpriteMaterial({map:own(neonSign([q.name||'Rider'],{w:512,h:128,col:'#'+col.getHexString(),glow:'#'+col.getHexString(),font:'bold 72px "Trebuchet MS",sans-serif'})),transparent:true,depthWrite:false,toneMapped:false,fog:false})));
+    tag.scale.set(0.8,0.2,1);tag.position.y=1.22;fig.add(tag);
+    others.push({k,id:q.id,name:q.name||'Rider',cart:c,fig,aim,tip,seen:false,sc:0});
+  });
   const board=canvasTex(512,160,()=>{});own(board);const boardCv=board.image,bctx=boardCv.getContext('2d');
   const drawBoard=(top,big,col='#2af0ff')=>{const x=bctx,w=512,h=160;x.fillStyle='#04010a';x.fillRect(0,0,w,h);x.strokeStyle='#5a1aa8';x.lineWidth=6;x.strokeRect(3,3,w-6,h-6);
     x.textAlign='center';x.textBaseline='middle';x.font='bold 34px "Trebuchet MS",sans-serif';x.fillStyle='#ff7ae8';x.shadowColor='#ff3ad6';x.shadowBlur=14;x.fillText(top,w/2,38);
@@ -244,6 +267,16 @@ export function neonRideRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
     const ex=new THREE.Mesh(own(new THREE.PlaneGeometry(0.9,0.3)),own(new THREE.MeshBasicMaterial({map:own(neonSign(['EXIT'],{w:384,h:128,col:'#b6ff2a',glow:'#6aff2a',font:'bold 90px "Trebuchet MS",sans-serif'})),toneMapped:false})));ex.position.set(0,2.5,0.05);exitF.add(ex);
     const warm=new THREE.PointLight(0xffc27a,6,7,1.6);warm.position.set(0,2.2,0.9);deskG.add(warm);counterDesk=deskG}
   // the prizes themselves, one built for each tier, shown on the counter when it is won
+  // with company: a board over the counter with everyone's score, best first
+  let drawLeaders=()=>{};
+  if(party){const lt=own(canvasTex(512,384,()=>{})),lx=lt.image.getContext('2d');
+    const lb=new THREE.Mesh(own(new THREE.PlaneGeometry(1.9,1.42)),own(new THREE.MeshBasicMaterial({map:lt,toneMapped:false})));lb.position.set(-1.9,2.5,0.25);lb.rotation.y=0.4;counterDesk.add(lb);
+    drawLeaders=()=>{const rows=[{name:(party.seats[me]&&party.seats[me].name)||'You',sc:S.score,mine:1}].concat(others.map(r=>({name:r.name,sc:r.sc}))).sort((a,b)=>b.sc-a.sc);
+      lx.fillStyle='#050208';lx.fillRect(0,0,512,384);lx.strokeStyle='#5a1aa8';lx.lineWidth=6;lx.strokeRect(3,3,506,378);lx.textBaseline='middle';
+      lx.font='bold 44px "Trebuchet MS",sans-serif';lx.textAlign='center';lx.fillStyle='#2af0ff';lx.shadowColor='#2af0ff';lx.shadowBlur=14;lx.fillText('HIGH SCORES',256,42);
+      rows.slice(0,8).forEach((r,i)=>{const y=96+i*36;lx.font='bold 30px "Courier New",monospace';lx.shadowColor=lx.fillStyle=r.mine?'#ffef3a':'#ff7ae8';
+        lx.textAlign='left';lx.fillText((i+1)+'. '+String(r.name).slice(0,14).toUpperCase(),26,y);lx.textAlign='right';lx.fillText(String(Math.max(0,r.sc)).padStart(4,'0'),486,y)});
+      lx.shadowBlur=0;lt.needsUpdate=true}}
   const prizeModels=NEON_PRIZES.map((q,i)=>{const g=new THREE.Group();g.visible=false;g.position.set(0,1.05,0);counterDesk.add(g);
     if(i===0){const d=new THREE.Mesh(own(new THREE.CylinderGeometry(0.12,0.12,0.01,24)),basic(0xb6ff2a));d.rotation.x=Math.PI/2;d.position.y=0.15;g.add(d)}
     else if(i===1){const m=std(0x39ff6e,0.4);const b=new THREE.Mesh(own(new THREE.CapsuleGeometry(0.06,0.12,6,12)),m);b.position.y=0.12;g.add(b);const h=new THREE.Mesh(own(new THREE.SphereGeometry(0.09,16,12)),m);h.scale.y=1.2;h.position.y=0.32;g.add(h)}
@@ -256,17 +289,18 @@ export function neonRideRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
       const d=new THREE.Mesh(own(new THREE.SphereGeometry(0.13,20,10,0,6.28,0,Math.PI/2)),own(new THREE.MeshStandardMaterial({color:0x7ae8ff,emissive:0x2af0ff,emissiveIntensity:1})));d.position.y=0.34;g.add(d)}
     return g});
 
-  const S={t:0,s:0,v:0,yaw:0,pitch:-0.04,bloom:0.9,seed,score:0,hits:[],ended:false,endT:0,cd:0,holdT:0,shots:0,friendly:0,beat:0,tier:0};
+  const S={t:0,s:Math.max(0,riders-1-me)*NEON.gap,v:0,yaw:0,pitch:-0.04,bloom:0.9,seed,score:0,hits:[],ended:false,endT:0,cd:0,holdT:0,shots:0,friendly:0,beat:0,tier:0};
   S.aimed=()=>!S.ended;
   S.controlMode=()=>'walk';
   const ray=new THREE.Raycaster(),ctr=new THREE.Vector2(0,0),tmp=new THREE.Vector3(),q=new THREE.Quaternion();
   const sayBoard=()=>{if(S.ended){const p=NEON_PRIZES[S.tier];drawBoard('YOU WIN: '+p.name.toUpperCase(),String(Math.max(0,S.score)).padStart(4,'0'),'#ffef3a')}else drawBoard('NEON RUN · SCORE',String(Math.max(0,S.score)).padStart(4,'0'))};
-  sayBoard();
+  sayBoard();drawLeaders();
   function hitPanel(P,pt,local=true){
     if(P.hit)return;P.hp--;
     for(let k=0,n=0;k<chips.length&&n<8;k++)if(chips[k].t<=0){const c=chips[k];c.m.position.copy(pt);c.v.set((Math.random()-0.5)*3,1+Math.random()*2.5,(Math.random()-0.5)*3);c.t=1.2;c.m.visible=true;n++}
     if(P.hp>0){P.flip=0.25;if(local)o.tone(180,0.12,'square',0.06,0,-40);return}
     P.hit=true;S.hits.push(P.t.id);
+    if(local&&party&&!A.watching)o.neon.send({k:'nrHit',id:P.t.id});
     const t=P.t,v=t.kind==='alien'?NEON_PTS.alien+(t.off>6?NEON_PTS.far:0):NEON_PTS[t.kind];
     if(local){S.score+=v;if(t.kind==='astronaut')S.friendly++;sayBoard();
       o.noise(0.08,0.25,1800,1.5);o.tone(t.kind==='astronaut'?140:520,0.12,t.kind==='astronaut'?'sawtooth':'triangle',0.07,0,t.kind==='astronaut'?-60:200);
@@ -283,7 +317,10 @@ export function neonRideRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
     muzzle.material.opacity=1;
     o.tone(1400,0.09,'square',0.035,0,-1100);o.noise(0.05,0.05,5000,2);
     if(hit)hitPanel(panels.find(P=>P.front===hit.object),hit.point);
+    if(party&&!A.watching)o.neon.send({k:'nrShot',to:[+to.x.toFixed(2),+to.y.toFixed(2),+to.z.toFixed(2)],id:hit?panels.find(P=>P.front===hit.object).t.id:-1});
   }
+  // a bolt from someone else's blaster
+  const boltFrom=(from,to)=>{const b=bolts.find(z=>z.t<=0)||bolts[0];b.m.position.copy(from);b.m.lookAt(to);b.m.scale.set(1,1,Math.max(0.01,from.distanceTo(to)));b.t=0.12;b.m.visible=true};
   S.tap=()=>false;
   S.snap=()=>({sd:seed,s:+S.s.toFixed(2),t:+S.t.toFixed(2),yaw:+S.yaw.toFixed(3),pitch:+S.pitch.toFixed(3),sc:S.score,h:S.hits.slice(-80),e:S.ended?1:0});
   S.apply=qq=>{
@@ -300,8 +337,8 @@ export function neonRideRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
       lookStep(S,dt,input.lx||0,input.ly||0,MOVE.roomPitch);S.yaw=THREE.MathUtils.clamp(S.yaw,-2.5,2.5);
       // the cart: waits a moment at the platform (a bell), rolls the course, and eases to a stop at the prize counter
       if(S.t>NEON.start&&!S.ended){
-        const left=L-S.s,want=Math.min(NEON.speed,Math.sqrt(2*0.9*Math.max(0,left-0.4))+0.15);
-        S.v+=THREE.MathUtils.clamp(want-S.v,-2*dt,1.2*dt);S.s=Math.min(L,S.s+S.v*dt);
+        const left=L-me*NEON.gap-S.s,want=Math.min(NEON.speed,Math.sqrt(2*0.9*Math.max(0,left-0.4))+0.15);
+        S.v+=THREE.MathUtils.clamp(want-S.v,-2*dt,1.2*dt);S.s=Math.min(L-me*NEON.gap,S.s+S.v*dt);
         if(left<0.5&&S.v<0.3){S.ended=true;S.endT=S.t;S.tier=neonTier(S.score);sayBoard();prizeModels[S.tier].visible=true;
           o.tone(523,0.18,'triangle',0.08);o.tone(659,0.18,'triangle',0.08,0.15);o.tone(784,0.18,'triangle',0.08,0.3);o.tone(1046,0.4,'triangle',0.08,0.45)}
       }
@@ -310,6 +347,16 @@ export function neonRideRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
       if(S.ended&&press&&S.t-S.endT>1.2){finish({k:'win',why:'neonride',score:S.score,tier:S.tier,friendly:S.friendly,shots:S.shots,hits:S.hits.length});return}
       // a soft synth pulse while the cart rolls
       if(S.t>NEON.start&&!S.ended){const b=Math.floor(S.t*2.4);if(b!==S.beat){S.beat=b;const n=[110,110,131,98][b%4];o.tone(n,0.18,'sawtooth',0.018,0,-20);if(b%2)o.tone(n*4,0.08,'triangle',0.008)}}
+    }
+    if(party&&!A.watching){
+      S.stT=(S.stT||0)-dt;if(S.stT<=0){S.stT=0.2;o.neon.send({k:'nrSt',y:+S.yaw.toFixed(2),p:+S.pitch.toFixed(2),sc:S.score,e:S.ended?1:0})}
+      for(const ev of o.neon.take()){
+        if(ev.k==='nrHit'){const P=panels.find(z=>z.t.id===ev.id);if(P&&!P.hit){P.hp=1;hitPanel(P,P.front.getWorldPosition(new THREE.Vector3()),false)}}
+        else if(ev.k==='nrShot'){const r=others.find(z=>z.id===ev.by);if(r&&Array.isArray(ev.to)&&ev.to.every(Number.isFinite)){r.fig.updateMatrixWorld(true);boltFrom(r.tip.getWorldPosition(new THREE.Vector3()),new THREE.Vector3(...ev.to));o.tone(1300,0.07,'square',0.012,0,-900)}}
+      }
+      const pe=o.neon.peers();
+      for(const r of others){const q=pe.get(r.id);if(q){r.seen=true;r.sc=q.sc|0;r.yaw=q.y||0;r.pitch=q.p||0}}
+      S.boardT=(S.boardT||0)-dt;if(S.boardT<=0){S.boardT=0.5;drawLeaders()}
     }
     o.hud(A.watching?'<small>'+(A.label||'')+'</small>':'');
     // place the cart and the camera on the track
@@ -320,6 +367,9 @@ export function neonRideRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
     const head=Math.atan2(-tg.x,-tg.z);
     cam.rotation.set(S.pitch,head-S.yaw,0,'YXZ');cam.updateMatrixWorld();
     cartLamp.position.set(p.x+tg.x*2.5,2.4,p.z+tg.z*2.5);
+    for(const r of others){const sk=THREE.MathUtils.clamp(S.s+(me-r.k)*NEON.gap,0,L),u2=sk/L,p2=curve.getPointAt(u2),t2=curve.getTangentAt(u2);
+      r.cart.position.copy(p2);r.cart.lookAt(p2.clone().add(t2));r.cart.rotateY(Math.PI);
+      r.fig.visible=r.seen;r.fig.rotation.y=-(r.yaw||0);r.aim.rotation.x=r.pitch||0}
     // the blaster, low and to the right of the view, kicking back as it fires
     const kick=Math.max(0,S.cd/NEON.cooldown)*0.03;
     gun.position.copy(new THREE.Vector3(0.19,-0.16,-0.45+kick).applyMatrix4(cam.matrixWorld));gun.quaternion.copy(cam.quaternion);gun.visible=!S.ended;
@@ -344,6 +394,6 @@ export function neonRideRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
   };
   onClear(()=>{scene.background=prevBg;scene.fog=prevFog;for(const x of owned)x.dispose&&x.dispose();for(const b of bolts)b.m.material.dispose()});
   S.update(0,{});
-  S.course=C;S.panels=panels;   // for the tests
+  S.course=C;S.panels=panels;S.others=others;   // for the tests
   return S;
 }
