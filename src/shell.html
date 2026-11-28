@@ -244,10 +244,12 @@
   :is(#stationCard,[data-screen-id=stationCard]) .hint,:is(#stationCard,[data-screen-id=stationCard]) .sub{margin:8px 0;text-align:left;line-height:1.45;color:#b8d4cc}
   #liftDestination{display:flex;flex-wrap:wrap;align-items:end;gap:16px;margin-top:16px}
   #liftDepth{font:600 25px Consolas,monospace;color:#cbf2df;background:#11242a;border:1px solid #608f7d;width:102px;padding:9px}
+  #liftFloorType{margin:12px 0 0;color:#f0d4a1;font-weight:700}
   #liftGo{color:#102c24;background:#a7dbc2;border:1px solid #a7dbc2}
   #liftDeepest,#liftLobby{background:#203b3a;color:#d5efdf;border:1px solid #608a7d}
   #title[data-lift] h1{font-size:clamp(34px,6cqi,50px)}
   #title[data-lift] #liftRunType,#title[data-lift] #liftDestination label{font-size:clamp(19px,3.7cqi,30px)}
+  #title[data-lift] #liftFloorType{font-size:clamp(20px,3.8cqi,32px)}
   #title[data-lift] #liftDestination{gap:24px;margin-top:32px}
   #title[data-lift] :is(#liftDepth,#liftGo,#liftDeepest,#liftLobby){font-size:clamp(20px,3.6cqi,32px);min-height:50px}
   @media(max-width:619px){:is(#stationCard,[data-screen-id=stationCard]){padding:15px 17px}:is(#stationCard,[data-screen-id=stationCard]) :is(#closeStation,[data-screen-id=closeStation]){top:13px;right:17px}}
@@ -337,6 +339,7 @@
       <button id="liftDeepest" type="button">Deepest reached</button>
       <button id="liftLobby" type="button" hidden>Lobby</button>
     </form>
+    <p id="liftFloorType" aria-live="polite"></p>
   </div>
   <div data-station-panel="news" hidden><div id="newsList" tabindex="0" aria-label="Update log"></div></div>
   <div data-station-panel="guide" hidden>

@@ -99,10 +99,10 @@ export function stepMove(b,dt,it,w){
 
 // A sprint into a solid wall, once per fresh impact. cell() is 0 open, 1 wall, 2 gate or blocked.
 // roll is in [0,1). Returns the open cell beyond the wall, or null. Never crosses a gate.
-export function noclipDest({x,z,hitVX=0,hitVZ=0,sprint,fullSpeed,roll,chance=0.07,cell,W,H}){
+export function noclipDest({x,z,hitVX=0,hitVZ=0,sprint,fullSpeed,roll,chance=0.025,cell,W,H}){
   if(!sprint)return null;
   const sp=Math.hypot(hitVX,hitVZ);
-  if(!(fullSpeed>0)||sp<fullSpeed*0.55)return null;
+  if(!(fullSpeed>0)||sp<fullSpeed*0.72)return null;
   if(!(roll<chance))return null;
   const ax=Math.abs(hitVX)>=Math.abs(hitVZ);
   const dirx=ax?Math.sign(hitVX):0,dirz=ax?0:Math.sign(hitVZ);

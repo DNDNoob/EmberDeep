@@ -19,6 +19,7 @@ export function mountLiftDock(floor,distances){
     if(floor.mazeH&&fz<0)continue;
     const width=fx?(floor.mazeH||H):W,length=fx?W:H;
     for(let side=1;side<width-1;side++){
+      if(fz>0&&floor.castle?.windows.some(window=>window.tx===side))continue;
       const tx=fx?(fx>0?0:W-1):side,tz=fz?(fz>0?0:H-1):side;
       const cells=[];
       for(let n=0;n<length-1;n++){

@@ -27,6 +27,8 @@ import {KEEPER} from './npc_recipes.js';
 import {createBabyFace,createFallVoid} from './babyface.js';
 import {pickVariant,VARIANTS} from './variants.js';
 import {ARCHIVE_DEPTH,ARCHIVE_CEILING,ARCHIVE_CORRIDOR,ARCHIVE_BODY,BALCONY_Y,LIBRARIAN,isArchiveDepth,carveArchive,archiveGround,archiveBlocked,archiveHeadroom,archiveMobBlocked,archiveLowOpening,archiveHidden,drawArchive,drawLibrarian} from './forgotten-archive.js';
+import {CASTLE_DEPTH,CASTLE_CEILING,CASTLE_GALLERY,isCastleDepth,carveCastle,castleGround,castleBlocked,castleHeadroom,
+  castleHatchAt,startCastleHatch,castleWindowWall,drawCastleArchitecture,drawCastleDetails,drawCastleHatches,createCastleValley} from './abandoned-castle.js';
 import {createForest,CORE_H,warmForest} from './forest.js';
 import {carveForestRoutes,creekBanks,forestGround,forestSubmerged,forestRootAt,forestRootTile,forestCover,forestBlocked,
   ROOT_CLEARANCE,drawCreekTerrain,drawForestGround,drawForestRoutes} from './forest-routes.js';
@@ -112,6 +114,7 @@ const BIOMES=[
   {base:23,name:'The Glimmer Veins',  wall:[0.8,0.85,1.05], floor:[0.8,0.85,1.0],  ceil:[0.6,0.65,0.85], torch:[0.98,0.86,0.72], amb:[0.012,0.016,0.03], stone:[0.28,0.3,0.36], spec:[0.4,0.45,0.25], wet:0.35},
   {base:26,name:'The Dark Forest',   wall:[0.7,0.9,0.7],  floor:[0.8,0.85,0.75], ceil:[0,0,0],        torch:[1.0,0.76,0.46], amb:[0.005,0.012,0.009], stone:[0.3,0.28,0.24], spec:[0.05,0.16,0.04], wet:0.45},
   {base:0,name:'Forgotten Archive',wall:[1.24,1.02,0.72],floor:[1.06,0.9,0.68],ceil:[0.86,0.77,0.61],torch:[1,0.81,0.57],amb:[0.072,0.055,0.038],stone:[0.58,0.42,0.28],spec:[0.11,0.12,0.04],wet:0},
+  {base:0,name:'Abandoned Castle',wall:[0.88,0.99,1.1],floor:[0.76,0.86,0.91],ceil:[0.74,0.78,0.87],torch:[1,0.77,0.48],amb:[0.047,0.061,0.076],stone:[0.38,0.43,0.46],spec:[0.09,0.11,0.12],wet:0.06},
 ];
 const ITEM={
   shard:{cell:0,col:[0.35,0.9,1.0], size:0.36},
@@ -142,7 +145,13 @@ function bfs(g,W,H,sx,sy){
 // every floor that is not a Humming Rooms floor moves on to the next biome
 const ORDER=[0,1,2,3,5,6,7];
 function biomeIx(depth){return ORDER[(depth-1-Math.floor(depth/4))%ORDER.length]}
-function floorKind(depth){if(bossAt(depth))return 'arena';if(isArchiveDepth(depth))return 'archive';if(depth>=4&&depth%4===0)return 'back';if(depth>=7&&depth%8===7)return 'forest';if(depth>=3&&depth%4===3)return 'cave';if(depth>=5&&depth%4===1)return 'dark';return 'maze'}
+function floorKind(depth){if(bossAt(depth))return 'arena';if(isArchiveDepth(depth))return 'archive';if(isCastleDepth(depth))return 'castle';if(depth>=4&&depth%4===0)return 'back';if(depth>=7&&depth%8===7)return 'forest';if(depth>=3&&depth%4===3)return 'cave';if(depth>=5&&depth%4===1)return 'dark';return 'maze'}
+const floorTypes={maze:'Stone Maze',cave:'The Hollow',back:'The Humming Rooms',dark:'The Black Hush',forest:'The Dark Forest',archive:'Forgotten Archive',castle:'Abandoned Castle'};
+function floorTypeName(depth){
+  if(depth===0)return 'Lobby';
+  const boss=bossAt(depth);
+  return boss?'Boss arena · '+BOSSES[boss.i].arena:floorTypes[floorKind(depth)];
+}
 function genFloor(seedStr,depth,look){
   const rng=mulberry32(hashStr(seedStr+'#'+depth));
   const ri=n=>(rng()*n)|0;
@@ -249,10 +258,12 @@ function genFloor(seedStr,depth,look){
     for(let cy=0;cy<ch;cy++)for(let cx=0;cx<cw;cx++)cells.push([cx*2+1,cy*2+1]);
   }
   const archive=kind==='archive'?carveArchive(g,W,mulberry32(hashStr(seedStr+'#archive'+depth))):null;
+  const castle=kind==='castle'?carveCastle(g,W,mulberry32(hashStr(seedStr+'#castle'+depth))):null;
   let forestRoutes=null;
-  const reserved=(x,z)=>archive?.reserved(x,z)||forestRoutes?.reserved(x,z);
-  if(archive){
-    [stx,sty]=archive.start;
+  const reserved=(x,z)=>archive?.reserved(x,z)||castle?.reserved(x,z)||forestRoutes?.reserved(x,z);
+  const landmark=archive||castle;
+  if(landmark){
+    [stx,sty]=landmark.start;
     cells=cells.filter(([x,z])=>!reserved(x,z));
   }
   // sanctuary: a 3x3 safe room around a brazier (tile value 4). Creatures never enter it.
@@ -267,7 +278,7 @@ function genFloor(seedStr,depth,look){
     }
     if(sc.length){const c=sc[ri(sc.length)];safe={tx:c[0],ty:c[1]}}
   }else{
-    const rx=ri(cw-1),ry=archive?5+ri(ch-6):ri(ch-1);
+    const rx=ri(cw-1),ry=landmark?5+ri(ch-6):ri(ch-1);
     for(let y=ry*2+1;y<=ry*2+3;y++)for(let x=rx*2+1;x<=rx*2+3;x++)g[idx(x,y)]=0;
     safe={tx:rx*2+2,ty:ry*2+2};
   }
@@ -524,7 +535,7 @@ function genFloor(seedStr,depth,look){
   for(const d of DIRS){if(g[idx(stx+d[0],sty+d[1])]===0){yaw=Math.atan2(d[1],d[0]);break}}
   if(archive)yaw=0;
   if(BA)yaw=-Math.PI/2;   // into the arena, toward the boss
-  const bi=archive?9:look&&look.bi!=null?look.bi:BA?BOSSES[BA.i].bi:kind==='back'?4:kind==='forest'?8:biomeIx(depth);
+  const bi=archive?9:castle?10:look&&look.bi!=null?look.bi:BA?BOSSES[BA.i].bi:kind==='back'?4:kind==='forest'?8:biomeIx(depth);
   // looks are drawn last, from their own dice, so nothing above ever moves
   const vr=mulberry32(hashStr(seedStr+'#var#'+depth)),variant=pickVariant(vr,bi,look&&look.ix),B=BIOMES[bi];
   const litter=[];
@@ -562,6 +573,10 @@ function genFloor(seedStr,depth,look){
   if(archive){
     floor.archive=archive;
     for(const z of [3.04,7.06])items.push({type:'gem',tx:7,ty:Math.floor(z),x:7.16,z,y:BALCONY_Y,got:false,ph:z});
+  }
+  if(castle){
+    floor.castle=castle;
+    Object.assign(items.find(it=>it.type==='shard'),{x:17.43,z:1.88,tx:17,ty:1,y:CASTLE_GALLERY});
   }
   if(sanctuaryEntrance){
     attachSanctuary(floor,sanctuaryEntrance);
@@ -975,19 +990,20 @@ function makeSpriteTexture(){
 const SURFS=makeSurfaces(renderer,Q>=2?1024:Q>=1?512:256,NORMALMAP), spriteTex=makeSpriteTexture();
 
 /* ---------- world mesh ---------- */
-let worldMesh=null,forestGrp=null;
+let worldMesh=null,forestGrp=null,castleValley=null;
 const FOREST=createForest({UT,Q,shadows:SHADOWS>0});
 const sanctuaryDisplay=createSanctuaryDisplay();
 sanctuaryDisplay.group.visible=false;
 scene.add(sanctuaryDisplay.group);
 function buildMesh(F,preview=false){
-  const v=[],{W,H,g}=F,Y=F.archive?ARCHIVE_CEILING:WALL_H;
+  const v=[],{W,H,g}=F,Y=F.castle?CASTLE_CEILING:F.archive?ARCHIVE_CEILING:WALL_H;
   if(F.start&&!F.lift&&!archiveRun)F.lift=mountLiftDock(F,bfs(g,W,H,F.start.tx,F.start.ty));
   const dock=F.lift;
   const quad=(p,n,uv,layer)=>{for(const i of[0,1,2,0,2,3])v.push(p[i][0],p[i][1],p[i][2],n[0],n[1],n[2],uv[i][0],uv[i][1],layer)};
   const wall=(x,y)=>x<0||y<0||x>=W||y>=H?!(dock&&x===dock.tx-dock.fx&&y===dock.tz-dock.fz):g[y*W+x]===1;
   const fr=F.forest,room=F.safe?.room;
   const topAt=(x,z)=>room&&F.safeMask[z*W+x]&&z>=room.front?SANCTUARY_HEIGHT:
+    F.castle&&!F.castle.reserved(x,z)?WALL_H:
     F.archive&&!F.archive.reserved(x,z)?ARCHIVE_CORRIDOR:Y;
   for(let y=0;y<H;y++)for(let x=0;x<W;x++){
     if(g[y*W+x]===1)continue;
@@ -1002,7 +1018,7 @@ function buildMesh(F,preview=false){
     // The sky is open above the hedges. Only pockets and the sanctuary keep a ceiling.
     if(!fr||pk||indoor)quad([[x,top,y],[x+1,top,y],[x+1,top,y+1],[x,top,y+1]],[0,-1,0],fu,(pk?4:F.panelAt[y*W+x]===2?6:F.panelAt[y*W+x]?4:2)+pk);
     if(fr&&!pk&&!indoor)continue;
-    const uvTop=1-top/Y;
+    const uvHeight=F.castle?WALL_H:Y,uvTop=1-top/uvHeight;
     if(F.archive&&dock&&x===dock.tx&&y===dock.tz){
       const bottom=WALL_H,uv=[[0,1-bottom/Y],[1,1-bottom/Y],[1,uvTop],[0,uvTop]];
       if(dock.fx){
@@ -1016,12 +1032,12 @@ function buildMesh(F,preview=false){
     if(wall(x+1,y))quad([[x+1,0,y],[x+1,0,y+1],[x+1,top,y+1],[x+1,top,y]],[-1,0,0],[[y,1],[y+1,1],[y+1,uvTop],[y,uvTop]],pk);
     if(wall(x-1,y))quad([[x,0,y],[x,0,y+1],[x,top,y+1],[x,top,y]],[1,0,0],[[y,1],[y+1,1],[y+1,uvTop],[y,uvTop]],pk);
     if(wall(x,y+1))quad([[x,0,y+1],[x+1,0,y+1],[x+1,top,y+1],[x,top,y+1]],[0,0,-1],[[x,1],[x+1,1],[x+1,uvTop],[x,uvTop]],pk);
-    if(F.archive){
+    if(F.archive||F.castle){
       for(const [dx,dz] of DIRS){
         if(x+dx<0||x+dx>=W||y+dz<0||y+dz>=H||wall(x+dx,y+dz))continue;
         const lower=topAt(x+dx,y+dz);
         if(lower>=top)continue;
-        const uv=[[0,1-lower/Y],[1,1-lower/Y],[1,uvTop],[0,uvTop]];
+        const uv=[[0,1-lower/uvHeight],[1,1-lower/uvHeight],[1,uvTop],[0,uvTop]];
         if(dx){
           const edge=x+(dx>0?1:0);
           quad([[edge,lower,y],[edge,lower,y+1],[edge,top,y+1],[edge,top,y]],[-dx,0,0],uv,0);
@@ -1033,10 +1049,12 @@ function buildMesh(F,preview=false){
     }
     if(wall(x,y-1)||tall&&y===room.front&&!F.archive){
       const bottom=wall(x,y-1)?0:Y;
-      quad([[x,bottom,y],[x+1,bottom,y],[x+1,top,y],[x,top,y]],[0,0,1],[[x,1-bottom/Y],[x+1,1-bottom/Y],[x+1,uvTop],[x,uvTop]],pk);
+      if(y===1&&F.castle?.windows.some(window=>window.tx===x))castleWindowWall(quad,x,y,top,pk);
+      else quad([[x,bottom,y],[x+1,bottom,y],[x+1,top,y],[x,top,y]],[0,0,1],[[x,1-bottom/uvHeight],[x+1,1-bottom/uvHeight],[x+1,uvTop],[x,uvTop]],pk);
     }
   }
   if(F.forestRoutes)drawCreekTerrain(F.forestRoutes.creek,quad);
+  if(F.castle)drawCastleArchitecture(F.castle,quad);
   let hedges=null;
   if(fr){
     const faces=FOREST.faces(F),under=new Set();
@@ -1125,6 +1143,8 @@ function installWorldMesh(F,mesh,deferCleanup=false){
     if(deferCleanup)afterLiftFrame(()=>previous.geometry.dispose());else previous.geometry.dispose();
   }
   worldMesh=mesh;scene.add(worldMesh);
+  if(F.castle&&!castleValley){castleValley=createCastleValley();scene.add(castleValley)}
+  if(castleValley)castleValley.visible=!!F.castle;
   if(forestGrp){
     const previous=forestGrp;
     previous.removeFromParent();forestGrp=null;
@@ -2181,6 +2201,7 @@ function buildStatic(F){
       for(const a of[-1,1])for(const b of[-1,1])slab(f,[lx+a*0.028,0.665,lz+b*0.028],[0.008,0.1,0.008],iron);
     }else{slab(f,[0,0.72,0],[0.05,0.2,0.05],iron);slab(f,[-q.dx*0.07,0.82,-q.dz*0.07],[0.12,0.04,0.12],iron)}}
   if(F.archive)drawArchive(F.archive,I,{slab,seg,rZ,rX});
+  if(F.castle)drawCastleDetails(F.castle,I,{slab,seg});
   if(F.forestRoutes)drawForestRoutes(F.forestRoutes,I,{slab,seg,ball,emit,mesh6,rZ});
   for(const pr of F.props)buildProp(pr,F);
   for(const D of F.sdoors){
@@ -7038,7 +7059,7 @@ $('gtx').addEventListener('change',e=>{lsSet('gtx',e.target.checked);lsSet('safe
 
 function playerEye(extra=0){
   const base=EYE*wofEye()*potEye();
-  const headroom=F.archive?archiveHeadroom(F.archive,P.x,P.z,P.y,PR):
+  const headroom=F.castle?castleHeadroom(F.castle,P.x,P.z,P.y,PR):F.archive?archiveHeadroom(F.archive,P.x,P.z,P.y,PR):
     F.forestRoutes&&forestRootAt(F.forestRoutes,P.x,P.z,PR)?ROOT_CLEARANCE:CAM_TOP+.06;
   return Math.min(headroom-.06,base+P.y+bobY(P,1)+extra-crouchOffset(P,base));
 }
@@ -7081,7 +7102,7 @@ function installFloor(depth,nextFloor,prepared=false,landing=null){
   if(prepared)afterLiftFrame(()=>{if(state==='play'&&F===nextFloor&&!loading)sweepWorld()});else sweepWorld();
   if(F.npcs&&F.npcs.some(q=>q.type==='keeper'))keeperWarm();
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
-  P.y=0;P.vy=0;P.vx=0;P.vz=0;P.crouched=false;P.crouchBlend=0;P.inWater=false;P.keys=0;P.jumpQ=0;P.inSafe=false;P.unseen=false;nearNpc=nearDoor=null;
+  P.y=0;P.vy=0;P.vx=0;P.vz=0;P.clipRunup=0;P.crouched=false;P.crouchBlend=0;P.inWater=false;P.keys=0;P.jumpQ=0;P.inSafe=false;P.unseen=false;nearNpc=nearDoor=null;
   const visit=liftVisits.get(depth);
   if(visit?.floor===F){
     P.shards=visit.shards;P.keys=visit.keys;
@@ -7207,7 +7228,7 @@ function enterRun(seed,sd,floor,landing,liftTrip){
   roomLeave();$('deadTitle').textContent='THE DARK TAKES YOU';wofClear();WOF.done=true;WOF.plan=null;WOF.flap=0;WOF.party=0;
   showHub(false);
   P.down=false;
-  R.seed=seed;R.pk={};R.mirror=false;P.pick=0;P.spikeTraps=0;P.moose=P.mounted=false;P.moosePending=null;R.score=0;R.time=0;R.gems=0;R.startDepth=sd;
+  R.seed=seed;R.pk={};R.mirror=false;P.pick=0;P.spikeTraps=0;P.moose=P.mounted=false;P.moosePending=null;P.clipReadyAt=0;R.score=0;R.time=0;R.gems=0;R.startDepth=sd;
   R.hpBonus=0;potReset(true);P.fizz=0;P.woozy=0;P.kissT=0;P.hug=null;W.shots=[];W.cd=0;W.parryT=0;
   P.hp=maxHp();P.fuel=100;P.stam=100;P.winded=false;P.flash=1+Math.floor((sd-1)/3)+(up.band|0);P.ward=0;R.wind=false;P.inv=0;P.chill=0;lowFuelSaid=false;
   installFloor(sd,floor,!!landing,landing);
@@ -7423,7 +7444,7 @@ function pkWhy(tx,ty){
   if(tx<1||ty<1||tx>W-2||ty>H-2)return 'border';
   if(F.mazeH&&ty>=F.mazeH-1)return 'kept';
   if(F.g[ty*W+tx]!==1)return 'notwall';
-  if(F.archive?.reserved(tx,ty)||F.forestRoutes?.reserved(tx,ty))return 'kept';
+  if(F.archive?.reserved(tx,ty)||F.castle?.reserved(tx,ty)||F.forestRoutes?.reserved(tx,ty))return 'kept';
   const near=(x,y,r)=>Math.abs(x-tx)<=r&&Math.abs(y-ty)<=r;
   for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){const i=(ty+dy)*W+tx+dx;if(F.safeMask[i]||F.pocketMask[i])return 'kept'}
   if(F.door&&near(F.door.tx,F.door.ty,1))return 'gate';
@@ -7770,6 +7791,7 @@ function mpRecv(m,from){
       p.positionAt=performance.now();
       p.d=m.d;p.x=+a[0];p.z=+a[1];p.y=+a[2];p.yaw=+a[3];p.pitch=+a[4];p.fu=+a[5];p.down=!!(a[6]&1);p.safe=!!(a[6]&2);p.run=!!(a[6]&4);p.away=!!(a[6]&8);p.mounted=!!(a[6]&16);p.unseen=!!(a[6]&32);p.hp=a[7];p.form=a[6]>>6&3;p.fat=!!(a[6]&256);p.pox=!!(a[6]&512);p.frz=!!(a[6]&1024);p.bob=!!(a[6]&2048);p.hedge=!!(a[6]&4096);p.curl=a[6]&8192?1:a[6]&16384?2:0;p.mirror=!!(a[6]&32768);p.crouched=!!(a[6]&65536);p.baby=!!(a[6]&131072);p.pf=a[8]|0;p.web=+a[9]||0;p.ko=+a[10]||0;p.slugs=a[11]|0;
       if(p.rx===undefined||p.rd!==p.d||Math.hypot(p.x-p.rx,p.z-p.rz)>3){p.rx=p.x;p.rz=p.z;p.ry=p.y;p.ryaw=p.yaw;p.rpitch=p.pitch;p.rd=p.d}
+      if(inRun&&here&&p.run&&!p.down&&!p.away)triggerCastleHatch(p.x,p.y,p.z);
       break;}
     case 'm':{
       if(!fromHost||!inRun||!here)return;
@@ -7907,9 +7929,9 @@ const playerInArchiveCover=()=>inArchiveAlcove(P.x,P.z,P.y,P.crouched);
 const underForestRoots=(x,z,y,crouched)=>!!F.forestRoutes&&forestCover(F.forestRoutes,x,z,y,crouched);
 function mpTargets(){
   const T=[];
-  if(!P.down&&!(P.ko>0)&&!(P.eaten>0))T.push({x:P.x,z:P.z,y:P.y,yaw:P.yaw,fuel:P.fuel,inSafe:P.inSafe||F.archive&&P.y>.84||playerInArchiveCover()||underForestRoots(P.x,P.z,P.y,P.crouched)||P.away||!!FX.frozen||potSafeAt(P.x,P.z),inv:P.inv,loc:true,mirror:R.mirror,tx:P.tx,ty:P.ty,pf:potFlags()});
+  if(!P.down&&!(P.ko>0)&&!(P.eaten>0))T.push({x:P.x,z:P.z,y:P.y,yaw:P.yaw,fuel:P.fuel,inSafe:P.inSafe||(F.archive||F.castle)&&P.y>.84||playerInArchiveCover()||underForestRoots(P.x,P.z,P.y,P.crouched)||P.away||!!FX.frozen||potSafeAt(P.x,P.z),inv:P.inv,loc:true,mirror:R.mirror,tx:P.tx,ty:P.ty,pf:potFlags()});
   if(MP.host)for(const p of MP.peers.values())
-    if(p.run&&!p.down&&!(p.ko>0)&&p.d===R.depth&&p.x!==undefined&&mpFresh(p))T.push({x:p.x,z:p.z,y:p.y,yaw:p.yaw,fuel:p.fu,inSafe:p.safe||F.archive&&p.y>.84||inArchiveAlcove(p.x,p.z,p.y,p.crouched)||underForestRoots(p.x,p.z,p.y,p.crouched)||potSafeAt(p.x,p.z),inv:p.inv,loc:false,mirror:!!p.mirror,p,tx:Math.floor(p.x),ty:Math.floor(p.z),pf:p.pf|0});
+    if(p.run&&!p.down&&!(p.ko>0)&&p.d===R.depth&&p.x!==undefined&&mpFresh(p))T.push({x:p.x,z:p.z,y:p.y,yaw:p.yaw,fuel:p.fu,inSafe:p.safe||(F.archive||F.castle)&&p.y>.84||inArchiveAlcove(p.x,p.z,p.y,p.crouched)||underForestRoots(p.x,p.z,p.y,p.crouched)||potSafeAt(p.x,p.z),inv:p.inv,loc:false,mirror:!!p.mirror,p,tx:Math.floor(p.x),ty:Math.floor(p.z),pf:p.pf|0});
   return T;
 }
 // path distance from every tile to the nearest player
@@ -7949,7 +7971,7 @@ function mpSpectate(){
   const L=mpAlive(),f=L.find(p=>p.id===MP.follow)||L[0];
   MP.follow=f?f.id:null;
   if(!f)return;
-  P.x=f.rx;P.z=f.rz;P.y=F.archive||F.forestRoutes?f.ry:0;P.crouched=f.crouched;P.crouchBlend=Number(!!f.crouched);P.yaw=f.ryaw;P.pitch=f.rpitch*0.6;P.fuel=f.fu;P.inSafe=f.safe;
+  P.x=f.rx;P.z=f.rz;P.y=F.archive||F.castle||F.forestRoutes?f.ry:0;P.crouched=f.crouched;P.crouchBlend=Number(!!f.crouched);P.yaw=f.ryaw;P.pitch=f.rpitch*0.6;P.fuel=f.fu;P.inSafe=f.safe;
   if(Math.floor(P.x)!==P.tx||Math.floor(P.z)!==P.ty)onTileChange();
 }
 function mpCycle(){const L=mpAlive();if(L.length<2)return;const i=L.findIndex(p=>p.id===MP.follow);MP.follow=L[(i+1)%L.length].id}
@@ -8034,11 +8056,11 @@ function mpTick(raw){
 }
 const appearanceColor=(look,field)=>field.colors[appearanceChoice(look,field)];
 function playerHead(H,look,skin,cloak,cloakD,blink){
-  const {face:shape,hair:hairStyle,hairColor,beard:facialHair,tattoo:ink}=appearanceField;
+  const {face:shape,hair:hairStyle,hairColor,beard:facialHair,tattoo:ink,eyes,accessory}=appearanceField;
   const scales=shape.scales[appearanceChoice(look,shape)];
   const head=scales===shape.scales[0]?H:{p:H.p,R:H.R.map((value,i)=>value*scales[i%3])};
   const hair=appearanceChoice(look,hairStyle),color=appearanceColor(look,hairColor);
-  face(head,{skin,blink,iris:[0.3,0.25,0.18],brow:color,browH:0.006,eyeS:1.1,ears:hair!==0,
+  face(head,{skin,blink,iris:appearanceColor(look,eyes),brow:color,browH:0.006,eyeS:1.1,ears:hair!==0,
     nose:[0.012,0.013,0.011],mouth:[0.6,0.32,0.3],mouthW:0.022});
   if(hair===0){
     ball(head,[-0.03,0.1,0],[0.088,0.1,0.094],cloak);
@@ -8070,6 +8092,33 @@ function playerHead(H,look,skin,cloak,cloakD,blink){
   }
   if(tattoo===2)slab(head,[0.074,0.058,-0.044],[0.006,0.016,0.016],pigment,rX(Math.PI/4));
   if(tattoo===3)for(let i=0;i<3;i++)ball(head,[0.078-i*0.005,0.059,-0.036-i*0.009],0.0035,pigment,true);
+  const adornment=appearanceChoice(look,accessory),gold=[0.69,0.49,0.25,4],dark=[0.08,0.055,0.035,3];
+  if(adornment===1){
+    for(const side of [-1,1]){
+      const z=side*.039;
+      for(let i=0;i<8;i++){
+        const a=i*Math.PI/4,b=a+Math.PI/4;
+        seg(head,[.096,.088+Math.cos(a)*.026,z+Math.sin(a)*.028],[.096,.088+Math.cos(b)*.026,z+Math.sin(b)*.028],.0024,.0024,gold);
+      }
+      seg(head,[.096,.089,side*.067],[-.019,.09,side*.083],.0025,.002,gold);
+    }
+    seg(head,[.098,.092,-.012],[.098,.092,.012],.0025,.0025,gold);
+  }else if(adornment===2){
+    ball(head,[.085,.102,-.039],[.015,.026,.031],dark,true);
+    seg(head,[.084,.119,-.052],[-.025,.129,-.087],.004,.004,dark);
+    seg(head,[.090,.096,-.012],[.069,.084,.054],.004,.004,dark);
+  }else if(adornment===3)for(const side of [-1,1]){
+    for(let i=0;i<8;i++){
+      const a=i*Math.PI/4,b=a+Math.PI/4;
+      seg(head,[.003+Math.sin(a)*.012,.057+Math.cos(a)*.015,side*.087],[.003+Math.sin(b)*.012,.057+Math.cos(b)*.015,side*.087],.003,.003,gold);
+    }
+  }
+}
+function playerCloakTrim(frame,v,look){
+  const trim=appearanceColor(look,appearanceField.trim);
+  if(!trim)return;
+  for(const side of [-1,1])seg(frame,v(.057,.243,side*.045),v(.068,.106,side*.066),.009,.006,trim);
+  ball(frame,v(.072,.196,0),v(.016,.018,.019),trim,true);
 }
 
 // friends drawn in the maze, built from the same jointed parts as everyone else
@@ -8102,6 +8151,7 @@ function buildPlayer(p,t,rev,et){
   seg(U,v(0,-0.1,0),v(0,0.07,0),0.12*S,0.078*S,cloak);
   seg(U,v(0,0.045,0),v(0,0.075,0),0.083*S,0.081*S,belt);
   if(rev<=0)ball(U,v(0,0.17+breath,0),[0.066*S,0.115*S,0.09*S],cloak);
+  if(rev<=0)playerCloakTrim(U,v,look);
   if(p.fat&&rev<=0){ball(U,v(0.05,0.05,0),[0.15*S,0.15*S,0.17*S],cloak);ball(U,v(0.0,0.19+breath,0),[0.11*S,0.12*S,0.15*S],cloak);for(const z of[-1,1])ball(B,v(0,0.36,z*0.07),[0.08*S,0.1*S,0.07*S],cloakD)}   // 200 extra pounds
   else mimicMaw(U,v,S,rev,t,et,cloak);
   ball(U,v(-0.035,0.2+breath,0),[0.055*S,0.12*S,0.095*S],cloakD);
@@ -8981,7 +9031,7 @@ function beginWallClip(dest,vx,vz,yaw){
   if(wallClip)return false;
   const x=(Math.floor(P.x)+Math.floor(dest.x))*0.5+0.5,z=(Math.floor(P.z)+Math.floor(dest.z))*0.5+0.5;
   wallClip={x,z,hx:x,hz:z,dx:dest.x,dz:dest.z,vx,vz,yaw,t:0,hold:0.7,shove:0.26};
-  P.x=x;P.z=z;P.vx=P.vz=P.vy=0;P.y=0;P.wallTouch=true;P.unseen=true;
+  P.x=x;P.z=z;P.vx=P.vz=P.vy=0;P.y=0;P.clipRunup=0;P.unseen=true;
   if(yaw!=null)P.yaw=yaw;
   const f=$('fade').style;f.transition='none';f.opacity='0.55';
   tone(52,0.9,'sine',0.2,0,-18);noise(0.75,0.22,110,0.4);tone(140,0.16,'sine',0.05,0.28,-30);
@@ -9009,6 +9059,13 @@ function wallClipTick(dt){
   }
   P.x=C.hx;P.z=C.hz;P.vx=P.vz=P.vy=0;P.y=0;
 }
+function triggerCastleHatch(x,y,z){
+  if(!F?.castle||Math.abs(y-CASTLE_GALLERY)>.11)return;
+  const index=castleHatchAt(F.castle,x,z);
+  if(startCastleHatch(F.castle.hatches[index],R.time)&&Math.hypot(x-P.x,z-P.z)<6){
+    noise(.28,.20,290,.75);tone(100,.22,'triangle',.11,0,-55);
+  }
+}
 function update(dt){
   if(floorLiftGate<1){
     floorLiftGate=Math.min(1,floorLiftGate+dt/liftGateTime);
@@ -9030,25 +9087,27 @@ function update(dt){
   const fury=ctl&&ps('fury');if(fury&&Math.abs(fwd)<0.2&&Math.abs(str)<0.2)fwd=1;   // Fury Brew: you cannot stop running
   const J0=MOVE.jumpV,G0=MOVE.gravity,pvx=P.vx,pvz=P.vz;MOVE.jumpV=J0*potJump();MOVE.gravity=G0*potGrav();
   const normalBlock=ps('phase')?potPhase:blocked;
-  const routes=F.forestRoutes;
-  const groundAt=F.archive?(x,z)=>archiveGround(F.archive,x,z,P.y):
+  const routes=F.forestRoutes,castle=F.castle;
+  if(ctl&&P.vy<=0)triggerCastleHatch(P.x,P.y,P.z);
+  const groundAt=castle?(x,z)=>castleGround(castle,x,z,P.y,R.time):F.archive?(x,z)=>archiveGround(F.archive,x,z,P.y):
     routes?(x,z)=>forestGround(routes,x,z,P.y):undefined;
   const height=()=>ARCHIVE_BODY*(P.crouched?MOVE.crouchEye:1);
-  const headroom=F.archive?(x,z)=>archiveHeadroom(F.archive,x,z,P.y,PR):
+  const headroom=castle?(x,z)=>castleHeadroom(castle,x,z,P.y,PR):F.archive?(x,z)=>archiveHeadroom(F.archive,x,z,P.y,PR):
     routes?(x,z)=>forestRootAt(routes,x,z,PR)?ROOT_CLEARANCE:Infinity:null;
-  const sceneryBlock=F.archive?(x,z)=>archiveBlocked(F.archive,x,z,P.y,height(),PR,P.y<=groundAt(P.x,P.z)):
+  const sceneryBlock=castle?(x,z)=>castleBlocked(castle,x,z,P.y,height(),PR):F.archive?(x,z)=>archiveBlocked(F.archive,x,z,P.y,height(),PR,P.y<=groundAt(P.x,P.z)):
     routes?(x,z)=>forestBlocked(routes,x,z,P.y,height(),PR):null;
   const wading=routes&&forestSubmerged(routes,P.x,P.z,P.y);
   const walkBlock=sceneryBlock?(x,z)=>normalBlock(x,z)||sceneryBlock(x,z):normalBlock;
   const slideBlock=sceneryBlock?(x,z)=>blocked(x,z)||sceneryBlock(x,z):blocked;
   const crouch=ctl&&!P.mounted&&(keys.ControlLeft||keys.ControlRight||keys.KeyX&&!FX.hedge||pad.crouch||touch.crouch);
+  const beforeX=P.x,beforeZ=P.z;
   const ev=stepMove(P,dt,{fwd,str,fx:Math.cos(P.yaw),fz:Math.sin(P.yaw),ctl,crouch,
     jump:FX.fat<=0&&!(FX.baby>0)&&potJump()>0&&(keys.Space||pad.jump||touch.jump),sprint:!(FX.baby>0)&&!P.half&&!((P.web||0)>=50)&&(fury||keyboardSprint()||pad.sprint||Math.hypot(touch.mx,touch.my)>0.94)},
-    {scale:1,speedMul:moveMul()*(P.mounted?1.25:1)*(wading?.49:1),lungs:up.lungs|0,blocked:walkBlock,groundAt,snap:F.archive?0.115:0,
+    {scale:1,speedMul:moveMul()*(P.mounted?1.25:1)*(wading?.49:1),lungs:up.lungs|0,blocked:walkBlock,groundAt,snap:castle?0.118:F.archive?0.115:0,
       canStand:headroom?()=>P.y+ARCHIVE_BODY<=headroom(P.x,P.z):null,
       ceilingAt:headroom?(x,z)=>headroom(x,z)-height():null});
   MOVE.jumpV=J0;MOVE.gravity=G0;
-  if(!F.archive&&P.y>0.62&&(potGrav()<1||potJump()>1)){P.y=0.62;if(P.vy>0)P.vy=0}
+  if(!F.archive&&!castle&&P.y>0.62&&(potGrav()<1||potJump()>1)){P.y=0.62;if(P.vy>0)P.vy=0}
   if(ps('slick')&&ev.ground){const k=Math.min(1,1.4*dt),nvx=pvx+(P.vx-pvx)*k,nvz=pvz+(P.vz-pvz)*k,cx=P.x+(nvx-P.vx)*dt,cz=P.z+(nvz-P.vz)*dt;if(!slideBlock(cx,P.z))P.x=cx;if(!slideBlock(P.x,cz))P.z=cz;P.vx=nvx;P.vz=nvz}
   if(POT.slv){const q=POT.slv;q.t-=dt;const nx=P.x+q.vx*dt,nz=P.z+q.vz*dt;if(!slideBlock(nx,P.z))P.x=nx;if(!slideBlock(P.x,nz))P.z=nz;q.vx*=0.9;q.vz*=0.9;if(q.t<=0)POT.slv=null}
   if(ev.jumped)sfx('jump');
@@ -9056,17 +9115,18 @@ function update(dt){
   if(inWater&&!P.inWater&&!ps('hush'))noise(.17,.12,690,.62);
   P.inWater=!!inWater;
   if((ev.landed>0||ev.step)&&!ps('hush')){if(inWater)noise(.12,.09,810,.65);else sfx('step');if(ps('loud'))tone(55,0.12,'sine',0.25)}
-  if(ctl&&ev.ground&&(ev.blockedX||ev.blockedZ)){
-    if(!P.wallTouch){
-      P.wallTouch=true;
-      const full=MOVE.sprint*(1+0.06*(up.boots|0))*(P.mounted?1.25:1);
-      const dest=!ev.sprint||P.chill>0?null:noclipDest({x:P.x,z:P.z,hitVX:ev.hitVX,hitVZ:ev.hitVZ,sprint:true,fullSpeed:full,roll:Math.random(),cell:mazeCell,W:F.W,H:F.H});
-      if(dest&&!blocked(dest.x,dest.z)){
-        remember('glitches','clip',encounterSnapshot());
-        beginWallClip(dest,ev.hitVX,ev.hitVZ);
-      }
+  const canClip=ctl&&ev.ground&&ev.sprint&&!P.chill&&!P.mounted&&!F.archive&&!F.castle&&!F.forestRoutes?.reserved(P.tx,P.ty);
+  const impact=!!(ev.hitVX||ev.hitVZ);
+  if(canClip&&impact&&P.clipRunup>=0.65&&R.time>=(P.clipReadyAt||0)){
+    const full=MOVE.sprint*(1+0.06*(up.boots|0));
+    const dest=noclipDest({x:P.x,z:P.z,hitVX:ev.hitVX,hitVZ:ev.hitVZ,sprint:true,fullSpeed:full,roll:Math.random(),cell:mazeCell,W:F.W,H:F.H});
+    if(dest&&!walkBlock(dest.x,dest.z)&&!F.forestRoutes?.reserved(Math.floor(dest.x),Math.floor(dest.z))){
+      remember('glitches','clip',encounterSnapshot());
+      if(beginWallClip(dest,ev.hitVX,ev.hitVZ))P.clipReadyAt=R.time+45;
     }
-  }else P.wallTouch=false;
+  }
+  // A held or latched sprint cannot rearm against the wall. Only actual travel does.
+  P.clipRunup=canClip&&!impact?Math.min(1,(P.clipRunup||0)+Math.hypot(P.x-beforeX,P.z-beforeZ)):0;
   }
   for(const q of F.pillars){const ddx=P.x-q[0],ddz=P.z-q[1],dd=Math.hypot(ddx,ddz),m=0.2+PR;if(dd<m&&dd>1e-4){P.x=q[0]+ddx/dd*m;P.z=q[1]+ddz/dd*m}}
   if(F.safe){const ddx=P.x-F.safe.x,ddz=P.z-F.safe.z,dd=Math.hypot(ddx,ddz),m=0.3+PR;if(dd<m&&dd>1e-4){P.x=F.safe.x+ddx/dd*m;P.z=F.safe.z+ddz/dd*m}}
@@ -9106,7 +9166,7 @@ function update(dt){
   if(flashT>0)flashT=Math.max(0,flashT-dt*1.6);
   // pickups
   for(const it of F.items){
-    if(it.got||P.y<-0.2||F.archive&&Math.abs(P.y-(it.y||0))>.72)continue;
+    if(it.got||P.y<-0.2||(F.archive||F.castle)&&Math.abs(P.y-(it.y||0))>.72)continue;
     const dx=it.x-P.x,dz=it.z-P.z;
     if(dx*dx+dz*dz<0.2)collect(it);
   }
@@ -9923,6 +9983,7 @@ const cabinLampColor=new THREE.Color(liftCabinLamps.color).toArray();
 const mazeView=cameraViewRig(),mazeViewDirection=new THREE.Vector3(),mazeViewEye=new THREE.Vector3();
 let mazeExternalView=false;
 function mazeCameraCeiling(x,y,z){
+  if(F.castle)return castleHeadroom(F.castle,x,z,y,0.08)-0.09;
   if(F.archive)return archiveHeadroom(F.archive,x,z,y,0.08)-0.09;
   if(F.forest)return F.forestRoutes&&forestRootAt(F.forestRoutes,x,z,0.08)?ROOT_CLEARANCE-0.09:Infinity;
   return CAM_TOP;
@@ -9933,6 +9994,7 @@ function mazeCameraClearance(origin,direction,distance){
     const x=origin.x+direction.x*d,y=origin.y+direction.y*d,z=origin.z+direction.z*d;
     const ground=F.forestRoutes?forestGround(F.forestRoutes,x,z,y):0;
     if(y<ground+0.08||y>mazeCameraCeiling(x,y,z)+1e-6||blocked(x,z)||
+      F.castle&&castleBlocked(F.castle,x,z,y-0.07,0.14,0.08)||
       F.archive&&archiveBlocked(F.archive,x,z,y-0.07,0.14,0.08,false)||
       F.forestRoutes&&forestBlocked(F.forestRoutes,x,z,y-0.07,0.14,0.08))return Math.max(0,d-0.08);
   }
@@ -10054,9 +10116,13 @@ function render(t){
       if(d<100)lights.push([d-3,c.mid,1.12,z,[.38,.65,.73],1.06,4.5]);
     }
   }
-  if(F.archive)for(const l of F.archive.lamps){
+  for(const l of F.archive?.lamps||F.castle?.lamps||[]){
     const d=(l.x-ex)**2+(l.z-ez)**2;
     if(d<125)lights.push([d-8,l.x,l.y-0.11,l.z,[1.0,0.69,0.37],2.2,6]);
+  }
+  if(F.castle)for(const {x} of F.castle.windows){
+    const d=(x-ex)**2+(1.25-ez)**2;
+    if(d<64)lights.push([d-6,x,3.12,1.22,[.48,.73,1],.82,4.1]);
   }
   if(F.lift&&floorLift.model.visible){
     const {x,z,fx,fz}=F.lift,ahead=(landingMazeZ-liftMouthLamp.z)*liftScale;
@@ -10117,6 +10183,11 @@ function render(t){
   const flat={p:[0,0,0],R:ID3,lo:ZERO3};
   sprList.length=0;
   CH.n=0;for(const r of GPU_RIGS)r.hide();NPC_T.tris=0;NPC_T.draws=0;
+  if(F.castle){
+    TB=CH;
+    drawCastleHatches(F.castle,R.time,(x,z)=>({p:[x,0,z],R:rYaw(0)}),{slab,subF,rX});
+    for(const l of F.castle.lamps)if((l.x-ex)**2+(l.z-ez)**2<110)spr(l.x,l.y,l.z,.08,.14,11,1,.65,.24,.76,1);
+  }
   for(const tr of F.traps){
     if((tr.x-ex)**2+(tr.z-ez)**2>16*16)continue;
     const h=0.04+trapExt(tr,R.time)*0.44;
@@ -10485,7 +10556,7 @@ const archiveCatalog={
   doors:{title:'Door Archive',action:'Enter',hint:'Open strange doors during a descent to record them.',entries:Object.fromEntries(
     Object.entries(DOOR_KINDS).map(([id,door])=>[id,door.name[0].toUpperCase()+door.name.slice(1)]))},
   floors:{title:'Floor Archive',action:'Explore',hint:'Reach a floor type during a descent to record it.',entries:{
-    maze:'Stone Maze',cave:'The Hollow',back:'The Humming Rooms',dark:'The Black Hush',forest:'The Dark Forest',archive:'Forgotten Archive'}},
+    ...floorTypes}},
   mobs:{title:'Mob Archive',action:'Encounter',hint:'Spot creatures during a descent, in the maze or behind a strange door, to record them.',entries:{
     0:'Shade',1:'Stalker',2:'Wisp',3:'Watcher',mimic:'Mimic',lurk:'Wrong Shadow',librarian:'Librarian',
     ...Object.fromEntries(Object.entries(ROOM_MOBS).map(([id,mob])=>[id,mob.name]))}},
@@ -10498,6 +10569,7 @@ const archive=Object.fromEntries(Object.keys(archiveCatalog).map(kind=>{
 }));
 const hub=createMenuRoom(renderer,{sfx,asset:exhibitAsset,activate:useMenuAsset,enterLanding:startFromLanding,arriveLobby:finishLiftInLobby,mazeFov:camera.fov,
   cameraView:()=>cameraView,createAvatar:buildLocalAvatar,
+  floorTypeName,
   sampleFloor:memoFloor,prepareLanding:preparedLanding,landingGlimpse,passingLook,onLeavePanel:()=>closeStation(),createVisitor:buildHubVisitor,
   appearance:{getLook:()=>playerLook,setLook:setPlayerLook,getName:myName,getColor:localPlayerColor,buildPortrait:buildMirrorPortrait}});
 const floorLift=hub.createDockModel();
@@ -10511,7 +10583,7 @@ function positionFloorLift(floor,depth){
   model.rotation.y=-dock.yaw-Math.PI/2;
   model.scale.setScalar(liftScale);
   floorLift.setGate(floorLiftGate);
-  floorLift.screen.setLabel(['FLOOR '+depth,'SELECT DESTINATION']);
+  floorLift.screen.setLabel(['FLOOR '+depth,floorTypeName(depth)]);
 }
 function floorLiftPose(player=P){
   return F?.lift&&dockPosition(F.lift,player.x,player.z,liftScale);
@@ -10631,6 +10703,7 @@ function updateLiftScreen(){
     go.textContent='Join floor '+MP.run.d;
     $('liftDeepest').textContent='Deepest reached · '+(selection?.deepest||deepest);
     $('liftRunType').textContent=hostName()+' is on this floor. You will arrive beside them.';
+    updateLiftFloorType();
     return;
   }
   go.textContent=onFloor||liftResume?'Travel':'Descend';
@@ -10642,9 +10715,14 @@ function updateLiftScreen(){
   $('liftDeepest').textContent='Deepest reached · '+(MP.on?selection?.deepest||deepest:deepest);
   $('liftRunType').textContent=MP.on?(selection?.pending?'Departing · '+(selection.depth===0?'Lobby':'Floor '+selection.depth):
     selection?.by?selection.by+' selected floor '+selection.depth:onFloor?'Floor '+R.depth+' · board together to travel':'Shared destination · all aboard ride together'):
-    onFloor?'Docked at floor '+R.depth:liftResume?'Continue your run':'Solo descent';
+    onFloor?'Docked at floor '+R.depth+' · '+floorTypeName(R.depth):liftResume?'Continue your run':'Solo descent';
+  updateLiftFloorType();
   // A guest can still press Descend; the click explains itself if the host has not answered yet.
   lobby.disabled=field.disabled=go.disabled=$('liftDeepest').disabled=!!(MP.on&&selection?.pending);
+}
+function updateLiftFloorType(){
+  const field=$('liftDepth'),depth=field.valueAsNumber;
+  setText('liftFloorType',validLiftDepth(depth)&&depth<=+field.max?'Floor '+depth+' · '+floorTypeName(depth):'');
 }
 
 function publishLiftSelection(to){
@@ -10808,7 +10886,7 @@ function rememberFloor(){
   remember('floors',F.kind,{seed:R.seed,depth:R.depth,label:floorTag()});
 }
 function encounterSnapshot(){
-  return {seed:R.seed,depth:R.depth,pose:[P.x,P.z,P.yaw,P.pitch],gate:F.doorOpen,breaks:R.pk[R.depth]?.slice(),blackout:F.blk,...(F.archive?{y:P.y,crouched:P.crouched}:{})};
+  return {seed:R.seed,depth:R.depth,pose:[P.x,P.z,P.yaw,P.pitch],gate:F.doorOpen,breaks:R.pk[R.depth]?.slice(),blackout:F.blk,...(F.archive||F.castle?{y:P.y,crouched:P.crouched}:{})};
 }
 function rememberMob(id,mob){
   if(archiveRun||P.down||state!=='play'||Object.hasOwn(archive.mobs,id))return;
@@ -10831,7 +10909,7 @@ function rememberRoomMob(id,seed){
 function archivePreview(kind,id){
   const seed='OVERRIDE';
   if(kind==='glitches')return {preview:true};
-  if(kind==='floors')return {seed,depth:{maze:1,cave:3,back:4,dark:9,forest:7,archive:ARCHIVE_DEPTH}[id]};
+  if(kind==='floors')return {seed,depth:{maze:1,cave:3,back:4,dark:9,forest:7,archive:ARCHIVE_DEPTH,castle:CASTLE_DEPTH}[id]};
   const room=kind==='doors'?id:ROOM_MOBS[id]?.room;
   if(room)return {seed:hashStr(seed+room),depth:1,room};
   return {seed,depth:id==='librarian'?ARCHIVE_DEPTH:1,preview:true};
@@ -10978,6 +11056,7 @@ function buildMirrorPortrait(look,baseColor){
     const head={p:[0,0,0],R:rYaw(-Math.PI/2).map(value=>value*2.35)};
     ball(head,[-0.013,-0.108,0],[0.063,0.079,0.146],cloak);
     ball(head,[0.023,-0.075,0.0],[0.049,0.045,0.104],shadow,true);
+    playerCloakTrim(subF(head,[0,-.29,0]),(x,y,z)=>[x,y,z*1.28],look);
     seg(head,[0.008,-0.082,0],[0.008,0.038,0],0.035,0.033,skin);
     playerHead(head,look,skin,cloak,shadow,1);
   });
@@ -10999,7 +11078,7 @@ function passingLook(depth){
   const hit=lookMemo.get(depth);
   if(hit)return hit;
   const kind=floorKind(depth);
-  const bi=kind==='back'?4:kind==='forest'?8:biomeIx(depth);
+  const bi=kind==='back'?4:kind==='forest'?8:kind==='archive'?9:kind==='castle'?10:biomeIx(depth);
   const B=BIOMES[bi];
   const look={kind:kind==='forest'?'forest':kind,forest:kind==='forest',dark:kind==='dark',back:kind==='back',
     stone:B.stone,name:kind==='cave'?'The Hollow':kind==='dark'?'The Black Hush':B.name,biome:B,base:B.base,wet:B.wet};
@@ -11008,7 +11087,7 @@ function passingLook(depth){
 }
 function glimpseSurf(depth,turn){
   const kind=floorKind(depth);
-  const bi=kind==='back'?4:kind==='forest'?8:biomeIx(depth);
+  const bi=kind==='back'?4:kind==='forest'?8:kind==='archive'?9:kind==='castle'?10:biomeIx(depth);
   return bi+':'+kind+':'+turn;
 }
 function buildGlimpseProto(depth,turn){
@@ -11417,6 +11496,7 @@ $('liftLobby').addEventListener('click',()=>{
 });
 $('liftDepth').addEventListener('input',()=>{
   editingLiftDepth=true;
+  updateLiftFloorType();
   const depth=$('liftDepth').valueAsNumber;
   if(MP.on&&activeStation==='lift'&&(state==='play'?aboardFloorLift():hub.boarded)&&validLiftDepth(depth)&&depth<=+$('liftDepth').max)sendLiftAction({k:'liftPick',depth});
   retargetShaft();
@@ -11597,8 +11677,8 @@ function restoreEncounter(data){
   const [x,z,yaw,pitch]=data.pose;
   if(!blocked(x,z)){
     Object.assign(P,{x,z,yaw,pitch});
-    if(F.archive){
-      P.y=archiveGround(F.archive,x,z,data.y||0);
+    if(F.archive||F.castle){
+      P.y=F.castle?castleGround(F.castle,x,z,data.y||0,R.time):archiveGround(F.archive,x,z,data.y||0);
       P.crouched=!!data.crouched;P.crouchBlend=Number(P.crouched);
     }
     onTileChange();

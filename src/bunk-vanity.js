@@ -4,7 +4,8 @@ import {appearanceChoice,appearanceFields,cycleAppearance} from './player-appear
 
 const mirrorX=0.72,controlsX=-0.68,sinkFront=5.65;
 const controlsWidth=1.23,controlsHeight=1.26,controlsY=1.835;
-const rowTop=97,rowHeight=53,screenWidth=480,screenHeight=492;
+const rowTop=97,rowHeight=58,screenWidth=480,screenHeight=492;
+const pageSize=5,pageY=416,pageCount=Math.ceil(appearanceFields.length/pageSize);
 
 export function createBunkVanity(group,box,{trim,wood,lockers,lens},back,{getLook,setLook,getName,getColor,buildPortrait},sfx){
   const enamel=new THREE.MeshStandardMaterial({color:0xd2d4c4,roughness:0.34});
@@ -20,7 +21,7 @@ export function createBunkVanity(group,box,{trim,wood,lockers,lens},back,{getLoo
   portraitMount.name='Mirror portrait';
   portraitMount.position.set(mirrorX,1.82,depth-0.23);
   group.add(portraitMount);
-  let portrait,shownLook,shownName,shownColor,highlight,washTime=0;
+  let portrait,shownLook,shownName,shownColor,highlight,washTime=0,page=0;
 
   const basinZ=5.91;
   box(group,lockers,mirrorX,0.46,basinZ+0.07,0.75,0.92,0.37);
@@ -62,7 +63,7 @@ export function createBunkVanity(group,box,{trim,wood,lockers,lens},back,{getLoo
     ctx.fillStyle='#f6e4bf';ctx.font='700 29px monospace';ctx.fillText('APPEARANCE',19,34);
     ctx.font='19px monospace';ctx.fillStyle='#adc9c3';ctx.fillText(name,20,62,screenWidth-40);
     ctx.textBaseline='middle';
-    appearanceFields.forEach((field,index)=>{
+    appearanceFields.slice(page*pageSize,(page+1)*pageSize).forEach((field,index)=>{
       const y=rowTop+index*rowHeight;
       ctx.fillStyle=index%2?'#1b2b2d':'#223335';ctx.fillRect(12,y,456,rowHeight-3);
       ctx.fillStyle='#c9d9d3';ctx.font='21px monospace';ctx.fillText(field.label,23,y+25);
@@ -75,7 +76,15 @@ export function createBunkVanity(group,box,{trim,wood,lockers,lens},back,{getLoo
       }
       ctx.textAlign='left';
     });
-    ctx.textBaseline='alphabetic';
+    ctx.fillStyle='#233538';ctx.fillRect(12,pageY,456,58);
+    ctx.textAlign='center';ctx.fillStyle='#f6e4bf';ctx.font='700 21px monospace';
+    ctx.fillText(page===0?'Style  1 / 2':'Details  2 / 2',240,pageY+29);
+    for(const [direction,x] of [[-1,47],[1,433]]){
+      const selected=highlight?.page===direction;
+      ctx.fillStyle=selected?'#e2bc79':'#3b5654';ctx.fillRect(x-22,pageY+8,44,42);
+      ctx.fillStyle=selected?'#192627':'#f6e4bf';ctx.fillText(direction<0?'‹':'›',x,pageY+29);
+    }
+    ctx.textAlign='left';ctx.textBaseline='alphabetic';
     texture.needsUpdate=true;
   }
 
@@ -98,21 +107,30 @@ export function createBunkVanity(group,box,{trim,wood,lockers,lens},back,{getLoo
     const hit=ray.intersectObjects([controls,basinTarget])[0];
     if(!hit||hit.distance>2.5)return null;
     if(hit.object===basinTarget)return {wash:true,label:'Wash face to restore defaults'};
-    const row=Math.floor(((1-hit.uv.y)*screenHeight-rowTop)/rowHeight);
-    const field=appearanceFields[row];
-    if(!field)return null;
+    const y=(1-hit.uv.y)*screenHeight;
     const x=hit.uv.x*screenWidth;
+    if(y>=pageY&&y<pageY+58){
+      const direction=x<80?-1:x>400?1:0;
+      return direction?{page:direction,label:'Change appearance page'}:null;
+    }
+    const row=Math.floor((y-rowTop)/rowHeight);
+    if(row<0||row>=pageSize)return null;
+    const field=appearanceFields[page*pageSize+row];
+    if(!field)return null;
     const direction=Math.abs(x-224)<=25?-1:Math.abs(x-438)<=25?1:0;
     if(!direction)return null;
     return {field,direction,label:field.label+' · '+(direction<0?'Previous':'Next')};
   }
   function setHighlight(hit){
-    if(hit?.field===highlight?.field&&hit?.direction===highlight?.direction)return;
+    if(hit?.field===highlight?.field&&hit?.direction===highlight?.direction&&hit?.page===highlight?.page)return;
     highlight=hit;draw(getLook(),getName());
   }
   function use(hit){
     if(hit.wash){
       setLook(0);washTime=0.95;stream.visible=true;sink.setLabel('APPEARANCE RESET');sfx('washFace');
+    }else if(hit.page){
+      page=(page+hit.page+pageCount)%pageCount;
+      draw(getLook(),getName());sfx('pick');
     }else{
       setLook(cycleAppearance(getLook(),hit.field,hit.direction));sfx('pick');
     }
