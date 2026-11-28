@@ -131,7 +131,7 @@ export function bathroomRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
       const q=S.stand||{x:0,z:-1.8,yaw:Math.PI,pitch:0};walker.watch(0,q.x,q.z,0);b.x=q.x;b.z=q.z;S.yaw=q.yaw;S.pitch=q.pitch;paper.visible=false}
   }
   S.controlMode=()=>S.sit?'read':'walk';
-  S.tap=()=>{if(A.watching)return false;if(S.sit){wipe();return true}return false};
+  S.tap=()=>{if(A.watching||!A.playing())return false;if(S.sit){wipe();return true}return false};
   S.snap=()=>({sd:seed,x:+b.x.toFixed(2),z:+b.z.toFixed(2),y:+b.y.toFixed(2),yaw:+S.yaw.toFixed(3),pitch:+S.pitch.toFixed(3),sit:S.sit?1:0,left:+G.left.toFixed(3),done:G.done?1:0,pk:G.paper?G.paper.k:'',pa:G.paper?+G.paper.amt.toFixed(2):0,w:G.wipes});
   S.apply=q=>{
     if(![q.x,q.z,q.y,q.yaw,q.pitch].every(Number.isFinite))return;
@@ -148,11 +148,12 @@ export function bathroomRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
       if(S.sit){
         lookStep(S,dt,input.lx,input.ly,MOVE.roomPitch);S.yaw=clamp(S.yaw,Math.PI-1.1,Math.PI+1.1);
         if(press&&wipe())return;
-        if(bk||Math.hypot(input.mx||0,input.my||0)>0.6&&S.t-(S.sitT||0)>0.5)sit(false);
+        if(bk||Math.hypot(input.mx||0,input.my||0)>0.6&&S.t-(S.sitT||0)>0.5){sit(false);if(!G.done)o.passTurn?.()}
       }else{
         lookStep(S,dt,input.lx,input.ly,MOVE.roomPitch);walker.step(dt,input,S.yaw);
-        if(press&&nearToilet()&&!G.done){sit(true);S.sitT=S.t}
+        if(press&&nearToilet()&&!G.done&&A.playing()){sit(true);S.sitT=S.t}
         else if(press&&nearDoor()){
+          if(!A.playing()){finish({k:'leave'});return}
           if(G.done){finish({k:'win',why:'bathroom',reds:G.redTotal});return}
           o.tone(110,0.2,'square',0.05);o.noise(0.25,0.12,600,1);   // the handle rattles: locked
         }

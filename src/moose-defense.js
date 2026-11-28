@@ -363,6 +363,7 @@ export function mooseModel(zombie=false) {
 
 export function mooseDefenseRoom({group:room,scene,cam,o,A,onClear,finish}){
   const S=mooseDefenseGame(),live=!A.watching;
+  const operator=()=>live&&A.playing();
   const arcade=outpostArcade(room,o,onClear),group=arcade.board;
   Object.assign(S,{table:false,tableMix:0,yaw:0,pitch:-.085,walker:arcade.walker});
   S.controlMode=()=>S.table?'table':'walk';
@@ -490,12 +491,14 @@ export function mooseDefenseRoom({group:room,scene,cam,o,A,onClear,finish}){
   const track=panel.querySelector('#outpostTrack'),percent=panel.querySelector('output');
   const walkHint=panel.querySelector('.moose-walk span'),[enter,door]=panel.querySelectorAll('.moose-walk button');
   const setTable=on=>{
+    const was=S.table;
     S.table=on;prompt='';
     if(live)o.mooseTableFocus(on);
     if(document.activeElement?.closest('#moosePanel'))document.activeElement.blur();
     refresh();
+    if(was&&!on&&S.phase!=='win'&&S.phase!=='lose'&&S.cleared<3)o.passTurn?.();
   };
-  enter.addEventListener('click',()=>{if(live&&arcade.near())setTable(true)});
+  enter.addEventListener('click',()=>{if(operator()&&arcade.near())setTable(true)});
   door.addEventListener('click',()=>{if(live&&!S.table&&arcade.atExit())leaveArcade()});
   if(!live)panel.classList.add('moose-watching');
   const button=(title,action)=>{
@@ -506,12 +509,12 @@ export function mooseDefenseRoom({group:room,scene,cam,o,A,onClear,finish}){
   const trap=button('Lay spikes',()=>command('spike'));
   const syrup=button('Pour syrup',()=>command('syrup'));
   const back=button('Step away',()=>setTable(false));
-  const skip=button('Skip bonus round',()=>{if(live&&S.skipBonus())refresh()});
+  const skip=button('Skip bonus round',()=>{if(operator()&&S.skipBonus())refresh()});
   const release=button('Start round 1',()=>command('launch'));
   const spendSpike=price=>o.useMooseSpike()||o.spendMooseGems(price);
 
   function command(action){
-    if(!live||!S.table||S.phase==='win'||S.phase==='lose')return;
+    if(!operator()||!S.table||S.phase==='win'||S.phase==='lose')return;
     prompt='';
     if(action==='build'){
       if(S.build(selection,o.spendMooseGems))o.sfx('pick');
@@ -526,13 +529,14 @@ export function mooseDefenseRoom({group:room,scene,cam,o,A,onClear,finish}){
     refresh();
   }
   function leaveArcade(){
+    if(!operator()){finish({k:'leave'});return}
     const win=S.cleared===MOOSE_ROUNDS.length;
     o.sfx('door');finish({k:win?'win':'lose',why:'moose',drone:S.bonusWon,
       beforePlay:S.phase==='build',forfeited:!win&&S.phase!=='lose'});
   }
 
   function refresh(){
-    const supply=live?o.mooseSpikes():S.supply||0,funds=live?o.mooseGems():S.funds||0;
+    const supply=operator()?o.mooseSpikes():S.supply||0,funds=operator()?o.mooseGems():S.funds||0;
     const tile=TILES[selection],phase=S.phase,round=S.round+1,over=phase==='win'||phase==='lose';
     const count=round+' / '+(S.bonus?4:3),boss=S.round===3;
     const reward=roundRules(S.round).gems;
@@ -555,11 +559,11 @@ export function mooseDefenseRoom({group:room,scene,cam,o,A,onClear,finish}){
     if(hud===lastHud)return;
     lastHud=hud;status.textContent=text;tileLabel.textContent=target;
     panel.classList.toggle('moose-roam',!S.table);
-    enter.hidden=!near||!live;
+    enter.hidden=!near||!operator();
     door.hidden=!atExit||!live;
     const interact=device==='touch'?'Tap Use':key('press');
     walkHint.textContent=atExit?interact+' to exit':phase==='run'?'Round '+round+' running · '+pct+'% of track':
-      phase==='hatch'||phase==='revive'?'Round complete':near?interact+' to play':'Approach the table to play';
+      phase==='hatch'||phase==='revive'?'Round complete':!operator()&&live?'The table is in use':near?interact+' to play':'Approach the table to play';
     track.value=pct;percent.value=pct+'%';
     const hue=pct>=50?0:pct<25?120-pct*3:45-(pct-25)*1.8;
     track.style.setProperty('--track-color',`hsl(${hue} 83% 56%)`);
@@ -592,7 +596,7 @@ export function mooseDefenseRoom({group:room,scene,cam,o,A,onClear,finish}){
   const ray=new THREE.Raycaster(),pointer=new THREE.Vector2(),hit=new THREE.Vector3(),spotV=new THREE.Vector3();
   const board=new THREE.Plane(new THREE.Vector3(0,1,0),-(TABLE_HEIGHT+.034*TABLE_SCALE));
   S.tap=(x,y)=>{
-    if(!live||!S.table||!['build','run','break'].includes(S.phase))return false;
+    if(!operator()||!S.table||!['build','run','break'].includes(S.phase))return false;
     ray.setFromCamera(pointer.set(x,y),cam);
     if(!ray.ray.intersectPlane(board,hit))return false;
     const col=Math.floor(hit.x/TABLE_SCALE+COLS/2),row=Math.floor(hit.z/TABLE_SCALE+ROWS/2);
@@ -611,7 +615,7 @@ export function mooseDefenseRoom({group:room,scene,cam,o,A,onClear,finish}){
       if(!S.table){
         if(rising('build')){
           if(arcade.atExit()){leaveArcade();return}
-          if(arcade.near())setTable(true);
+          if(operator()&&arcade.near())setTable(true);
         }
       }else if(rising('back')||!arcade.near())setTable(false);
       else{
@@ -622,6 +626,8 @@ export function mooseDefenseRoom({group:room,scene,cam,o,A,onClear,finish}){
         for(const action of ['build','spike','syrup','launch'])if(rising(action))command(action);
       }
       previous=edges;
+    }
+    if(operator()){
       const before=S.cleared,reviveT=S.reviveT;
       S.step(dt);
       for(const hit of S.hits)drawHit(hit);
@@ -736,7 +742,7 @@ export function mooseDefenseRoom({group:room,scene,cam,o,A,onClear,finish}){
     arcade:[arcade.walker.b.x,arcade.walker.b.z,arcade.walker.b.y,S.yaw,S.pitch,S.table],
     sy:[...S.syrups],geese:S.geese.map(q=>[q.distance,q.hp,q.slow]),
     shots:S.shots.map(q=>[q.i,q.age,q.target]),sel:selection,supply:o.mooseSpikes(),funds:o.mooseGems()});
-  S.apply=q=>{
+  S.apply=(q,shared=false)=>{
     if(!q||!['build','break','run','hatch','revive','win','lose'].includes(q.phase))return;
     if(!Array.isArray(q.t)||!Array.isArray(q.p)||!Array.isArray(q.shots))return;
     const oldHp=S.hp,oldGeese=S.geese,sameWave=S.phase==='run'&&S.round===q.round;
@@ -744,11 +750,11 @@ export function mooseDefenseRoom({group:room,scene,cam,o,A,onClear,finish}){
     S.cleared=clamp(q.cleared|0,0,3);S.bonus=!!q.bonus;S.bonusWon=!!q.bonusWon;
     S.hatchT=clamp(Number(q.hatchT)||0,0,HATCH_TIME);S.mooseAt=clamp(Number(q.mooseAt)||0,0,LAST);
     S.farthest=clamp(Number(q.farthest??q.d)||0,0,LAST);
-    if(Array.isArray(q.arcade)&&q.arcade.length>=6&&q.arcade.slice(0,5).every(Number.isFinite)){
+    if(!shared&&Array.isArray(q.arcade)&&q.arcade.length>=6&&q.arcade.slice(0,5).every(Number.isFinite)){
       const [x,z,y,yaw,pitch,table]=q.arcade;
       Object.assign(arcade.walker.b,{x:clamp(x,-6.23,6.23),z:clamp(z,-5.18,5.18),y:clamp(y,0,1.28)});
       S.yaw=yaw;S.pitch=clamp(pitch,-1.2,1.2);S.table=table===true;
-    }else S.table=true;
+    }else if(!shared)S.table=true;
     flagT=clamp(Number(q.flagT)||0,0,3);
     S.hp=clamp(Number(q.hp)||0,0,roundRules(S.round).hp);S.distance=clamp(Number(q.d)||0,0,LAST);
     S.slow=clamp(Number(q.slow)||0,0,1.75);
@@ -768,6 +774,7 @@ export function mooseDefenseRoom({group:room,scene,cam,o,A,onClear,finish}){
       .map(([i,age,target])=>({i,age:Number(age)||0,target:Number.isInteger(target)&&S.geese[target]?target:-1}));
     selection=Number.isInteger(q.sel)&&TILES[q.sel]?q.sel:selection;S.supply=Math.max(0,q.supply|0);S.funds=Math.max(0,q.funds|0);
   };
+  S.partyApply=q=>S.apply(q,true);
   S.bloom=.39;
   return S;
 }

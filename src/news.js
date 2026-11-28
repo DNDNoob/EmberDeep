@@ -7,6 +7,8 @@
 // it is, or how to trigger it. No code names, file names, PR numbers or agent names.
 // Group small fixes into one post. Rebuild index.html afterwards (npm run build).
 export const NEWS=[
+  {date:'2026-11-28',title:'Through the door together',
+    body:'Strange doors now have room for the whole party. Invite friends from the same maze floor, then explore together or take turns at the controls.'},
   {date:'2026-11-28',title:'A castle in the mist',
     body:'The Abandoned Castle has opened its doors. The lift now names each destination, and the bunk room mirror has new eye colors, accessories, and cloak trim. Strange encounters with the maze walls are rarer.'},
   {date:'2026-11-28',title:'A roof among the firs',
