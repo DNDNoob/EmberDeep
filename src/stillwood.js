@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import {MOVE,bobY,createRoomWalker,lookStep,scaleFor,crouchOffset} from './movement.js';
 import {getProp,natureMaterial} from './nature.js';
+import {createStillwoodBirds} from './stillwood-birds.js';
 
 const EYE=1.6;
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
@@ -989,6 +990,8 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     return g;
   };
   S.G=G;
+  const birds=createStillwoodBirds(group,{seed,ground:G,open:(x,z)=>pondDist(x,z)>2.4&&!trunkAt(x,z)});
+  S.birds=()=>birds.birds.map(b=>({k:b.kind,mode:b.mode,y:+b.y.toFixed(2)}));
   const blockedAt=(x,z)=>trunkAt(x,z)||rocks.some(r=>(r.cx-x)**2+(r.cz-z)**2<(r.rb+0.9)**2);
   const walker=createRoomWalker({o,eye:EYE,x:0,z:0,groundAt:G,snap:0.7,collide:b=>{
     for(const t of trees){
@@ -1196,11 +1199,12 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     mtn.position.set(cam.position.x,cam.position.y-1,cam.position.z);
     UT.value=S.t;
     updatePonds(dt,b,moving);
+    birds.step(dt,b.x,b.z,S.yaw);
     // the eye follows the feet smoothly on the ground (stepping onto or off a stone does not pop) and exactly in the air
     if(A.watching)poseCam(dt);
   };
   onClear(()=>{
-    deadClear=true;scene.background=prevBg;rt.dispose();mtn.geometry.dispose();mtn.material.dispose();ghostBody.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()});ghostDoor.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()});
+    deadClear=true;birds.dispose();scene.background=prevBg;rt.dispose();mtn.geometry.dispose();mtn.material.dispose();ghostBody.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()});ghostDoor.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()});
     const gs=new Set([ground.geometry,padGeo,cupGeo,waterGeo,...Object.values(holders)]);
     for(const s of slots){gs.add(s.near.geometry);gs.add(s.farM.geometry);s.near.dispose();s.farM.dispose()}
     for(const g of gs)g.dispose();
