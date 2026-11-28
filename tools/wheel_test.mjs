@@ -111,6 +111,8 @@ await pg.waitForTimeout(9000); await shot('05-walmart-later');
 await pg.evaluate(() => window.__game.brk.stop());
 r = await outcome(0, {mine: false}); check(!r.fx.frozen, 'Walmart only takes the spinner');
 await pg.evaluate(() => import('data:text/javascript,'));
+r = await outcome(1, {mine: false}); check(r.fx.frozen === 'ad' && r.screen, 'Ad Break: everyone in the game watches the ad, not just the spinner');
+await pg.evaluate(() => window.__game.brk.stop());
 r = await outcome(1, {mine: true}); check(r.fx.frozen === 'ad' && r.screen, 'Ad Break: the spinner watches the ad');
 await pg.waitForTimeout(1000); await shot('06-ad-start');
 await pg.waitForTimeout(5500);
@@ -163,6 +165,8 @@ r = await outcome(12, {reset: true, mine: true}); check(r.fx.frozen === 'dmv' &&
 for (const t of [3, 25, 34, 39]) { await pg.evaluate(t => window.__game.brk.seek(t), t); await shot('14-dmv-' + t); }
 await pg.evaluate(() => window.__game.brk.stop());
 check(await pg.evaluate(() => !window.__game.fx.frozen), 'DMV: you are let go at the end');
+r = await outcome(12, {reset: true, mine: false}); check(r.fx.frozen === 'dmv' && r.screen, 'DMV: everyone in the game takes a number, not just the spinner');
+await pg.evaluate(() => window.__game.brk.stop());
 r = await outcome(13, {reset: true, mine: true}); check(r.fx.frozen === 'terms', 'Terms & Conditions: the spinner has to accept them');
 await shot('15-terms');
 const terms = await pg.evaluate(() => {

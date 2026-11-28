@@ -7,6 +7,20 @@
 // it is, or how to trigger it. No code names, file names, PR numbers or agent names.
 // Group small fixes into one post. Rebuild index.html afterwards (npm run build).
 export const NEWS=[
+  {date:'2026-11-27',title:'A door that hums',
+    body:'Somewhere in the maze there is a black door that buzzes pink and blue. Behind it the lights are low, the music is loud, and the prizes get better the steadier your aim. Keep your arms inside the cart.'},
+  {date:'2026-11-27',title:'A quicker lift, a smoother maze',
+    body:'The lift now gets your floor ready while you walk across the lobby, instead of making you wait at the controls, so the panel answers right away. The deep halls are also much lighter on your graphics card, with the same look, so the mazes should feel smoother.'},
+  {date:'2026-11-27',title:'Something big below floor 20',
+    body:'Every so often, past floor 20, you might hear heavy footsteps through the walls. Through them, mind you, not around them. Bring a sturdy weapon and a lot of patience.'},
+  {date:'2026-11-27',title:'Nobody skips the ad',
+    body:'When the Wheel lands on Ad Break or the DMV, it is no longer just the spinner\'s problem. Everyone in the game sits through it together.'},
+  {date:'2026-11-27',title:'Creepy crawlies, and a hand up',
+    body:'Something small and eight-legged has moved into the floors ending in 9, and it does not stay small for long. The floors ending in 4 have gone slimy, and the Brewer has a new solvent for sticky situations (it takes the place of an old potion nobody will miss). In co-op, losing your last heart now knocks you down for a little while, so your friends have time to get you back on your feet.'},
+  {date:'2026-11-27',title:'Every boss has a trick now',
+    body:'The bosses have toughened up: swing at them all you like, it barely scratches them. Each one has a weakness hidden somewhere in its arena, and the title card gives you a nudge. Work it out, strike while they are reeling, and expect a proper fight that gets longer the deeper you go.'},
+  {date:'2026-11-27',title:'The circle of life, completed',
+    body:'Spin your way into a certain slice of the Wheel and you will find out what happens after the delivery room. Mind your head on the way down: it is a long way from the floor up to the doorknob when you are this small.'},
   {date:'2026-11-27',title:'A new look in the bunk room',
     body:'Try a different cloak color, hairstyle, beard, or tattoo at the bunk room mirror. Wash your face at the sink any time you want your original look back.'},
   {date:'2026-11-27',title:'Across the Dark Forest creek',

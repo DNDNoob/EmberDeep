@@ -281,10 +281,11 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
     });
   }
   const liftDesk={x:1.09,y:1.45,z:-9.93,w:1.15,h:0.83};
-  function canWarmLift(){
-    const {x,z,vx,vz}=walker.b;
-    return lobbyReady&&!ride&&Math.hypot(x-liftDesk.x,z-liftDesk.z)<8&&Math.hypot(vx,vz)<0.1;
-  }
+  // The lift's floors are built and its shaders compiled in the background from the moment the lobby is ready, wherever you are
+  // (it used to wait until you stood still beside the lift desk, which put all of that work right where you wanted to use the panel).
+  // canWarmLift: the lobby is free for background work at all; warmStill: you are standing still, for the few steps that cost a frame.
+  function canWarmLift(){return lobbyReady&&!ride&&!isBunkPosition(walker.b.x,walker.b.z)}   // not from the bunk room: it is its own little scene
+  function warmStill(){const {vx,vz}=walker.b;return lobbyReady&&!ride&&Math.hypot(vx,vz)<0.1}
   terminals.lift=liftDesk;
   box(cabin,iron,liftDesk.x,0.51,liftDesk.z-0.16,0.76,1.04,0.37);
   box(cabin,iron,liftDesk.x,liftDesk.y,liftDesk.z-0.13,liftDesk.w+0.15,liftDesk.h+0.16,0.23);
@@ -737,7 +738,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
   },{passive:true});
   return {get scene(){return scene},get camera(){return camera},update,render,markNewsSeen,get newsUnseen(){return !newsSeen},syncArchives,syncVisitors,watchLift,liftMode,setSharedLift,engageLift,reset,resetLift,setActive,
     get lobbyReady(){return lobbyReady},get bunkDoorOpen(){return bunk.open},
-    canWarmLift,
+    canWarmLift,warmStill,
     buildLobbyStep(){const build=lobbyBuilders.shift();if(!build)return false;build();return true},
     setLobbyStatus:bunk.setStatus,
     unlockLobby(){
