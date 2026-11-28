@@ -7,6 +7,8 @@
 // it is, or how to trigger it. No code names, file names, PR numbers or agent names.
 // Group small fixes into one post. Rebuild index.html afterwards (npm run build).
 export const NEWS=[
+  {date:'2026-11-27',title:'A new point of view',
+    body:'Try Third person to see your Delver from behind, or Second person to face them from the front. Choose Camera view in Settings or press J to switch while you play.'},
   {date:'2026-11-27',title:'A door that hums',
     body:'Somewhere in the maze there is a black door that buzzes pink and blue. Behind it the lights are low, the music is loud, and the prizes get better the steadier your aim. Keep your arms inside the cart.'},
   {date:'2026-11-27',title:'A quicker lift, a smoother maze',

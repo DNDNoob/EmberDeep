@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import {bobY, createRoomWalker, lookBy, lookStep,crouchOffset} from './movement.js';
+import {cameraViewRig,sceneCameraClearance} from './camera-view.js';
 import {createArchiveHall, worldSign} from './archive-hall.js';
 import {buildAsteroidLobby,TELESCOPE_PANEL} from './asteroid-lobby.js';
 import {createKeplerOrrery} from './kepler-orrery.js';
@@ -24,7 +25,7 @@ const screenWidth=900,screenHeight=596;
 const clamp=THREE.MathUtils.clamp;
 export const onLiftPlatform=({x,z})=>Math.abs(x)<1.66&&z<wallZ-0.3&&z>liftGateZ;
 
-export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveLobby,mazeFov,sampleFloor,prepareLanding,landingGlimpse,passingLook,onLeavePanel,createVisitor,appearance}){
+export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveLobby,mazeFov,sampleFloor,prepareLanding,landingGlimpse,passingLook,onLeavePanel,createVisitor,appearance,cameraView=()=> 'first',createAvatar}){
   const scene=new THREE.Scene();
   scene.background=new THREE.Color(0x14121d);
   scene.fog=new THREE.Fog(0x17151f,24,64);
@@ -34,6 +35,9 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
   bunkScene.add(bunk.group,new THREE.HemisphereLight(0xddd5f9,0x877075,1.22));
   let lobbyReady=false,bunkAttached=false,hangar,hangarFront,skyMat;
   const camera=new THREE.PerspectiveCamera(61,1,0.06,77);
+  const viewRig=cameraViewRig(),displayCamera=new THREE.PerspectiveCamera();
+  const lobbyClearance=sceneCameraClearance(scene),bunkClearance=sceneCameraClearance(bunkScene);
+  let avatar,externalView=false;
   const view={yaw:BUNK_SPAWN.yaw,pitch:0};
   const cube=new THREE.BoxGeometry();
   const material=(color,options)=>new THREE.MeshStandardMaterial({color,roughness:0.78,...options});
@@ -518,18 +522,19 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
   }
 
   const raycaster=new THREE.Raycaster(),pointer=new THREE.Vector2(),worldPoint=new THREE.Vector3();
-  function aim(x=0,y=0){
-    raycaster.setFromCamera(pointer.set(x,y),camera);
+  function aim(x=0,y=0,aimCamera=camera){
+    raycaster.setFromCamera(pointer.set(x,y),aimCamera);
     for(const hit of raycaster.intersectObjects(targets,false)){
       const entry=hit.object.userData.entry;
-      if(entry.lift&&(ride||walker.b.z>wallZ-0.3||hit.distance>4.3))continue;
+      const distance=hit.point.distanceTo(camera.position);
+      if(entry.lift&&(ride||walker.b.z>wallZ-0.3||distance>4.3))continue;
       if(entry.station&&(terminals[entry.station].f||1)*(walker.b.z-terminals[entry.station].z)<=0.06)continue;
       if(ride&&!entry.lift)continue;
       if(entry.kind){
         const portal=portals.find(p=>p.id===entry.kind);
-        if(walker.b.z>=wallZ+0.05||Math.abs(walker.b.x-portal.x)>=2.3||hit.distance>(entry.playClip?3.4:6.2))continue;
+        if(walker.b.z>=wallZ+0.05||Math.abs(walker.b.x-portal.x)>=2.3||distance>(entry.playClip?3.4:6.2))continue;
       }
-      if(hit.distance<= (entry.station?8.5:6.2))return entry;
+      if(distance<= (entry.station?8.5:6.2))return entry;
     }
     return null;
   }
@@ -688,6 +693,21 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
       if(skyMat.uniforms.uBody)orrery.fillWindow(skyMat.uniforms);
     }
   }
+  function placeCamera(renderScene,time){
+    externalView=!study&&viewRig.place(camera,cameraView(),eye-crouchOffset(walker.b,eye),renderScene===bunkScene?bunkClearance:lobbyClearance);
+    if(!externalView)return;
+    displayCamera.copy(camera,false);
+    avatar??=createAvatar();
+    const parent=ride?cabin:renderScene;
+    if(avatar.parent!==parent)parent.add(avatar);
+    avatar.visible=true;
+    avatar.userData.pose(time,walker.b,view.yaw,view.pitch,eye);
+  }
+  function restoreCamera(){
+    if(!externalView)return;
+    avatar.visible=false;
+    viewRig.restore(camera);
+  }
   function render(exposure,time,mazeExposure=exposure){
     const width=innerWidth,height=innerHeight;
     const aspect=width/height;
@@ -701,24 +721,30 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
     }
     pose();
     if(!lobbyReady||(!bunkAttached&&isBunkPosition(walker.b.x,walker.b.z)&&!bunk.opening)){
-      renderer.toneMappingExposure=exposure;renderer.setRenderTarget(null);renderer.render(bunkScene,camera);
+      placeCamera(bunkScene,time);
+      try{renderer.toneMappingExposure=exposure;renderer.setRenderTarget(null);renderer.render(bunkScene,camera)}
+      finally{restoreCamera()}
       return;
     }
     if(!bunkAttached){
       scene.add(bunk.group);bunkAttached=true;
       pool().rescan();lights.update(camera,0.35);
     }
-    const sharedVisible=sharedSettings&&!sharedSettings.hidden;
-    if(sharedVisible){
-      if(ride||terminals.settings.f*(walker.b.z-terminals.settings.z)<=0.08)sharedSettings.style.visibility='hidden';
-      else if(!projectPanel(width,height,'settings',sharedSettings)&&panel==='settings')onLeavePanel();
-    }
-    if(panel&&!(sharedVisible&&panel==='settings')&&!projectPanel(width,height,panel,stationForm))stationForm.style.visibility='hidden';
     animateLobby(time,camera);
-    pose();
-    pool();
-    lights.update(camera,Math.min(0.1,Math.max(0,(time||0)-(lightT??(time||0)))));lightT=time||0;
-    renderer.toneMappingExposure=THREE.MathUtils.lerp(exposure,mazeExposure,approach);renderer.setRenderTarget(null);renderer.render(scene,camera);
+    placeCamera(scene,time);
+    try{
+      const sharedVisible=sharedSettings&&!sharedSettings.hidden;
+      if(sharedVisible){
+        if(ride||terminals.settings.f*(walker.b.z-terminals.settings.z)<=0.08)sharedSettings.style.visibility='hidden';
+        else if(!projectPanel(width,height,'settings',sharedSettings)&&panel==='settings')onLeavePanel();
+      }
+      if(panel&&!(sharedVisible&&panel==='settings')&&!projectPanel(width,height,panel,stationForm))stationForm.style.visibility='hidden';
+      pool();
+      lights.update(camera,Math.min(0.1,Math.max(0,(time||0)-(lightT??(time||0)))));lightT=time||0;
+      renderer.toneMappingExposure=THREE.MathUtils.lerp(exposure,mazeExposure,approach);renderer.setRenderTarget(null);renderer.render(scene,camera);
+    }finally{
+      restoreCamera();
+    }
   }
   function markNewsSeen(){
     if(newsSeen)return;
@@ -838,13 +864,14 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
     setTrophies,
     tap(x,y){
       pose();
-      raycaster.setFromCamera(pointer.set(x,y),camera);
+      const aimCamera=externalView&&!study?displayCamera:camera;
+      raycaster.setFromCamera(pointer.set(x,y),aimCamera);
       const vanityHit=active&&!ride&&bunk.aim(raycaster,walker.b);
       if(vanityHit){bunk.use(vanityHit);return true}
       if(!lobbyReady)return false;
-      const hit=aim(x,y);
+      const hit=aim(x,y,aimCamera);
       if(hit){activate(hit);return true}
-      raycaster.setFromCamera(pointer.set(x,y),camera);
+      raycaster.setFromCamera(pointer.set(x,y),aimCamera);
       const id=pickOrrery();
       if(!id)return false;
       if(!orrery.press(id))beginStudy(id);

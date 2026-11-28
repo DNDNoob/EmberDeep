@@ -126,7 +126,7 @@ export function noclipDest({x,z,hitVX=0,hitVZ=0,sprint,fullSpeed,roll,chance=0.0
 const num=v=>typeof v==='number'&&isFinite(v)?clamp(v,-1,1):0;
 export function createRoomWalker(c){
   const o=c.o||{},sc=scaleFor(c.eye),b=newBody({x:c.x||0,z:c.z||0});
-  const W={b,scale:sc,ev:null,pj:false};
+  const W={b,eye:c.eye,scale:sc,ev:null,pj:false};
   const world={scale:sc,snap:c.snap,sta:o.sta||b,collide:c.collide?()=>c.collide(b):null,groundAt:c.groundAt,ceilingAt:c.ceilingAt,canStand:c.canStand};
   const sound=c.sound||(e=>{if(!o.sfx)return;if(e.jumped)o.sfx('jump');else if(e.landed>0.8||e.step)o.sfx('step')});
   W.step=(dt,inp,yaw)=>{

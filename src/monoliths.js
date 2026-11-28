@@ -150,7 +150,7 @@ export function monolithRoom({group,cam,o,A,finish,rand,seed}){
 
   const S={t:0,yaw:0,pitch:0,bloom:.42,seed};
   let lastBeat=-1, screamed=false, vanished=false;
-  const walker=createRoomWalker({o,eye:EYE,x:0,z:1,collide:b=>{
+  const walker=S.walker=createRoomWalker({o,eye:EYE,x:0,z:1,collide:b=>{
     if(S.t>=VANISH&&b.z<-.8&&(b.z<-2.1||Math.abs(b.x)<1.5)){
       b.x=clamp(b.x,-1.01,1.01);
       return;

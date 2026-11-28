@@ -364,7 +364,7 @@ export function mooseModel(zombie=false) {
 export function mooseDefenseRoom({group:room,scene,cam,o,A,onClear,finish}){
   const S=mooseDefenseGame(),live=!A.watching;
   const arcade=outpostArcade(room,o,onClear),group=arcade.board;
-  Object.assign(S,{table:false,tableMix:0,yaw:0,pitch:-.085});
+  Object.assign(S,{table:false,tableMix:0,yaw:0,pitch:-.085,walker:arcade.walker});
   S.controlMode=()=>S.table?'table':'walk';
   const frame=outpostCamera(cam,arcade,S);
   let selection=Math.floor(TILES.length/2),previous={},time=0,prompt='',lastHud='';
