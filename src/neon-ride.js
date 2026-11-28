@@ -290,7 +290,8 @@ export function neonRideRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
     return g});
 
   const S={t:0,s:Math.max(0,riders-1-me)*NEON.gap,v:0,yaw:0,pitch:-0.04,bloom:0.9,seed,score:0,hits:[],ended:false,endT:0,cd:0,holdT:0,shots:0,friendly:0,beat:0,tier:0};
-  S.aimed=()=>!S.ended;
+  const boarding=()=>!!A.party()&&!party;
+  S.aimed=()=>!S.ended&&!boarding();
   S.controlMode=()=>'walk';
   const ray=new THREE.Raycaster(),ctr=new THREE.Vector2(0,0),tmp=new THREE.Vector3(),q=new THREE.Quaternion();
   const sayBoard=()=>{if(S.ended){const p=NEON_PRIZES[S.tier];drawBoard('YOU WIN: '+p.name.toUpperCase(),String(Math.max(0,S.score)).padStart(4,'0'),'#ffef3a')}else drawBoard('NEON RUN · SCORE',String(Math.max(0,S.score)).padStart(4,'0'))};
@@ -331,7 +332,7 @@ export function neonRideRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
     if(qq.e&&!S.ended){S.ended=true;S.tier=neonTier(S.score);sayBoard();prizeModels[S.tier].visible=true}
   };
   S.update=(dt,input)=>{
-    S.t+=dt;
+    if(!boarding())S.t+=dt;
     const pressNow=!!input.press,press=pressNow&&!S.wasP;S.wasP=pressNow;
     if(!A.watching){
       lookStep(S,dt,input.lx||0,input.ly||0,MOVE.roomPitch);S.yaw=THREE.MathUtils.clamp(S.yaw,-2.5,2.5);
@@ -372,7 +373,7 @@ export function neonRideRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
       r.fig.visible=r.seen;r.fig.rotation.y=-(r.yaw||0);r.aim.rotation.x=r.pitch||0}
     // the blaster, low and to the right of the view, kicking back as it fires
     const kick=Math.max(0,S.cd/NEON.cooldown)*0.03;
-    gun.position.copy(new THREE.Vector3(0.19,-0.16,-0.45+kick).applyMatrix4(cam.matrixWorld));gun.quaternion.copy(cam.quaternion);gun.visible=!S.ended;
+    gun.position.copy(new THREE.Vector3(0.19,-0.16,-0.45+kick).applyMatrix4(cam.matrixWorld));gun.quaternion.copy(cam.quaternion);gun.visible=!S.ended&&!boarding();
     muzzle.material.opacity=Math.max(0,muzzle.material.opacity-dt*10);
     for(const b of bolts)if(b.t>0){b.t-=dt;b.m.material.opacity=Math.max(0,b.t/0.12);if(b.t<=0)b.m.visible=false}
     for(const c of chips)if(c.t>0){c.t-=dt;c.v.y-=9.8*dt;c.m.position.addScaledVector(c.v,dt);c.m.rotation.x+=dt*9;c.m.rotation.z+=dt*7;if(c.m.position.y<0){c.m.position.y=0;c.v.set(0,0,0)}if(c.t<=0)c.m.visible=false}

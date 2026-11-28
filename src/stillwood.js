@@ -1092,27 +1092,40 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
     spent:S.spentPond,unlocked:S.unlocked,hidden:S.hidden,cw:+cottageWalk.toFixed(1),
     po:ponds.map(p=>[p.x,p.z,p.r,p.fx,p.fz,p.i]),
     co:cottages.map(c=>[c.x,c.z,c.face,c.i,c.open?1:0])});
+  const applyLandmarks=q=>{
+    if(Array.isArray(q.po)&&q.po.length<=STILL.pondMax){
+      const list=q.po.filter(a=>Array.isArray(a)&&a.length>=6&&a.slice(0,6).every(Number.isFinite)).map(a=>({x:a[0],z:a[1],r:clamp(a[2],3,8),fx:a[3],fz:a[4],i:Math.max(0,a[5]|0)}));
+      const same=list.length===ponds.length&&list.every((p,k)=>p.i===ponds[k].i&&p.x===ponds[k].x&&p.z===ponds[k].z);
+      if(list.length===q.po.length&&!same){setPonds(list);S.mist=list.length?2.4:0}
+    }
+    if(Array.isArray(q.co)&&q.co.length<=STILL.cottageMax){
+      const list=q.co.filter(a=>Array.isArray(a)&&a.length>=5&&a.slice(0,4).every(Number.isFinite)).map(a=>({x:a[0],z:a[1],face:a[2],i:Math.max(0,a[3]|0),open:!!a[4]||!A.watching&&!!cottages.find(c=>c.i===a[3])?.open}));
+      const same=list.length===cottages.length&&list.every((c,k)=>c.i===cottages[k].i&&c.x===cottages[k].x&&c.z===cottages[k].z);
+      if(list.length===q.co.length&&!same)setCottages(list);
+      else for(let k=0;k<list.length;k++)cottages[k].open=list[k].open;
+    }
+  };
   S.apply=q=>{
     if(![q.x,q.z,q.y,q.yaw,q.pitch,q.dx,q.dz,q.face].every(Number.isFinite))return;
     S.yaw=q.yaw;S.pitch=clamp(q.pitch,-MOVE.roomPitch,MOVE.roomPitch);
     camY=null;S.doorX=q.dx;S.doorZ=q.dz;S.doorFace=q.face;S.pinned=!!q.pin;
     S.spentPond=Number.isInteger(q.spent)?q.spent:null;
     S.unlocked=q.unlocked??true;S.hidden=q.hidden??false;
-    if(Array.isArray(q.po)&&q.po.length<=STILL.pondMax){
-      const list=q.po.filter(a=>Array.isArray(a)&&a.length>=6&&a.slice(0,6).every(Number.isFinite)).map(a=>({x:a[0],z:a[1],r:clamp(a[2],3,8),fx:a[3],fz:a[4],i:Math.max(0,a[5]|0)}));
-      const same=list.length===ponds.length&&list.every((p,k)=>p.i===ponds[k].i&&p.x===ponds[k].x&&p.z===ponds[k].z);
-      if(list.length===q.po.length&&!same){setPonds(list);S.mist=list.length?2.4:0}
-    }
+    applyLandmarks(q);
     if(Number.isFinite(q.cw))cottageWalk=q.cw;
-    if(Array.isArray(q.co)&&q.co.length<=STILL.cottageMax){
-      const list=q.co.filter(a=>Array.isArray(a)&&a.length>=5&&a.slice(0,4).every(Number.isFinite)).map(a=>({x:a[0],z:a[1],face:a[2],i:Math.max(0,a[3]|0),open:!!a[4]}));
-      const same=list.length===cottages.length&&list.every((c,k)=>c.i===cottages[k].i&&c.x===cottages[k].x&&c.z===cottages[k].z);
-      if(list.length===q.co.length&&!same)setCottages(list);
-      else for(let k=0;k<list.length;k++)cottages[k].open=list[k].open;
-    }
     walker.watch(0.1,q.x,q.z,clamp(q.y,-12,14));
   };
-  let camY=null;
+  S.partyApply=q=>{
+    applyLandmarks(q);
+    if(q.po&&pendingPond!==null&&q.po.at(-1)?.[5]>=pendingPond)pendingPond=null;
+    if(q.co&&pendingCottage!==null&&q.co.at(-1)?.[3]>=pendingCottage){pendingCottage=null;cottageWalk=0}
+    const pin=q.pin;
+    if(Array.isArray(pin)&&pin.length===3&&pin.every(Number.isFinite)){
+      S.sharedPin=pin;S.unlocked=true;S.pinned=true;S.hidden=false;
+      [S.doorX,S.doorZ,S.doorFace]=pin;
+    }
+  };
+  let pendingPond=null,pendingCottage=null,camY=null;
   const frustum=new THREE.Frustum(),pm=new THREE.Matrix4(),sph=new THREE.Sphere(),plane=new THREE.Plane(),clipV=new THREE.Vector4(),qv=new THREE.Vector4();
   const cp=new THREE.Vector3(),cq=new THREE.Quaternion(),cs=new THREE.Vector3(),fw=new THREE.Vector3(),tg=new THREE.Vector3(),nrm=new THREE.Vector3(0,1,0),pt=new THREE.Vector3();
   const reflectedDoor=(p,x,z,face)=>{
@@ -1216,21 +1229,30 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
       // The first pond counts the path walked, including turns and backtracking.
       const last=ponds[ponds.length-1];
       if(!last)S.distance+=distance;
-      if(last?pondSpawnDue(b.x,b.z,last):S.distance>=STILL.pondEvery){
-        addPond(pondSpawnAt({seed,index:last?last.i+1:0,x:b.x,z:b.z,yaw:S.yaw,ponds}));
+      if(pendingPond===null&&(last?pondSpawnDue(b.x,b.z,last):S.distance>=STILL.pondEvery)){
+        const next=pondSpawnAt({seed,index:last?last.i+1:0,x:b.x,z:b.z,yaw:S.yaw,ponds});
+        if(A.party()){
+          pendingPond=next.i;
+          o.roomEvent('po',[next.x,next.z,next.r,next.fx,next.fz,next.i]);
+        }else addPond(next);
         S.mist=2.4;
         o.tone(392,0.6,'sine',0.03,0,-90);
       }
       cottageWalk+=distance;
-      if(cottageSpawnDue(cottageWalk,cottages.length>0)){
+      if(pendingCottage===null&&cottageSpawnDue(cottageWalk,cottages.length>0)){
         const lastHome=cottages[cottages.length-1];
         const spec=cottageSpawnAt({seed,index:lastHome?lastHome.i+1:0,x:b.x,z:b.z,yaw:S.yaw,ponds,cottages});
-        mountCottage(spec);
-        while(cottages.length>STILL.cottageMax){
-          const old=cottages.shift();dropCottage(old);clearHome(old.x,old.z);
+        if(A.party()){
+          pendingCottage=spec.i;
+          o.roomEvent('co',[spec.x,spec.z,spec.face,spec.i,0]);
+        }else{
+          mountCottage(spec);
+          while(cottages.length>STILL.cottageMax){
+            const old=cottages.shift();dropCottage(old);clearHome(old.x,old.z);
+          }
+          cottageWalk=0;
+          clearHome(spec.x,spec.z);
         }
-        cottageWalk=0;
-        clearHome(spec.x,spec.z);
         o.tone(220,0.7,'sine',0.02,0,-120);
       }
       poseCam(dt);
@@ -1240,8 +1262,9 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
         ponds,usablePonds:S.spentPond===null?[]:ponds.filter(p=>p.i!==S.spentPond),
         pinned:S.pinned,hold:S.hold,dwell:S.dwell||0,blocked:blockedAt,groundAt:H,
       };
-      stillStep(sim,dt);
-      if(S.spentPond===null){
+      if(!S.sharedPin)stillStep(sim,dt);
+      if(S.sharedPin){sim.hidden=false;sim.pinned=true}
+      else if(S.spentPond===null){
         if(!glimpse){
           const p=ponds.find(p=>seesReflectedDoor(p,sim.door));
           if(p)glimpse={i:p.i,time:STILL.glimpseTime};
@@ -1251,6 +1274,7 @@ export function stillwoodRoom({group,scene,cam,renderer,o,A,finish,onClear,seed=
         }
       }else if(sim.locked){
         S.unlocked=true;
+        if(A.party())o.roomEvent('pin',[sim.door.x,sim.door.z,sim.door.face]);
         S.shim=1.2;o.tone(494,0.5,'sine',0.03,0,-160);o.tone(740,0.7,'sine',0.014,0.1);
       }else if(sim.released){o.tone(330,0.4,'sine',0.018,0,90);}
       S.pinned=sim.pinned;S.hold=sim.hold;S.dwell=sim.dwell;S.doorX=sim.door.x;S.doorZ=sim.door.z;S.doorFace=sim.door.face;

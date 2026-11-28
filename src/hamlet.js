@@ -138,7 +138,7 @@ export function hamletRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
   box(monsterM,0.1,0.26,0.1,0.14,1.92,0.02,mon);
   const monLight=new THREE.PointLight(0xff3344,0,7,2);mon.add(monLight);
   const order=['legR','legL','armR','armL'];
-  const lost=[];
+  const remoteCuts=new Map();
 
   const door=new THREE.Group();door.position.set(0,0,3.35);door.rotation.y=Math.PI;group.add(door);
   box(wood,0.16,2.3,0.18,-0.7,1.15,0,door);
@@ -167,7 +167,7 @@ export function hamletRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
   const b=walker.b;
   const poseMon=()=>{mon.position.set(S.mx,S.dead?0.15:0,S.mz);if(!S.dead)mon.rotation.y=Math.atan2(b.x-S.mx,b.z-S.mz)};
   const syncParts=()=>{
-    order.forEach((k,i)=>{if(parts[k])parts[k].visible=i<S.limbs});
+    order.forEach((k,i)=>{if(parts[k])parts[k].visible=i>=order.length-S.limbs});
     mon.visible=S.night;sword.visible=S.sword&&!S.dead;
     if(S.sword)lid.rotation.x=-1.15;
     if(S.dead){mon.rotation.x=1.2;mon.position.y=0.2}
@@ -195,6 +195,31 @@ export function hamletRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
     sword.visible=S.sword&&!S.dead;mon.visible=S.night;syncParts();
     walker.watch(0.1,q.x,q.z,clamp(q.y,0,3));
   };
+  S.partyApply=q=>{
+    if(Number.isFinite(q.t)&&Math.abs(S.t-q.t)>0.25)S.t=q.t;
+    S.night=!!q.night;S.limbs=clamp(q.limbs|0,0,4);S.dead=!!q.dead;
+    if(Number.isFinite(q.mx))S.mx=q.mx;
+    if(Number.isFinite(q.mz))S.mz=q.mz;
+    poseMon();syncParts();
+  };
+  function cut(){
+    S.limbs--;o.tone(520,0.12,'square',0.07,0,180);o.sfx('spike');
+    if(S.limbs<=0){
+      S.dead=true;mon.rotation.x=1.2;mon.position.y=0.2;monLight.intensity=0.2;
+      o.say('It comes apart. The door home is behind you.',3.6);o.sfx('shard');
+    }else o.say(S.limbs===3?'A limb comes off.':S.limbs+' left.',1.3);
+    syncParts();
+  }
+  const inReach=(x,z,yaw,range)=>{
+    const dx=S.mx-x,dz=S.mz-z,d=Math.hypot(dx,dz);
+    return d>=0.2&&d<range&&(Math.sin(yaw)*dx-Math.cos(yaw)*dz)/d>0.25;
+  };
+  S.partyInput=(kind,data,id,pose)=>{
+    if(kind!=='cut'||!pose||!S.night||S.dead||S.t-(remoteCuts.get(id)??-1)<0.42)return;
+    if(!inReach(pose[0],pose[2],pose[3],3))return;
+    remoteCuts.set(id,S.t);
+    cut();o.roomEvent('credit',id);
+  };
   S.update=(dt,input)=>{
     S.t+=dt;
     const elev=1.22-S.t*0.062;
@@ -219,6 +244,7 @@ export function hamletRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
         S.night=true;mon.visible=true;monLight.intensity=3.2;
         S.said=2;o.say('The sun is down. Something is in the village.',3.6);o.tone(70,1.2,'sawtooth',0.12,0,-40);
       }
+      const authoritative=A.playing();
       // villagers
       for(const v of folks){
         if(v.dead)continue;
@@ -239,11 +265,21 @@ export function hamletRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
       }
       // the thing
       if(S.night&&!S.dead){
-        let tx=b.x,tz=b.z,best=1e9,prey=null;
-        for(const v of folks)if(!v.dead){const d=Math.hypot(v.x-S.mx,v.z-S.mz);if(d<best){best=d;prey=v}}
-        if(prey&&best<16){tx=prey.x;tz=prey.z}
-        const step=moveTo(S.mx,S.mz,tx,tz,6.6*dt);
-        S.mx=clamp(step.x,-14,14);S.mz=clamp(step.z,-26,2);
+        if(authoritative){
+          let tx=b.x,tz=b.z,best=1e9,prey=null;
+          for(const v of folks)if(!v.dead){const d=Math.hypot(v.x-S.mx,v.z-S.mz);if(d<best){best=d;prey=v}}
+          if(prey&&best<16){tx=prey.x;tz=prey.z}
+          else{
+            best=Math.hypot(tx-S.mx,tz-S.mz);
+            for(const {pose,at} of o.roomPeers?.()?.values()||[]){
+              if(performance.now()-at>1500)continue;
+              const [x,,z]=pose,d=Math.hypot(x-S.mx,z-S.mz);
+              if(d<best){best=d;tx=x;tz=z}
+            }
+          }
+          const step=moveTo(S.mx,S.mz,tx,tz,6.6*dt);
+          S.mx=clamp(step.x,-14,14);S.mz=clamp(step.z,-26,2);
+        }
         poseMon();
         monLight.position.set(0,1.6,0.2);
         if(!S.noted){const cp=Math.cos(S.pitch);if(spotted([b.x,EYE+b.y,b.z],[Math.sin(S.yaw)*cp,Math.sin(S.pitch),-Math.cos(S.yaw)*cp],[S.mx,1.2,S.mz],14)){S.noted=true;o.mob?.('nightthing',seed)}}
@@ -268,16 +304,12 @@ export function hamletRoom({group,scene,cam,o,A,finish,onClear,seed=7}){
         chestLight.intensity=0.4;
         o.say('Obsidian glass. Cold as a window at night.',3.2);o.sfx('shard');
       }
-      const facing=(()=>{const dx=S.mx-b.x,dz=S.mz-b.z,d=Math.hypot(dx,dz);if(d<0.2)return false;
-        const f=[Math.sin(S.yaw),-Math.cos(S.yaw)];return (f[0]*dx+f[1]*dz)/d>0.35})();
-      if(S.sword&&S.night&&!S.dead&&(alt||press)&&S.cool<=0&&facing&&Math.hypot(b.x-S.mx,b.z-S.mz)<2.35){
-        S.cool=0.48;S.limbs--;o.tone(520,0.12,'square',0.07,0,180);o.sfx('spike');
-        const key=order[lost.length];
-        if(key&&parts[key]){parts[key].visible=false;lost.push(key)}
-        if(S.limbs<=0){
-          S.dead=true;mon.rotation.x=1.2;mon.position.y=0.2;monLight.intensity=0.2;
-          o.say('It comes apart. The door home is behind you.',3.6);o.sfx('shard');
-        }else o.say(S.limbs===3?'A limb comes off.':S.limbs+' left.',1.3);
+      if(S.sword&&S.night&&!S.dead&&(alt||press)&&S.cool<=0&&inReach(b.x,b.z,S.yaw,2.35)){
+        S.cool=0.48;
+        if(authoritative){
+          cut();
+          if(A.party())o.roomEvent('credit',A.party().lead);
+        }else o.roomEvent('cut');
       }
       if(b.y<1.3&&crossedDoor(ox,oz,b.x,b.z,{x:S.doorX,z:S.doorZ,face:S.doorFace},0.62)){
         finish({k:S.dead?'win':'leave',why:'hamlet'});return;

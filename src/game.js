@@ -12,10 +12,11 @@ import {openRoom,newRoomCode,cleanCode} from './net.js';
 import {createVoice} from './voice.js';
 import {guidePath,guideBeacon,GUIDE_RANGE} from './guide.js';
 import {createRooms,kilnGame,KILN,DOOR_KINDS} from './rooms.js';
+import {TURN_ROOMS,ONCE_ROOMS,createDoorParty,doorLeader,admitToDoor,leaveDoorParty,passDoorTurn} from './door-party.js';
 import {NEON_PRIZES,neonTier} from './neon-ride.js';
 import {EMOTES,emotePose,BPM as EMOTE_BPM} from './emotes.js';
 import {animalHitEffects,mooseModel,scoutGooseModel,MOOSE_ACH,MOOSE_SPIKE_PRICE} from './moose-defense.js';
-import {stillwoodWarm,stillwoodWarmState} from './stillwood.js';
+import {STILL,stillwoodWarm,stillwoodWarmState} from './stillwood.js';
 import {ROOM_MOBS} from './room-mobs.js';
 import {roomMobExhibit} from './room-mob-exhibits.js';
 import {roomActions,roomControlLabel} from './room-controls.js';
@@ -6702,9 +6703,17 @@ const ROOMS=createRooms(renderer,{post:POST,low:Q===0,ao:Q>=2,
   damage:()=>{if(!P.ward&&P.hp<=1&&!(up.wind&&!R.wind))return true;hurt(null);return false},
   hearts:()=>'♥'.repeat(Math.max(0,P.hp))+'<span style="opacity:.4">'+'♥'.repeat(Math.max(0,maxHp()-P.hp))+'</span>',
   gems:n=>{wallet+=n;R.gems+=n;store.set('wallet',wallet)},sfx:n=>sfx(n),
-  neon:{party:()=>NR.party,send:m=>mpSend(m),peers:()=>NR.peers,take:()=>NR.events.splice(0)},
+  neon:{party:()=>NR.party,send:m=>mpSend({...m,room:doorVisit?.i,train:NR.party?.id}),peers:()=>NR.peers,take:()=>NR.events.splice(0)},
   mooseSpikes:()=>P.spikeTraps,useMooseSpike:()=>{if(P.spikeTraps<1)return false;P.spikeTraps--;return true},
   mooseGems:()=>previewStamina?.mooseGems??wallet,
+  party:()=>doorVisit,passTurn:()=>doorControl('pass'),
+  roomFinishing:(res,q)=>{
+    if(doorVisit?.isLead&&q&&['mirror','theater','hamlet'].includes(doorVisit.kind)){
+      doorRequest('frame',{i:doorVisit.i,ticket:doorVisit.ticket,turn:doorVisit.turn,q});
+    }
+  },
+  roomEvent:(kind,data)=>doorVisit&&doorRequest('event',{i:doorVisit.i,ticket:doorVisit.ticket,kind,data}),
+  roomPeers:()=>doorVisit?.poses,createPeerAvatar:buildDoorAvatar,
   mooseTableFocus:on=>{
     document.body.classList.toggle('moose-table',on);mouseL=false;
     if(on){
@@ -6765,47 +6774,273 @@ function stillwoodWarmSoon(){
   const go=()=>{if(F!==fl)return;if(loading||state==='title'){swWarmTimer=setTimeout(go,1000);return}stillwoodWarm(doorSeed(D))};
   swWarmTimer=setTimeout(go,1500);
 }
-function sdoorOpen(D,showProgress=false){
-  if(loading||state!=='play'||D.used||P.down||P.grab)return;
-  D.used=true;nearDoor=null;clearPrompt();RW=null;document.body.classList.remove('rwatch');
-  mpSend({k:'sd',d:R.depth,i:F.sdoors.indexOf(D),w:D.kind});
+function enterDoor(D,onEnd,showProgress){
+  nearDoor=null;clearPrompt();RW=null;document.body.classList.remove('rwatch');
   sfx('door');
   const seed=doorSeed(D);
   remember('doors',D.kind,{seed,depth:R.depth,look:doorLookOf(D),tx:D.tx,ty:D.ty,ph:D.ph,stone:F.stone.slice()});
-  if(!showProgress)buildStatic(F);
-  if(D.kind==='neonride')nrPullAll(seed);
-  beginRoom(D.kind,roomEnd,seed,showProgress);
+  beginRoom(D.kind,onEnd,seed,showProgress);
   if(DOOR_KINDS[D.kind]?.infinite)achieve('infinite',ACH_DEFS.infinite.title,ACH_DEFS.infinite.desc);
 }
-// ---- the Neon Run is a party ride: whoever opens its door pulls every other player in the run (on any floor) in with them. They ride
-// one train of carts in the order of the list the opener sends ({k:'nrPull'}), each with their own blaster, score and prize. Riders
-// tell each other where they aim and their score five times a second ({k:'nrSt'}), and send their shots and the cutouts they knock down
-// ({k:'nrShot'}, {k:'nrHit'}); the room (src/neon-ride.js) reads all that through o.neon. Anyone who cannot come just then (dead, down,
-// behind another door, in a cut scene) is left out, and their seat stays an empty cart.
-const NR={party:null,peers:new Map(),events:[]};
-function nrPullAll(seed){
-  NR.party=null;NR.peers.clear();NR.events.length=0;
-  if(!MP.on)return;
-  const seats=[{id:MP.id,name:myName(),col:localPlayerColor()}];
-  for(const p of MP.peers.values())if(p.run&&!p.down&&!p.away&&!(p.ko>0)&&mpFresh(p)&&seats.length<8)seats.push({id:p.id,name:p.name,col:p.col});
-  if(seats.length<2)return;
-  NR.party={seats,me:0};
-  mpSend({k:'nrPull',sd:seed>>>0,seats,by:myName()});
-  mpSys(myName()+' pulled everyone onto the Neon Run');
+function sdoorOpen(D,showProgress=false){
+  if(loading||state!=='play'||D.used||P.down||P.grab)return;
+  if(MP.on){requestDoorEntry(F.sdoors.indexOf(D),false);return}
+  D.used=true;
+  if(!showProgress)buildStatic(F);
+  enterDoor(D,roomEnd,showProgress);
 }
-function nrPulled(m,p){
-  if(!Array.isArray(m.seats))return;
-  const seats=m.seats.slice(0,8).filter(q=>q&&typeof q.id==='string').map(q=>({id:q.id,name:String(q.name||'Rider').slice(0,16),col:Array.isArray(q.col)?q.col.slice(0,3).map(v=>clamp(+v||0,0,1)):[0.5,0.8,1]}));
-  const me=seats.findIndex(q=>q.id===MP.id);
-  if(me<0||state==='room'||state==='dead'||loading||P.down||P.ko>0||P.eaten>0||FX.frozen||P.hug||P.grab||RR)return;
-  if(state==='pause')$('pause').classList.add('hidden');
-  roomPauseHide(false);
-  if(state==='talk'){$('talk').classList.add('hidden');talk=null}
-  if(activeStation)closeStation();
-  state='play';NR.party={seats,me};NR.peers.clear();NR.events.length=0;
-  clearPrompt();RW=null;document.body.classList.remove('rwatch');
-  say((p.name||'Someone')+' pulled you onto the Neon Run!',3.5);
-  beginRoom('neonride',roomEnd,(+m.sd||7)>>>0);
+
+const NR={party:null,peers:new Map(),events:[]};
+const doorHistory=new Map(),doorInvites=new Map();
+let doorParties=new Map();
+const DOOR_INVITE_MS=30000;
+let doorVisit=null,doorEntry=null,doorTicket=0,doorFloor=null;
+const doorLocalOnFloor=()=>MP.on&&['play','pause','talk'].includes(state)&&!loading&&!archiveRun&&!P.down&&!P.away;
+const doorLocalReady=()=>doorLocalOnFloor()&&!P.ko&&!P.grab&&!P.hug&&!P.eaten&&!FX.frozen&&!RR;
+const doorPeerOnFloor=p=>p&&p.run&&p.d===R.depth&&performance.now()-p.positionAt<15000&&!p.down&&!p.away;
+const doorPeerReady=p=>doorPeerOnFloor(p)&&!p.ko&&!p.frz;
+const doorEnvelope=(op,fields)=>({k:'sr',op,d:R.depth,seed:R.seed,...fields});
+function doorRequest(op,fields){
+  const m=doorEnvelope(op,fields);
+  if(MP.host)doorHostRecv(m,MP.id);
+  else if(MP.hostId)mpSend(m,MP.hostId);
+}
+function doorPublish(op,fields,to){
+  const m=doorEnvelope(op,fields);
+  if(!to||to===MP.id)doorClientRecv(m);
+  if(to!==MP.id)mpSend(m,to);
+}
+function doorMeta(i,room){
+  return {i,first:room.first,lead:doorLeader(room),turn:room.turn,done:room.done,members:[...room.members],train:room.train,trainId:room.trainId};
+}
+function requestDoorEntry(i,invited){
+  if(!Number.isInteger(i)||!doorLocalReady()||doorEntry)return;
+  const invite=doorInvites.get(i);
+  if(invited&&(!invite||invite.expires<=performance.now()))return;
+  const ticket=++doorTicket;
+  doorEntry={i,ticket,expires:performance.now()+5000};
+  doorRequest('join',{i,ticket,invited});
+}
+function doorHostRecv(m,id){
+  const D=F?.sdoors[m.i];
+  if(!D||!Number.isInteger(m.i)||m.d!==R.depth||m.seed!==R.seed)return;
+  const p=id===MP.id?P:MP.peers.get(id);
+  if(!p)return;
+  let room=doorParties.get(m.i);
+  if(m.op==='join'){
+    const ready=id===MP.id?doorLocalReady():doorPeerReady(p);
+    const invited=room?.invites.get(id)>performance.now();
+    const near=ready&&Math.hypot(p.x-D.x,p.z-D.z)<=1.1;
+    const busy=[...doorParties.values()].some(r=>r.members.has(id));
+    if(!Number.isSafeInteger(m.ticket)||!ready||busy||!(m.invited?invited:near)){
+      doorPublish('denied',{i:m.i,ticket:m.ticket},id);return;
+    }
+    if(!room){room=createDoorParty(D.kind);doorParties.set(m.i,room)}
+    admitToDoor(room,id,m.ticket);
+    doorPublish('meta',doorMeta(m.i,room));
+    doorPublish('admitted',{...doorMeta(m.i,room),ticket:m.ticket,shared:room.shared,credited:room.contributors.has(id)},id);
+    return;
+  }
+  if(!room||!room.members.has(id)||room.members.get(id)!==m.ticket)return;
+  if(m.op==='invite'&&room.first===id){
+    let count=0;
+    const invite=peerId=>{
+      room.invites.set(peerId,performance.now()+DOOR_INVITE_MS);
+      doorPublish('invite',{i:m.i,by:p===P?myName():p.name},peerId);count++;
+    };
+    if(id!==MP.id&&doorLocalOnFloor())invite(MP.id);
+    for(const peer of MP.peers.values())if(peer.id!==id&&doorPeerOnFloor(peer)&&![...doorParties.values()].some(r=>r.members.has(peer.id)))invite(peer.id);
+    doorPublish('invited',{i:m.i,count},id);
+  }else if(m.op==='leave'){
+    if(D.kind==='galaxy'&&doorLeader(room)===id&&m.result==='warp'){
+      const n=1+(Math.random()*3|0);
+      room.done=true;
+      const why='A collapsing star throws you '+n+(n>1?' floors':' floor')+' down';
+      doorPublish('warp',{i:m.i,n,why});
+      return;
+    }
+    if(leaveDoorParty(room,id))doorPublish('meta',doorMeta(m.i,room));
+  }else if(m.op==='pass'&&passDoorTurn(room,id)){
+    doorPublish('meta',doorMeta(m.i,room));
+  }else if(m.op==='start'&&D.kind==='neonride'&&!room.train&&doorLeader(room)===id){
+    room.train=[...room.members.keys()].slice(0,8);room.trainId++;
+    doorPublish('meta',doorMeta(m.i,room));
+  }else if(m.op==='frame'){
+    if(Array.isArray(m.pose)&&m.pose.length===6&&m.pose.every(Number.isFinite))doorPublish('pose',{i:m.i,id,ticket:m.ticket,pose:m.pose});
+    if(!m.q||typeof m.q!=='object'||m.turn!==room.turn||room.done||doorLeader(room)!==id||
+        !['kiln','moose','mirror','galaxy','theater','hamlet'].includes(D.kind))return;
+    if(D.kind==='theater'&&room.shared?.st==='crying'&&m.q.st!=='crying')return;
+    if(D.kind==='hamlet'&&room.shared?.dead&&!m.q.dead)return;
+    room.shared=m.q;
+    doorPublish('shared',{i:m.i,id,turn:room.turn,q:m.q});
+  }else if(m.op==='event')doorHostEvent(m,id,room);
+}
+function doorHostEvent(m,id,room){
+  if(room.kind==='stillwood'){
+    const shared=room.shared??={};
+    const valid=(length)=>Array.isArray(m.data)&&m.data.length===length&&m.data.every(Number.isFinite);
+    if(m.kind==='pin'&&!shared.pin&&valid(3))shared.pin=m.data;
+    else if((m.kind==='po'&&valid(6))||(m.kind==='co'&&valid(5))){
+      const list=shared[m.kind]??=[],index=m.kind==='po'?5:3;
+      if(m.data[index]!==((list.at(-1)?.[index]??-1)+1))return;
+      shared[m.kind]=[...list,m.data].slice(-(m.kind==='po'?STILL.pondMax:STILL.cottageMax));
+    }else return;
+    doorPublish('shared',{i:m.i,q:shared});
+  }else if(room.kind==='theater'&&m.kind==='voice'&&Array.isArray(m.data)&&m.data.length===2&&m.data.every(Number.isFinite)){
+    doorPublish('input',{i:m.i,id,kind:m.kind,data:m.data},doorLeader(room));
+  }else if(room.kind==='hamlet'&&m.kind==='cut'&&doorLeader(room)&&!room.shared?.dead){
+    doorPublish('input',{i:m.i,id,kind:m.kind},doorLeader(room));
+  }else if(room.kind==='hamlet'&&m.kind==='credit'&&id===doorLeader(room)&&room.members.has(m.data)){
+    room.contributors.add(m.data);
+    doorPublish('credit',{i:m.i},m.data);
+  }
+}
+function updateDoorVisit(m){
+  if(!doorVisit||doorVisit.i!==m.i)return;
+  const v=doorVisit,wasLead=v.isLead,oldTurn=v.turn;
+  v.first=m.first;v.lead=m.lead;v.isLead=m.lead===MP.id;v.turn=m.turn;v.done=m.done;v.members=new Map(m.members);
+  v.train=m.train;v.trainId=m.trainId;
+  for(const id of v.poses.keys())if(!v.members.has(id))v.poses.delete(id);
+  if(oldTurn!==v.turn&&TURN_ROOMS.has(v.kind)&&ROOMS.active){
+    v.shared=null;
+    v.restart='turn';
+  }
+  if(v.isLead&&!wasLead&&v.shared)ROOMS.shared(v.shared);
+  if(v.kind==='neonride'&&v.train?.includes(MP.id)&&NR.party?.id!==v.trainId){
+    const seats=v.train.map(id=>{
+      const p=MP.peers.get(id);
+      return {id,name:id===MP.id?myName():p?.name||'Rider',col:id===MP.id?localPlayerColor():p?.col||[0.5,0.8,1]};
+    });
+    NR.peers.clear();NR.events.length=0;
+    NR.party={id:v.trainId,seats,me:v.train.indexOf(MP.id)};
+    if(ROOMS.active)v.restart='ride';
+  }
+}
+function doorClientRecv(m){
+  if(m.op==='invite'){
+    doorInvites.set(m.i,{by:m.by,expires:performance.now()+DOOR_INVITE_MS});
+    sfx('door');
+  }else if(m.op==='denied'&&doorEntry?.ticket===m.ticket){
+    doorEntry=null;doorInvites.delete(m.i);say('That room invitation or entrance is unavailable.',3);
+  }else if(m.op==='admitted'){
+    const D=F.sdoors[m.i];
+    if(!D||!doorLocalReady()||doorEntry?.ticket!==m.ticket){
+      doorRequest('leave',{i:m.i,ticket:m.ticket});return;
+    }
+    doorEntry=null;doorInvites.clear();
+    if(state==='pause')$('pause').classList.add('hidden');
+    if(state==='talk')closeTalk();
+    if(activeStation)closeStation();
+    freeInput();
+    doorVisit={i:m.i,ticket:m.ticket,kind:D.kind,poses:new Map(),shared:m.shared,credited:!!m.credited};
+    updateDoorVisit(m);
+    enterDoor(D,partyRoomEnd,false);
+    if(m.shared)ROOMS.shared(m.shared);
+  }else if(m.op==='meta')updateDoorVisit(m);
+  else if(m.op==='invited'&&doorVisit?.i===m.i){
+    say(m.count?'Room invitation sent to '+m.count+(m.count===1?' player.':' players.'):'No players are available on this floor.',3);
+  }else if(m.op==='pose'&&doorVisit?.i===m.i&&m.id!==MP.id&&doorVisit.members.get(m.id)===m.ticket){
+    doorVisit.poses.set(m.id,{pose:m.pose,peer:MP.peers.get(m.id),at:performance.now()});
+  }else if(m.op==='shared'&&doorVisit?.i===m.i&&(m.turn===undefined||m.turn===doorVisit.turn)){
+    doorVisit.shared=m.q;
+    if(m.id!==MP.id&&!doorVisit.restart)ROOMS.shared(m.q);
+  }else if(m.op==='input'&&doorVisit?.i===m.i&&doorVisit.isLead){
+    ROOMS.partyInput(m.kind,m.data,m.id,doorVisit.poses.get(m.id)?.pose);
+  }else if(m.op==='credit'&&doorVisit?.i===m.i)doorVisit.credited=true;
+  else if(m.op==='warp')mpDescend(m.n,m.why);
+}
+function leaveSharedDoor(result){
+  if(!doorVisit)return;
+  const {i,ticket}=doorVisit;
+  doorVisit=null;
+  doorRequest('leave',{i,ticket,result});
+}
+function partyRoomEnd(res){
+  const credit=doorVisit?.credited;
+  if(res.k==='warp'){leaveSharedDoor('warp');return}
+  leaveSharedDoor();
+  if(res.k==='leave'&&!['theater','stillwood','hamlet','moose'].includes(res.why))roomClose();
+  else if(res.why==='hamlet'&&res.k==='win'&&!credit)roomClose();
+  else roomEnd(res);
+}
+function resetDoorParties(){
+  doorHistory.clear();enterDoorFloor(F,R.depth);
+}
+function enterDoorFloor(floor,depth){
+  if(doorFloor!==floor&&MP.host){
+    for(const room of doorParties.values()){
+      for(const id of room.members.keys())leaveDoorParty(room,id);
+      room.invites.clear();
+    }
+  }
+  doorFloor=floor;
+  doorParties=doorHistory.get(depth)||new Map();
+  doorHistory.set(depth,doorParties);
+  doorInvites.clear();doorVisit=null;doorEntry=null;
+}
+function prepareDoorRoom(){
+  const v=doorVisit;
+  if(!v?.restart)return;
+  const keepPosition=v.restart==='turn';
+  v.restart=null;
+  ROOMS.restart(doorSeed(F.sdoors[v.i]),keepPosition);
+  if(v.shared&&!v.isLead)ROOMS.shared(v.shared);
+}
+function tickDoorParties(raw){
+  if(doorFloor!==F)enterDoorFloor(F,R.depth);
+  const now=performance.now();
+  if(doorEntry?.expires<=now)doorEntry=null;
+  for(const [i,v] of doorInvites)if(v.expires<=now)doorInvites.delete(i);
+  if(MP.host){
+    for(const [i,room] of doorParties){
+      for(const id of room.members.keys()){
+        if(id!==MP.id&&(!MP.peers.has(id)||!mpFresh(MP.peers.get(id)))){
+          leaveDoorParty(room,id);doorPublish('meta',doorMeta(i,room));
+        }
+      }
+    }
+  }
+  rvT-=raw;
+  if(doorVisit&&state==='room'&&rvT<=0){
+    rvT=0.1;
+    const q=ROOMS.snap(),pose=ROOMS.partyPose();
+    doorRequest('frame',{i:doorVisit.i,ticket:doorVisit.ticket,turn:doorVisit.turn,q,pose});
+    if(q)mpSend({k:'rv',d:R.depth,w:ROOMS.kind,q});
+  }
+}
+function doorControl(op){
+  if(op==='join'){const i=doorInvites.keys().next().value;requestDoorEntry(i,true);return}
+  if(state!=='room'||!doorVisit||loading)return;
+  if(op==='exit'){if(!$('doorPartyExit').hidden)roomLeave();return}
+  doorRequest(op,{i:doorVisit.i,ticket:doorVisit.ticket});
+}
+function renderDoorControls(){
+  if(!MP.on&&$('doorPartyActions').hidden&&$('doorPartyJoin').hidden)return;
+  const v=state==='room'&&!loading?doorVisit:null,invite=doorLocalOnFloor()?doorInvites.entries().next().value:null;
+  $('doorPartyActions').hidden=!v;
+  $('doorPartyInvite').hidden=!v||v.first!==MP.id;
+  $('doorPartyPass').hidden=!v||!v.isLead||!TURN_ROOMS.has(v.kind)||v.members.size<2;
+  $('doorPartyStart').hidden=!v||!v.isLead||v.kind!=='neonride'||!!v.train;
+  $('doorPartyExit').hidden=!v||v.isLead&&(ONCE_ROOMS.has(v.kind)&&!v.done||['bathroom','moose'].includes(v.kind));
+  const status=$('doorPartyStatus');
+  const lead=v?.isLead?'Your turn':v?.lead?(MP.peers.get(v.lead)?.name||'Another player')+' is playing':'';
+  const label=v&&TURN_ROOMS.has(v.kind)?lead:v?.kind==='neonride'&&!NR.party?(v.train?'Waiting for the next train':'Boarding the Neon Run'):'';
+  if(status.textContent!==label)status.textContent=label;
+  status.hidden=!label;
+  const join=$('doorPartyJoin');
+  join.hidden=!invite;
+  join.disabled=!doorLocalReady()||!!doorEntry;
+  if(invite){
+    const hint=join.querySelector('small'),shortcut=join.disabled?'Available when you can move':document.pointerLockElement?'N to join · Esc for cursor':'Click or press N to join';
+    if(hint.textContent!==shortcut)hint.textContent=shortcut;
+    const [i,entry]=invite,name=entry.by||'A player',D=F.sdoors[i];
+    const target=D&&!DOOR_KINDS[D.kind].disguise?DOOR_KINDS[D.kind].name:'a strange room';
+    const heading=name+' invited you to '+target;
+    if($('doorPartyJoinText').textContent!==heading)$('doorPartyJoinText').textContent=heading;
+  }
+}
+for(const [id,op] of [['doorPartyInvite','invite'],['doorPartyPass','pass'],['doorPartyStart','start'],['doorPartyExit','exit'],['doorPartyJoin','join']]){
+  $(id).addEventListener('click',()=>doorControl(op));
 }
 function beginRoom(kind,onEnd,seed,showProgress=false){
   const door=DOOR_KINDS[kind]||{};
@@ -6826,6 +7061,7 @@ function beginRoom(kind,onEnd,seed,showProgress=false){
 }
 let previewStamina=null;
 function previewRoom(kind,seed=7){
+  if(kind==='fall'&&doorVisit&&!doorVisit.isLead){document.body.classList.remove('room-cinematic');document.body.classList.add('room-look-only')}
   if(!Object.hasOwn(DOOR_KINDS,kind)||MP.on||P.down||P.grab)return false;
   if(previewStamina)roomLeave();
   if(state!=='play')return false;
@@ -6851,6 +7087,7 @@ function roomClose(){
   $('fade').style.transition='opacity .4s';$('fade').style.opacity=0;
   if(mooseRelock){mooseRelock=false;if(!touch.on)lock()}
 }
+  leaveSharedDoor();
 /* ---------- burning eyes: after the mirror, for the rest of that floor, the creatures show through a wall or around a corner ---------- */
 const XR={list:[],t:0,pool:null};
 const xrayOn=()=>(R.xray>0&&R.xray===R.depth||ps('xray'))&&!!F;
@@ -7102,6 +7339,7 @@ function installFloor(depth,nextFloor,prepared=false,landing=null){
   if(prepared)afterLiftFrame(()=>{if(state==='play'&&F===nextFloor&&!loading)sweepWorld()});else sweepWorld();
   if(F.npcs&&F.npcs.some(q=>q.type==='keeper'))keeperWarm();
   P.x=F.start.tx+0.5;P.z=F.start.ty+0.5;P.yaw=F.start.yaw;P.pitch=0;P.shards=0;P.tx=-1;P.ty=-1;
+  enterDoorFloor(nextFloor,depth);
   P.y=0;P.vy=0;P.vx=0;P.vz=0;P.clipRunup=0;P.crouched=false;P.crouchBlend=0;P.inWater=false;P.keys=0;P.jumpQ=0;P.inSafe=false;P.unseen=false;nearNpc=nearDoor=null;
   const visit=liftVisits.get(depth);
   if(visit?.floor===F){
@@ -7225,7 +7463,7 @@ function enterRun(seed,sd,floor,landing,liftTrip){
   liftVisits.clear();liftResume=liftJourney=false;
   if(seed===autoSeed&&!$('seedIn').value.trim()){autoSeed=randSeed();reWarm=true}
   liftCacheClear(!!landing);
-  roomLeave();$('deadTitle').textContent='THE DARK TAKES YOU';wofClear();WOF.done=true;WOF.plan=null;WOF.flap=0;WOF.party=0;
+  $('deadTitle').textContent='THE DARK TAKES YOU';wofClear();WOF.done=true;WOF.plan=null;WOF.flap=0;WOF.party=0;
   showHub(false);
   P.down=false;
   R.seed=seed;R.pk={};R.mirror=false;P.pick=0;P.spikeTraps=0;P.moose=P.mounted=false;P.moosePending=null;P.clipReadyAt=0;R.score=0;R.time=0;R.gems=0;R.startDepth=sd;
@@ -7234,6 +7472,8 @@ function enterRun(seed,sd,floor,landing,liftTrip){
   installFloor(sd,floor,!!landing,landing);
   finishFloorArrival(sd,liftTrip);
 }
+  roomLeave();
+  resetDoorParties();
 function finishFloorArrival(depth,liftTrip){
   // Resetting the lift disposes its landing task. Transfer the floor first.
   if(!archiveRun)hub.reset();
@@ -7617,6 +7857,8 @@ function mpLeave(endIfDown){
   if(P.down){P.down=false;if(endIfDown&&state!=='title'&&state!=='dead')die()}
   mpTitle();
 }
+  if(doorVisit)roomLeave();
+  resetDoorParties();
 // the host button: open a room, start a run, copy the invite link
 function mpHost(depth,seed=$('seedIn').value.trim(),landing){
   if(loading)return;
@@ -7643,7 +7885,7 @@ function mpJoinClick(){
 function mpSendRun(to,liftTrip){
   if(!MP.host||!F)return;
   const got=[];F.items.forEach((it,i)=>{if(it.got)got.push(i)});
-  mpSend({k:'run',seed:R.seed,d:R.depth,sd:R.startDepth,t:r2(R.time),got,door:F.doorOpen?1:0,sdo:F.sdoors.map(q=>q.used?1:0),pk:(R.pk[R.depth]||[]).slice(0,64),sh:P.shards,ke:P.keys,blk:F.blk|0,liftTrip},to);
+  mpSend({k:'run',seed:R.seed,d:R.depth,sd:R.startDepth,t:r2(R.time),got,door:F.doorOpen?1:0,pk:(R.pk[R.depth]||[]).slice(0,64),sh:P.shards,ke:P.keys,blk:F.blk|0,liftTrip},to);
 }
 function mpApplyRun(r){
   startRun(r.seed,r.d,true,true,()=>{
@@ -7668,7 +7910,6 @@ function mpRestoreRun(r){
   R.startDepth=r.sd;R.time=r.t;
   for(const i of r.got||[]){const it=F.items[i];if(it)it.got=true}
   if(r.door&&F.door)openDoor(true);
-  if(Array.isArray(r.sdo)){r.sdo.forEach((u,i)=>{if(u&&F.sdoors[i])F.sdoors[i].used=true});buildStatic(F)}
   if(Array.isArray(r.pk))for(const q of r.pk.slice(0,64))if(Array.isArray(q))pkApply(q[0],q[1],true);
   P.shards=r.sh|0;P.keys=r.ke|0;
   if(F.back&&r.blk)F.blk=r.blk;
@@ -7702,7 +7943,7 @@ function mpRecv(m,from){
   const inRun=state!=='title'&&state!=='dead'&&!(MP.guest&&!MP.wantJoin);
   const here=m.d===R.depth;
   if(state==='title'&&hub.riding&&sharedLift.trip&&m.d===sharedLift.trip.depth&&sharedLift.trip.members.includes(from)
-    &&['got','pk','door','sd'].includes(m.k)&&sharedLift.waiting.length<256){
+    &&['got','pk','door'].includes(m.k)&&sharedLift.waiting.length<256){
     sharedLift.waiting.push([m,from]);return;
   }
   switch(m.k){
@@ -7831,10 +8072,13 @@ function mpRecv(m,from){
       break;
     case 'wh':{if(!MP.host||!inRun||!here||!Array.isArray(m.h))break;for(const h of m.h.slice(0,24))if(h&&Number.isInteger(h.i)&&Number.isFinite(+h.d)&&+h.d<50)wApply(h,from);break}
     case 'gw':{if(fromHost&&inRun&&here)grannyWoozy();break}
-    case 'nrPull':{if(inRun)nrPulled(m,p);break}
+    case 'sr':{
+      if(!inRun||!here||m.seed!==R.seed||state==='trans')break;
+      if(MP.host)doorHostRecv(m,from);else if(fromHost)doorClientRecv(m);
+      break;}
     case 'emo':{const e=m.e|0;p.emote=e>=0&&e<EMOTES.length?{id:e,t0:R.time}:null;break}
-    case 'nrSt':{if(NR.party&&NR.party.seats.some(q=>q.id===from))NR.peers.set(from,{y:clamp(+m.y||0,-4,4),p:clamp(+m.p||0,-2,2),sc:m.sc|0,e:m.e?1:0});break}
-    case 'nrShot':case 'nrHit':{if(NR.party&&state==='room'&&ROOMS.kind==='neonride'&&NR.party.seats.some(q=>q.id===from)){NR.events.push({k:m.k,id:m.id|0,to:Array.isArray(m.to)?m.to.slice(0,3).map(Number):null,by:from});if(NR.events.length>200)NR.events.shift()}break}
+    case 'nrSt':{if(NR.party&&m.room===doorVisit?.i&&m.train===NR.party.id&&NR.party.seats.some(q=>q.id===from))NR.peers.set(from,{y:clamp(+m.y||0,-4,4),p:clamp(+m.p||0,-2,2),sc:m.sc|0,e:m.e?1:0});break}
+    case 'nrShot':case 'nrHit':{if(NR.party&&m.room===doorVisit?.i&&m.train===NR.party.id&&state==='room'&&ROOMS.kind==='neonride'&&NR.party.seats.some(q=>q.id===from)){NR.events.push({k:m.k,id:m.id|0,to:Array.isArray(m.to)?m.to.slice(0,3).map(Number):null,by:from});if(NR.events.length>200)NR.events.shift()}break}
     case 'slx':{if(fromHost&&inRun&&here&&F.shades.some(q=>q.type===8)){const n=Math.min(m.n|0,F.shades.length+400);while(F.shades.length<n)slugNew()}break}
     case 'spe':{if(fromHost&&inRun&&here)spiderEaten();break}
     case 'spl':{if(fromHost&&inRun&&here&&Array.isArray(m.a))for(const q of m.a){const s=Array.isArray(q)&&F.shades[q[0]|0];if(s&&s.type===10)s.lv=clamp(q[1]|0,1,99)}break}
@@ -7864,12 +8108,6 @@ function mpRecv(m,from){
       else if(it.type==='key'){P.keys++;sfx('key');say(p.name+' found the gate key',2.5)}
       break;}
     case 'door':if(inRun&&here&&F.door)openDoor(false);break;
-    case 'sd':{
-      if(!inRun||!here)return;
-      const D=F.sdoors[m.i];if(!D||D.used)return;
-      D.used=true;if(nearDoor===D)nearDoor=null;buildStatic(F);
-      say(p.name+' opened a strange door',2.5);mpSys(p.name+' opened '+(DOOR_KINDS[m.w]?.name||'a strange door'));
-      break;}
     case 'rv':if(m.q&&typeof m.q==='object'&&typeof m.w==='string'&&Object.hasOwn(DOOR_KINDS,m.w)){p.rv={w:m.w,q:m.q,d:m.d,at:performance.now()};if(RW&&RW.id===from&&RW.w===m.w)ROOMS.sync(m.q)}break;
     case 'sdr':if(inRun)say(m.r==='theater'?p.name+' silenced the picture house':m.r==='theater-dead'?p.name+' was roasted to death by teenagers':m.r==='esc'?p.name+' beat the glass kiln':m.r==='fall'?p.name+' fell to their death':m.r==='lucky'?p.name+' hid behind a mirror and got lucky':m.r==='mirror'?p.name+' was eaten by the thing behind the mirror':m.r==='bathroom'?p.name+' wiped too hard':m.r==='hamlet'?p.name+' was taken by the thing in the village':p.name+' was buried in the glass kiln',3);break;
     case 'warp':{
@@ -8019,6 +8257,7 @@ function mpTick(raw){
   }
   // a quiet host for 15 seconds has gone (closed the tab or lost the connection)
   if(MP.guest&&MP.hostId){const h=MP.peers.get(MP.hostId);if(h&&!mpFresh(h)){mpGone(MP.hostId);if(!MP.on)return}}
+  tickDoorParties(raw);
   if(state==='title'){
     MP.pt-=raw;
     if(MP.pt<=0){
@@ -8034,8 +8273,6 @@ function mpTick(raw){
     MP.pt=1/15;
     sendRunPresence();
   }
-  rvT-=raw;
-  if(state==='room'&&rvT<=0&&MP.peers.size){rvT=0.1;const q=ROOMS.snap();if(q)mpSend({k:'rv',d:R.depth,w:ROOMS.kind,q})}
   if(MP.host&&state!=='trans'){
     MP.mt-=raw;
     if(MP.mt<=0){
@@ -8606,6 +8843,11 @@ addEventListener('keydown',e=>{
   if(roomMode==='table'&&['Backspace','Enter','NumpadEnter','Escape'].includes(e.code))e.preventDefault();
   if(e.repeat)return;
   if(e.code==='KeyJ'&&['title','play','room'].includes(state)){
+  if(!e.repeat&&e.code==='KeyN'){
+    if(doorLocalReady()&&doorInvites.size){e.preventDefault();doorControl('join');return}
+    if(state==='room'&&doorVisit?.first===MP.id){e.preventDefault();doorControl('invite');return}
+  }
+  if((e.code==='Tab'||e.target?.closest?.('#doorPartyActions,#doorPartyJoin')&&['Enter','NumpadEnter','Space'].includes(e.code))&&doorLocalReady()&&doorInvites.size)return;
     setCameraView(nextCameraView(cameraView));
     say(CAMERA_VIEWS[cameraView],1.4);
     return;
@@ -10006,7 +10248,8 @@ function localAvatarPose(){
   return {id,col:localPlayerColor(),look:playerLook,rx:0,ry:0,rz:0,ryaw:0,rpitch:0,spd:0,walk:0};
 }
 
-function buildLocalAvatar(){
+function buildDoorAvatar(id,peer){return buildLocalAvatar({id,peer})}
+function buildLocalAvatar(remote){
   const pose=localAvatarPose();
   const avatar=exhibitModel(time=>buildPlayer(pose,time),true);
   avatar.name='Local player';
@@ -10019,9 +10262,9 @@ function buildLocalAvatar(){
   };
   const animate=avatar.userData.pose;
   avatar.userData.pose=(time,body,yaw,pitch,eye)=>{
-    pose.id=MP.on?MP.id:'me';
-    pose.col=localPlayerColor();
-    pose.look=playerLook;
+    pose.id=remote?.id||(MP.on?MP.id:'me');
+    pose.col=remote?.peer?.col||(remote?[0.7,0.7,0.8]:localPlayerColor());
+    pose.look=remote?.peer?.look||playerLook;
     pose.crouchBlend=body.crouchBlend;
     pose.rpitch=pitch;
     pose.spd=Math.hypot(body.vx,body.vz)*EYE/eye;
@@ -10479,7 +10722,7 @@ function step(now){
   const moving=state==='play'||state==='room'||state==='title';
   if(moving!==wasPlaying){wasPlaying=moving;document.body.classList.toggle('playing',wasPlaying)}
   roomWatch();
-  if(state==='room'){if(!roomPaused)ROOMS.update(dt,roomInput());else if(MP.on)ROOMS.update(dt,NOIN);if(state==='room'){$('fade').style.opacity=ROOMS.fade();$('roomCross').classList.toggle('on',ROOMS.aimed());mirrorBtns()}}
+  if(state==='room'){prepareDoorRoom();if(!roomPaused)ROOMS.update(dt,roomInput());else if(MP.on)ROOMS.update(dt,NOIN);if(state==='room'){$('fade').style.opacity=ROOMS.fade();$('roomCross').classList.toggle('on',ROOMS.aimed());mirrorBtns()}}
   else if(ROOMS.watching){ROOMS.update(dt,NOIN);$('fade').style.opacity=ROOMS.fade()}
   const live=()=>state==='play'||(MP.on&&(state==='pause'||state==='talk'||state==='room'));
   // a fake hang: nothing moves for you, though the room carries on
@@ -10546,6 +10789,7 @@ function frameBody(now){
   }
 }
 setInterval(()=>{
+  renderDoorControls();
   if(!document.hidden)return;
   const now=performance.now();
   advanceLoading(now);
@@ -11769,6 +12013,6 @@ function gripProbe(ts,talking){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='
   for(const t of ts){buildNpc(n,t,P.x,0.7,P.z,0.016);res.push({t,...GRIP_DBG})}talk=save;return res}
 function benchNpc(iters){PROBE_SYNC=true;const n=F.npcs.find(q=>q.type==='keeper');const e=[P.x,0.7,P.z];buildNpc(n,1,e[0],e[1],e[2],0.016);let t0=performance.now();
   for(let i=0;i<iters;i++){CH.n=0;buildNpc(n,1+i*0.016,e[0],e[1],e[2],0.016)}return (performance.now()-t0)/iters}
-window.__game={pipelineWarm:pipeWarmState,EMO,emoteNext,emoteStop,NR,nrPulled,perf:{get composer(){return composer},torchLight,poolLights,shadLights,get gtao(){return gtaoPass},get bloom(){return bloomPass},get fxaa(){return fxaaPass},get rs(){return rs},set rs(v){rs=v;viewKey=''}},wMaxHp,TROLL,trollTick,trollWall,canUse,SPI,SLUG,KO,spiderTick,slugTick,slugPeel,slugOn,koTry,koUp,helpStart,webClear,webMul,crawlPlayerTick,get crawl(){return CRAWL},liftCache:()=>[...liftCache.values()].map(e=>({seed:e.seed,depth:e.depth,ready:e.task.ready,compiled:e.compiled})),stillwoodWarmState,stillwoodWarm,doorSeed,wofQ:WOQ,tkTargets,rrStart,wofClear,wofTick,mpPosFlags,wof:WOF,fx:FX,get tk(){return TK},get bomb(){return BOMB},get rr(){return RR},set rr(v){RR=v},rrAct,get ts(){return TS},get brk(){return BRK},set tk(v){TK=v},get cg(){return CG},set cg(v){CG=v},departFromLift,wofSpinStart,wofResolve,wofBegin,wofScene,planSpin,pickSlice,sliceAt,spinAngle,NEWS,openStation,get activeStation(){return activeStation},hub,get lobbyPaused(){return lobbyPaused},get roomPaused(){return roomPaused},simLockLost(){if(document.pointerLockElement){document.exitPointerLock();return}usingLock=true;document.dispatchEvent(new Event("pointerlockchange"))},music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch,patYell,initAudio,fizzTick,fizzMe,FIZZ,grannyTick,grannyWoozy,grannyGrab,grannyMash,GRAN,smith:SMITH,W,wAttack,sprList,wApply,wStats,wHeld,wCycle,clickL,clickR,WEAPONS,pot:POT,PFX,potLand,potDrink,potThrow,beltAdd,potBrew,potMon,potTouch,POTIONS,INGREDIENTS,brew,brewAny,potInfo,ps,potHud,wLevelOf,wRanks,wChoice,wGainXp,wXpFor,wReward,smithTalk,BS,BOSSES,bossAt,danceKey,danceChart,bossStart,bossWin,bossTrophies,bMain,wPunch,BP,bpAct,bpUse,bossArmor};
+window.__game={pipelineWarm:pipeWarmState,EMO,emoteNext,emoteStop,NR,perf:{get composer(){return composer},torchLight,poolLights,shadLights,get gtao(){return gtaoPass},get bloom(){return bloomPass},get fxaa(){return fxaaPass},get rs(){return rs},set rs(v){rs=v;viewKey=''}},wMaxHp,TROLL,trollTick,trollWall,canUse,SPI,SLUG,KO,spiderTick,slugTick,slugPeel,slugOn,koTry,koUp,helpStart,webClear,webMul,crawlPlayerTick,get crawl(){return CRAWL},liftCache:()=>[...liftCache.values()].map(e=>({seed:e.seed,depth:e.depth,ready:e.task.ready,compiled:e.compiled})),stillwoodWarmState,stillwoodWarm,doorSeed,wofQ:WOQ,tkTargets,rrStart,wofClear,wofTick,mpPosFlags,wof:WOF,fx:FX,get tk(){return TK},get bomb(){return BOMB},get rr(){return RR},set rr(v){RR=v},rrAct,get ts(){return TS},get brk(){return BRK},set tk(v){TK=v},get cg(){return CG},set cg(v){CG=v},departFromLift,wofSpinStart,wofResolve,wofBegin,wofScene,planSpin,pickSlice,sliceAt,spinAngle,NEWS,openStation,get activeStation(){return activeStation},hub,get lobbyPaused(){return lobbyPaused},get roomPaused(){return roomPaused},simLockLost(){if(document.pointerLockElement){document.exitPointerLock();return}usingLock=true;document.dispatchEvent(new Event("pointerlockchange"))},music,get menuPosition(){return hub.position},previewRoom,keeperReady:()=>{PROBE_SYNC=true;return keeperReady()},keeperLoad:()=>KEEPER_LOAD,KEEPER_T,keeperSaved:()=>KEEPER_SAVED,gripProbe,studio,benchNpc,NPC_T,GPU_RIGS,get CH(){return CH},bakeRecipe,KEEPER,get keeperStats(){return bakeRecipe(KEEPER).stats},guideInfo,guideCompute,GD,achieve,ACH,amb,roomInput,XR,xrayTick,wallsBetween,update,render,drawHUD,drawMap,camera,scene,get BABY(){return BABY},get Q(){return Q},mpRecv,blocked,solidAt,onTileChange,pkWhy,pkApply,pkAim,usePick,pkReapply,doorPlan,doorCountFor,doorOrder,flashStun,collect,get watching(){return RW},roomLeave,DOOR_LOOKS,DOOR_KINDS,buildStatic,glitch:glTest,setSkyTime:t=>hub.setSkyTime(t),get skyTime(){return hub.skyTime},hubLook:(dyaw,dpitch)=>hub.look(dyaw,dpitch),hubRender:t=>{if(t!=null)hub.setSkyTime(t);hub.render(1,t??hub.skyTime)},hubStep:(dt,inp)=>hub.update(dt,inp||{},dt),pause,resume,GL,ROOMS,sdoorOpen,kilnGame,KILN,roomEnd,MP,mpHost,hurt,keys,MIM,CLIPS,VOX,mpVoiceSet,chatOpenBox,chatClose,mimicEat,surfPreview(i,nrm,p){const t=SURFS.get(i,p),rt=nrm?t.rtN:t.rtA,n=rt.width,px=new Uint8Array(n*n*4);renderer.readRenderTargetPixels(rt,0,0,n,n,px);const c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),im=x.createImageData(n,n);im.data.set(px);if(!nrm)for(let k=3;k<px.length;k+=4)im.data[k]=255;else for(let k=0;k<px.length;k+=4){im.data[k]=im.data[k+1]=im.data[k+2]=255-px[k+3];im.data[k+3]=255}x.putImageData(im,0,0);return c.toDataURL('image/jpeg',0.9)},get wallet(){return wallet},set wallet(v){wallet=v},up,openTalk,closeTalk,pickTalk,moveTalk,get talk(){return talk},get nearNpc(){return nearNpc},act,genFloor,bfs,loadFloor,get F(){return F},FOREST,get forestGrp(){return forestGrp},BIOMES,VARIANTS,biomeIx,floorKind,pickVariant,SURFS,worldMats,get URL_DEPTH(){return URL_DEPTH},renderer,resize,get state(){return state},get rs(){return rs},get panelLvl(){return panelLvl},watcher,banish,startRun,useFlash,P,R,touch,patYell,initAudio,fizzTick,fizzMe,FIZZ,grannyTick,grannyWoozy,grannyGrab,grannyMash,GRAN,smith:SMITH,W,wAttack,sprList,wApply,wStats,wHeld,wCycle,clickL,clickR,WEAPONS,pot:POT,PFX,potLand,potDrink,potThrow,beltAdd,potBrew,potMon,potTouch,POTIONS,INGREDIENTS,brew,brewAny,potInfo,ps,potHud,wLevelOf,wRanks,wChoice,wGainXp,wXpFor,wReward,smithTalk,BS,BOSSES,bossAt,danceKey,danceChart,bossStart,bossWin,bossTrophies,bMain,wPunch,BP,bpAct,bpUse,bossArmor};
 lobbyWarm=prepareLobby();
 requestAnimationFrame(frame);

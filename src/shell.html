@@ -22,6 +22,12 @@
   #fade{background:#000;opacity:0;transition:opacity .4s}
   #roomHud{position:fixed;left:0;right:0;top:calc(14px + env(safe-area-inset-top));text-align:center;font-size:17px;line-height:1.5;letter-spacing:.05em;color:#ffd9a0;pointer-events:none;text-shadow:0 2px 6px #000,0 0 12px #000;z-index:6}
   #roomHud small{font-size:13px;color:#cdbfae}
+  #doorPartyActions,#doorPartyJoin{position:fixed;z-index:42;right:max(14px,env(safe-area-inset-right));top:calc(16px + env(safe-area-inset-top));max-width:min(280px,80vw);display:grid;gap:6px}
+  #doorPartyActions[hidden],#doorPartyActions [hidden],#doorPartyJoin[hidden]{display:none}
+  #doorPartyActions button,#doorPartyJoin{padding:9px 13px;border:1px solid #a8885b;border-radius:6px;background:#241d17f5;color:#ffe3bc;font:inherit;text-align:left;cursor:pointer}
+  #doorPartyActions button:focus-visible,#doorPartyJoin:focus-visible{outline:2px solid #ffe3bc;outline-offset:2px}
+  #doorPartyActions small,#doorPartyJoin small{display:block;color:#ddbc94;font-size:12px}
+  #doorPartyStatus{padding:7px 10px;border-radius:4px;background:#181411ec;color:#ffe3bc}
   #roomHud [data-room-choice]{display:block;margin:6px auto 0;padding:7px 14px;max-width:88vw;pointer-events:auto;border:1px solid #6b5a48;border-radius:6px;background:#211b18f0;color:#e0d1c0;font:inherit;cursor:pointer}
   #roomHud [data-room-choice][aria-pressed="true"],#roomHud [data-room-choice]:focus-visible{border-color:#ffe0a8;background:#624326;color:#fff2d6}
   body.room-look-only #tFlash,body.room-look-only #tJump,body.room-look-only #tCrouch,body.room-choice #tCrouch,body.moose-table #tCrouch,body.room-cinematic #touch,body.room-no-use #tFlash,body.room-choice #tFlash{display:none!important}
@@ -315,6 +321,14 @@
 <div id="chat" hidden><div id="chatLog"></div><input id="chatIn" class="plain" type="text" maxlength="200" placeholder="Say something, Enter to send, Esc to close" autocomplete="off"></div>
 <div id="prompt"></div>
 <div id="roomHud"></div><div id="roomCross"></div>
+<div id="doorPartyActions" aria-label="Room party" hidden>
+  <div id="doorPartyStatus" role="status" hidden></div>
+  <button type="button" id="doorPartyInvite" hidden>Invite players on this floor <small>N to send</small></button>
+  <button type="button" id="doorPartyPass" hidden>Pass turn</button>
+  <button type="button" id="doorPartyStart" hidden>Start ride</button>
+  <button type="button" id="doorPartyExit" hidden>Return to maze</button>
+</div>
+<button type="button" id="doorPartyJoin" hidden><span id="doorPartyJoinText"></span><small>Join room · N to accept</small></button>
 <div id="talk" class="hidden"><div id="talkPurse"></div><div id="talkName"></div><div id="talkText"></div><div id="talkOpts"></div><div id="talkHint"></div></div>
 <div id="fade" class="fx"></div>
 <div id="loading" hidden>

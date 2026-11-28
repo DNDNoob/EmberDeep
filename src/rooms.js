@@ -264,7 +264,9 @@ export function createRooms(renderer,o0){
   scene.background=new THREE.Color(0x000000);
   let composer=null,bloom=null,blurPass=null,fxaaPass=null,viewKey='',cur=null,group=null,done=null,held=false;
   const A={active:false,kind:'',watching:false,label:'',mute:0,theaterOpts:{}};
-  const clearHooks=[];
+  const clearHooks=[],peerAvatars=new Map();
+  A.party=()=>o.party?.();
+  A.playing=()=>!A.party()||A.party().isLead;
   const glowTex=canvasTex(128,128,(c,w)=>{const g=c.createRadialGradient(w/2,w/2,0,w/2,w/2,w/2);
     g.addColorStop(0,'rgba(255,255,255,1)');g.addColorStop(0.25,'rgba(255,255,255,0.45)');g.addColorStop(0.6,'rgba(255,255,255,0.08)');g.addColorStop(1,'rgba(255,255,255,0)');
     c.fillStyle=g;c.fillRect(0,0,w,w)});
@@ -297,9 +299,9 @@ export function createRooms(renderer,o0){
     while(clearHooks.length){try{clearHooks.pop()()}catch(e){}}
     if(!group)return;
     group.traverse(m=>{if(m.geometry)m.geometry.dispose();if(m.material){const L=Array.isArray(m.material)?m.material:[m.material];for(const q of L){if(q.map&&q.map!==glowTex)q.map.dispose();q.dispose()}}});
-    scene.remove(group);group=null;scene.fog=null;
+    peerAvatars.clear();scene.remove(group);group=null;scene.fog=null;
   }
-  const finish=res=>{if(A.watching){held=true;return}const d=done;done=null;A.active=false;A.kind='';cur=null;clear();o.hud('');if(d)d(res)};
+  const finish=res=>{if(A.watching){held=true;return}o.roomFinishing?.(res,cur?.snap?.());const d=done;done=null;A.active=false;A.kind='';cur=null;clear();o.hud('');if(d)d(res)};
 
   /* ---------- the galaxy ---------- */
   function galaxy(){
@@ -384,9 +386,11 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     S.white=glow(0xffffff,1,0);group.add(S.white);
     const HOLE_AT=6.5,EAT=8.3,END=13.6,OUT=14.4,FIN=16.2;
     S.update=(dt,inp)=>{
-      S.t+=dt;const t=S.t;
+      const aftermath=A.party()?.done;
+      S.t=aftermath?FIN:Math.min(FIN+1,S.t+dt);const t=S.t;
       lookStep(S,dt,inp.lx,inp.ly);
       if(!A.watching)o.hud('<small>'+o.hint('galaxy')+'</small>');
+      if(aftermath)S.said=4;
       if(S.said===0&&t>0.9){S.said=1;o.say('You are floating. There is no floor, and no maze.',4)}
       if(S.said===1&&t>HOLE_AT){S.said=2;o.say('The twin stars go dark.',3.5);o.tone(55,3.5,'sawtooth',0.2,0,-30);o.noise(2.5,0.25,180,0.7)}
       if(S.said===2&&t>EAT+1.6){S.said=3;o.say('It is pulling everything in.',3.5)}
@@ -443,10 +447,11 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       const w=ss(END-0.25,END+0.15,t)*(1-ss(OUT,OUT+0.8,t));
       S.white.material.opacity=w;S.white.scale.setScalar(900*w+1);S.white.position.copy(cam.position).add(new THREE.Vector3(0,0,-3).applyEuler(cam.rotation));
       S.sys.visible=t<END+0.1;
-      S.fade=ss(FIN-0.7,FIN-0.1,t);
-      if(t>=FIN)finish({k:'warp'});
+      S.fade=aftermath?0:ss(FIN-0.7,FIN-0.1,t);
+      if(t>=FIN&&(A.watching||A.playing()))finish({k:'warp'});
     };
     S.bloom=1.0;
+    S.partyApply=q=>{if(nf(q.t)&&Math.abs(S.t-q.t)>0.2)S.t=clamp(q.t,0,FIN)};
     S.snap=()=>({t:+S.t.toFixed(3),yaw:+S.yaw.toFixed(2),pitch:+S.pitch.toFixed(2)});
     S.apply=q=>{
       if(nf(q.yaw))S.yaw=q.yaw;if(nf(q.pitch))S.pitch=clamp(q.pitch,-1.2,1.2);
@@ -462,7 +467,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
 
   /* ---------- the fall ---------- */
   function fall(){
-    const S={t:0,y:0,v:0,said:0,windT:0,hit:false};
+    const S={t:0,y:0,v:0,yaw:0,pitch:-0.82,said:0,windT:0,hit:false};
     cam.fov=78;cam.near=0.05;cam.far=200;
     scene.fog=new THREE.FogExp2(0x000000,0.055);
     const DEPTH=64;
@@ -479,11 +484,22 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     for(let i=0;i<5;i++)for(let j=0;j<5;j++){const sp=new THREE.Mesh(new THREE.ConeGeometry(0.16,1.3+rnd()*0.7,6),iron);sp.position.set(-1.2+i*0.6+(rnd()-0.5)*0.15,-DEPTH+2.3,-1.2+j*0.6+(rnd()-0.5)*0.15);group.add(sp)}
     const floorY=-DEPTH+3.6;
     // the doorway, left behind above
+    if(!A.watching&&!A.playing()){
+      const lip=new THREE.Mesh(new THREE.BoxGeometry(2.96,0.24,0.5),new THREE.MeshStandardMaterial({map:brick.clone(),roughness:0.95}));
+      lip.position.set(0,-0.3,1.24);lip.material.map.repeat.set(2,1);group.add(lip);
+    }
     const door=new THREE.Mesh(new THREE.PlaneGeometry(0.9,1.5),new THREE.MeshBasicMaterial({color:new THREE.Color(1.6,0.9,0.4)}));
     door.position.set(0,0.1,1.49);door.rotation.y=Math.PI;group.add(door);
     S.torch=new THREE.PointLight(0xffb070,14,13,1.6);group.add(S.torch);
     group.add(new THREE.AmbientLight(0x202028,0.6));
-    S.update=(dt)=>{
+    S.update=(dt,input=Z)=>{
+      if(!A.watching&&!A.playing()){
+        lookStep(S,dt,input.lx||0,input.ly||0,MOVE.roomPitch);
+        cam.position.set(0,0.95,1.34);
+        cam.rotation.set(clamp(S.pitch??-0.82,-1.5,-0.12),-(S.yaw||0),0,'YXZ');
+        S.torch.position.copy(cam.position);
+        return;
+      }
       S.t+=dt;const t=S.t;
       if(S.said===0){S.said=1;o.say('Hands in the dark shove you through.',2.5);o.noise(0.25,0.5,300,0.8);o.tone(70,0.3,'square',0.2,0,-30);o.rumble(300,1,0.8)}
       if(!S.hit){
@@ -650,7 +666,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       S.inst.count=n;S.inst.instanceMatrix.needsUpdate=true;if(S.inst.instanceColor)S.inst.instanceColor.needsUpdate=true;
       S.ghost.count=gn;S.ghost.instanceMatrix.needsUpdate=true;
     };
-    const hud=()=>o.hud(K.over==='win'?'<b>The glass parts.</b>':K.over==='dead'?'<b>The kiln is full.</b>':
+    const hud=()=>o.hud(!A.watching&&!A.playing()?'<b>THE GLASS KILN</b>':K.over==='win'?'<b>The glass parts.</b>':K.over==='dead'?'<b>The kiln is full.</b>':
       !S.started?`<b>THE GLASS KILN</b><br>Walk to the console and press any button to light the kiln<br><small>${o.hint()}</small>`:
       `<b>THE GLASS KILN</b><br>Rows burned <b>${K.cleared} / ${KILN.need}</b> &nbsp;·&nbsp; ash rises in ${Math.max(0,Math.ceil(K.ashT))}s<br><small>${o.hint()}</small>`);
     const landed=n=>{
@@ -669,7 +685,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     };
     const fovFor=a=>{const tv=Math.max(Math.tan(35*Math.PI/180),0.62/Math.max(0.2,a));return Math.min(100,2*Math.atan(tv)*180/Math.PI)};
     S.tap=(nx,ny,viewCamera)=>{
-      if(A.watching||K.over||!nf(nx)||!nf(ny))return false;
+      if(A.watching||!A.playing()||K.over||!nf(nx)||!nf(ny))return false;
       if(viewCamera){
         const b=S.bp.findIndex(point=>{
           const [x,y,z]=point;
@@ -684,7 +700,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       const b=pick(d.map(v=>v/l),SNAPT);if(b<0)return false;S.tb=b;return true;
     };
     S.untap=()=>{S.tb=-1};
-    S.aimed=()=>S.aim>=0;
+    S.aimed=()=>S.aim>=0&&A.playing();
     const setHeld=(h,quiet)=>{
       if(h===S.held)return;const was=S.held;S.held=h;
       if(!quiet){if(h>=0)o.tone(150+h*30,0.05,'square',0.14,0,-70);else if(was>=0)o.tone(260,0.03,'square',0.05)}
@@ -745,6 +761,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       if(S.shake>0)S.shake-=dt;
       if(A.watching)watchView(dt);else walk(dt,inp);
       S.lit+=((S.started?1:0)-S.lit)*Math.min(1,dt*3);
+      if(K.over&&!A.watching&&!A.playing()){runes();visuals(dt);hud();draw();return}
       if(K.over){
         if(S.endT===0){
           if(K.over==='win'){o.tone(392,0.5,'sine',0.2);o.tone(523,0.6,'sine',0.2,0.15);o.tone(784,0.9,'sine',0.2,0.3);o.noise(0.9,0.2,1800,0.6)}
@@ -758,7 +775,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
         if(S.endT>(K.over==='win'?2.0:1.7))finish({k:K.over==='win'?'win':'dead',why:'kiln'});
         return;
       }
-      if(A.watching){
+      if(A.watching||!A.playing()){
         // the watcher only draws what the player's last snapshot said; the rules run on the player's side
         runes();K.ashT-=dt;visuals(dt);hud();draw();return;
       }
@@ -799,6 +816,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       if(Number.isInteger(q.hd)&&q.hd>=-1&&q.hd<5)setHeld(q.hd);
       if(q.st===0||q.st===1)S.started=q.st===1;else if(q.st===undefined)S.started=true;
     };
+    S.partyApply=q=>S.apply(q);
     S.frame=()=>{
       cam.fov=fovFor(cam.aspect);
       const sh=S.shake>0?S.shake*0.12:0;
@@ -1301,12 +1319,14 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     // ---- update ----
     let T0=0;const at=x=>T0<x&&S.t>=x;
     S.update=(dt,inp)=>{
+      const observing=!A.watching&&!A.playing(),aftermath=observing&&A.party()?.done;
+      if(aftermath)S.t=Math.max(S.t,MIR.SMASH+3);
       T0=S.t;S.t+=dt;const t=S.t,W=A.watching,hold=S.ch===2?t-S.ct:-1;
       lookStep(S,dt,inp.lx||0,inp.ly||0,[-1.25,1.0]);S.yaw=wrap(S.yaw);
       S.fr=S.ch===2&&hold>=LK.PROMPT&&S.bt<0;
       // walking: not while it breaks through, not when you spray it, not while you lean in to the little glass
       const wOk=S.bt<0&&S.ch!==1&&S.leaveT<0;
-      if(W)watchWalk(dt);else walk(dt,inp,hold,wOk);
+      if(W)watchWalk(dt);else walk(dt,inp,observing?-1:hold,observing||wOk);
       S.lampK+=clamp(S.lamp-S.lampK,-dt/0.35,dt/0.35);
       if(S.gb>=0&&!S.st&&S.pz<WZ-0.32)stepIn();
       // sound of the parlor
@@ -1323,7 +1343,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       if(!W&&!S.noted&&t>=MIR.ENTER+0.35&&mp.x<40&&spotted([S.px,S.eyeY,S.pz],[fx,fy,fz],[mp.x,2.2,mp.z])){
         S.noted=true;o.mob?.('guest',S.seed);
       }
-      if(mp.wa>0&&S.ch!==2){const a=Math.floor(mp.w/Math.PI);if(S.fs!==undefined&&a!==S.fs){o.tone(50,0.14,'sine',0.25);o.noise(0.14,0.25,110,0.8)}S.fs=a}else S.fs=undefined;
+      if(!aftermath&&mp.wa>0&&S.ch!==2){const a=Math.floor(mp.w/Math.PI);if(S.fs!==undefined&&a!==S.fs){o.tone(50,0.14,'sine',0.25);o.noise(0.14,0.25,110,0.8)}S.fs=a}else S.fs=undefined;
       // is the can under the crosshair? a generous ray test, and the only thing that ever says so
       {const ey=S.eyeY;let tg='';const c=S.canC,rx=c[0]-S.px,ry=c[1]-ey,rz=c[2]-S.pz,al=rx*fx+ry*fy+rz*fz;
         if(!S.held&&S.ch===0&&S.bt<0&&al>0.2&&al<3.4&&Math.hypot(rx-fx*al,ry-fy*al,rz-fz*al)<0.17)tg='can';
@@ -1335,13 +1355,13 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
           if(!tg&&emB.aimed(S.px,ey,S.pz,fx,fy,fz))tg='book'}
         S.tg=tg;S.aim=!!tg}
       // the glass
-      if(t>=MIR.SMASH&&S.bt<0){
+      if(!aftermath&&t>=MIR.SMASH&&S.bt<0){
         let r=0;
         if(S.ch===1)r=(1-S.sp0)/1.2/1.0;
         else if(S.ch===2){const m=1-ss(0.6,3.0,hold);r=lerp(0.35,1,S.lk)/MIR.BREAK*m}
         else r=lerp(0.35,1,S.lk)/MIR.BREAK;
         if(S.ch===0&&t<MIR.SMASH+0.8)r*=ss(MIR.SMASH,MIR.SMASH+0.8,t);
-        let sm=S.sm+r*dt;if(S.ch===2)sm=Math.min(sm,0.93);if(W&&S.ch===0&&!S.wb)sm=Math.min(sm,0.995);
+        let sm=S.sm+r*dt;if(S.ch===2)sm=Math.min(sm,0.93);if((W||observing)&&S.ch===0&&!S.wb)sm=Math.min(sm,0.995);
         S.sm=sm;
         const nb=Math.floor(Math.min(S.sm,1)*MIR.NB+1e-6);
         if(nb>S.nb){const n=nb-S.nb;S.nb=nb;for(let i=0;i<n;i++)blow(nb-n+i)}
@@ -1351,7 +1371,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       // choosing
       const cur_={l:!!inp.navLeft,r:!!inp.navRight,ok:!!inp.press,back:!!inp.back},P0=S.prev||cur_;S.prev=cur_;const e=k=>cur_[k]&&!P0[k];
       const live=S.held&&t>=MIR.CHOICE&&S.ch===0&&S.bt<0;S.live=live;
-      if(!W&&S.ch===0&&S.bt<0){
+      if(!W&&!observing&&S.ch===0&&S.bt<0){
         if(!S.held){if(S.tg==='can'&&e('ok'))grab()}
         else if(live){
           if(e('l'))S.sel=0;
@@ -1360,8 +1380,8 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
         }else if(e('ok')&&t>=S.spc)spray(fx,fy,fz);
       }
       // once it is gone: break the glass, leave by the door, or look at what is in the parlor. No timer forces you out
-      if(!W&&emB.st===1&&e('back'))emB.toggle();
-      else if(!W&&S.fr&&S.leaveT<0&&e('ok')){
+      if(!W&&!observing&&emB.st===1&&e('back'))emB.toggle();
+      else if(!W&&!observing&&S.fr&&S.leaveT<0&&e('ok')){
         if(emB.st===1)emB.toggle();
         else if(S.tg==='glass')fblow();
         else if(S.tg==='door'){S.leaveT=t;o.tone(300,0.4,'sine',0.12,0,-100)}
@@ -1370,11 +1390,12 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
         else if(S.tg==='book')emB.toggle()}
       if(emB.st===1&&Math.abs(nf(inp.mx)?inp.mx:0)+Math.abs(nf(inp.my)?inp.my:0)>0.3)emB.st=2;
       emM.update(dt);
-      if(S.leaveT>=0&&t-S.leaveT>=0.7)finish({k:'win',why:'mirror'});
+      if(!observing&&S.leaveT>=0&&t-S.leaveT>=0.7){finish({k:'win',why:'mirror'});return}
       // after it gives
-      if(S.bt>=0){const d=t-S.bt;if(at(S.bt+0.75)){o.hurtFx();o.noise(0.6,0.8,300,0.6);o.tone(70,0.6,'sawtooth',0.4,0,-40)}if(d>=1.9)finish({k:'dead',why:'mirror'})}
+      if(!observing&&S.bt>=0){const d=t-S.bt;if(at(S.bt+0.75)){o.hurtFx();o.noise(0.6,0.8,300,0.6);o.tone(70,0.6,'sawtooth',0.4,0,-40)}if(d>=1.9){finish({k:'dead',why:'mirror'});return}}
       S.shk=Math.max(0,S.shk-dt*1.4);
       draw(t,dt,mp);
+      if(observing){S.fade=0;S.blur=0}
     };
     // ---- the choice ----
     const LK={PROMPT:11.6};
@@ -1396,10 +1417,10 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       const k=i%HP.length;S.hitT[k]=S.t;S.shk=Math.max(S.shk,0.14);
       o.tone(62+Math.random()*10,0.28,'sawtooth',0.3,0,-30);o.noise(0.22,0.55,170,0.7);o.noise(0.35,0.3,3600,2);o.tone(2200+Math.random()*900,0.16,'triangle',0.05,0,-1300);o.rumble(160,0.9,0.5);
     };
-    const shatter=()=>{S.pane.visible=false;S.drip.visible=false;S.shards.visible=true;o.noise(1.0,0.9,2800,0.8);o.noise(0.9,0.7,500,0.8);o.tone(1700,0.5,'triangle',0.1,0,-1200);o.tone(60,0.9,'sawtooth',0.4,0,-30);o.rumble(800,1,1);S.shk=0.5};
+    const shatter=(quiet=false)=>{S.pane.visible=false;S.drip.visible=false;S.shards.visible=true;if(quiet)return;o.noise(1.0,0.9,2800,0.8);o.noise(0.9,0.7,500,0.8);o.tone(1700,0.5,'triangle',0.1,0,-1200);o.tone(60,0.9,'sawtooth',0.4,0,-30);o.rumble(800,1,1);S.shk=0.5};
     // ---- drawing ----
     const hudHtml=()=>{
-      if(A.watching)return;
+      if(A.watching||!A.playing())return;
       let h='';
       const op=(i,tx)=>`<button type="button" data-room-choice="${i}" aria-pressed="${S.sel===i}">${tx}</button>`;
       const pr=(w,k)=>`<div style="position:fixed;left:0;right:0;top:61%;font-size:15px">${w} <small>[${o.hint(k)}]</small></div>`;
@@ -1426,12 +1447,13 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       // camera
       const sh=S.shk*(S.shk>0.2?0.06:0.04),cy=S.eyeY+Math.sin(t*1.1)*0.008;
       let yaw=S.yaw,pit=S.pitch;
-      if(S.ch===1&&S.bt>=0||S.ch===1&&t-S.ct<2){const k=Math.min(1,dt*4);S.yaw=yaw=lerp(yaw,0,k);S.pitch=pit=lerp(pit,0.05,k)}
-      if(dd>=0&&S.ch!==1){const k=Math.min(1,dt*2.5);S.yaw=yaw=lerp(yaw,0,k);S.pitch=pit=lerp(pit,0.1,k)}
+      const observing=!W&&!A.playing();
+      if(!observing&&(S.ch===1&&S.bt>=0||S.ch===1&&t-S.ct<2)){const k=Math.min(1,dt*4);S.yaw=yaw=lerp(yaw,0,k);S.pitch=pit=lerp(pit,0.05,k)}
+      if(!observing&&dd>=0&&S.ch!==1){const k=Math.min(1,dt*2.5);S.yaw=yaw=lerp(yaw,0,k);S.pitch=pit=lerp(pit,0.1,k)}
       cam.position.set(S.px+(Math.random()-0.5)*sh,cy+(Math.random()-0.5)*sh,S.pz+(Math.random()-0.5)*sh);
       cam.rotation.set(pit,-yaw,Math.sin(t*0.4)*0.008+(Math.random()-0.5)*sh*0.8,'YXZ');cam.updateMatrixWorld();camQ.copy(cam.quaternion);
       // people
-      CM[0]=mp.x;CM[1]=mp.z;const mOn=t>=MIR.ENTER+0.35;
+      CM[0]=mp.x;CM[1]=mp.z;const mOn=t>=MIR.ENTER+0.35&&!(observing&&(A.party()?.done||dd>0.55));
       if(!S.st)for(const e of cast)drawCast(e,t);
       for(const e of cast){
         const p=e.p.R.position;
@@ -1498,7 +1520,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
         S.hand.children[0].position.set(0.34-turn*0.12,-0.5-(1-up)*0.8,-0.4);
         S.handCan.position.set(0.2-turn*0.14,-0.2-(1-up)*0.8,-0.58+turn*0.18);S.handCan.rotation.set(S.ch===1?-1.45:-1.45+turn*3.0,0,S.ch===1?0.0:0.0);
         S.hand.children[1].position.set(0.2-turn*0.14,-0.22-(1-up)*0.8,-0.58+turn*0.18);for(let i=0;i<3;i++)S.hand.children[3+i].position.set(0.14+i*0.04-turn*0.14,-0.16-(1-up)*0.8,-0.52-i*0.02+turn*0.18)}
-      S.hand.visible=hv;
+      S.hand.visible=hv&&!observing;
       if(S.ch===0&&t<S.spj)S.hand.position.y+=Math.sin(t*70)*0.004;
       if(S.ch===0&&t<S.spj&&t>S.spj-0.5)emit(0,Math.max(1,Math.round(dt*140)),[cam.position.x+0.2,cam.position.y-0.3,cam.position.z-0.8],S.spt);
       // splats on the glass
@@ -1549,8 +1571,18 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       if((q.lo===0||q.lo===1)&&q.lo!==S.lamp)setLamp(q.lo);if(nf(q.jy))S.tjy=clamp(q.jy,0,2);
       emM.apply(q);emB.apply(q);
     };
+    S.partyApply=q=>{
+      if(!nf(q.t)||q.t<0)return;
+      if(Math.abs(q.t-S.t)>0.25)S.t=q.t;
+      if((q.ch===1||q.ch===2)&&S.ch===0&&nf(q.ct)){S.ch=q.ch;S.ct=q.ct}
+      if(q.hd){S.held=true;S.can.visible=false}
+      if(nf(q.sm)&&S.bt<0)S.sm=clamp(q.sm,0,1);
+      if(nf(q.bt)&&q.bt>=0&&S.bt<0){S.bt=q.bt;shatter(!!A.party()?.done||q.t-q.bt>0.5)}
+      if(Number.isInteger(q.fb)&&q.fb>=0&&q.fb<=3)while(S.fb<q.fb)fblow();
+      if((q.lo===0||q.lo===1)&&q.lo!==S.lamp)setLamp(q.lo);
+    };
     S.bloom=0.33;
-    S.look=0;S.aimed=()=>S.aim;
+    S.look=0;S.aimed=()=>A.playing()&&S.aim;
     S.update(0,Z);
     return S;
   }
@@ -1567,7 +1599,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
   A.mode=modeOf;
   A.controlMode=()=>cur?.controlMode?.()||modeOf(A.kind);
   // a room only ever sees the controls its mode allows
-  const gate=(k,inp)=>{const m=modeOf(k);return m==='walk'?inp:m==='look'?{lx:inp.lx||0,ly:inp.ly||0}:Z};
+  const gate=(k,inp)=>{const m=modeOf(k);return m==='walk'?inp:m==='look'||k==='fall'&&!A.playing()?{lx:inp.lx||0,ly:inp.ly||0}:Z};
   const build=(kind,seed)=>{
     setup();A.active=true;A.kind=kind;held=false;
     cur=(KINDS[kind]||kiln)(seed);
@@ -1593,11 +1625,28 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
     cur.fade=0;cur.in=0;
     cur.update(0,Z);
   };
+  A.restart=(seed,keepPosition=false)=>{
+    if(!cur||!done)return;
+    const cb=done,kind=A.kind,b=cur.walker?.b;
+    const pose=keepPosition&&b?{x:b.x,y:b.y,z:b.z,yaw:cur.yaw,pitch:cur.pitch}:null;
+    A.start(kind,cb,seed);
+    if(pose&&cur?.walker){
+      const {x,y,z,yaw,pitch}=pose;
+      Object.assign(cur.walker.b,{x,y,z});Object.assign(cur,{yaw,pitch});
+      cur.update(0,Z);
+    }
+  };
+  A.shared=q=>{if(cur&&!A.watching&&q)cur.partyApply?.(q)};
+  A.partyInput=(kind,data,id,pose)=>cur?.partyInput?.(kind,data,id,pose);
+  A.partyPose=()=>{
+    const walker=cur?.walker,b=walker?.b;
+    return b?[b.x,b.y,b.z,cur.yaw||0,cur.pitch||0,walker.eye].map(v=>+v.toFixed(3)):null;
+  };
   A.abort=()=>{done=null;A.active=false;A.kind='';A.watching=false;held=false;cur=null;externalView=false;clear();o.hud('')};
   A.update=(dt,inp)=>{if(!cur||held)return;cur.in+=dt;cur.update(dt,A.watching?inp:gate(A.kind,inp))};
   A.tap=(x,y)=>!!(cur&&!A.watching&&cur.tap&&cur.tap(x,y,externalView?displayCamera:null));
   A.untap=()=>{if(cur&&cur.untap)cur.untap()};
-  A.choose=index=>!A.watching&&cur?.choose?.(index);
+  A.choose=index=>!A.watching&&A.playing()&&cur?.choose?.(index);
   A.aimed=()=>!!(cur&&cur.aimed&&cur.aimed());
   A.cam=cam;
   // test hooks for the picture house: inject a mic level or recognised words, force the house reel
@@ -1609,6 +1658,24 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
   const viewRig=cameraViewRig(),displayCamera=new THREE.PerspectiveCamera();
   const cameraClearance=sceneCameraClearance(scene),crosshair=document.getElementById('roomCross');
   let localAvatar,externalView=false;
+  function drawPartyAvatars(){
+    if(!cur.walker||A.watching)return;
+    const peers=o.roomPeers?.();
+    for(const avatar of peerAvatars.values())avatar.visible=false;
+    for(const [id,{peer,pose,at}] of peers||[]){
+      if(performance.now()-at>2000)continue;
+      const [x,y,z,yaw,pitch,eye]=pose;
+      let avatar=peerAvatars.get(id);
+      if(!avatar){avatar=o.createPeerAvatar(id,peer);peerAvatars.set(id,avatar);group.add(avatar)}
+      const b=avatar.userData.doorBody??={x,y,z,vx:0,vz:0,bob:0,crouchBlend:0};
+      const dx=x-b.x,dz=z-b.z;
+      const travel=Math.hypot(dx,dz),blend=travel>2?1:0.25;
+      b.vx=dx*0.4;b.vz=dz*0.4;b.bob+=travel*blend*1.5;
+      b.x+=dx*blend;b.y+=(y-b.y)*blend;b.z+=dz*blend;
+      avatar.visible=externalView||Math.hypot(x-cur.walker.b.x,z-cur.walker.b.z)>0.35;
+      avatar.userData.pose(cur.t||0,b,yaw,pitch,clamp(eye,0.5,2.5));
+    }
+  }
   A.render=()=>{
     if(!cur)return;
     const sz=renderer.getSize(new THREE.Vector2()),pr=renderer.getPixelRatio();
@@ -1633,6 +1700,7 @@ void main(){float r=length(vP),a=atan(vP.y,vP.x);float k=(r-1.15)/1.85;
       else{crosshair.style.left='';crosshair.style.top=''}
     }
     try{
+      drawPartyAvatars();
       cur.beforeRender?.();
       if(externalView)localAvatar.visible=true;
       if(composer){

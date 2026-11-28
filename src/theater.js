@@ -101,7 +101,8 @@ export function createTheater(env){
       keyHold:0,teens:[],bubbles:[],test:{level:null},heard:[],watching:A.watching};
     cam.fov=70;cam.near=0.05;cam.far=90;
     scene.fog=new THREE.FogExp2(0x0a0508,0.012);
-    const live=!A.watching;
+    const live=!A.watching,voices=new Map();
+    let voiceSent=-1;
 
     /* ---------- the room ---------- */
     const tex=(w,h,draw,rep)=>canvasTex(w,h,draw,rep);
@@ -620,6 +621,10 @@ export function createTheater(env){
       S.heard.push(String(text).slice(0,80));if(S.heard.length>6)S.heard.shift();
       if(!heardPhrase(text))return;
       const pk=peak();
+      if(!A.playing()){
+        if(pk>=TH.YELL)o.roomEvent('voice',[pk,1]);
+        return;
+      }
       if(pk>=TH.YELL||S.test.force)toCrying();
       else if(S.hintT<=0){S.hint='Yell it!';S.hintT=3;say(S.teens[(Math.random()*S.teens.length)|0],"we can't HEAR you",'','stay')}
     }
@@ -716,14 +721,23 @@ export function createTheater(env){
         S.lvl=lv;hist.push([S.t,lv]);while(hist.length&&hist[0][0]<S.t-TH.YELL_WINDOW)hist.shift();
         if(keyYell)heard('silence peasants');
         const n=near();S.dist=n;
-        if(S.st==='calm'){
-          if(lv>TH.SPEAK&&n<=TH.TEEN_RANGE)S.speechT+=dt;else S.speechT=Math.max(0,S.speechT-dt*2);
-          if(S.speechT>=TH.SPEAK_TIME)toHuh();
-        }else if(S.st==='huh'){if(S.stT>=TH.HUH_TIME)toAttack()}
-        else if(S.st==='attack'){
-          S.insT-=dt;if(S.insT<=0){S.insT=TH.INSULT_EVERY;fire()}
-          // no speech recogniser (or it failed): a yell that holds long enough is the phrase
-          if(!srOk()||(S.test&&S.test.noSR)){if(lv>=TH.YELL)S.yellT=Math.min(TH.YELL_HOLD+0.5,S.yellT+dt);else S.yellT=Math.max(0,S.yellT-dt*0.5);if(S.yellT>=TH.YELL_HOLD)toCrying()}
+        if(!A.playing()){
+          if(S.t-voiceSent>=0.1){voiceSent=S.t;if(lv>TH.SPEAK)o.roomEvent('voice',[lv,0])}
+        }else{
+          let nearVoice=n<=TH.TEEN_RANGE?lv:0,anyVoice=lv;
+          for(const [id,v] of voices){
+            if(S.t-v.at>0.28){voices.delete(id);continue}
+            nearVoice=Math.max(nearVoice,v.near?v.lv:0);anyVoice=Math.max(anyVoice,v.lv);
+          }
+          if(S.st==='calm'){
+            if(nearVoice>TH.SPEAK)S.speechT+=dt;else S.speechT=Math.max(0,S.speechT-dt*2);
+            if(S.speechT>=TH.SPEAK_TIME)toHuh();
+          }else if(S.st==='huh'){if(S.stT>=TH.HUH_TIME)toAttack()}
+          else if(S.st==='attack'){
+            S.insT-=dt;if(S.insT<=0){S.insT=TH.INSULT_EVERY;fire()}
+            // no speech recogniser (or it failed): a yell that holds long enough is the phrase
+            if(voices.size||!srOk()||(S.test&&S.test.noSR)){if(anyVoice>=TH.YELL)S.yellT=Math.min(TH.YELL_HOLD+0.5,S.yellT+dt);else S.yellT=Math.max(0,S.yellT-dt*0.5);if(S.yellT>=TH.YELL_HOLD)toCrying()}
+          }
         }
         // the doors
         if(S.pz>ZB-0.55&&Math.abs(S.px-ENT.x)<0.9){
@@ -740,6 +754,18 @@ export function createTheater(env){
     };
     // a friend watching: the pose and the story, nothing else runs on their side
     S.snap=()=>({x:+S.px.toFixed(2),z:+S.pz.toFixed(2),jy:+Math.max(0,WK.b.y-FY(S.pz)).toFixed(2),yw:+S.yaw.toFixed(2),pt:+S.pitch.toFixed(2),st:S.st,tv:S.tv});
+    S.partyInput=(kind,data,id,pose)=>{
+      if(kind!=='voice'||!pose)return;
+      const lv=clamp(data[0],0,1);
+      if(data[1]===1&&lv>=TH.YELL&&S.st==='attack'){toCrying();return}
+      const near=S.teens.some(T=>Math.hypot(T.x-pose[0],T.z-pose[2])<=TH.TEEN_RANGE);
+      voices.set(id,{lv,near,at:S.t});
+    };
+    S.partyApply=q=>{
+      if(q.st==='crying'){toCrying();return}
+      if(S.st==='calm'&&['huh','attack'].includes(q.st))toHuh();
+      if(S.st==='huh'&&q.st==='attack')toAttack();
+    };
     S.apply=q=>{
       if(nf(q.x)&&nf(q.z)){S.tx=clamp(q.x,-RX,RX);S.tz=clamp(q.z,ZF,ZB)}
       if(nf(q.jy))S.tjy=clamp(q.jy,0,3);if(nf(q.yw))S.tyaw=clamp(q.yw,-7,7);if(nf(q.pt))S.tpitch=clamp(q.pt,-1.2,1.2);
