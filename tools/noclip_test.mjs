@@ -24,6 +24,7 @@ const full=MOVE.sprint;
 
 // One roll per impact: a miss stays put, and a graze below full speed does not count.
 assert.equal(noclipDest({x:2.8,z:1.5,hitVX:full,hitVZ:0,sprint:true,fullSpeed:full,roll:0.5,cell,W,H}),null);
+assert.equal(noclipDest({x:2.8,z:1.5,hitVX:full,hitVZ:0,sprint:true,fullSpeed:full,roll:0.04,cell,W,H}),null);
 assert.equal(noclipDest({x:2.8,z:1.5,hitVX:full*0.4,hitVZ:0,sprint:true,fullSpeed:full,roll:0,cell,W,H}),null);
 assert.equal(noclipDest({x:2.8,z:1.5,hitVX:full,hitVZ:0,sprint:false,fullSpeed:full,roll:0,cell,W,H}),null);
 

@@ -25,7 +25,7 @@ const screenWidth=900,screenHeight=596;
 const clamp=THREE.MathUtils.clamp;
 export const onLiftPlatform=({x,z})=>Math.abs(x)<1.66&&z<wallZ-0.3&&z>liftGateZ;
 
-export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveLobby,mazeFov,sampleFloor,prepareLanding,landingGlimpse,passingLook,onLeavePanel,createVisitor,appearance,cameraView=()=> 'first',createAvatar}){
+export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveLobby,mazeFov,sampleFloor,prepareLanding,landingGlimpse,passingLook,onLeavePanel,createVisitor,appearance,cameraView=()=> 'first',createAvatar,floorTypeName}){
   const scene=new THREE.Scene();
   scene.background=new THREE.Color(0x14121d);
   scene.fog=new THREE.Fog(0x17151f,24,64);
@@ -352,7 +352,7 @@ export function createMenuRoom(renderer,{sfx,asset,activate,enterLanding,arriveL
     guest=guestName;hosting=willHost;
     if(ride)return;
     liftLabel.setLabel(guest?.ready?['JOIN RUN',guest.name]:
-      sharedLift?['FLOOR '+sharedLift.depth,sharedLift.pending?'DEPARTING':sharedLift.by?sharedLift.by+' selected':'SHARED DESTINATION']:
+      sharedLift?[sharedLift.depth?'FLOOR '+sharedLift.depth:'LOBBY',sharedLift.pending?'DEPARTING':floorTypeName(sharedLift.depth)]:
       ['SELECT FLOOR',hosting?'HOST FOR FRIENDS':'DESCENT CONTROL']);
   }
   function setSharedLift(selection,away){

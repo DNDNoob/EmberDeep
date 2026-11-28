@@ -9,7 +9,12 @@ export const appearanceFields=[
   {key:'hairColor',label:'Hair color',choices:['Chestnut','Black','Copper','Blond','Silver','Teal'],
     colors:[[0.25,0.16,0.1,5],[0.055,0.045,0.05,5],[0.54,0.21,0.09,5],[0.74,0.54,0.28,5],[0.66,0.69,0.72,5],[0.12,0.42,0.39,5]]},
   {key:'beard',label:'Facial hair',choices:['Clean-shaven','Stubble','Mustache','Full beard','Goatee']},
-  {key:'tattoo',label:'Face tattoo',choices:['None','Twin lines','Diamond','Dots']}
+  {key:'tattoo',label:'Face tattoo',choices:['None','Twin lines','Diamond','Dots']},
+  {key:'eyes',label:'Eye color',choices:['Hazel','Blue','Green','Gray','Amber','Brown'],
+    colors:[[0.3,0.25,0.18],[0.15,0.39,0.63],[0.23,0.44,0.23],[0.39,0.43,0.47],[0.65,0.38,0.12],[0.2,0.1,0.055]]},
+  {key:'accessory',label:'Accessory',choices:['None','Spectacles','Eyepatch','Gold hoops']},
+  {key:'trim',label:'Cloak trim',choices:['Plain','Brass','Silver','Crimson','Jade'],
+    colors:[null,[0.72,0.48,0.19,4],[0.56,0.64,0.69,4],[0.54,0.09,0.13,2],[0.16,0.48,0.33,2]]}
 ];
 
 // Three bits per choice keep the saved look and multiplayer presence compact.
