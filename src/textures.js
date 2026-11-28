@@ -824,8 +824,10 @@ const VS = `varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0.,
 // slow to compile, and there are many of them, so sharing one program between the two layers halves what a new floor has to compile.
 const mainAH = `
 uniform int MODE;
+uniform float DESATURATE;
 void main(){float h,rough,em;vec3 alb;surf(vUv,h,alb,rough,em);
   if(MODE==1){gl_FragColor=vec4(sat(h),0.,0.,1.);return;}
+  alb=mix(alb,vec3(dot(alb,vec3(.2126,.7152,.0722))),DESATURATE);
   alb=pow(clamp(alb*TINT,0.,1.),vec3(2.2));
   gl_FragColor=vec4(alb,em>.5?.5-.5*sat(em):.5+.5*sat(rough));}`;
 const FS_N = `precision highp float;varying vec2 vUv;uniform sampler2D tH;uniform vec2 px;uniform float bump;
@@ -856,7 +858,7 @@ export function makeSurfaces(renderer, size, wantNormals) {
     return m;
   };
   const head = (i, v) => `#define VAR ${v}\nuniform float SEED;uniform vec3 TINT;\n` + LIB + SURF[i];
-  const matAH = (i, v) => shader('AH' + i + ':' + v, head(i, v) + mainAH, {SEED: {value: 0}, TINT: {value: new THREE.Vector3(1, 1, 1)}, MODE: {value: 0}});
+  const matAH = (i, v) => shader('AH' + i + ':' + v, head(i, v) + mainAH, {SEED: {value: 0}, TINT: {value: new THREE.Vector3(1, 1, 1)}, MODE: {value: 0}, DESATURATE: {value: 0}});
   const matA = (i, v) => {const m = matAH(i, v); m.uniforms.MODE.value = 0; return m};
   const matH = (i, v) => {const m = matAH(i, v); m.uniforms.MODE.value = 1; return m};
   const matN = () => shader('N', FS_N, {tH: {value: null}, px: {value: new THREE.Vector2(1 / size, 1 / size)}, bump: {value: 0.1}});
@@ -873,7 +875,12 @@ export function makeSurfaces(renderer, size, wantNormals) {
   const paintStep = job => {
     const prev = renderer.getRenderTarget(), tm = renderer.toneMapping;
     renderer.toneMapping = THREE.NoToneMapping;
-    const {i, v, seed, tn} = job, set = m => {m.uniforms.SEED.value = seed; m.uniforms.TINT.value.set(tn[0], tn[1], tn[2]); return m};
+    const {i, v, seed, tn, gray} = job, set = m => {
+      m.uniforms.SEED.value = seed;
+      m.uniforms.TINT.value.set(tn[0], tn[1], tn[2]);
+      m.uniforms.DESATURATE.value = gray;
+      return m;
+    };
     const st = job.st || (job.st = {phase: 0, k: 0});
     try {
       if (st.phase === 0) run(set(matA(i, v)), job.A, st.k);
@@ -897,13 +904,13 @@ export function makeSurfaces(renderer, size, wantNormals) {
   // the painting; pump() paints the queue a few at a time, so a floor can be built across many frames (the lift ride, a loading bar).
   let deferred = false;
   const queue = [];
-  // p = {v: look 0-3, seed: noise offset, tint: [r,g,b]} (all optional). Surfaces are cached per layer and look; sweep() frees the ones a floor stopped using.
-  const key = p => p ? `${p.v | 0}|${(p.seed || 0).toFixed(2)}|${(p.tint || [1, 1, 1]).map(c => c.toFixed(3)).join(',')}` : '0|0.00|1.000,1.000,1.000';
+  // Surfaces are cached by layer, variant, seed, tint, and grayscale mode.
+  const key = p => p ? `${p.v | 0}|${(p.seed || 0).toFixed(2)}|${(p.tint || [1, 1, 1]).map(c => c.toFixed(3)).join(',')}${p.gray ? '|gray' : ''}` : '0|0.00|1.000,1.000,1.000';
   function get(i, p) {
     const ck = i + ':' + key(p);
     if (cache.has(ck)) return cache.get(ck);
     const tn = ((p && p.tint) || [1, 1, 1]).map(c => Math.round(c * 1e4) / 1e4);
-    const job = {i, v: (p && p.v) | 0, seed: Math.round((i * 17.31 + 3.7 + ((p && p.seed) || 0)) * 100) / 100, tn, A: target(true), N: wantNormals ? target(false) : null};
+    const job = {i, v: (p && p.v) | 0, seed: Math.round((i * 17.31 + 3.7 + ((p && p.seed) || 0)) * 100) / 100, tn, gray: p?.gray ? 1 : 0, A: target(true), N: wantNormals ? target(false) : null};
     if (deferred) queue.push(job); else paint(job);
     const out = {map: job.A.texture, nrm: job.N ? job.N.texture : null, rtA: job.A, rtN: job.N};
     cache.set(ck, out);
